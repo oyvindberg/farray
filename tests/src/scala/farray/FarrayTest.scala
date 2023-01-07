@@ -4,7 +4,7 @@ import org.junit.Test
 
 import scala.collection.BuildFrom
 
-class FListTest {
+class FListTest:
   @Test def test_++ : Unit = test2(_ ++ _)(_ ++ _)
   @Test def test_+: : Unit = test1("x" +: _)("x" +: _)
   @Test def test_:+ : Unit = test1(_ :+ "x")(_ :+ "x")
@@ -96,10 +96,9 @@ class FListTest {
   ) =
     org.junit.Assert.assertEquals(msg, Res1(res1), Res2(res2))
 
-  def inputs(base: String): Seq[List[String]] = {
+  def inputs(base: String): Seq[List[String]] =
     val all = base.toList.map(_.toString)
     all.indices.map(all.take)
-  }
 
   val lists: Seq[List[String]] = inputs("aabcdefg")
 
@@ -144,7 +143,7 @@ class FListTest {
   // this test compares results from `FList` to those of `List`. Types vary a bit, so this massages both sides into something safe we can compare
   trait CompareAs[From, To] extends (From => To)
 
-  object CompareAs {
+  object CompareAs:
     /* base case, can safely be compared */
     given [T <: Comparable[T] | AnyVal]: CompareAs[T, T] = t => t
 
@@ -168,5 +167,3 @@ class FListTest {
         V: CompareAs[V1, V2]
     ): CompareAs[(T1, U1, V1), (T2, U2, V2)] =
       case (t, u, v) => (T(t), U(u), V(v))
-  }
-}
