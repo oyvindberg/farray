@@ -44,7 +44,7 @@ object Builder {
 
     def ++=(as: FArray[A]): this.type = {
       var idx = 0
-      while (idx < as.length) {
+      while idx < as.length do {
         buf += as(idx)
         idx += 1
       }
@@ -53,7 +53,7 @@ object Builder {
 
     def ++=(as: Seq[A]): this.type = {
       var idx = 0
-      while (idx < as.length) {
+      while idx < as.length do {
         buf.add(as(idx))
         idx += 1
       }
@@ -62,7 +62,7 @@ object Builder {
 
     def ++=(as: Array[A]): this.type = {
       var idx = 0
-      while (idx < as.length) {
+      while idx < as.length do {
         buf.add(as(idx))
         idx += 1
       }
@@ -70,7 +70,7 @@ object Builder {
     }
 
     def ++=(it: Iterator[A]): this.type = {
-      while (it.hasNext) {
+      while it.hasNext do {
         buf.add(it.next())
       }
       this
@@ -101,7 +101,7 @@ object Builder {
     inline def foreach(inline f: A => Unit): Unit = {
       var i = 0
       val size = buf.size()
-      while (i < size) {
+      while i < size do {
         f(get(i))
         i += 1
       }
@@ -111,8 +111,8 @@ object Builder {
       var idx = 0
       var found = false
       val size = buf.size()
-      while (idx < size && !found) {
-        if (p(buf.get(idx))) {
+      while idx < size && !found do {
+        if p(buf.get(idx)) then {
           found = true
         }
         idx += 1

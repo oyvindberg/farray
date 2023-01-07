@@ -12,7 +12,7 @@ object FArray {
   @static val Empty = new FArray(Array.ofDim(0))
 
   private[farray] inline def create[A <: AnyRef](as: Array[AnyRef]): FArray[A] =
-    if (as.length == 0) Empty else new FArray[A](as)
+    if as.length == 0 then Empty else new FArray[A](as)
 
   inline def empty[A <: AnyRef]: FArray[A] =
     Empty
@@ -64,46 +64,46 @@ object FArray {
   }
   object firstTwo {
     inline def unapply[A <: AnyRef](as: FArray[A]): Option[(A, A)] =
-      if (as.length >= 2) Some((as(0), as(1))) else None
+      if as.length >= 2 then Some((as(0), as(1))) else None
   }
   object firstThree {
     inline def unapply[A <: AnyRef](as: FArray[A]): Option[(A, A, A)] =
-      if (as.length >= 3) Some((as(0), as(1), as(2))) else None
+      if as.length >= 3 then Some((as(0), as(1), as(2))) else None
   }
   object last {
     inline def unapply[A <: AnyRef](as: FArray[A]): Option[A] = as.lastOption
   }
   object exactlyOne {
     inline def unapply[A <: AnyRef](as: FArray[A]): Option[A] =
-      if (as.length == 1) Some(as(0)) else None
+      if as.length == 1 then Some(as(0)) else None
   }
   object exactlyTwo {
     inline def unapply[A <: AnyRef](as: FArray[A]): Option[(A, A)] =
-      if (as.length == 2) Some((as(0), as(1))) else None
+      if as.length == 2 then Some((as(0), as(1))) else None
   }
   object exactlyThree {
     inline def unapply[A <: AnyRef](as: FArray[A]): Option[(A, A, A)] =
-      if (as.length == 3) Some((as(0), as(1), as(2))) else None
+      if as.length == 3 then Some((as(0), as(1), as(2))) else None
   }
   object exactlyFour {
     inline def unapply[A <: AnyRef](as: FArray[A]): Option[(A, A, A, A)] =
-      if (as.length == 4) Some((as(0), as(1), as(2), as(3))) else None
+      if as.length == 4 then Some((as(0), as(1), as(2), as(3))) else None
   }
   object exactlyFive {
     inline def unapply[A <: AnyRef](as: FArray[A]): Option[(A, A, A, A, A)] =
-      if (as.length == 5) Some((as(0), as(1), as(2), as(3), as(4))) else None
+      if as.length == 5 then Some((as(0), as(1), as(2), as(3), as(4))) else None
   }
   object headTail {
     inline def unapply[A <: AnyRef](as: FArray[A]): Option[(A, FArray[A])] =
-      if (as.length == 0) None else Some((as.head, as.tail))
+      if as.length == 0 then None else Some((as.head, as.tail))
   }
   object headHeadTail {
     inline def unapply[A <: AnyRef](as: FArray[A]): Option[(A, A, FArray[A])] =
-      if (as.length < 2) None else Some((as(0), as(1), as.drop(2)))
+      if as.length < 2 then None else Some((as(0), as(1), as.drop(2)))
   }
   object initLast {
     inline def unapply[A <: AnyRef](as: FArray[A]): Option[(FArray[A], A)] =
-      if (as.length == 0) None else Some((as.init, as.last))
+      if as.length == 0 then None else Some((as.init, as.last))
   }
 
   def newBuilder[A <: AnyRef](): Builder[A] = Builder.empty()
@@ -115,9 +115,9 @@ object FArray {
         val xe = x.iterator
         val ye = y.iterator
 
-        while (xe.hasNext && ye.hasNext) {
+        while xe.hasNext && ye.hasNext do {
           val res = summon[Ordering[T]].compare(xe.next(), ye.next())
-          if (res != 0) return res
+          if res != 0 then return res
         }
 
         summon[Ordering[Boolean]].compare(xe.hasNext, ye.hasNext)
@@ -129,7 +129,7 @@ object FArray {
       val newLength: Int = {
         var value = 0
         var i = 0
-        while (i < ts.length) {
+        while i < ts.length do {
           value += ts(i).length
           i += 1
         }
@@ -139,10 +139,10 @@ object FArray {
       val ret = Array.ofDim[AnyRef](newLength)
       var i = 0
       var o = 0
-      while (i < ts.length) {
+      while i < ts.length do {
         val bs: FArray[T] = ts(i)
         var j = 0
-        while (j < bs.length) {
+        while j < bs.length do {
           ret(o) = bs(j)
           j += 1
           o += 1
@@ -156,11 +156,11 @@ object FArray {
 
   extension [A <: AnyRef](as: FArray[A]) {
     inline def sameElements(other: FArray[A]): Boolean =
-      if (as.length != other.length) false
+      if as.length != other.length then false
       else {
         var idx = 0
         var same = true
-        while (idx < as.length && same) {
+        while idx < as.length && same do {
           same = as(idx) eq other.apply(idx)
           idx += 1
         }
@@ -169,8 +169,8 @@ object FArray {
 
     def contains(t: A): Boolean = {
       var idx = 0
-      while (idx < as.length) {
-        if (as(idx) == t) {
+      while idx < as.length do {
+        if as(idx) == t then {
           return true
         }
         idx += 1
@@ -207,7 +207,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
     else
       val newArray = Array.ofDim[AnyRef](length)
       var i = 0
-      while (i < length) {
+      while i < length do {
         newArray(i) = f(apply(i))
         i += 1
       }
@@ -221,7 +221,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
       val newArray = Array.ofDim[AnyRef](length)
       var i = 0
       var foundDifferent = false
-      while (i < length) {
+      while i < length do {
         val before: A = apply(i)
         val after: B = f(before)
         if before ne after then foundDifferent = true
@@ -235,7 +235,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
 
   inline def foreach(inline f: A => Unit): Unit = {
     var i = 0
-    while (i < length) {
+    while i < length do {
       f(apply(i))
       i += 1
     }
@@ -250,7 +250,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
   inline def foldLeft[Z](z: Z)(inline f: (Z, A) => Z): Z = {
     var current = z
     var idx = 0
-    while (idx < length) {
+    while idx < length do {
       current = f(current, apply(idx))
       idx += 1
     }
@@ -258,10 +258,10 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
   }
 
   inline def reduce[A1 >: A](inline op: (A1, A1) => A1): A1 = {
-    if (isEmpty) sys.error("reduce on empty list")
+    if isEmpty then sys.error("reduce on empty list")
     var ret: A1 = apply(0)
     var idx = 1
-    while (idx < length) {
+    while idx < length do {
       ret = op(ret, apply(idx))
       idx += 1
     }
@@ -269,17 +269,17 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
   }
 
   inline def reduceOption[A1 >: A](inline op: (A1, A1) => A1): Option[A1] =
-    if (isEmpty) None else Some(reduce(op))
+    if isEmpty then None else Some(reduce(op))
 
   inline def reduceLeft[B >: A <: AnyRef](inline op: (B, A) => B): B = {
-    if (isEmpty)
+    if isEmpty then
       throw new UnsupportedOperationException("empty.reduceLeft")
 
     var acc: B = null.asInstanceOf[B]
     var idx = 0
-    while (idx < length) {
+    while idx < length do {
       val x = apply(idx)
-      if (idx == 0) {
+      if idx == 0 then {
         acc = x
       } else acc = op(acc, x)
       idx += 1
@@ -290,8 +290,8 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
   inline def count(inline p: A => Boolean): Int = {
     var ret = 0
     var idx = 0
-    while (idx < length) {
-      if (p(apply(idx))) {
+    while idx < length do {
+      if p(apply(idx)) then {
         ret += 1
       }
       idx += 1
@@ -301,25 +301,25 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
   }
 
   def headOption: Option[A] =
-    if (isEmpty) None else Some(apply(0))
+    if isEmpty then None else Some(apply(0))
 
   def head: A =
     headOption.getOrElse(sys.error("head of empty list"))
 
   private def tailOpt: Option[FArray[A]] =
-    if (isEmpty) None else Some(drop(1))
+    if isEmpty then None else Some(drop(1))
 
   def tail: FArray[A] =
     tailOpt.getOrElse(sys.error("tail of empty list"))
 
   private def initOption: Option[FArray[A]] =
-    if (isEmpty) None else Some(dropRight(1))
+    if isEmpty then None else Some(dropRight(1))
 
   def init: FArray[A] =
     initOption.getOrElse(sys.error("init of empty list"))
 
   def lastOption: Option[A] =
-    if (isEmpty) None else Some(apply(length - 1))
+    if isEmpty then None else Some(apply(length - 1))
 
   def last: A =
     lastOption.getOrElse(sys.error("last of empty list"))
@@ -327,8 +327,8 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
   inline def forall(inline p: A => Boolean): Boolean = {
     var idx = 0
     var foundNot = true
-    while (idx < length && foundNot) {
-      if (!p(apply(idx))) {
+    while idx < length && foundNot do {
+      if !p(apply(idx)) then {
         foundNot = false
       }
       idx += 1
@@ -339,8 +339,8 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
   inline def exists(inline p: A => Boolean): Boolean = {
     var idx = 0
     var found = false
-    while (idx < length) {
-      if (p(apply(idx))) {
+    while idx < length do {
+      if p(apply(idx)) then {
         found = true
         idx = Int.MaxValue // break
       } else {
@@ -353,9 +353,9 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
   inline def collectFirst[B](inline pf: PartialFunction[A, B]): Option[B] = {
     var idx = 0
     var found: Option[B] = None
-    while (idx < length && found.isEmpty) {
+    while idx < length && found.isEmpty do {
       val a = apply(idx)
-      if (pf.isDefinedAt(a))
+      if pf.isDefinedAt(a) then
         found = Some(pf(a))
       idx += 1
     }
@@ -366,8 +366,8 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
 
   def indexOf[B >: A](elem: B, from: Int): Int = {
     var i = math.max(from, 0)
-    while (i < length) {
-      if (elem == apply(i)) {
+    while i < length do {
+      if elem == apply(i) then {
         return i
       }
       i += 1
@@ -380,8 +380,8 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
   inline def indexWhere(inline p: A => Boolean, from: Int): Int = {
     var i = math.max(from, 0)
     var ret = -1
-    while (i < length) {
-      if (p(apply(i))) {
+    while i < length do {
+      if p(apply(i)) then {
         ret = i
         i = Int.MaxValue // break
       } else {
@@ -394,9 +394,9 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
   inline def find(inline f: A => Boolean): Option[A] = {
     var idx = 0
     var found: Option[A] = None
-    while (idx < length) {
+    while idx < length do {
       val a = apply(idx)
-      if (f(a)) {
+      if f(a) then {
         found = Some(a)
         idx = Int.MaxValue // break
       } else {
@@ -411,9 +411,9 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
     else
       val builder = FArray.newBuilder[B](length)
       var i = 0
-      while (i < length) {
+      while i < length do {
         val a = apply(i)
-        if (f.isDefinedAt(a)) {
+        if f.isDefinedAt(a) then {
           val b = f(a)
           builder += b
         }
@@ -431,9 +431,9 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
     else
       val ret = newBuilder[A](length)
       var i = 0
-      while (i < length) {
+      while i < length do {
         val a = apply(i)
-        if (f(a)) {
+        if f(a) then {
           ret += a
         }
         i += 1
@@ -446,8 +446,8 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
     filter(f)
 
   def ++[B >: A <: AnyRef](that: FArray[B]): FArray[B] =
-    if (isEmpty) that
-    else if (that.isEmpty) this
+    if isEmpty then that
+    else if that.isEmpty then this
     else {
       val newLength = length + that.length
       val ret = Array.ofDim[AnyRef](newLength)
@@ -484,8 +484,8 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
   def take(n: Int): FArray[A] = {
     require(n >= 0)
     val newLength = math.min(length, n)
-    if (newLength == 0) FArray.Empty
-    else if (newLength == length) this
+    if newLength == 0 then FArray.Empty
+    else if newLength == length then this
     else {
       val ret = Array.ofDim[AnyRef](newLength)
       System.arraycopy(underlying, 0, ret, 0, newLength)
@@ -496,8 +496,8 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
   def takeRight(n: Int): FArray[A] = {
     require(n >= 0)
     val newLength = math.min(length, n)
-    if (newLength == 0) FArray.Empty
-    else if (newLength == length) this
+    if newLength == 0 then FArray.Empty
+    else if newLength == length then this
     else {
       val ret = Array.ofDim[AnyRef](newLength)
       System.arraycopy(underlying, length - newLength, ret, 0, newLength)
@@ -510,8 +510,8 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
     else
       var i = 0
       var ret = this
-      while (i < length) {
-        if (p(apply(i))) {
+      while i < length do {
+        if p(apply(i)) then {
           i += 1
         } else {
           ret = take(i)
@@ -523,7 +523,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
 
   def drop(n: Int): FArray[A] = {
     val newLength = math.max(0, length - n)
-    if (newLength == 0) return FArray.Empty
+    if newLength == 0 then return FArray.Empty
     val ret = Array.ofDim[AnyRef](newLength)
     System.arraycopy(underlying, n, ret, 0, newLength)
     create[A](ret)
@@ -531,7 +531,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
 
   def dropRight(n: Int): FArray[A] = {
     val newLength = math.max(0, length - n)
-    if (newLength == 0) return FArray.Empty
+    if newLength == 0 then return FArray.Empty
     val ret = Array.ofDim[AnyRef](newLength)
     System.arraycopy(underlying, 0, ret, 0, newLength)
     create[A](ret)
@@ -542,8 +542,8 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
     else
       var idx = 0
       var continue = true
-      while (idx < length && continue) {
-        if (!p(apply(idx))) {
+      while idx < length && continue do {
+        if !p(apply(idx)) then {
           continue = false
         } else {
           idx += 1
@@ -556,10 +556,10 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
     (take(n), drop(n))
 
   def reverse: FArray[A] = {
-    if (isEmpty) return FArray.Empty
+    if isEmpty then return FArray.Empty
     val ret = Array.ofDim[AnyRef](length)
     var idx = 0
-    while (idx < length) {
+    while idx < length do {
       ret(idx) = underlying(length - 1 - idx)
       idx += 1
     }
@@ -568,11 +568,11 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
 
   def zip[B <: AnyRef](other: FArray[B]): FArray[(A, B)] = {
     val newLength = math.min(length, other.length)
-    if (newLength == 0) return FArray.Empty
+    if newLength == 0 then return FArray.Empty
 
     val ret = Array.ofDim[AnyRef](newLength)
     var idx = 0
-    while (idx < newLength) {
+    while idx < newLength do {
       ret(idx) = (underlying(idx), other(idx))
       idx += 1
     }
@@ -584,11 +584,11 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
 
   def lazyZip[B <: AnyRef, C <: AnyRef](bs: FArray[B], cs: FArray[C]): FArray[(A, B, C)] = {
     val newLength = math.min(math.min(length, bs.length), cs.length)
-    if (newLength == 0) return FArray.Empty
+    if newLength == 0 then return FArray.Empty
 
     val ret = Array.ofDim[AnyRef](newLength)
     var idx = 0
-    while (idx < newLength) {
+    while idx < newLength do {
       ret(idx) = (underlying(idx), bs(idx), cs(idx))
       idx += 1
     }
@@ -596,11 +596,11 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
   }
 
   def zipWithIndex: FArray[(A, Int)] = {
-    if (isEmpty) return FArray.Empty
+    if isEmpty then return FArray.Empty
 
     val ret = Array.ofDim[AnyRef](length)
     var idx = 0
-    while (idx < length) {
+    while idx < length do {
       ret(idx) = (underlying(idx), idx)
       idx += 1
     }
@@ -611,9 +611,9 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
     val lefts = newBuilder[A](length)
     val rights = newBuilder[A](length)
     var i = 0
-    while (i < length) {
+    while i < length do {
       val current = apply(i)
-      if (f(current)) {
+      if f(current) then {
         lefts += current
       } else {
         rights += current
@@ -644,7 +644,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
     sorted(ord.on(f))
 
   def sorted[B >: A <: AnyRef](implicit ord: Ordering[B]): FArray[A] =
-    if (length < 2) this
+    if length < 2 then this
     else {
       val ret = Array.ofDim[AnyRef](length)
       System.arraycopy(underlying, 0, ret, 0, length)
@@ -656,27 +656,27 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
     sorted(Ordering.fromLessThan(lt))
 
   def min[B >: A](implicit cmp: Ordering[B]): A = {
-    if (isEmpty) sys.error("min on empty FList")
+    if isEmpty then sys.error("min on empty FList")
 
-    reduce((x, y) => if (cmp.lteq(x, y)) x else y)
+    reduce((x, y) => if cmp.lteq(x, y) then x else y)
   }
 
   def max[B >: A](implicit cmp: Ordering[B]): A = {
-    if (isEmpty) sys.error("max on empty FList")
+    if isEmpty then sys.error("max on empty FList")
 
-    reduce((x, y) => if (cmp.gteq(x, y)) x else y)
+    reduce((x, y) => if cmp.gteq(x, y) then x else y)
   }
 
   inline def maxBy[B](inline f: A => B)(implicit cmp: Ordering[B]): A = {
-    if (isEmpty) sys.error("maxBy on empty FList")
+    if isEmpty then sys.error("maxBy on empty FList")
 
     var maxF: B = null.asInstanceOf[B]
     var maxElem: A = null.asInstanceOf[A]
     var first = true
 
-    for (elem <- this) {
+    for elem <- this do {
       val fx = f(elem)
-      if (first || cmp.gt(fx, maxF)) {
+      if first || cmp.gt(fx, maxF) then {
         maxElem = elem
         maxF = fx
         first = false
@@ -686,15 +686,15 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
   }
 
   inline def minBy[B](inline f: A => B)(implicit cmp: Ordering[B]): A = {
-    if (isEmpty) sys.error("minBy on empty FList")
+    if isEmpty then sys.error("minBy on empty FList")
 
     var minF: B = null.asInstanceOf[B]
     var minElem: A = null.asInstanceOf[A]
     var first = true
 
-    for (elem <- this) {
+    for elem <- this do {
       val fx = f(elem)
-      if (first || cmp.lt(fx, minF)) {
+      if first || cmp.lt(fx, minF) then {
         minElem = elem
         minF = fx
         first = false
@@ -704,28 +704,28 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
   }
 
   def distinct: FArray[A] =
-    if (length < 2) this
+    if length < 2 then this
     else {
       val ret = newBuilder[A](length)
       val seen = new mutable.HashSet[A]()
       seen.sizeHint(length)
       var idx = 0
       var different = false
-      while (idx < length) {
+      while idx < length do {
         val next = apply(idx)
-        if (seen.add(next)) {
+        if seen.add(next) then {
           ret += next
         } else different = true
         idx += 1
       }
-      if (different) ret.result() else this
+      if different then ret.result() else this
     }
 
   def toSet[AA >: A]: Set[AA] = {
     val b = Set.newBuilder[AA]
     b.sizeHint(length)
     var idx = 0
-    while (idx < length) {
+    while idx < length do {
       b.addOne(apply(idx))
       idx += 1
     }
@@ -736,7 +736,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
     val b = List.newBuilder[A]
     b.sizeHint(length)
     var idx = 0
-    while (idx < length) {
+    while idx < length do {
       b.addOne(apply(idx))
       idx += 1
     }
@@ -747,7 +747,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
     val b = Vector.newBuilder[A]
     b.sizeHint(length)
     var idx = 0
-    while (idx < length) {
+    while idx < length do {
       b.addOne(apply(idx))
       idx += 1
     }
@@ -764,7 +764,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
     val ret = Map.newBuilder[T, U]
     ret.sizeHint(length)
     var idx = 0
-    while (idx < length) {
+    while idx < length do {
       ret += apply(idx)
       idx += 1
     }
@@ -775,7 +775,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
   inline def groupBy[K](inline f: A => K): Map[K, FArray[A]] = {
     val builder = mutable.HashMap.empty[K, FArray[A]]
     var idx = 0
-    while (idx < length) {
+    while idx < length do {
       val a = apply(idx)
       val key = f(a)
       val newEntry = builder.get(key) match {
@@ -789,20 +789,20 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
   }
 
   def transpose[B <: AnyRef](implicit asTraversable: A => FArray[B]): FArray[FArray[B]] = {
-    if (isEmpty) return FArray.Empty
+    if isEmpty then return FArray.Empty
 
     def fail() = sys.error("transpose requires all collections have the same size")
 
     val headSize = asTraversable(head).length
     val bs = Array.fill(headSize)(newBuilder[B]())
-    for (xs <- this) {
+    for xs <- this do {
       var i = 0
-      for (x <- asTraversable(xs)) {
-        if (i >= headSize) fail()
+      for x <- asTraversable(xs) do {
+        if i >= headSize then fail()
         bs(i) += x
         i += 1
       }
-      if (i != headSize) fail()
+      if i != headSize then fail()
     }
     FArray.fromArray(bs.map(_.result()))
   }
@@ -812,7 +812,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
   def startsWith[B <: AnyRef](that: FArray[B], offset: Int): Boolean = {
     var i = offset
     var j = 0
-    while (i < length && j < that.length && underlying(i) == that(j)) {
+    while i < length && j < that.length && underlying(i) == that(j) do {
       i += 1
       j += 1
     }
@@ -823,8 +823,8 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
     val sb = new java.lang.StringBuilder()
     sb.append(init)
     var i = 0
-    while (i < length) {
-      if (i != 0) {
+    while i < length do {
+      if i != 0 then {
         sb.append(sep)
       }
       sb.append(underlying(i))
@@ -843,7 +843,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
   def updated[B >: A <: AnyRef](index: Int, elem: B): FArray[B] = {
     require(index >= 0)
     require(index < length)
-    if (length == 0) return FArray.Empty
+    if length == 0 then return FArray.Empty
     val ret = Array.ofDim[AnyRef](length)
     System.arraycopy(underlying, 0, ret, 0, length)
     ret(index) = elem
@@ -854,7 +854,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
     val b1 = Array.ofDim[AnyRef](length)
     val b2 = Array.ofDim[AnyRef](length)
     var idx = 0
-    while (idx < length) {
+    while idx < length do {
       val (x, y) = asPair(apply(idx))
       b1(idx) = x.asInstanceOf[AnyRef]
       b2(idx) = y.asInstanceOf[AnyRef]
@@ -871,7 +871,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
     val b2 = Array.ofDim[AnyRef](length)
     val b3 = Array.ofDim[AnyRef](length)
     var idx = 0
-    while (idx < length) {
+    while idx < length do {
       val (x, y, z) = asTriple(apply(idx))
       b1(idx) = x.asInstanceOf[AnyRef]
       b2(idx) = y.asInstanceOf[AnyRef]
@@ -888,7 +888,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
     var idx = 0
     val prime = 31
     var result = 1
-    while (idx < length) {
+    while idx < length do {
       result = prime * result + apply(idx).##
       idx += 1
     }
@@ -899,8 +899,8 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
     obj match {
       case other: FArray[_] if other.length == length =>
         var idx = 0
-        while (idx < length) {
-          if (apply(idx) != other(idx)) {
+        while idx < length do {
+          if apply(idx) != other(idx) then {
             return false
           }
           idx += 1
@@ -914,8 +914,8 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
     val a = iterator
     val b = that.iterator
 
-    while (a.hasNext && b.hasNext) {
-      if (!p(a.next(), b.next())) return false
+    while a.hasNext && b.hasNext do {
+      if !p(a.next(), b.next()) then return false
     }
 
     a.hasNext == b.hasNext
@@ -927,16 +927,16 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
     val second = newBuilder[A](length)
     val it = iterator
     var inFirst = true
-    while (it.hasNext && inFirst) {
+    while it.hasNext && inFirst do {
       val a = it.next()
-      if (p(a)) {
+      if p(a) then {
         first += a
       } else {
         second += a
         inFirst = false
       }
     }
-    while (it.hasNext) {
+    while it.hasNext do {
       second += it.next()
     }
     (first.result(), second.result())
@@ -944,16 +944,16 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
 
   private def occCounts[B <: AnyRef](sq: FArray[B]): mutable.Map[B, Int] = {
     val occ = new mutable.HashMap[B, Int]().withDefaultValue(0)
-    for (y <- sq) occ(y) += 1
+    for y <- sq do occ(y) += 1
     occ
   }
 
   def diff[B >: A <: AnyRef](that: FArray[B]): FArray[B] = {
     val occ = occCounts(that)
     val b = newBuilder[B](length)
-    for (x <- this) {
+    for x <- this do {
       val ox = occ(x) // Avoid multiple map lookups
-      if (ox == 0) b += x
+      if ox == 0 then b += x
       else occ(x) = ox - 1
     }
     b.result()
@@ -962,9 +962,9 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
   def intersect[B >: A <: AnyRef](that: FArray[B]): FArray[B] = {
     val occ = occCounts(that)
     val b = newBuilder[B](length)
-    for (x <- this) {
+    for x <- this do {
       val ox = occ(x) // Avoid multiple map lookups
-      if (ox > 0) {
+      if ox > 0 then {
         b += x
         occ(x) = ox - 1
       }
@@ -973,12 +973,12 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
   }
 
   def endsWith[B >: A <: AnyRef](that: FArray[B]): Boolean = {
-    if (that.isEmpty) true
+    if that.isEmpty then true
     else {
       val i = iterator.drop(length - that.size)
       val j = that.iterator
-      while (i.hasNext && j.hasNext)
-        if (i.next() != j.next())
+      while i.hasNext && j.hasNext do
+        if i.next() != j.next() then
           return false
 
       !j.hasNext
@@ -989,7 +989,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
     val b = newBuilder[B](math.max(length, len))
     var diff = len - length
     b ++= this
-    while (diff > 0) {
+    while diff > 0 do {
       b += elem
       diff -= 1
     }
@@ -1002,7 +1002,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]) {
   inline def firstDefined[U](inline f: A => Option[U]): Option[U] = {
     var idx = 0
     var ret = Option.empty[U]
-    while (idx < length && ret.isEmpty) {
+    while idx < length && ret.isEmpty do {
       ret = f(apply(idx))
       idx += 1
     }
