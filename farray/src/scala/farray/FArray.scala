@@ -1,10 +1,7 @@
 package farray
 
-import java.util
 import scala.annotation.static
-import scala.collection.immutable.SortedSet
-import scala.collection.{Iterator, mutable}
-import scala.util.hashing.MurmurHash3
+import scala.collection.mutable
 
 object FArray:
   @static val Empty = new FArray(Array.ofDim(0))
@@ -93,7 +90,7 @@ object FArray:
   def newBuilder[A <: AnyRef](): Builder[A] = Builder.empty()
   def newBuilder[A <: AnyRef](initialCapacity: Int): Builder[A] = Builder.empty(initialCapacity)
 
-  implicit def ordering[T <: AnyRef: Ordering]: Ordering[FArray[T]] =
+  given ordering[T <: AnyRef: Ordering]: Ordering[FArray[T]] =
     new Ordering[FArray[T]]:
       override def compare(x: FArray[T], y: FArray[T]): Int =
         val xe = x.iterator
@@ -143,8 +140,7 @@ object FArray:
     def contains(t: A): Boolean =
       var idx = 0
       while idx < as.length do
-        if as(idx) == t then
-          return true
+        if as(idx) == t then return true
         idx += 1
       false
 
@@ -155,20 +151,15 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
 
   inline def size = underlying.length
 
-  inline def isEmpty: Boolean =
-    length == 0
+  inline def isEmpty: Boolean = length == 0
 
-  inline def nonEmpty: Boolean =
-    length > 0
+  inline def nonEmpty: Boolean = length > 0
 
-  inline def lengthCompare(len: Int): Int =
-    Integer.compare(length, len)
+  inline def lengthCompare(len: Int): Int = Integer.compare(length, len)
 
-  def apply(n: Int): A =
-    underlying(n).asInstanceOf[A]
+  def apply(n: Int): A = underlying(n).asInstanceOf[A]
 
-  inline def isDefinedAt(n: Int): Boolean =
-    n < length
+  inline def isDefinedAt(n: Int): Boolean = n < length
 
   inline def map[B <: AnyRef](inline f: A => B): FArray[B] =
     if isEmpty then this.asInstanceOf[FArray[B]]
@@ -230,15 +221,13 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
     if isEmpty then None else Some(reduce(op))
 
   inline def reduceLeft[B >: A <: AnyRef](inline op: (B, A) => B): B =
-    if isEmpty then
-      throw new UnsupportedOperationException("empty.reduceLeft")
+    if isEmpty then throw new UnsupportedOperationException("empty.reduceLeft")
 
     var acc: B = null.asInstanceOf[B]
     var idx = 0
     while idx < length do
       val x = apply(idx)
-      if idx == 0 then
-        acc = x
+      if idx == 0 then acc = x
       else acc = op(acc, x)
       idx += 1
     acc
@@ -247,42 +236,28 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
     var ret = 0
     var idx = 0
     while idx < length do
-      if p(apply(idx)) then
-        ret += 1
+      if p(apply(idx)) then ret += 1
       idx += 1
 
     ret
 
-  def headOption: Option[A] =
-    if isEmpty then None else Some(apply(0))
+  def headOption: Option[A] = if isEmpty then None else Some(apply(0))
 
-  def head: A =
-    headOption.getOrElse(sys.error("head of empty list"))
+  def head: A = if isEmpty then sys.error("head of empty list") else apply(0)
 
-  private def tailOpt: Option[FArray[A]] =
-    if isEmpty then None else Some(drop(1))
+  def tail: FArray[A] = if isEmpty then sys.error("tail of empty list") else drop(1)
 
-  def tail: FArray[A] =
-    tailOpt.getOrElse(sys.error("tail of empty list"))
+  def init: FArray[A] = if isEmpty then sys.error("init of empty list") else dropRight(1)
 
-  private def initOption: Option[FArray[A]] =
-    if isEmpty then None else Some(dropRight(1))
+  def lastOption: Option[A] = if isEmpty then None else Some(apply(length - 1))
 
-  def init: FArray[A] =
-    initOption.getOrElse(sys.error("init of empty list"))
-
-  def lastOption: Option[A] =
-    if isEmpty then None else Some(apply(length - 1))
-
-  def last: A =
-    lastOption.getOrElse(sys.error("last of empty list"))
+  def last: A = if isEmpty then sys.error("last of empty list") else apply(length - 1)
 
   inline def forall(inline p: A => Boolean): Boolean =
     var idx = 0
     var foundNot = true
     while idx < length && foundNot do
-      if !p(apply(idx)) then
-        foundNot = false
+      if !p(apply(idx)) then foundNot = false
       idx += 1
     foundNot
 
@@ -293,8 +268,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
       if p(apply(idx)) then
         found = true
         idx = Int.MaxValue // break
-      else
-        idx += 1
+      else idx += 1
     found
 
   inline def collectFirst[B](inline pf: PartialFunction[A, B]): Option[B] =
@@ -302,8 +276,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
     var found: Option[B] = None
     while idx < length && found.isEmpty do
       val a = apply(idx)
-      if pf.isDefinedAt(a) then
-        found = Some(pf(a))
+      if pf.isDefinedAt(a) then found = Some(pf(a))
       idx += 1
     found
 
@@ -312,8 +285,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
   def indexOf[B >: A](elem: B, from: Int): Int =
     var i = math.max(from, 0)
     while i < length do
-      if elem == apply(i) then
-        return i
+      if elem == apply(i) then return i
       i += 1
     -1
 
@@ -326,8 +298,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
       if p(apply(i)) then
         ret = i
         i = Int.MaxValue // break
-      else
-        i += 1
+      else i += 1
     ret
 
   inline def find(inline f: A => Boolean): Option[A] =
@@ -338,8 +309,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
       if f(a) then
         found = Some(a)
         idx = Int.MaxValue // break
-      else
-        idx += 1
+      else idx += 1
     found
 
   inline def collect[B <: AnyRef](inline f: PartialFunction[A, B]): FArray[B] =
@@ -366,8 +336,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
       var i = 0
       while i < length do
         val a = apply(i)
-        if f(a) then
-          ret += a
+        if f(a) then ret += a
         i += 1
 
       ret.result()
@@ -434,8 +403,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
       var i = 0
       var ret = this
       while i < length do
-        if p(apply(i)) then
-          i += 1
+        if p(apply(i)) then i += 1
         else
           ret = take(i)
           i = Int.MaxValue // break
@@ -461,10 +429,8 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
       var idx = 0
       var continue = true
       while idx < length && continue do
-        if !p(apply(idx)) then
-          continue = false
-        else
-          idx += 1
+        if !p(apply(idx)) then continue = false
+        else idx += 1
       drop(idx)
 
   def splitAt(n: Int): (FArray[A], FArray[A]) =
@@ -520,10 +486,8 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
     var i = 0
     while i < length do
       val current = apply(i)
-      if f(current) then
-        lefts += current
-      else
-        rights += current
+      if f(current) then lefts += current
+      else rights += current
       i += 1
 
     (lefts.result(), rights.result())
@@ -605,8 +569,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
       var different = false
       while idx < length do
         val next = apply(idx)
-        if seen.add(next) then
-          ret += next
+        if seen.add(next) then ret += next
         else different = true
         idx += 1
       if different then ret.result() else this
@@ -697,8 +660,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
     sb.append(init)
     var i = 0
     while i < length do
-      if i != 0 then
-        sb.append(sep)
+      if i != 0 then sb.append(sep)
       sb.append(underlying(i))
       i += 1
     sb.append(post)
@@ -763,8 +725,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
       case other: FArray[_] if other.length == length =>
         var idx = 0
         while idx < length do
-          if apply(idx) != other(idx) then
-            return false
+          if apply(idx) != other(idx) then return false
           idx += 1
         true
       case _ => false
@@ -774,8 +735,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
     val a = iterator
     val b = that.iterator
 
-    while a.hasNext && b.hasNext do
-      if !p(a.next(), b.next()) then return false
+    while a.hasNext && b.hasNext do if !p(a.next(), b.next()) then return false
 
     a.hasNext == b.hasNext
 
@@ -787,13 +747,11 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
     var inFirst = true
     while it.hasNext && inFirst do
       val a = it.next()
-      if p(a) then
-        first += a
+      if p(a) then first += a
       else
         second += a
         inFirst = false
-    while it.hasNext do
-      second += it.next()
+    while it.hasNext do second += it.next()
     (first.result(), second.result())
 
   private def occCounts[B <: AnyRef](sq: FArray[B]): mutable.Map[B, Int] =
@@ -825,9 +783,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
     else
       val i = iterator.drop(length - that.size)
       val j = that.iterator
-      while i.hasNext && j.hasNext do
-        if i.next() != j.next() then
-          return false
+      while i.hasNext && j.hasNext do if i.next() != j.next() then return false
 
       !j.hasNext
 
