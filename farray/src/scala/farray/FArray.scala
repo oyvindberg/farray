@@ -1,7 +1,7 @@
 package farray
 
 import scala.annotation.static
-import scala.collection.mutable
+import scala.collection.{Factory, mutable}
 
 object FArray:
   @static val Empty = new FArray(Array.ofDim(0))
@@ -575,6 +575,12 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
         else different = true
         idx += 1
       if different then ret.result() else this
+
+  def to[C1](factory: Factory[A, C1]): C1 = {
+    val b = factory.newBuilder
+    foreach(b.addOne)
+    b.result()
+  }
 
   def toSet[AA >: A]: Set[AA] =
     val b = Set.newBuilder[AA]
