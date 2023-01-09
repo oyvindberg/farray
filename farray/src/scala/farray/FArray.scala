@@ -1,5 +1,7 @@
 package farray
 
+import farray.FArray.Empty
+
 import scala.annotation.static
 import scala.collection.{Factory, mutable}
 
@@ -575,6 +577,13 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
         else different = true
         idx += 1
       if different then ret.result() else this
+
+  // todo: optimize
+  def slice(from: Int, until: Int): FArray[A] = {
+    val lo = math.max(from, 0)
+    if (until <= lo || isEmpty) Empty
+    else this drop lo take (until - lo)
+  }
 
   def to[C1](factory: Factory[A, C1]): C1 = {
     val b = factory.newBuilder
