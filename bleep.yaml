@@ -15,6 +15,24 @@ projects:
     dependsOn: farray
     extends: template-common
     isTestProject: true
+  scripts:
+    dependencies:
+      - build.bleep::bleep-plugin-ci-release:${BLEEP_VERSION}
+    platform:
+      name: jvm
+    scala:
+      options: -encoding utf8 -feature -unchecked
+      strict: true
+      version: 2.13.10
+
+scripts:
+  my-publish-local:
+    main: PublishLocal
+    project: scripts
+  publish:
+    main: Publish
+    project: scripts
+
 templates:
   template-common:
     platform:

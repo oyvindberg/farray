@@ -344,7 +344,9 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
   inline def withFilter(inline f: A => Boolean): FArray[A] =
     filter(f)
 
-  def ++[B >: A <: AnyRef](that: FArray[B]): FArray[B] =
+  def ++[B >: A <: AnyRef](that: FArray[B]): FArray[B] = appendedAll(that)
+
+  def appendedAll[B >: A <: AnyRef](that: FArray[B]): FArray[B] =
     if isEmpty then that
     else if that.isEmpty then this
     else
