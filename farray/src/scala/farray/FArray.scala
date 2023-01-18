@@ -38,7 +38,7 @@ object FArray:
     create(as.toArray)
 
   inline def fromJavaIterator[A <: AnyRef](as: java.util.Iterator[A]): FArray[A] =
-    val b = newBuilder[A]()
+    val b = newBuilder[A]
     as.forEachRemaining(a => b += a)
     b.result()
 
@@ -89,7 +89,7 @@ object FArray:
     inline def unapply[A <: AnyRef](as: FArray[A]): Option[(FArray[A], A)] =
       if as.length == 0 then None else Some((as.init, as.last))
 
-  def newBuilder[A <: AnyRef](): Builder[A] = Builder.empty()
+  def newBuilder[A <: AnyRef]: Builder[A] = Builder.empty()
   def newBuilder[A <: AnyRef](initialCapacity: Int): Builder[A] = Builder.empty(initialCapacity)
 
   given ordering[T <: AnyRef: Ordering]: Ordering[FArray[T]] =
@@ -148,6 +148,12 @@ object FArray:
 
 final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
   private[FArray] def get_underlying: Array[AnyRef] = underlying
+
+  def _1: A = apply(0)
+  def _2: A = apply(1)
+  def _3: A = apply(2)
+  def _4: A = apply(3)
+  def _5: A = apply(4)
 
   inline def length = underlying.length
 
@@ -652,7 +658,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
     def fail() = sys.error("transpose requires all collections have the same size")
 
     val headSize = asTraversable(head).length
-    val bs = Array.fill(headSize)(FArray.newBuilder[B]())
+    val bs = Array.fill(headSize)(FArray.newBuilder[B])
     for xs <- this do
       var i = 0
       for x <- asTraversable(xs) do
