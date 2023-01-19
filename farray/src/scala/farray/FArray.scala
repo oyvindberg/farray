@@ -469,6 +469,11 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
       idx += 1
     FArray.create[A](ret)
 
+  
+  // todo: optimize later
+  def reverse_:::[B >: A <: AnyRef](prefix: FArray[B]): FArray[B] = 
+    prefix.reverse ++ this
+
   def zip[B <: AnyRef](other: FArray[B]): FArray[(A, B)] =
     val newLength = math.min(length, other.length)
     if newLength == 0 then return FArray.Empty
@@ -843,6 +848,8 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
       ret = f(apply(idx))
       idx += 1
     ret
+
+  def copyToArray[B >: A](xs: Array[B]): Int = copyToArray(xs, 0, Int.MaxValue)
 
   def copyToArray[B >: A](xs: Array[B], start: Int): Int = copyToArray(xs, start, Int.MaxValue)
 

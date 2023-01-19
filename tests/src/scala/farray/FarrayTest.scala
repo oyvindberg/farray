@@ -68,6 +68,7 @@ class FListTest:
   @Test def test_reduceRight: Unit = test1NonEmpty(_.reduceRight((str, acc) => acc + str))(_.reduceRight((str, acc) => acc + str))
   @Test def test_reduceOption: Unit = test1(_.reduceOption((acc, str) => acc + str))(_.reduceOption((acc, str) => acc + str))
   @Test def test_reverse: Unit = test1(_.reverse)(_.reverse)
+  @Test def `test_reverse_:::`: Unit = test2(_.reverse_:::(_))(_.reverse_:::(_))
   @Test def test_size: Unit = test1(_.size)(_.size)
   @Test def test_sortBy: Unit = test1(_.sortBy(x => x))(_.sortBy(x => x))
   @Test def test_sorted: Unit = test1(_.sorted)(_.sorted)
