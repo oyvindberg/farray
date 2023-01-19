@@ -39,6 +39,7 @@ class FListTest:
     var ret = ""; xs.foreach(ret += _); ret
   })
   @Test def test_groupBy: Unit = test1(_.groupBy(x => x.length))(_.groupBy(x => x.length))
+  @Test def test_groupMap: Unit = test1(_.groupMap(x => x.length)(_ * 2))(_.groupMap(x => x.length)(_ * 2))
   @Test def test_head: Unit = test1NonEmpty(_.head)(_.head)
   @Test def test_headOption: Unit = test1(_.headOption)(_.headOption)
   @Test def test_indexOf: Unit = test1(_.indexOf("a"))(_.indexOf("a"))

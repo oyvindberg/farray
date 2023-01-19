@@ -3,7 +3,7 @@ package farray
 import farray.FArray.Empty
 
 import scala.annotation.static
-import scala.collection.{Factory, mutable}
+import scala.collection.{Factory, immutable, mutable}
 
 object FArray:
   @static val Empty = new FArray(Array.ofDim(0))
@@ -176,17 +176,14 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
   def _5: A = apply(4)
 
   inline def length = underlying.length
-
   inline def size = underlying.length
-
   inline def sizeCompare(otherSize: Int): Int = Integer.compare(length, otherSize)
   inline def sizeIs[B >: A <: AnyRef]: FArray.SizeCompareOps[B] = new FArray.SizeCompareOps(this)
   inline def isEmpty: Boolean = length == 0
-
   inline def nonEmpty: Boolean = length > 0
-
   inline def lengthCompare(len: Int): Int = Integer.compare(length, len)
-
+  
+  
   def apply(n: Int): A = underlying(n).asInstanceOf[A]
 
   inline def isDefinedAt(n: Int): Boolean = n < length
@@ -692,6 +689,18 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
       builder.put(key, newEntry)
       idx += 1
     builder.toMap
+
+  def groupMap[K, B <: AnyRef](key: A => K)(f: A => B): immutable.Map[K, FArray[B]] = {
+    val m = mutable.Map.empty[K, Builder[B]]
+    for (elem <- this) {
+      val k = key(elem)
+      val bldr = m.getOrElseUpdate(k, FArray.newBuilder[B])
+      bldr += f(elem)
+    }
+    val result = immutable.Map.newBuilder[K, FArray[B]]
+    m.foreach { case (k, v) => result.addOne(k, v.result()) }
+    result.result()
+  }
 
   def transpose[B <: AnyRef](implicit asTraversable: A => FArray[B]): FArray[FArray[B]] =
     if isEmpty then return FArray.Empty
