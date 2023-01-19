@@ -240,6 +240,20 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
       idx += 1
     acc
 
+  inline def reduceRight[B >: A](inline op: (A, B) => B): B = {
+    if isEmpty then throw new UnsupportedOperationException("empty.reduceRight")
+
+    var acc: B = null.asInstanceOf[B]
+    val last = length - 1
+    var idx = last
+    while idx >= 0 do
+      val x = apply(idx)
+      if idx == last then acc = x
+      else acc = op(x, acc)
+      idx -= 1
+    acc
+  }
+
   inline def count(inline p: A => Boolean): Int =
     var ret = 0
     var idx = 0
@@ -829,3 +843,17 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
       ret = f(apply(idx))
       idx += 1
     ret
+
+  def copyToArray[B >: A](xs: Array[B], start: Int): Int = copyToArray(xs, start, Int.MaxValue)
+
+  // todo: optimize later
+  def copyToArray[B >: A](xs: Array[B], start: Int, len: Int): Int = {
+    val it = iterator
+    var i = start
+    val end = start + math.min(len, xs.length - start)
+    while (i < end && it.hasNext) {
+      xs(i) = it.next()
+      i += 1
+    }
+    i - start
+  }
