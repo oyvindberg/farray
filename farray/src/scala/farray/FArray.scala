@@ -146,6 +146,26 @@ object FArray:
         idx += 1
       false
 
+  final class SizeCompareOps[A <: AnyRef](val it: FArray[A]) extends AnyVal {
+    /** Tests if the size of the collection is less than some value. */
+    inline def <(size: Int): Boolean = it.sizeCompare(size) < 0
+
+    /** Tests if the size of the collection is less than or equal to some value. */
+    inline def <=(size: Int): Boolean = it.sizeCompare(size) <= 0
+
+    /** Tests if the size of the collection is equal to some value. */
+    inline def ==(size: Int): Boolean = it.sizeCompare(size) == 0
+
+    /** Tests if the size of the collection is not equal to some value. */
+    inline def !=(size: Int): Boolean = it.sizeCompare(size) != 0
+
+    /** Tests if the size of the collection is greater than or equal to some value. */
+    inline def >=(size: Int): Boolean = it.sizeCompare(size) >= 0
+
+    /** Tests if the size of the collection is greater than some value. */
+    inline def >(size: Int): Boolean = it.sizeCompare(size) > 0
+  }
+
 final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
   private[FArray] def get_underlying: Array[AnyRef] = underlying
 
@@ -159,6 +179,8 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
 
   inline def size = underlying.length
 
+  inline def sizeCompare(otherSize: Int): Int = Integer.compare(length, otherSize)
+  inline def sizeIs[B >: A <: AnyRef]: FArray.SizeCompareOps[B] = new FArray.SizeCompareOps(this)
   inline def isEmpty: Boolean = length == 0
 
   inline def nonEmpty: Boolean = length > 0
@@ -469,9 +491,9 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
       idx += 1
     FArray.create[A](ret)
 
-  
+
   // todo: optimize later
-  def reverse_:::[B >: A <: AnyRef](prefix: FArray[B]): FArray[B] = 
+  def reverse_:::[B >: A <: AnyRef](prefix: FArray[B]): FArray[B] =
     prefix.reverse ++ this
 
   def zip[B <: AnyRef](other: FArray[B]): FArray[(A, B)] =
