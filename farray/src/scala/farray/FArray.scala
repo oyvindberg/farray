@@ -89,6 +89,8 @@ object FArray:
     inline def unapply[A <: AnyRef](as: FArray[A]): Option[(FArray[A], A)] =
       if as.length == 0 then None else Some((as.init, as.last))
 
+  inline def unapplySeq[A <: AnyRef](as: FArray[A]): UnapplySeq[A] = new UnapplySeq(as)
+
   def newBuilder[A <: AnyRef]: Builder[A] = Builder.empty()
   def newBuilder[A <: AnyRef](initialCapacity: Int): Builder[A] = Builder.empty(initialCapacity)
 
@@ -169,11 +171,7 @@ object FArray:
 final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
   private[FArray] def get_underlying: Array[AnyRef] = underlying
 
-  def _1: A = apply(0)
-  def _2: A = apply(1)
-  def _3: A = apply(2)
-  def _4: A = apply(3)
-  def _5: A = apply(4)
+  def get: this.type = this
 
   inline def length = underlying.length
   inline def size = underlying.length
@@ -182,8 +180,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
   inline def isEmpty: Boolean = length == 0
   inline def nonEmpty: Boolean = length > 0
   inline def lengthCompare(len: Int): Int = Integer.compare(length, len)
-  
-  
+
   def apply(n: Int): A = underlying(n).asInstanceOf[A]
 
   inline def isDefinedAt(n: Int): Boolean = n < length
@@ -488,7 +485,6 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
       idx += 1
     FArray.create[A](ret)
 
-
   // todo: optimize later
   def reverse_:::[B >: A <: AnyRef](prefix: FArray[B]): FArray[B] =
     prefix.reverse ++ this
@@ -653,6 +649,12 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
       idx += 1
     b.result()
 
+  def toSeq: Seq[A] =
+    new AsIndexedSeq(this)
+
+  def toIndexedSeq: IndexedSeq[A] =
+    new AsIndexedSeq(this)
+
   def toVector: Vector[A] =
     val b = Vector.newBuilder[A]
     b.sizeHint(length)
@@ -672,7 +674,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
     ret.sizeHint(length)
     var idx = 0
     while idx < length do
-      ret += apply(idx)
+      ret += ev(apply(idx))
       idx += 1
 
     ret.result()
