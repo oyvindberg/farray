@@ -116,7 +116,7 @@ object FArray:
           i += 1
         value
 
-      val ret = Array.ofDim[AnyRef](newLength)
+      val ret = new Array[AnyRef](newLength)
       var i = 0
       var o = 0
       while i < ts.length do
@@ -188,7 +188,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
   inline def map[B <: AnyRef](inline f: A => B): FArray[B] =
     if isEmpty then this.asInstanceOf[FArray[B]]
     else
-      val newArray = Array.ofDim[AnyRef](length)
+      val newArray = new Array[AnyRef](length)
       var i = 0
       while i < length do
         newArray(i) = f(apply(i))
@@ -199,7 +199,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
   inline def mapConserve[B <: AnyRef](inline f: A => B): FArray[B] =
     if isEmpty then this.asInstanceOf[FArray[B]]
     else
-      val newArray = Array.ofDim[AnyRef](length)
+      val newArray = new Array[AnyRef](length)
       var i = 0
       var foundDifferent = false
       while i < length do
@@ -389,7 +389,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
     else if that.isEmpty then this
     else
       val newLength = length + that.length
-      val ret = Array.ofDim[AnyRef](newLength)
+      val ret = new Array[AnyRef](newLength)
       System.arraycopy(underlying, 0, ret, 0, length)
       System.arraycopy(that.get_underlying, 0, ret, length, that.length)
       FArray.create[A](ret)
@@ -397,7 +397,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
   // prepend
   def +:[B >: A <: AnyRef](elem: B): FArray[B] =
     val newLength = length + 1
-    val ret = Array.ofDim[AnyRef](newLength)
+    val ret = new Array[AnyRef](newLength)
     ret(0) = elem
     System.arraycopy(underlying, 0, ret, 1, length)
     FArray.create[B](ret)
@@ -405,7 +405,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
   // append
   def :+[B >: A <: AnyRef](elem: B): FArray[B] =
     val newLength = length + 1
-    val ret = Array.ofDim[AnyRef](newLength)
+    val ret = new Array[AnyRef](newLength)
     System.arraycopy(underlying, 0, ret, 0, length)
     ret(length) = elem
     FArray.create[B](ret)
@@ -423,7 +423,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
     if newLength == 0 then FArray.Empty
     else if newLength == length then this
     else
-      val ret = Array.ofDim[AnyRef](newLength)
+      val ret = new Array[AnyRef](newLength)
       System.arraycopy(underlying, 0, ret, 0, newLength)
       FArray.create[A](ret)
 
@@ -433,7 +433,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
     if newLength == 0 then FArray.Empty
     else if newLength == length then this
     else
-      val ret = Array.ofDim[AnyRef](newLength)
+      val ret = new Array[AnyRef](newLength)
       System.arraycopy(underlying, length - newLength, ret, 0, newLength)
       FArray.create[A](ret)
 
@@ -452,14 +452,14 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
   def drop(n: Int): FArray[A] =
     val newLength = math.max(0, length - n)
     if newLength == 0 then return FArray.Empty
-    val ret = Array.ofDim[AnyRef](newLength)
+    val ret = new Array[AnyRef](newLength)
     System.arraycopy(underlying, n, ret, 0, newLength)
     FArray.create[A](ret)
 
   def dropRight(n: Int): FArray[A] =
     val newLength = math.max(0, length - n)
     if newLength == 0 then return FArray.Empty
-    val ret = Array.ofDim[AnyRef](newLength)
+    val ret = new Array[AnyRef](newLength)
     System.arraycopy(underlying, 0, ret, 0, newLength)
     FArray.create[A](ret)
 
@@ -478,7 +478,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
 
   def reverse: FArray[A] =
     if isEmpty then return FArray.Empty
-    val ret = Array.ofDim[AnyRef](length)
+    val ret = new Array[AnyRef](length)
     var idx = 0
     while idx < length do
       ret(idx) = underlying(length - 1 - idx)
@@ -493,7 +493,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
     val newLength = math.min(length, other.length)
     if newLength == 0 then return FArray.Empty
 
-    val ret = Array.ofDim[AnyRef](newLength)
+    val ret = new Array[AnyRef](newLength)
     var idx = 0
     while idx < newLength do
       ret(idx) = (underlying(idx), other(idx))
@@ -507,7 +507,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
     val newLength = math.min(math.min(length, bs.length), cs.length)
     if newLength == 0 then return FArray.Empty
 
-    val ret = Array.ofDim[AnyRef](newLength)
+    val ret = new Array[AnyRef](newLength)
     var idx = 0
     while idx < newLength do
       ret(idx) = (underlying(idx), bs(idx), cs(idx))
@@ -517,7 +517,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
   def zipWithIndex: FArray[(A, Int)] =
     if isEmpty then return FArray.Empty
 
-    val ret = Array.ofDim[AnyRef](length)
+    val ret = new Array[AnyRef](length)
     var idx = 0
     while idx < length do
       ret(idx) = (underlying(idx), idx)
@@ -555,7 +555,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
   def sorted[B >: A <: AnyRef](implicit ord: Ordering[B]): FArray[A] =
     if length < 2 then this
     else
-      val ret = Array.ofDim[AnyRef](length)
+      val ret = new Array[AnyRef](length)
       System.arraycopy(underlying, 0, ret, 0, length)
       java.util.Arrays.sort(ret, ord.asInstanceOf[Ordering[AnyRef]])
       FArray.create(ret)
@@ -665,7 +665,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
     b.result()
 
   def toArray[AA >: A](implicit CT: reflect.ClassTag[AA]): Array[AA] =
-    val ret = Array.ofDim[AA](length)
+    val ret = CT.newArray(length)
     System.arraycopy(underlying, 0, ret, 0, length)
     ret
 
@@ -751,14 +751,14 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
     require(index >= 0)
     require(index < length)
     if length == 0 then return FArray.Empty
-    val ret = Array.ofDim[AnyRef](length)
+    val ret = new Array[AnyRef](length)
     System.arraycopy(underlying, 0, ret, 0, length)
     ret(index) = elem
     FArray.create[A](ret)
 
   inline def unzip[A1 <: AnyRef, A2 <: AnyRef](implicit inline asPair: A => (A1, A2)): (FArray[A1], FArray[A2]) =
-    val b1 = Array.ofDim[AnyRef](length)
-    val b2 = Array.ofDim[AnyRef](length)
+    val b1 = new Array[AnyRef](length)
+    val b2 = new Array[AnyRef](length)
     var idx = 0
     while idx < length do
       val (x, y) = asPair(apply(idx))
@@ -771,9 +771,9 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
       inline asTriple: A => (A1, A2, A3)
   ): (FArray[A1], FArray[A2], FArray[A3]) =
 
-    val b1 = Array.ofDim[AnyRef](length)
-    val b2 = Array.ofDim[AnyRef](length)
-    val b3 = Array.ofDim[AnyRef](length)
+    val b1 = new Array[AnyRef](length)
+    val b2 = new Array[AnyRef](length)
+    val b3 = new Array[AnyRef](length)
     var idx = 0
     while idx < length do
       val (x, y, z) = asTriple(apply(idx))
