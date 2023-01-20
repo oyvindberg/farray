@@ -669,7 +669,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
   def toSeq: Seq[A] =
     new AsIndexedSeq(this)
 
-  def toIndexedSeq: IndexedSeq[A] =
+  def toIndexedSeq: AsIndexedSeq[A] =
     new AsIndexedSeq(this)
 
   def toVector: Vector[A] =
