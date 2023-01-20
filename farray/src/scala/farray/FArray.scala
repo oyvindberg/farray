@@ -4,6 +4,7 @@ import farray.FArray.Empty
 
 import scala.annotation.static
 import scala.collection.{Factory, immutable, mutable}
+import scala.quoted.{Quotes, Expr, quotes, Type, Varargs}
 
 object FArray:
   @static val Empty = new FArray(Array.ofDim(0))
@@ -14,13 +15,29 @@ object FArray:
   inline def empty[A <: AnyRef]: FArray[A] =
     Empty
 
-  inline def apply[A <: AnyRef](as: A*): FArray[A] =
-    create(Array[AnyRef](as: _*))
+  inline def apply[A <: AnyRef](inline as: A*): FArray[A] =
+    ${ applyImpl('{ as }) }
 
-  inline def fromOption[A <: AnyRef](oa: Option[A]): FArray[A] =
-    oa match
-      case Some(a) => apply(a)
-      case None    => Empty
+  def applyImpl[A <: AnyRef](as: Expr[Seq[A]])(using Type[A], Quotes): Expr[FArray[A]] = {
+    import quotes.reflect.*
+    val ret = as match
+      case Varargs(Nil) => '{ FArray.empty }
+      case Varargs(exprs) =>
+        '{
+          val ret = new Array[AnyRef](${ Expr(exprs.length) })
+          ${
+            Expr.block(
+              exprs.toList.zipWithIndex.map { case (expr, idx) => '{ ret(${ Expr(idx) }) = ${ expr } } },
+              '{ new FArray[A](ret) }
+            )
+          }
+
+        }
+      case _ => '{ create[A](Array[AnyRef](${ as })) }
+
+//    report.warning(ret.show)
+    ret
+  }
 
   inline def fromOptions[A <: AnyRef](as: Option[A]*): FArray[A] =
     apply(as.flatten: _*)
