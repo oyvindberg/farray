@@ -217,23 +217,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
         i += 1
 
       FArray.create[B](newArray)
-
-  inline def mapConserve[B <: AnyRef](inline f: A => B): FArray[B] =
-    if isEmpty then this.asInstanceOf[FArray[B]]
-    else
-      val newArray = new Array[AnyRef](length)
-      var i = 0
-      var foundDifferent = false
-      while i < length do
-        val before: A = apply(i)
-        val after: B = f(before)
-        if before ne after then foundDifferent = true
-
-        newArray(i) = after
-        i += 1
-
-      if foundDifferent then FArray.create[B](newArray) else this.asInstanceOf[FArray[B]]
-
+  
   inline def foreach(inline f: A => Unit): Unit =
     var i = 0
     while i < length do
