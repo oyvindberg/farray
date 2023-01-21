@@ -42,7 +42,7 @@ object FArray:
   inline def fromOption[A <: AnyRef](oa: Option[A]): FArray[A] =
     oa match
       case Some(a) => apply(a)
-      case None => Empty
+      case None    => Empty
 
   inline def fromOptions[A <: AnyRef](as: Option[A]*): FArray[A] =
     apply(as.flatten: _*)
@@ -153,7 +153,6 @@ object FArray:
       create(ret)
 
   extension [A <: AnyRef](as: FArray[A])
-
     def contains(t: A): Boolean =
       var idx = 0
       while idx < as.length do
@@ -162,6 +161,7 @@ object FArray:
       false
 
   final class SizeCompareOps[A <: AnyRef](val it: FArray[A]) extends AnyVal {
+
     /** Tests if the size of the collection is less than some value. */
     inline def <(size: Int): Boolean = it.sizeCompare(size) < 0
 
@@ -208,7 +208,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
         i += 1
 
       FArray.create[B](newArray)
-  
+
   inline def foreach(inline f: A => Unit): Unit =
     var i = 0
     while i < length do
@@ -542,6 +542,17 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
       override def next(): A =
         val ret = underlying(idx).asInstanceOf[A]
         idx += 1
+        ret
+
+  def reverseIterator: Iterator[A] =
+    new Iterator[A]:
+      var idx = underlying.length - 1
+
+      override def hasNext: Boolean = idx >= 0
+
+      override def next(): A =
+        val ret = underlying(idx).asInstanceOf[A]
+        idx -= 1
         ret
 
   def indices: Range = 0 until length
