@@ -48,6 +48,22 @@ extension [A <: AnyRef](as: FArray[A]) {
 
       if foundDifferent then FArray.create[B](newArray) else as.asInstanceOf[FArray[B]]
 
+  inline def mapWithIndexConserve[B <: A](inline f: (A, Int) => B): FArray[B] =
+    if as.isEmpty then as.asInstanceOf[FArray[B]]
+    else
+      val newArray = new Array[AnyRef](as.length)
+      var i = 0
+      var foundDifferent = false
+      while i < as.length do
+        val before: A = as(i)
+        val after: B = f(before, i)
+        if before ne after then foundDifferent = true
+
+        newArray(i) = after
+        i += 1
+
+      if foundDifferent then FArray.create[B](newArray) else as.asInstanceOf[FArray[B]]
+
   def zipWithConserve[U <: AnyRef, V <: A](ys: FArray[U])(f: (A, U) => V): FArray[V] = {
     if as.isEmpty then as.asInstanceOf[FArray[V]]
     else
@@ -64,6 +80,16 @@ extension [A <: AnyRef](as: FArray[A]) {
         i += 1
 
       if foundDifferent then FArray.create[V](newArray) else as.asInstanceOf[FArray[V]]
-
   }
+
+  def eqElements(other: FArray[A]): Boolean =
+    if as.length != other.length then false
+    else
+      var idx = 0
+      var same = true
+      while idx < as.length && same do
+        same = as(idx) eq other.apply(idx)
+        idx += 1
+      same
+
 }

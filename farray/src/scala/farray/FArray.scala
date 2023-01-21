@@ -153,15 +153,6 @@ object FArray:
       create(ret)
 
   extension [A <: AnyRef](as: FArray[A])
-    inline def sameElements(other: FArray[A]): Boolean =
-      if as.length != other.length then false
-      else
-        var idx = 0
-        var same = true
-        while idx < as.length && same do
-          same = as(idx) eq other.apply(idx)
-          idx += 1
-        same
 
     def contains(t: A): Boolean =
       var idx = 0
