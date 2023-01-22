@@ -7,6 +7,8 @@ import scala.collection.{Factory, immutable, mutable}
 import scala.quoted.{Quotes, Expr, quotes, Type, Varargs}
 
 object FArray:
+  type Builder[A <: AnyRef] = FArrayBuilder[A]
+  
   @static val Empty = new FArray(Array.ofDim(0))
 
   private[farray] inline def create[A <: AnyRef](as: Array[AnyRef]): FArray[A] =
@@ -113,8 +115,8 @@ object FArray:
 
   inline def unapplySeq[A <: AnyRef](as: FArray[A]): UnapplySeq[A] = new UnapplySeq(as)
 
-  def newBuilder[A <: AnyRef]: FArrayBuilder[A] = FArrayBuilder.empty()
-  def newBuilder[A <: AnyRef](initialCapacity: Int): FArrayBuilder[A] = FArrayBuilder.empty(initialCapacity)
+  def newBuilder[A <: AnyRef]: Builder[A] = FArrayBuilder.empty()
+  def newBuilder[A <: AnyRef](initialCapacity: Int): Builder[A] = FArrayBuilder.empty(initialCapacity)
 
   given ordering[T <: AnyRef: Ordering]: Ordering[FArray[T]] =
     new Ordering[FArray[T]]:
