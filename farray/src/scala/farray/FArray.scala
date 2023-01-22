@@ -533,6 +533,18 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
 
     (lefts.result(), rights.result())
 
+  inline def partitionMap[A1 <: AnyRef, A2 <: AnyRef](f: A => Either[A1, A2]): (FArray[A1], FArray[A2]) = {
+    val l = FArray.newBuilder[A1](length)
+    val r = FArray.newBuilder[A2](length)
+    foreach { x =>
+      f(x) match {
+        case Left(x1) => l += x1
+        case Right(x2) => r += x2
+      }
+    }
+    (l.result(), r.result())
+  }
+
   def iterator: Iterator[A] =
     new Iterator[A]:
       var idx = 0

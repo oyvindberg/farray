@@ -5,6 +5,8 @@ import org.junit.Test
 import scala.collection.BuildFrom
 
 class FListTest:
+  def foo(str: String): Either[String, String] = if (str.length > 2) Left(str) else Right(str)
+
   @Test def test_++ : Unit = test2(_ ++ _)(_ ++ _)
   @Test def test_+: : Unit = test1("x" +: _)("x" +: _)
   @Test def test_:+ : Unit = test1(_ :+ "x")(_ :+ "x")
@@ -64,6 +66,7 @@ class FListTest:
   @Test def test_nonEmpty: Unit = test1(_.nonEmpty)(_.nonEmpty)
   @Test def test_padTo: Unit = test1(_.padTo(10, ""))(_.padTo(10, ""))
   @Test def test_partition: Unit = test1(_.partition(_.length > 2))(_.partition(_.length > 2))
+  @Test def test_partitionMap: Unit = test1(_.partitionMap(foo))(_.partitionMap(foo))
   @Test def test_reduce: Unit = test1NonEmpty(_.reduce((acc, str) => acc + str))(_.reduce((acc, str) => acc + str))
   @Test def test_reduceLeft: Unit = test1NonEmpty(_.reduceLeft((acc, str) => acc + str))(_.reduceLeft((acc, str) => acc + str))
   @Test def test_reduceRight: Unit = test1NonEmpty(_.reduceRight((str, acc) => acc + str))(_.reduceRight((str, acc) => acc + str))
