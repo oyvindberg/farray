@@ -113,8 +113,8 @@ object FArray:
 
   inline def unapplySeq[A <: AnyRef](as: FArray[A]): UnapplySeq[A] = new UnapplySeq(as)
 
-  def newBuilder[A <: AnyRef]: Builder[A] = Builder.empty()
-  def newBuilder[A <: AnyRef](initialCapacity: Int): Builder[A] = Builder.empty(initialCapacity)
+  def newBuilder[A <: AnyRef]: FArrayBuilder[A] = FArrayBuilder.empty()
+  def newBuilder[A <: AnyRef](initialCapacity: Int): FArrayBuilder[A] = FArrayBuilder.empty(initialCapacity)
 
   given ordering[T <: AnyRef: Ordering]: Ordering[FArray[T]] =
     new Ordering[FArray[T]]:

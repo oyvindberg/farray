@@ -70,7 +70,7 @@ class FListTest:
   @Test def test_reduceOption: Unit = test1(_.reduceOption((acc, str) => acc + str))(_.reduceOption((acc, str) => acc + str))
   @Test def test_reverse: Unit = test1(_.reverse)(_.reverse)
   @Test def `test_reverse_:::` : Unit = test2(_.reverse_:::(_))(_.reverse_:::(_))
-  @Test def test_reverseIterator: Unit = test1(_.reverseIterator)(_.reverseIterator)
+  @Test def test_reverseIterator: Unit = test1(_.reverseIterator.toList)(_.reverseIterator.toList)
   @Test def test_size: Unit = test1(_.size)(_.size)
   @Test def `test_sizeIs >` : Unit = test1(_.sizeIs > 2)(_.sizeIs > 2)
   @Test def `test_sizeIs <=` : Unit = test1(_.sizeIs <= 2)(_.sizeIs <= 2)

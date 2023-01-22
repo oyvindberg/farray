@@ -2,23 +2,22 @@ package farray
 
 import java.util
 
-opaque type Builder[A <: AnyRef] = util.ArrayList[A]
+opaque type FArrayBuilder[A <: AnyRef] = util.ArrayList[A]
 
-object Builder:
-  def empty[A <: AnyRef](): Builder[A] = empty(32)
+object FArrayBuilder:
+  def empty[A <: AnyRef](): FArrayBuilder[A] = empty(32)
 
-  def empty[A <: AnyRef](initialCapacity: Int): Builder[A] = new Builder[A](initialCapacity)
+  def empty[A <: AnyRef](initialCapacity: Int): FArrayBuilder[A] = new FArrayBuilder[A](initialCapacity)
 
-  def from[A <: AnyRef](as: FArray[A]): Builder[A] =
+  def from[A <: AnyRef](as: FArray[A]): FArrayBuilder[A] =
     from(as, as.length)
 
-  def from[A <: AnyRef](as: FArray[A], initialCapacity: Int): Builder[A] =
-    val ret = new Builder[A](initialCapacity)
+  def from[A <: AnyRef](as: FArray[A], initialCapacity: Int): FArrayBuilder[A] =
+    val ret = new FArrayBuilder[A](initialCapacity)
     ret ++= as
     ret
 
-  extension [A <: AnyRef](buf: Builder[A])
-
+  extension [A <: AnyRef](buf: FArrayBuilder[A])
     def size =
       buf.size()
 
@@ -71,7 +70,7 @@ object Builder:
         case None => ()
       this
 
-    def ++=(fb: Builder[A]): this.type =
+    def ++=(fb: FArrayBuilder[A]): this.type =
       buf.addAll(fb)
       this
 
