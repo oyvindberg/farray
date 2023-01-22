@@ -1,6 +1,7 @@
 package farray
 
 import java.util
+import scala.jdk.CollectionConverters.*
 
 opaque type FArrayBuilder[A <: AnyRef] = util.ArrayList[A]
 
@@ -105,3 +106,9 @@ object FArrayBuilder:
 
     inline def nonEmpty: Boolean =
       !isEmpty
+
+    def javaIterator: util.Iterator[A] =
+      buf.iterator()
+
+    def iterator: Iterator[A] =
+      javaIterator.asScala
