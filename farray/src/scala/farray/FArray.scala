@@ -680,8 +680,8 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
       idx += 1
     builder.toMap
 
-  def groupMap[K, B <: AnyRef](key: A => K)(f: A => B): immutable.Map[K, FArray[B]] = {
-    val m = mutable.Map.empty[K, Builder[B]]
+  inline def groupMap[K, B <: AnyRef](inline key: A => K)(inline f: A => B): immutable.Map[K, FArray[B]] = {
+    val m = mutable.Map.empty[K, FArrayBuilder[B]]
     for (elem <- this) {
       val k = key(elem)
       val bldr = m.getOrElseUpdate(k, FArray.newBuilder[B])
