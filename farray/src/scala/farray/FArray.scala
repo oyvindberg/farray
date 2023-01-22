@@ -635,27 +635,14 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
 
   def to[C1](factory: Factory[A, C1]): C1 = {
     val b = factory.newBuilder
+    b.sizeHint(length)
     foreach(b.addOne)
     b.result()
   }
 
-  def toSet[AA >: A]: Set[AA] =
-    val b = Set.newBuilder[AA]
-    b.sizeHint(length)
-    var idx = 0
-    while idx < length do
-      b.addOne(apply(idx))
-      idx += 1
-    b.result()
+  def toSet[AA >: A]: Set[AA] = to(Set)
 
-  def toList: List[A] =
-    val b = List.newBuilder[A]
-    b.sizeHint(length)
-    var idx = 0
-    while idx < length do
-      b.addOne(apply(idx))
-      idx += 1
-    b.result()
+  def toList: List[A] = to(List)
 
   def toSeq: Seq[A] =
     new AsIndexedSeq(this)
@@ -663,14 +650,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
   def toIndexedSeq: AsIndexedSeq[A] =
     new AsIndexedSeq(this)
 
-  def toVector: Vector[A] =
-    val b = Vector.newBuilder[A]
-    b.sizeHint(length)
-    var idx = 0
-    while idx < length do
-      b.addOne(apply(idx))
-      idx += 1
-    b.result()
+  def toVector: Vector[A] = to(Vector)
 
   def toArray[AA >: A](implicit CT: reflect.ClassTag[AA]): Array[AA] =
     val ret = CT.newArray(length)
