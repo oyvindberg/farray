@@ -61,19 +61,20 @@ object FArrayBuilder:
       this
 
     def ++=(it: Iterator[A]): this.type =
-      while it.hasNext do
-        buf.add(it.next())
+      while it.hasNext do buf.add(it.next())
       this
 
     def ++=(as: Option[A]): this.type =
       as match
         case Some(a) => buf.add(a)
-        case None => ()
+        case None    => ()
       this
 
     def ++=(fb: FArrayBuilder[A]): this.type =
       buf.addAll(fb)
       this
+
+    def apply(idx: Int): A = buf.get(idx)
 
     def update(idx: Int, value: A): Unit = buf.set(idx, value)
 
@@ -96,8 +97,7 @@ object FArrayBuilder:
       var found = false
       val size = buf.size()
       while idx < size && !found do
-        if p(buf.get(idx)) then
-          found = true
+        if p(buf.get(idx)) then found = true
         idx += 1
       found
 
