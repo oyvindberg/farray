@@ -1,14 +1,14 @@
 package farray
 
-import farray.FArray.Empty
+import farray.FArray.{Empty, newBuilder}
 
 import scala.annotation.static
 import scala.collection.{Factory, immutable, mutable}
-import scala.quoted.{Quotes, Expr, quotes, Type, Varargs}
+import scala.quoted.{Expr, Quotes, Type, Varargs, quotes}
 
 object FArray:
   type Builder[A <: AnyRef] = FArrayBuilder[A]
-  
+
   @static val Empty = new FArray(Array.ofDim(0))
 
   private[farray] inline def create[A <: AnyRef](as: Array[AnyRef]): FArray[A] =
@@ -540,7 +540,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
     val r = FArray.newBuilder[A2](length)
     foreach { x =>
       f(x) match {
-        case Left(x1) => l += x1
+        case Left(x1)  => l += x1
         case Right(x2) => r += x2
       }
     }
@@ -624,6 +624,19 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
         minF = fx
         first = false
     minElem
+
+  inline def distinctBy[B](inline f: A => B): FArray[A] = {
+    if (lengthCompare(1) <= 0) this
+    else {
+      val builder = FArray.newBuilder[A]
+      val seen = mutable.HashSet.empty[B]
+      var different = false
+      foreach {next =>
+        if (seen.add(f(next))) builder += next else different = true
+      }
+      if (different) builder.result() else this
+    }
+  }
 
   def distinct: FArray[A] =
     if length < 2 then this

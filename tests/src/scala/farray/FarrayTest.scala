@@ -20,6 +20,7 @@ class FListTest:
   @Test def test_count: Unit = test1(_.count(_.contains('a')))(_.count(_.contains('a')))
   @Test def test_diff: Unit = test1(xs => xs.diff(xs.take(2)))(xs => xs.diff(xs.take(2)))
   @Test def test_distinct: Unit = test1(_.distinct)(_.distinct)
+  @Test def test_distinct_by: Unit = test1(_.distinctBy(_.length))(_.distinctBy(_.length))
   @Test def test_drop: Unit = test1(_.drop(1))(_.drop(1))
   @Test def test_dropRight: Unit = test1(_.dropRight(1))(_.dropRight(1))
   @Test def test_dropWhile: Unit = test1(_.dropWhile(!_.headOption.contains('b')))(_.dropWhile(!_.headOption.contains('b')))
