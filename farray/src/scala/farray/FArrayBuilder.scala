@@ -19,10 +19,10 @@ object FArrayBuilder:
     ret
 
   extension [A <: AnyRef](buf: FArrayBuilder[A])
-    def size =
+    def size: Int =
       buf.size()
 
-    def length =
+    def length: Int =
       buf.size()
 
     def +=(elem: A): this.type =
@@ -112,3 +112,11 @@ object FArrayBuilder:
 
     def iterator: Iterator[A] =
       javaIterator.asScala
+      
+    def dropRightInPlace(n: Int): Unit = {
+      var left = n
+      while (left > 0 && nonEmpty) {
+        buf.remove(length - 1)
+        left -= 1
+      }
+    }
