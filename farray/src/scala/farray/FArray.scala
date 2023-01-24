@@ -206,6 +206,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
   def get: this.type = this
 
   inline def length = underlying.length
+  inline def lengthIs[B >: A <: AnyRef]: FArray.SizeCompareOps[B] = new FArray.SizeCompareOps(this)
   inline def size = underlying.length
   inline def sizeCompare(otherSize: Int): Int = Integer.compare(length, otherSize)
   inline def sizeIs[B >: A <: AnyRef]: FArray.SizeCompareOps[B] = new FArray.SizeCompareOps(this)

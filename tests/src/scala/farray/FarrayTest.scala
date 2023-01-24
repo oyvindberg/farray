@@ -57,6 +57,8 @@ class FListTest:
   @Test def test_lastOption: Unit = test1(_.lastOption)(_.lastOption)
   @Test def test_lazyZip: Unit = test3(_.lazyZip(_).lazyZip(_).toList)(_.lazyZip(_, _))
   @Test def test_lengthCompare: Unit = test1(_.lengthCompare(1))(_.lengthCompare(1))
+  @Test def `test_lengthIs >`: Unit = test1(_.lengthIs > 2)(_.lengthIs > 2)
+  @Test def `test_lengthIs <=`: Unit = test1(_.lengthIs <= 2)(_.lengthIs <= 2)
   @Test def test_map: Unit = test1(_.map(_.toUpperCase))(_.map(_.toUpperCase))
   @Test def test_mapConserve: Unit = test1(xs => xs.mapConserve(x => x) eq xs)(xs => xs.mapConserve(x => x) eq xs)
   @Test def test_max: Unit = test1NonEmpty(_.max)(_.max)
@@ -126,18 +128,18 @@ class FListTest:
     assertEquals("", List.range(1, -6, -2), FArray.range(1, -6, -2).toList)
     assertEquals("", List.range(1, -6, -3), FArray.range(1, -6, -3).toList)
   }
-  
+
   @Test def testRangeInvariants: Unit = {
     org.junit.Assert.assertThrows(
-      classOf[IllegalArgumentException], 
+      classOf[IllegalArgumentException],
       () => FArray.range(1, -6, 3)
     )
     org.junit.Assert.assertThrows(
-      classOf[IllegalArgumentException], 
+      classOf[IllegalArgumentException],
       () => FArray.range(1, -6, 0)
     )
   }
-  
+
   inline def assertEquals[Res1, Res2, To](msg: String, res1: Res1, res2: Res2)(using
       Res1: CompareAs[Res1, To],
       Res2: CompareAs[Res2, To]
