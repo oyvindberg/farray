@@ -7,9 +7,10 @@ import scala.collection.{Factory, immutable, mutable}
 import scala.quoted.{Expr, Quotes, Type, Varargs, quotes}
 
 object FArray:
-  type Builder[A <: AnyRef] = FArrayBuilder[A]
-
   @static val Empty = new FArray(Array.ofDim(0))
+
+  type Builder[A <: AnyRef] = FArrayBuilder[A]
+  val Builder = FArrayBuilder
 
   private[farray] inline def create[A <: AnyRef](as: Array[AnyRef]): FArray[A] =
     if as.length == 0 then Empty else new FArray[A](as)
