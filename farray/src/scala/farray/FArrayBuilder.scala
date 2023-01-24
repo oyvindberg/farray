@@ -25,13 +25,13 @@ object FArrayBuilder:
     def length: Int =
       buf.size()
 
-    def +=(elem: A): this.type =
+    def +=(elem: A): FArrayBuilder[A] =
       buf.add(elem)
-      this
+      buf
 
-    def append(elem: A): this.type =
+    def append(elem: A): FArrayBuilder[A] =
       buf.add(elem)
-      this
+      buf
 
     def clear(): Unit =
       buf.clear()
@@ -39,40 +39,40 @@ object FArrayBuilder:
     def result(): FArray[A] =
       FArray.create(buf.toArray)
 
-    def ++=(as: FArray[A]): this.type =
+    def ++=(as: FArray[A]): FArrayBuilder[A] =
       var idx = 0
       while idx < as.length do
         buf += as(idx)
         idx += 1
-      this
+      buf
 
-    def ++=(as: Seq[A]): this.type =
+    def ++=(as: Seq[A]): FArrayBuilder[A] =
       var idx = 0
       while idx < as.length do
         buf.add(as(idx))
         idx += 1
-      this
+      buf
 
-    def ++=(as: Array[A]): this.type =
+    def ++=(as: Array[A]): FArrayBuilder[A] =
       var idx = 0
       while idx < as.length do
         buf.add(as(idx))
         idx += 1
-      this
+      buf
 
-    def ++=(it: Iterator[A]): this.type =
+    def ++=(it: Iterator[A]): FArrayBuilder[A] =
       while it.hasNext do buf.add(it.next())
-      this
+      buf
 
-    def ++=(as: Option[A]): this.type =
+    def ++=(as: Option[A]): FArrayBuilder[A] =
       as match
         case Some(a) => buf.add(a)
         case None    => ()
-      this
+      buf
 
-    def ++=(fb: FArrayBuilder[A]): this.type =
+    def ++=(fb: FArrayBuilder[A]): FArrayBuilder[A] =
       buf.addAll(fb)
-      this
+      buf
 
     def apply(idx: Int): A = buf.get(idx)
 
@@ -112,7 +112,7 @@ object FArrayBuilder:
 
     def iterator: Iterator[A] =
       javaIterator.asScala
-      
+
     def dropRightInPlace(n: Int): Unit = {
       var left = n
       while (left > 0 && nonEmpty) {
