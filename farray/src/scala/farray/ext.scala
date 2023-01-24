@@ -91,5 +91,10 @@ extension [A <: AnyRef](as: FArray[A]) {
         same = as(idx) eq other.apply(idx)
         idx += 1
       same
-
+  
+  inline def sumBy(inline f: A => Int): Int = {
+    var acc = 0
+    as.foreach(a => acc += f(a))
+    acc
+  }
 }
