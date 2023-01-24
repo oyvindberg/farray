@@ -78,6 +78,20 @@ object FArray:
   def fromRange(r: Range): FArray[Integer] =
     fromIterator(r.iterator.map(i => i))
 
+  def range(start: Int, end: Int, step: Int): FArray[Integer] =
+    val length = end - start
+    require(step != 0, "step must not be 0") 
+    require(Integer.signum(length) == Integer.signum(step), "length and step but have same sign") 
+    val numSteps = math.ceil(length.toDouble / step).toInt
+    val a = new Array[AnyRef](numSteps)
+    var current = start
+    var currentStep = 0
+    while currentStep < numSteps do
+      a(currentStep) = current: Integer
+      current += step
+      currentStep += 1
+    create[Integer](a)
+
   object first:
     inline def unapply[A <: AnyRef](as: FArray[A]): Option[A] = as.headOption
   object firstTwo:
@@ -631,7 +645,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
       val builder = FArray.newBuilder[A]
       val seen = mutable.HashSet.empty[B]
       var different = false
-      foreach {next =>
+      foreach { next =>
         if (seen.add(f(next))) builder += next else different = true
       }
       if (different) builder.result() else this

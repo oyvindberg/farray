@@ -100,6 +100,44 @@ class FListTest:
   @Test def test_zip: Unit = test2(_ zip _)(_ zip _)
   @Test def test_zipWithIndex: Unit = test1(_.zipWithIndex)(_.zipWithIndex)
 
+  @Test def testRange(): Unit = {
+    assertEquals("", List.range(0, 5, 1), FArray.range(0, 5, 1).toList)
+    assertEquals("", List.range(0, 5, 2), FArray.range(0, 5, 2).toList)
+    assertEquals("", List.range(0, 5, 3), FArray.range(0, 5, 3).toList)
+    assertEquals("", List.range(0, -5, -1), FArray.range(0, -5, -1).toList)
+    assertEquals("", List.range(0, -5, -2), FArray.range(0, -5, -2).toList)
+    assertEquals("", List.range(0, -5, -3), FArray.range(0, -5, -3).toList)
+    assertEquals("", List.range(1, 5, 1), FArray.range(1, 5, 1).toList)
+    assertEquals("", List.range(1, 5, 2), FArray.range(1, 5, 2).toList)
+    assertEquals("", List.range(1, 5, 3), FArray.range(1, 5, 3).toList)
+    assertEquals("", List.range(1, -5, -1), FArray.range(1, -5, -1).toList)
+    assertEquals("", List.range(1, -5, -2), FArray.range(1, -5, -2).toList)
+    assertEquals("", List.range(1, -5, -3), FArray.range(1, -5, -3).toList)
+    assertEquals("", List.range(0, 6, 1), FArray.range(0, 6, 1).toList)
+    assertEquals("", List.range(0, 6, 2), FArray.range(0, 6, 2).toList)
+    assertEquals("", List.range(0, 6, 3), FArray.range(0, 6, 3).toList)
+    assertEquals("", List.range(0, -6, -1), FArray.range(0, -6, -1).toList)
+    assertEquals("", List.range(0, -6, -2), FArray.range(0, -6, -2).toList)
+    assertEquals("", List.range(0, -6, -3), FArray.range(0, -6, -3).toList)
+    assertEquals("", List.range(1, 6, 1), FArray.range(1, 6, 1).toList)
+    assertEquals("", List.range(1, 6, 2), FArray.range(1, 6, 2).toList)
+    assertEquals("", List.range(1, 6, 3), FArray.range(1, 6, 3).toList)
+    assertEquals("", List.range(1, -6, -1), FArray.range(1, -6, -1).toList)
+    assertEquals("", List.range(1, -6, -2), FArray.range(1, -6, -2).toList)
+    assertEquals("", List.range(1, -6, -3), FArray.range(1, -6, -3).toList)
+  }
+  
+  @Test def testRangeInvariants: Unit = {
+    org.junit.Assert.assertThrows(
+      classOf[IllegalArgumentException], 
+      () => FArray.range(1, -6, 3)
+    )
+    org.junit.Assert.assertThrows(
+      classOf[IllegalArgumentException], 
+      () => FArray.range(1, -6, 0)
+    )
+  }
+  
   inline def assertEquals[Res1, Res2, To](msg: String, res1: Res1, res2: Res2)(using
       Res1: CompareAs[Res1, To],
       Res2: CompareAs[Res2, To]
@@ -157,6 +195,7 @@ class FListTest:
     /* base case, can safely be compared */
     given [T <: Comparable[T] | AnyVal]: CompareAs[T, T] = t => t
 
+    given CompareAs[Integer, Int] = x => x
     given CompareAs[Character, Char] = x => x
     given CompareAs[Range, Range] = x => x // todo: should be covered by `Iterable` below
 
