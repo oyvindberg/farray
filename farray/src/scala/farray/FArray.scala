@@ -42,7 +42,7 @@ object FArray:
     ret
   }
 
-  inline def fromOption[A <: AnyRef](oa: Option[A]): FArray[A] =
+  def fromOption[A <: AnyRef](oa: Option[A]): FArray[A] =
     oa match
       case Some(a) => apply(a)
       case None    => Empty
