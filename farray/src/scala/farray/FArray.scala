@@ -97,41 +97,41 @@ object FArray:
     create[Integer](a)
 
   object first:
-    inline def unapply[A <: AnyRef](as: FArray[A]): Option[A] = as.headOption
+    def unapply[A <: AnyRef](as: FArray[A]): Option[A] = as.headOption
   object firstTwo:
-    inline def unapply[A <: AnyRef](as: FArray[A]): Option[(A, A)] =
+    def unapply[A <: AnyRef](as: FArray[A]): Option[(A, A)] =
       if as.length >= 2 then Some((as(0), as(1))) else None
   object firstThree:
-    inline def unapply[A <: AnyRef](as: FArray[A]): Option[(A, A, A)] =
+    def unapply[A <: AnyRef](as: FArray[A]): Option[(A, A, A)] =
       if as.length >= 3 then Some((as(0), as(1), as(2))) else None
   object last:
-    inline def unapply[A <: AnyRef](as: FArray[A]): Option[A] = as.lastOption
+    def unapply[A <: AnyRef](as: FArray[A]): Option[A] = as.lastOption
   object exactlyOne:
-    inline def unapply[A <: AnyRef](as: FArray[A]): Option[A] =
+    def unapply[A <: AnyRef](as: FArray[A]): Option[A] =
       if as.length == 1 then Some(as(0)) else None
   object exactlyTwo:
-    inline def unapply[A <: AnyRef](as: FArray[A]): Option[(A, A)] =
+    def unapply[A <: AnyRef](as: FArray[A]): Option[(A, A)] =
       if as.length == 2 then Some((as(0), as(1))) else None
   object exactlyThree:
-    inline def unapply[A <: AnyRef](as: FArray[A]): Option[(A, A, A)] =
+    def unapply[A <: AnyRef](as: FArray[A]): Option[(A, A, A)] =
       if as.length == 3 then Some((as(0), as(1), as(2))) else None
   object exactlyFour:
-    inline def unapply[A <: AnyRef](as: FArray[A]): Option[(A, A, A, A)] =
+    def unapply[A <: AnyRef](as: FArray[A]): Option[(A, A, A, A)] =
       if as.length == 4 then Some((as(0), as(1), as(2), as(3))) else None
   object exactlyFive:
-    inline def unapply[A <: AnyRef](as: FArray[A]): Option[(A, A, A, A, A)] =
+    def unapply[A <: AnyRef](as: FArray[A]): Option[(A, A, A, A, A)] =
       if as.length == 5 then Some((as(0), as(1), as(2), as(3), as(4))) else None
   object headTail:
-    inline def unapply[A <: AnyRef](as: FArray[A]): Option[(A, FArray[A])] =
+    def unapply[A <: AnyRef](as: FArray[A]): Option[(A, FArray[A])] =
       if as.length == 0 then None else Some((as.head, as.tail))
   object headHeadTail:
-    inline def unapply[A <: AnyRef](as: FArray[A]): Option[(A, A, FArray[A])] =
+    def unapply[A <: AnyRef](as: FArray[A]): Option[(A, A, FArray[A])] =
       if as.length < 2 then None else Some((as(0), as(1), as.drop(2)))
   object initLast:
-    inline def unapply[A <: AnyRef](as: FArray[A]): Option[(FArray[A], A)] =
+    def unapply[A <: AnyRef](as: FArray[A]): Option[(FArray[A], A)] =
       if as.length == 0 then None else Some((as.init, as.last))
 
-  inline def unapplySeq[A <: AnyRef](as: FArray[A]): UnapplySeq[A] = new UnapplySeq(as)
+  def unapplySeq[A <: AnyRef](as: FArray[A]): UnapplySeq[A] = new UnapplySeq(as)
 
   def newBuilder[A <: AnyRef]: Builder[A] = FArrayBuilder.empty()
   def newBuilder[A <: AnyRef](initialCapacity: Int): Builder[A] = FArrayBuilder.empty(initialCapacity)
