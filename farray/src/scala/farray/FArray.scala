@@ -50,10 +50,10 @@ object FArray:
   inline def fromOptions[A <: AnyRef](as: Option[A]*): FArray[A] =
     apply(as.flatten: _*)
 
-  implicit inline def fromArray[A <: AnyRef](as: Array[A]): FArray[A] =
+  inline def fromArray[A <: AnyRef](as: Array[A]): FArray[A] =
     create(as.asInstanceOf[Array[AnyRef]])
 
-  implicit inline def fromIterable[A <: AnyRef](as: Iterable[A]): FArray[A] =
+  inline def fromIterable[A <: AnyRef](as: Iterable[A]): FArray[A] =
     create(as.asInstanceOf[Iterable[AnyRef]].toArray)
 
   inline def fromIterator[A <: AnyRef](as: Iterator[A]): FArray[A] =
