@@ -44,7 +44,7 @@ object FArray:
 
   def fromOption[A <: AnyRef](oa: Option[A]): FArray[A] =
     oa match
-      case Some(a) => apply(a)
+      case Some(a) => create(Array(a))
       case None    => Empty
 
   inline def fromOptions[A <: AnyRef](as: Option[A]*): FArray[A] =
