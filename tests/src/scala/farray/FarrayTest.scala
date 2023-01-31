@@ -127,6 +127,7 @@ class FListTest:
     assertEquals("", List.range(1, -6, -1), FArray.range(1, -6, -1).toList)
     assertEquals("", List.range(1, -6, -2), FArray.range(1, -6, -2).toList)
     assertEquals("", List.range(1, -6, -3), FArray.range(1, -6, -3).toList)
+    assertEquals("", List.range(0, 0), FArray.range(0, 0).toList)
   }
 
   @Test def testRangeInvariants: Unit = {

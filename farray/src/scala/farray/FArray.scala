@@ -85,7 +85,7 @@ object FArray:
   def range(start: Int, end: Int, step: Int): FArray[Integer] =
     val length = end - start
     require(step != 0, "step must not be 0")
-    require(Integer.signum(length) == Integer.signum(step), "length and step but have same sign")
+    require(Integer.signum(length) >= 0 == Integer.signum(step) >= 0, "length and step but have same sign")
     val numSteps = math.ceil(length.toDouble / step).toInt
     val a = new Array[AnyRef](numSteps)
     var current = start
