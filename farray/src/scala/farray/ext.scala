@@ -20,16 +20,17 @@ extension [A <: AnyRef](as: FArray[A]) {
     else
       val ret = FArray.newBuilder[A](as.length)
       var i = 0
-      var changed = false
+      var hasDropped = false
       while i < as.length do
         val a = as(i)
         if p(a) then {
           ret += a
-          changed = true
+        } else {
+          hasDropped = true
         }
         i += 1
 
-      if (changed) ret.result() else as
+      if (hasDropped) ret.result() else as
   }
 
   inline def mapConserve[B <: AnyRef](inline f: A => B): FArray[B] =
@@ -91,7 +92,7 @@ extension [A <: AnyRef](as: FArray[A]) {
         same = as(idx) eq other.apply(idx)
         idx += 1
       same
-  
+
   inline def sumBy(inline f: A => Int): Int = {
     var acc = 0
     as.foreach(a => acc += f(a))
