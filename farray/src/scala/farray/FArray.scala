@@ -19,7 +19,7 @@ object FArray:
     Empty
 
   inline def apply[A <: AnyRef](inline as: A*): FArray[A] =
-    ${ applyImpl('{ as }) }
+    fromIterable(as)
 
   def applyImpl[A <: AnyRef](as: Expr[Seq[A]])(using Type[A], Quotes): Expr[FArray[A]] = {
     import quotes.reflect.*
