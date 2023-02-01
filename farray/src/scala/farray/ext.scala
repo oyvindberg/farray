@@ -84,7 +84,8 @@ extension [A <: AnyRef](as: FArray[A]) {
   }
 
   def eqElements(other: FArray[A]): Boolean =
-    if as.length != other.length then false
+    if as eq other then true
+    else if as.length != other.length then false
     else
       var idx = 0
       var same = true
