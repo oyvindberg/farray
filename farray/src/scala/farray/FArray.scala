@@ -465,16 +465,18 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
           i = Int.MaxValue // break
       ret
 
-  def drop(n: Int): FArray[A] =
+  def drop(n0: Int): FArray[A] =
+    val n = math.max(0, n0)
     val newLength = math.max(0, length - n)
-    if newLength == 0 then return FArray.Empty
+    if newLength == length then return this
     val ret = new Array[AnyRef](newLength)
     System.arraycopy(underlying, n, ret, 0, newLength)
     FArray.create[A](ret)
 
-  def dropRight(n: Int): FArray[A] =
+  def dropRight(n0: Int): FArray[A] =
+    val n = math.max(0, n0)
     val newLength = math.max(0, length - n)
-    if newLength == 0 then return FArray.Empty
+    if newLength == length then return this
     val ret = new Array[AnyRef](newLength)
     System.arraycopy(underlying, 0, ret, 0, newLength)
     FArray.create[A](ret)
