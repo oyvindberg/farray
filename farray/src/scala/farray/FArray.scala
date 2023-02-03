@@ -436,8 +436,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
     prefix ++ this
 
   def take(n: Int): FArray[A] =
-    require(n >= 0)
-    val newLength = math.min(length, n)
+    val newLength = math.max(0, math.min(length, n))
     if newLength == 0 then FArray.Empty
     else if newLength == length then this
     else
@@ -446,8 +445,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
       FArray.create[A](ret)
 
   def takeRight(n: Int): FArray[A] =
-    require(n >= 0)
-    val newLength = math.min(length, n)
+    val newLength = math.max(0, math.min(length, n))
     if newLength == 0 then FArray.Empty
     else if newLength == length then this
     else
