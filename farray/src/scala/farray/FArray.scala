@@ -36,7 +36,8 @@ object FArray:
           }
 
         }
-      case _ => '{ create[A](Array[AnyRef](${ as })) }
+      case _ =>
+        '{ fromIterable[A](${ as }) }
 
 //    report.warning(ret.show)
     ret
