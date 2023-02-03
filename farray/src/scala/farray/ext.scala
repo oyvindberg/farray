@@ -68,10 +68,11 @@ extension [A <: AnyRef](as: FArray[A]) {
   def zipWithConserve[U <: AnyRef, V <: A](ys: FArray[U])(f: (A, U) => V): FArray[V] = {
     if as.isEmpty then as.asInstanceOf[FArray[V]]
     else
-      val newArray = new Array[AnyRef](as.length)
+      val length = math.min(as.length, ys.length)
+      val newArray = new Array[AnyRef](length)
       var i = 0
       var foundDifferent = false
-      while i < as.length do
+      while i < length do
         val before: A = as(i)
         val u: U = ys(i)
         val after: V = f(before, u)
