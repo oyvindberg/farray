@@ -470,6 +470,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
     val n = math.max(0, n0)
     val newLength = math.max(0, length - n)
     if newLength == length then return this
+    else if newLength == 0 then return Empty
     val ret = new Array[AnyRef](newLength)
     System.arraycopy(underlying, n, ret, 0, newLength)
     FArray.create[A](ret)
