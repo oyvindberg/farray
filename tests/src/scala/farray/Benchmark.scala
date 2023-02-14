@@ -56,7 +56,7 @@ object Benchmark:
     test1("test_iterator", _.iterator)(_.iterator)(_.iterator),
     test1NonEmpty("test_last", _.last)(_.last)(_.last),
     test1("test_lastOption", _.lastOption)(_.lastOption)(_.lastOption),
-    test3("test_lazyZip", _.lazyZip(_).lazyZip(_).toList)(_.lazyZip(_, _))(_.lazyZip(_).lazyZip(_).toList),
+//    test3("test_lazyZip", _.lazyZip(_).lazyZip(_).toList)(_.lazyZip(_, _))(_.lazyZip(_).lazyZip(_).toList),
     test1("test_lengthCompare", _.lengthCompare(1))(_.lengthCompare(1))(_.lengthCompare(1)),
     test1("`test_lengthIs >` ", _.lengthIs > 2)(_.lengthIs > 2)(_.lengthIs > 2),
     test1("`test_lengthIs <=` ", _.lengthIs <= 2)(_.lengthIs <= 2)(_.lengthIs <= 2),
@@ -103,7 +103,7 @@ object Benchmark:
   )
 
   def inputs(base: String, nonEmpty: Boolean = false): (List[List[String]], FArray[FArray[String]], IArray[IArray[String]]) =
-    val all = base.toArray.map(_.toString)
+    val all = (base * 4).toArray.map(_.toString)
     val indices = if nonEmpty then all.indices.drop(1) else all.indices
     val allList = indices.map(all.take).map(_.toList).toList
     val allFArray = FArray.fromIterable(indices.map(all.take).map(FArray.fromArray(_)))
