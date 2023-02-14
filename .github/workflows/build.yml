@@ -42,6 +42,7 @@ jobs:
         with:
           submodules: recursive
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: bleep-build/bleep-setup-action@0.0.1
       - id: get_version
         uses: battila7/get-version-action@v2
         with:
@@ -51,8 +52,6 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           path: artifacts
-      - name: Display structure of downloaded files
-        run: find artifacts
       - name: Release
         run: bleep publish
         env:
