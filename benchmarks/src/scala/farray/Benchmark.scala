@@ -1,7 +1,5 @@
 package farray
 
-import org.junit.Test
-
 import scala.collection.BuildFrom
 
 //format: off
@@ -103,7 +101,7 @@ object Benchmark:
   )
 
   def inputs(base: String, nonEmpty: Boolean = false): (List[List[String]], FArray[FArray[String]], IArray[IArray[String]]) =
-    val all = (base * 4).toArray.map(_.toString)
+    val all = (base * 2).toArray.map(_.toString)
     val indices = if nonEmpty then all.indices.drop(1) else all.indices
     val allList = indices.map(all.take).map(_.toList).toList
     val allFArray = FArray.fromIterable(indices.map(all.take).map(FArray.fromArray(_)))
@@ -169,7 +167,9 @@ object Benchmark:
 
   def timed(title: String)(t: => Unit): Unit = {
     val t0 = System.currentTimeMillis()
-    t
+    0 to 100 foreach {_ =>
+      t
+    }
     val td = System.currentTimeMillis() - t0
     println(s"$title: $td ms")
   }
@@ -197,7 +197,7 @@ object Benchmark:
         test.runAllIArray()
       }
     }
-    0 to 1000 foreach { _ =>
+    0 to 100 foreach { _ =>
       tests.foreach { test =>
         test.runAllFArray()
         test.runAllList()
