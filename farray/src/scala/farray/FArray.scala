@@ -7,13 +7,16 @@ import scala.collection.{Factory, immutable, mutable}
 import scala.quoted.{Expr, Quotes, Type, Varargs, quotes}
 
 object FArray:
-  @static val Empty = new FArray(Array.ofDim(0))
+  @static val Empty = new FArray(Array.ofDim(0), 0)
 
   type Builder[A <: AnyRef] = FArrayBuilder[A]
   val Builder = FArrayBuilder
 
+  private[farray] inline def create[A <: AnyRef](as: Array[AnyRef], length: Int): FArray[A] =
+    if as.length == 0 then Empty else new FArray[A](as, length)
+
   private[farray] inline def create[A <: AnyRef](as: Array[AnyRef]): FArray[A] =
-    if as.length == 0 then Empty else new FArray[A](as)
+    create(as, as.length)
 
   inline def empty[A <: AnyRef]: FArray[A] =
     Empty
@@ -31,7 +34,7 @@ object FArray:
           ${
             Expr.block(
               exprs.toList.zipWithIndex.map { case (expr, idx) => '{ ret(${ Expr(idx) }) = ${ expr } } },
-              '{ new FArray[A](ret) }
+              '{ new FArray[A](ret, ${ Expr(exprs.length) }) }
             )
           }
 
@@ -202,14 +205,15 @@ object FArray:
     inline def >(size: Int): Boolean = it.sizeCompare(size) > 0
   }
 
-final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
+final class FArray[+A <: AnyRef](underlying: Array[AnyRef], val length: Int):
+  self =>
+
   private[FArray] def get_underlying: Array[AnyRef] = underlying
 
   def get: this.type = this
 
-  inline def length = underlying.length
   inline def lengthIs[B >: A <: AnyRef]: FArray.SizeCompareOps[B] = new FArray.SizeCompareOps(this)
-  inline def size = underlying.length
+  inline def size = length
   inline def sizeCompare(otherSize: Int): Int = Integer.compare(length, otherSize)
   inline def sizeIs[B >: A <: AnyRef]: FArray.SizeCompareOps[B] = new FArray.SizeCompareOps(this)
   inline def isEmpty: Boolean = length == 0
@@ -229,7 +233,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
         newArray(i) = f(apply(i))
         i += 1
 
-      FArray.create[B](newArray)
+      new FArray[B](newArray, length)
 
   inline def foreach(inline f: A => Unit): Unit =
     var i = 0
@@ -245,10 +249,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
 
   inline def foldLeft[Z](z: Z)(inline f: (Z, A) => Z): Z =
     var current = z
-    var idx = 0
-    while idx < length do
-      current = f(current, apply(idx))
-      idx += 1
+    foreach { a => current = f(current, a) }
     current
 
   inline def reduce[A1 >: A](inline op: (A1, A1) => A1): A1 =
@@ -291,11 +292,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
 
   inline def count(inline p: A => Boolean): Int =
     var ret = 0
-    var idx = 0
-    while idx < length do
-      if p(apply(idx)) then ret += 1
-      idx += 1
-
+    foreach { a => if p(a) then ret += 1 }
     ret
 
   def headOption: Option[A] = if isEmpty then None else Some(apply(0))
@@ -369,19 +366,17 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
       else idx += 1
     found
 
-  inline def collect[B <: AnyRef](inline f: PartialFunction[A, B]): FArray[B] =
+  def collect[B <: AnyRef](f: PartialFunction[A, B]): FArray[B] =
     if isEmpty then this.asInstanceOf[FArray[B]]
     else
-      val builder = FArray.newBuilder[B](length)
-      var i = 0
-      while i < length do
-        val a = apply(i)
+      val ret = new Array[AnyRef](length)
+      var o = 0
+      foreach { a =>
         if f.isDefinedAt(a) then
-          val b = f(a)
-          builder += b
-
-        i += 1
-      builder.result()
+          ret(o) = f(a)
+          o += 1
+      }
+      FArray.create(ret, o)
 
   inline def filterNot(inline f: A => Boolean): FArray[A] =
     filter(a => !f(a))
@@ -389,14 +384,14 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
   inline def filter(inline f: A => Boolean): FArray[A] =
     if isEmpty then this
     else
-      val ret = FArray.newBuilder[A](length)
-      var i = 0
-      while i < length do
-        val a = apply(i)
-        if f(a) then ret += a
-        i += 1
-
-      ret.result()
+      val ret = new Array[AnyRef](length)
+      var o = 0
+      foreach { a =>
+        if f(a) then
+          ret(o) = a
+          o += 1
+      }
+      FArray.create(ret, o)
 
   inline def withFilter(inline f: A => Boolean): FArray[A] =
     filter(f)
@@ -479,9 +474,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
     val n = math.max(0, n0)
     val newLength = math.max(0, length - n)
     if newLength == length then return this
-    val ret = new Array[AnyRef](newLength)
-    System.arraycopy(underlying, 0, ret, 0, newLength)
-    FArray.create[A](ret)
+    FArray.create[A](underlying, newLength)
 
   inline def dropWhile(inline p: A => Boolean): FArray[A] =
     if isEmpty then this
@@ -545,16 +538,22 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
     FArray.create[(A, Int)](ret)
 
   inline def partition(inline f: A => Boolean): (FArray[A], FArray[A]) =
-    val lefts = FArray.newBuilder[A](length)
-    val rights = FArray.newBuilder[A](length)
+    val lefts = new Array[AnyRef](size)
+    val rights = new Array[AnyRef](size)
     var i = 0
+    var ol = 0
+    var or = 0
     while i < length do
       val current = apply(i)
-      if f(current) then lefts += current
-      else rights += current
+      if f(current) then
+        lefts(ol) = current
+        ol += 1
+      else
+        rights(or) = current
+        or += 1
       i += 1
 
-    (lefts.result(), rights.result())
+    (FArray.create(lefts, ol), FArray.create(rights, or))
 
   inline def partitionMap[A1 <: AnyRef, A2 <: AnyRef](f: A => Either[A1, A2]): (FArray[A1], FArray[A2]) = {
     val l = FArray.newBuilder[A1](length)
@@ -572,7 +571,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
     new Iterator[A]:
       var idx = 0
 
-      override def hasNext: Boolean = idx < underlying.length
+      override def hasNext: Boolean = idx < self.length
 
       override def next(): A =
         val ret = underlying(idx).asInstanceOf[A]
@@ -581,7 +580,7 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
 
   def reverseIterator: Iterator[A] =
     new Iterator[A]:
-      var idx = underlying.length - 1
+      var idx = self.length - 1
 
       override def hasNext: Boolean = idx >= 0
 
@@ -649,30 +648,37 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
   inline def distinctBy[B](inline f: A => B): FArray[A] = {
     if (lengthCompare(1) <= 0) this
     else {
-      val builder = FArray.newBuilder[A]
+      val ret = new Array[AnyRef](length)
+      var o = 0
       val seen = mutable.HashSet.empty[B]
       var different = false
       foreach { next =>
-        if (seen.add(f(next))) builder += next else different = true
+        if (seen.add(f(next)))
+          ret(o) = next
+          o += 1
+        else different = true
       }
-      if (different) builder.result() else this
+      if (different) FArray.create(ret, o) else this
     }
   }
 
   def distinct: FArray[A] =
     if length < 2 then this
     else
-      val ret = FArray.newBuilder[A](length)
+      val ret = new Array[AnyRef](length)
       val seen = new mutable.HashSet[A]()
       seen.sizeHint(length)
       var idx = 0
       var different = false
+      var o = 0
       while idx < length do
         val next = apply(idx)
-        if seen.add(next) then ret += next
+        if seen.add(next) then
+          ret(o) = next
+          o += 1
         else different = true
         idx += 1
-      if different then ret.result() else this
+      if different then FArray.create(ret, o) else this
 
   // todo: optimize
   def slice(from: Int, until: Int): FArray[A] = {
@@ -872,22 +878,27 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
 
   def diff[B >: A <: AnyRef](that: FArray[B]): FArray[B] =
     val occ = occCounts(that)
-    val b = FArray.newBuilder[B](length)
+    val ret = new Array[AnyRef](length)
+    var o = 0
     for x <- this do
       val ox = occ(x) // Avoid multiple map lookups
-      if ox == 0 then b += x
+      if ox == 0 then
+        ret(o) = x
+        o += 1
       else occ(x) = ox - 1
-    b.result()
+    FArray.create(ret, o)
 
   def intersect[B >: A <: AnyRef](that: FArray[B]): FArray[B] =
     val occ = occCounts(that)
-    val b = FArray.newBuilder[B](length)
+    val ret = new Array[AnyRef](length)
+    var o = 0
     for x <- this do
       val ox = occ(x) // Avoid multiple map lookups
       if ox > 0 then
-        b += x
+        ret(o) = x
+        o += 1
         occ(x) = ox - 1
-    b.result()
+    FArray.create(ret, o)
 
   def endsWith[B >: A <: AnyRef](that: FArray[B]): Boolean =
     if that.isEmpty then true
@@ -899,24 +910,20 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef]):
       !j.hasNext
 
   def padTo[B >: A <: AnyRef](len: Int, elem: B): FArray[B] =
-    val b = FArray.newBuilder[B](math.max(length, len))
-    var diff = len - length
-    b ++= this
-    while diff > 0 do
-      b += elem
-      diff -= 1
-    b.result()
+    val newLength = math.max(length, len)
+    if (newLength == length) this
+    else
+      val ret = new Array[AnyRef](newLength)
+      System.arraycopy(underlying, 0, ret, 0, length)
+      var i = length
+      while i < newLength do
+        ret(i) = elem
+        i += 1
+      FArray.create(ret, newLength)
 
   inline def foldRight[Z](z: Z)(inline f: (A, Z) => Z): Z =
     iterator.foldRight(z)(f)
 
-  inline def firstDefined[U](inline f: A => Option[U]): Option[U] =
-    var idx = 0
-    var ret = Option.empty[U]
-    while idx < length && ret.isEmpty do
-      ret = f(apply(idx))
-      idx += 1
-    ret
 
   def copyToArray[B >: A](xs: Array[B]): Int = copyToArray(xs, 0, Int.MaxValue)
 
