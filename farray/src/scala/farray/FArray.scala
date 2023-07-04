@@ -924,7 +924,6 @@ final class FArray[+A <: AnyRef](underlying: Array[AnyRef], val length: Int):
   inline def foldRight[Z](z: Z)(inline f: (A, Z) => Z): Z =
     iterator.foldRight(z)(f)
 
-
   def copyToArray[B >: A](xs: Array[B]): Int = copyToArray(xs, 0, Int.MaxValue)
 
   def copyToArray[B >: A](xs: Array[B], start: Int): Int = copyToArray(xs, start, Int.MaxValue)

@@ -1,8 +1,8 @@
 import bleep._
+import bleep.nosbt.InteractionService
 import bleep.packaging.{CoordinatesFor, PackagedLibrary, PublishLayout, packageLibraries}
 import bleep.plugin.cirelease.CiReleasePlugin
 import bleep.plugin.dynver.DynVerPlugin
-import bleep.plugin.nosbt.InteractionService
 import bleep.plugin.pgp.PgpPlugin
 import bleep.plugin.sonatype.Sonatype
 import coursier.Info
