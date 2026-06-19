@@ -1,0 +1,27 @@
+package farray
+
+import org.openjdk.jmh.annotations.{Benchmark, Param, Setup}
+
+// Validates wiring a second primitive (Long): FArray[Long].foldLeft should be an unboxed long[] loop
+// (ladd), matching raw Array[Long] and beating boxed List/Vector.
+class LongFoldLeftBenchmark extends CommonParams {
+  @Param(Array("1", "10", "100", "1000", "10000", "100000", "1000000"))
+  var size: Int = 1000
+
+  var listInput: List[Long] = _
+  var vectorInput: Vector[Long] = _
+  var arrayInput: Array[Long] = _
+  var farrayInput: FArray[Long] = _
+
+  @Setup def setup(): Unit = {
+    listInput = List.tabulate(size)(i => i.toLong)
+    vectorInput = Vector.tabulate(size)(i => i.toLong)
+    arrayInput = Array.tabulate(size)(i => i.toLong)
+    farrayInput = FArray.tabulate(size)(i => i.toLong)
+  }
+
+  @Benchmark def list(): Long   = listInput.foldLeft(0L)(_ + _)
+  @Benchmark def vector(): Long = vectorInput.foldLeft(0L)(_ + _)
+  @Benchmark def array(): Long  = { var acc = 0L; var i = 0; val a = arrayInput; while (i < a.length) { acc += a(i); i += 1 }; acc }
+  @Benchmark def farray(): Long = farrayInput.foldLeft(0L)(_ + _)
+}

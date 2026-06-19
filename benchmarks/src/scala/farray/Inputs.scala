@@ -6,6 +6,7 @@ abstract class Inputs extends CommonParams {
   var listInput: List[String] = _
   var farrayInput: FArray[String] = _
   var iarrayInput: IArray[String] = _
+  var vectorInput: Vector[String] = _
 
   @Param(Array("1", "10", "100", "1000", "10000", "100000", "1000000"))
   var size: Int = 1000
@@ -15,5 +16,6 @@ abstract class Inputs extends CommonParams {
     listInput = List.tabulate(size)(_.toString)
     farrayInput = FArray.tabulate(size)(_.toString)
     iarrayInput = IArray.tabulate(size)(_.toString)
+    vectorInput = Vector.tabulate(size)(_.toString)
   }
 }

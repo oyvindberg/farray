@@ -12,7 +12,6 @@ import scala.collection.immutable.BitSet
 @Fork(
   value = 1,
   jvmArgs = Array(
-    "-server",
     "-Xms2g",
     "-Xmx2g",
     "-XX:NewSize=1g",
@@ -23,9 +22,11 @@ import scala.collection.immutable.BitSet
     "-XX:-UseAdaptiveSizePolicy",
     "-XX:MaxInlineLevel=20",
     "-XX:InlineSmallCode=1500",
-    "-XX:+AlwaysPreTouch",
-    "-XX:+UseNUMA",
-    "-XX:-UseAdaptiveNUMAChunkSizing"
+    "-XX:+AlwaysPreTouch"
+    // NOTE: dropped -server / -XX:+UseNUMA / -XX:-UseAdaptiveNUMAChunkSizing — server-tuned,
+    // skew results on a non-NUMA macOS dev box. Re-add for the final publishable run on a server.
+    // Quick low-N iteration: override warmup/iters/size from the CLI, e.g.
+    //   bleep run benchmarks-runner <regex> -p size=4 -wi 0 -i 2 -f 1 -r 300ms
   )
 )
 @BenchmarkMode(Array(Mode.Throughput))

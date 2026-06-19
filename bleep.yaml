@@ -1,5 +1,5 @@
 $schema: https://raw.githubusercontent.com/oyvindberg/bleep/master/schema.json
-$version: 0.0.2
+$version: 1.0.0-M10
 jvm:
   name: graalvm-java17:22.3.1
 projects:
@@ -8,6 +8,13 @@ projects:
     extends: template-common
     platform:
       mainClass: com.foo.App
+    sourcegen:
+      project: codegen
+      main: farray.GenCores
+  codegen:
+    extends: template-common
+    dependencies:
+      - build.bleep::bleep-core:${BLEEP_VERSION}
   tests:
     dependencies:
       - junit:junit:4.13.2
@@ -50,6 +57,6 @@ templates:
     platform:
       name: jvm
     scala:
-      options: -encoding utf8 -feature -unchecked
+      options: -encoding utf8 -feature -unchecked -opt
       strict: true
-      version: 3.3.0
+      version: 3.8.3
