@@ -95,39 +95,48 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val dfs = opKinds.map(dfsDef).mkString("\n")
     val ats = opKinds.map(atDef).mkString("\n")
 
+    // Reference reads cast the leaf array to Array[A] (checkcast hoisted out of the loop at the
+    // concrete inline call site; empty leaves never evaluate it). Primitive arrays can't cast to
+    // Array[A] (erases to Object[]), so they read directly.
+    def rd(k: Kind): String = if k.name == "Ref" then "a.asInstanceOf[Array[A]](i)" else "a(i).asInstanceOf[A]"
+    // Reference arrays are allocated typed via ClassTag (a real String[]) so the typed read succeeds.
+    def alloc(k: Kind, n: String, tp: String): String =
+      if k.name == "Ref" then s"summonInline[scala.reflect.ClassTag[$tp]].newArray($n).asInstanceOf[Array[Object]]"
+      else s"new Array[${k.arr}]($n)"
+
     val foldLeft = branches(k =>
-      s"dfs${k.name}(xs)((a, n) => { var i = 0; while (i < n) { acc = op(acc, a(i).asInstanceOf[A]); i += 1 } })(v => { acc = op(acc, v.asInstanceOf[A]) })")
+      s"dfs${k.name}(xs)((a, n) => { var i = 0; while (i < n) { acc = op(acc, ${rd(k)}); i += 1 } })(v => { acc = op(acc, v.asInstanceOf[A]) })")
     val foreach = branches(k =>
-      s"dfs${k.name}(xs)((a, n) => { var i = 0; while (i < n) { f(a(i).asInstanceOf[A]); i += 1 } })(v => { f(v.asInstanceOf[A]) })")
+      s"dfs${k.name}(xs)((a, n) => { var i = 0; while (i < n) { f(${rd(k)}); i += 1 } })(v => { f(v.asInstanceOf[A]) })")
     val mapM = opKinds.map { ka =>
       val inner = opKinds.map { kb =>
-        s"          case _: ${kb.pat} => { val out = new Array[${kb.arr}](n); var o = 0; dfs${ka.name}(xs)((a, len) => { var i = 0; while (i < len) { out(o) = f(a(i).asInstanceOf[A]).asInstanceOf[${kb.arr}]; o += 1; i += 1 } })(v => { out(o) = f(v.asInstanceOf[A]).asInstanceOf[${kb.arr}]; o += 1 }); new ${kb.name}Arr(out, n) }"
+        s"          case _: ${kb.pat} => { val out = ${alloc(kb, "n", "B")}; var o = 0; dfs${ka.name}(xs)((a, len) => { var i = 0; while (i < len) { out(o) = f(${rd(ka)}).asInstanceOf[${kb.arr}]; o += 1; i += 1 } })(v => { out(o) = f(v.asInstanceOf[A]).asInstanceOf[${kb.arr}]; o += 1 }); new ${kb.name}Arr(out, n) }"
       }.mkString("\n")
       s"      case _: ${ka.pat} => inline erasedValue[B] match {\n$inner\n      }"
     }.mkString("\n")
     val filter = branches(k =>
-      s"{ val out = new Array[${k.arr}](n); var o = 0; dfs${k.name}(xs)((a, len) => { var i = 0; while (i < len) { val e = a(i); if (p(e.asInstanceOf[A])) { out(o) = e; o += 1 }; i += 1 } })(v => { if (p(v.asInstanceOf[A])) { out(o) = v; o += 1 } }); if (o == n) xs else if (o == 0) ${k.name}Arr.EMPTY else new ${k.name}Arr(java.util.Arrays.copyOf(out, o), o) }")
+      s"{ val out = ${alloc(k, "n", "A")}; var o = 0; dfs${k.name}(xs)((a, len) => { var i = 0; while (i < len) { val e = ${rd(k)}; if (p(e)) { out(o) = e.asInstanceOf[${k.arr}]; o += 1 }; i += 1 } })(v => { val e = v.asInstanceOf[A]; if (p(e)) { out(o) = e.asInstanceOf[${k.arr}]; o += 1 } }); if (o == n) xs else if (o == 0) ${k.name}Arr.EMPTY else new ${k.name}Arr(java.util.Arrays.copyOf(out, o), o) }")
     val contains = branches(k =>
-      if k.name == "Ref" then s"dfsRef(xs)((a, n) => { var i = 0; while (i < n) { if (a(i) == elem) found = true; i += 1 } })(v => { if (v == elem) found = true })"
+      if k.name == "Ref" then s"dfsRef(xs)((a, n) => { var i = 0; while (i < n) { if (${rd(k)} == elem) found = true; i += 1 } })(v => { if (v == elem) found = true })"
       else s"{ val e = elem.asInstanceOf[${k.arr}]; dfs${k.name}(xs)((a, n) => { var i = 0; while (i < n) { if (a(i) == e) found = true; i += 1 } })(v => { if (v == e) found = true }) }")
     val applyAt = branches(k => s"${k.lc}At(xs, i).asInstanceOf[A]")
     val flatMapEmpty = branches(k => s"${k.name}Arr.EMPTY")
     val flatMapRead = branches(k =>
-      s"dfs${k.name}(xs)((a, n) => { var i = 0; while (i < n) { acc = acc.concat(f(a(i).asInstanceOf[A])); i += 1 } })(v => { acc = acc.concat(f(v.asInstanceOf[A])) })")
+      s"dfs${k.name}(xs)((a, n) => { var i = 0; while (i < n) { acc = acc.concat(f(${rd(k)})); i += 1 } })(v => { acc = acc.concat(f(v.asInstanceOf[A])) })")
     val updated = branches(k =>
-      s"{ val out = new Array[${k.arr}](n); var o = 0; dfs${k.name}(xs)((a, len) => { System.arraycopy(a, 0, out, o, len); o += len })(v => { out(o) = v; o += 1 }); out(index) = elem.asInstanceOf[${k.arr}]; new ${k.name}Arr(out, n) }")
+      s"{ val out = ${alloc(k, "n", "A")}; var o = 0; dfs${k.name}(xs)((a, len) => { System.arraycopy(a, 0, out, o, len); o += len })(v => { out(o) = v.asInstanceOf[${k.arr}]; o += 1 }); out(index) = elem.asInstanceOf[${k.arr}]; new ${k.name}Arr(out, n) }")
     val append = branches(k => s"new ${k.name}Append(xs, elem.asInstanceOf[${k.arr}])")
     val prepend = branches(k => s"new ${k.name}Prepend(elem.asInstanceOf[${k.arr}], xs)")
     val emptyB = branches(k => s"${k.name}Arr.EMPTY")
     val tabulate = branches(k =>
-      s"if (n <= 0) ${k.name}Arr.EMPTY else { val out = new Array[${k.arr}](n); var i = 0; while (i < n) { out(i) = f(i).asInstanceOf[${k.arr}]; i += 1 }; new ${k.name}Arr(out, n) }")
+      s"if (n <= 0) ${k.name}Arr.EMPTY else { val out = ${alloc(k, "n", "A")}; var i = 0; while (i < n) { out(i) = f(i).asInstanceOf[${k.arr}]; i += 1 }; new ${k.name}Arr(out, n) }")
     val applyVar = branches(k =>
-      s"if (as.isEmpty) ${k.name}Arr.EMPTY else { val n = as.length; val out = new Array[${k.arr}](n); var i = 0; while (i < n) { out(i) = as(i).asInstanceOf[${k.arr}]; i += 1 }; new ${k.name}Arr(out, n) }")
+      s"if (as.isEmpty) ${k.name}Arr.EMPTY else { val n = as.length; val out = ${alloc(k, "n", "A")}; var i = 0; while (i < n) { out(i) = as(i).asInstanceOf[${k.arr}]; i += 1 }; new ${k.name}Arr(out, n) }")
     val fromArr = branches(k => s"new ${k.name}Arr(as.asInstanceOf[Array[${k.arr}]], as.length)")
 
     s"""package farray
        |
-       |import scala.compiletime.erasedValue
+       |import scala.compiletime.{erasedValue, summonInline}
        |
        |// GENERATED by GenCores — do not edit. Per-kind specialized combinator implementations.
        |object FArrayOps {
@@ -325,7 +334,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    }
        |    @Override public FBase reverse() {
        |        if (length < 2) return this;
-       |        Object[] out = new Object[length];
+       |        Object[] out = (Object[]) java.lang.reflect.Array.newInstance(arr.getClass().getComponentType(), length);
        |        for (int i = 0; i < length; i++) out[i] = arr[length - 1 - i];
        |        return new RefArr(out, length);
        |    }
