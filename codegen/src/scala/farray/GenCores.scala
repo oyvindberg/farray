@@ -157,19 +157,23 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // copy-back). `less(x, y)` = x sorts strictly before y. Returns the sorted buffer (may be the input or temp).
     // non-inline per-kind flatMap result builder: dfs+System.arraycopy each inner into one flat array (dfs
     // inlined ONCE here, not at every flatMap call site). Ref takes the ClassTag so the array is typed.
+    // leaf inners (the overwhelming common case for f) arraycopy directly — NO dfs (a dfs would alloc a
+    // fresh traversal stack per inner). Only non-leaf inners fall back to dfs.
     val flatMapBuild = opKinds.map { k =>
-      if k.name == "Ref" then
-        s"""  def flatMapBuildRef(inners: Array[FBase], cnt: Int, total: Int, ct: scala.reflect.ClassTag[?]): Array[Object] = {
-           |    val out = ct.newArray(total).asInstanceOf[Array[Object]]; var off = 0; var j = 0
-           |    while (j < cnt) { dfsRef(inners(j))((a, ln) => { System.arraycopy(a, 0, out, off, ln); off += ln })(v => { out(off) = v; off += 1 }); j += 1 }
-           |    out
-           |  }""".stripMargin
-      else
-        s"""  def flatMapBuild${k.name}(inners: Array[FBase], cnt: Int, total: Int): Array[${k.arr}] = {
-           |    val out = new Array[${k.arr}](total); var off = 0; var j = 0
-           |    while (j < cnt) { dfs${k.name}(inners(j))((a, ln) => { System.arraycopy(a, 0, out, off, ln); off += ln })(v => { out(off) = v; off += 1 }); j += 1 }
-           |    out
-           |  }""".stripMargin
+      val decl = if k.name == "Ref" then s"flatMapBuildRef(inners: Array[FBase], cnt: Int, total: Int, ct: scala.reflect.ClassTag[?]): Array[Object]"
+                 else s"flatMapBuild${k.name}(inners: Array[FBase], cnt: Int, total: Int): Array[${k.arr}]"
+      val alloc = if k.name == "Ref" then "ct.newArray(total).asInstanceOf[Array[Object]]" else s"new Array[${k.arr}](total)"
+      s"""  def $decl = {
+         |    val out = $alloc; var off = 0; var j = 0
+         |    while (j < cnt) {
+         |      inners(j) match {
+         |        case leaf: ${k.name}Arr => { System.arraycopy(leaf.arr, 0, out, off, leaf.length); off += leaf.length }
+         |        case node => dfs${k.name}(node)((a, ln) => { System.arraycopy(a, 0, out, off, ln); off += ln })(v => { out(off) = v; off += 1 })
+         |      }
+         |      j += 1
+         |    }
+         |    out
+         |  }""".stripMargin
     }.mkString("\n")
     val sortArr = opKinds.map(k =>
       s"""  inline def sort${k.name}(a: Array[${k.arr}], n: Int)(inline less: (${k.arr}, ${k.arr}) => Boolean): Array[${k.arr}] = {
@@ -239,6 +243,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // flatMap result assembly dispatches only on B (4 tiny cases) and CALLS a non-inline per-kind builder,
     // so the dfs/arraycopy isn't re-inlined at every call site (keeps chained flatMap/map under the JIT's
     // HugeMethodLimit). Source is read via applyBoxed in the (kind-agnostic) impl, no dfs inlined there.
+    // pass 1: read source UNBOXED (leaf fast-path / <kind>At), apply f, collect inners + total length.
+    val flatMapPass1 = dispatchA(k =>
+      s"xs match { case leaf: ${k.name}Arr => { val sa = leaf.arr; var i = 0; while (i < cnt) { val inr = f(${readVal(k, "sa(i)")}); inners(i) = inr; total += inr.length; i += 1 } }; case _ => { var i = 0; while (i < cnt) { val inr = f(${readVal(k, s"${k.lc}At(xs, i)")}); inners(i) = inr; total += inr.length; i += 1 } } }")
     val flatMapV = dispatchB(k =>
       if k.name == "Ref" then "if (total == 0) RefArr.EMPTY else new RefArr(flatMapBuildRef(inners, cnt, total, r.ct), total)"
       else s"if (total == 0) ${k.name}Arr.EMPTY else new ${k.name}Arr(flatMapBuild${k.name}(inners, cnt, total), total)")
@@ -262,6 +269,11 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val applyVar = dispatchA(k =>
       s"if (as.isEmpty) ${k.name}Arr.EMPTY else { val n = as.length; val out = ${alloc(k, "r")}; var i = 0; while (i < n) { out(i) = ${wr(k, "r.unwrap(as(i))")}; i += 1 }; new ${k.name}Arr(out, n) }")
     val fromArr = dispatchA(k => s"new ${k.name}Arr(as.asInstanceOf[Array[${k.arr}]], as.length)")
+    // small-arity construction without varargs/Seq/boxing (FArray(a, b) etc.) — the hot path inside flatMap
+    def allocN(k: Kind, n: Int): String = if k.name == "Ref" then s"r.ct.newArray($n).asInstanceOf[Array[Object]]" else s"new Array[${k.arr}]($n)"
+    val fromValues1 = dispatchA(k => s"{ val out = ${allocN(k, 1)}; out(0) = ${wr(k, "r.unwrap(a)")}; new ${k.name}Arr(out, 1) }")
+    val fromValues2 = dispatchA(k => s"{ val out = ${allocN(k, 2)}; out(0) = ${wr(k, "r.unwrap(a)")}; out(1) = ${wr(k, "r.unwrap(b)")}; new ${k.name}Arr(out, 2) }")
+    val fromValues3 = dispatchA(k => s"{ val out = ${allocN(k, 3)}; out(0) = ${wr(k, "r.unwrap(a)")}; out(1) = ${wr(k, "r.unwrap(b)")}; out(2) = ${wr(k, "r.unwrap(c)")}; new ${k.name}Arr(out, 3) }")
 
     s"""package farray
        |
@@ -277,6 +289,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |
        |  inline def emptyImpl[A]: FBase = $emptyB
        |  inline def applyImpl[A](as: Seq[A]): FBase = $applyVar
+       |  inline def fromValues1[A](a: A): FBase = $fromValues1
+       |  inline def fromValues2[A](a: A, b: A): FBase = $fromValues2
+       |  inline def fromValues3[A](a: A, b: A, c: A): FBase = $fromValues3
        |  inline def tabulateImpl[A](n: Int)(inline f: Int => A): FBase = $tabulate
        |  inline def fromArrayImpl[A](as: Array[A]): FBase = $fromArr
        |  inline def foldLeftImpl[A, Z](xs: FBase, z: Z)(inline op: (Z, A) => Z): Z = {
@@ -303,8 +318,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def containsImpl[A](xs: FBase, elem: A): Boolean = $contains
        |  inline def applyAtImpl[A](xs: FBase, i: Int): A = $applyAt
        |  inline def flatMapImpl[A, B](xs: FBase)(inline f: A => FBase): FBase = {
-       |    val cnt = xs.length; val inners = new Array[FBase](cnt); var total = 0; var i0 = 0
-       |    while (i0 < cnt) { val inr = f((xs: FBase).applyBoxed(i0).asInstanceOf[A]); inners(i0) = inr; total += inr.length; i0 += 1 }
+       |    val cnt = xs.length; val inners = new Array[FBase](cnt); var total = 0
+       |    $flatMapPass1
        |    $flatMapV
        |  }
        |  inline def updatedImpl[A, B](xs: FBase, index: Int, elem: B): FBase = $updated
