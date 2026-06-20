@@ -30,13 +30,6 @@ object FArray:
         (if diff % step != 0 then c + 1 else c).toInt
     FArrayOps.tabulateImpl[Int](count)(i => start + i * step)
 
-  // boxed materialization, ONLY for ops with no per-element lambda (toX / set-based) — never lambdas.
-  private def coreList[A](core: FBase): List[A] =
-    val b = List.newBuilder[A]
-    var i = 0
-    while i < core.length do { b += core.applyBoxed(i).asInstanceOf[A]; i += 1 }
-    b.result()
-
   extension [A](xs: FArray[A])
     // ---- shape ----
     def length: Int = xs.length
@@ -174,18 +167,37 @@ object FArray:
         def hasNext: Boolean = i >= 0
         def next(): A = { val r = core.applyBoxed(i).asInstanceOf[A]; i -= 1; r }
 
-    // ---- conversions / structure ops (no per-element user lambda) ----
-    def toList: List[A] = coreList(xs)
-    def toVector: Vector[A] = coreList(xs).toVector
-    def toSeq: Seq[A] = coreList(xs)
-    def toSet[B >: A]: Set[B] = coreList[B](xs).toSet
-    def toMap[K, V](using ev: A <:< (K, V)): Map[K, V] = coreList(xs).map(ev).toMap
-    def toArray[B >: A](using ct: ClassTag[B]): Array[B] = coreList[B](xs).toArray
-    def mkString(start: String, sep: String, end: String): String = coreList(xs).mkString(start, sep, end)
-    def mkString(sep: String): String = coreList(xs).mkString(sep)
-    def mkString: String = coreList(xs).mkString
-    def startsWith[B >: A](that: FArray[B]): Boolean = coreList[B](xs).startsWith(coreList[B](that))
-    def endsWith[B >: A](that: FArray[B]): Boolean = coreList[B](xs).endsWith(coreList[B](that))
+    // ---- conversions / structure ops (specialized unboxed traversal into the target builder) ----
+    // toList is used generically (abstract A, e.g. test harness) so it can't be inline; List boxes anyway.
+    def toList: List[A] =
+      val b = List.newBuilder[A]; val c: FBase = xs; var i = 0
+      while i < c.length do { b += c.applyBoxed(i).asInstanceOf[A]; i += 1 }
+      b.result()
+    inline def toVector: Vector[A] = { val b = Vector.newBuilder[A]; xs.foreach(a => b += a); b.result() }
+    inline def toSeq: Seq[A] = xs.toVector
+    inline def toSet[B >: A]: Set[B] = { val b = Set.newBuilder[B]; xs.foreach(a => b += a); b.result() }
+    inline def toMap[K, V](using ev: A <:< (K, V)): Map[K, V] = { val b = Map.newBuilder[K, V]; xs.foreach(a => b += ev(a)); b.result() }
+    inline def toArray[B >: A](using ct: ClassTag[B]): Array[B] =
+      val arr = ct.newArray(xs.length); var i = 0; xs.foreach(a => { arr(i) = a; i += 1 }); arr
+    inline def mkString(start: String, sep: String, end: String): String =
+      val sb = new java.lang.StringBuilder(start); var first = true
+      xs.foreach(a => { if first then first = false else sb.append(sep); sb.append(String.valueOf(a.asInstanceOf[Object])) }); sb.append(end).toString
+    inline def mkString(sep: String): String = xs.mkString("", sep, "")
+    inline def mkString: String = xs.mkString("", "", "")
+    inline def startsWith[B >: A](that: FArray[B]): Boolean =
+      val m = that.length
+      if m > xs.length then false
+      else
+        var i = 0; var ok = true
+        while ok && i < m do { if FArrayOps.applyAtImpl[A](xs, i) != FArrayOps.applyAtImpl[B](that, i) then ok = false; i += 1 }
+        ok
+    inline def endsWith[B >: A](that: FArray[B]): Boolean =
+      val m = that.length; val off = xs.length - m
+      if off < 0 then false
+      else
+        var i = 0; var ok = true
+        while ok && i < m do { if FArrayOps.applyAtImpl[A](xs, off + i) != FArrayOps.applyAtImpl[B](that, i) then ok = false; i += 1 }
+        ok
 
     inline def padTo[B >: A](len: Int, elem: B): FArray[B] =
       if len <= xs.length then xs.asInstanceOf[FArray[B]]
@@ -213,13 +225,20 @@ object FArray:
       xs.foreach(a => acc = acc.concat(ev(a)))
       acc
     inline def transpose[B](using ev: A <:< FArray[B]): FArray[FArray[B]] =
-      val _ = ev
-      val rows: List[List[Any]] = coreList[FBase](xs).map(r => coreList[Any](r))
-      val cols = rows.transpose
-      val outer = new Array[Object](cols.length)
-      var i = 0
-      cols.foreach { col => outer(i) = new RefArr(col.map(_.asInstanceOf[Object]).toArray, col.length); i += 1 }
-      new RefArr(outer, outer.length).asInstanceOf[FArray[FArray[B]]]
+      val n = xs.length
+      if n == 0 then FArray.empty[FArray[B]]
+      else
+        val inners = new Array[Object](n)
+        var k = 0; while k < n do { inners(k) = ev(xs.apply(k)).asInstanceOf[Object]; k += 1 }
+        val cols = inners(0).asInstanceOf[FBase].length
+        // outer is Ref (FArrays, built directly); each column is tabulated in B's own kind -> unboxed for primitive B
+        val outer = new Array[Object](cols)
+        var c = 0
+        while c < cols do
+          val cc = c
+          outer(c) = (FArray.tabulate[B](n)(r => FArrayOps.applyAtImpl[B](inners(r).asInstanceOf[FBase], cc)): FArray[B]).asInstanceOf[Object]
+          c += 1
+        new RefArr(outer, cols).asInstanceOf[FArray[FArray[B]]]
     inline def mapConserve(inline f: A => A): FArray[A] =
       var changed = false
       val out = xs.map { a => val b = f(a); if !(b.asInstanceOf[AnyRef] eq a.asInstanceOf[AnyRef]) then changed = true; b }
