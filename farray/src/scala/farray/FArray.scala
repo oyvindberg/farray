@@ -131,16 +131,9 @@ object FArray:
       FArray.tabulate(n)(i => (FArrayOps.applyAtImpl[A](xs, i), FArrayOps.applyAtImpl[B](that, i)))
     inline def zipWithIndex: FArray[(A, Int)] =
       FArray.tabulate(xs.length)(i => (FArrayOps.applyAtImpl[A](xs, i), i))
-    inline def sortWith(inline lt: (A, A) => Boolean): FArray[A] =
-      val order = (0 until xs.length).sortWith((i, j) => lt(FArrayOps.applyAtImpl[A](xs, i), FArrayOps.applyAtImpl[A](xs, j)))
-      FArray.tabulate(xs.length)(i => FArrayOps.applyAtImpl[A](xs, order(i)))
-    inline def sortBy[B](inline f: A => B)(using ord: Ordering[B]): FArray[A] =
-      val keys = xs.map(f) // f unboxed
-      val order = (0 until xs.length).sortBy(i => FArrayOps.applyAtImpl[B](keys, i))
-      FArray.tabulate(xs.length)(i => FArrayOps.applyAtImpl[A](xs, order(i)))
-    inline def sorted[B >: A](using ord: Ordering[B]): FArray[A] =
-      val order = (0 until xs.length).sortWith((i, j) => ord.lt(FArrayOps.applyAtImpl[A](xs, i), FArrayOps.applyAtImpl[A](xs, j)))
-      FArray.tabulate(xs.length)(i => FArrayOps.applyAtImpl[A](xs, order(i)))
+    inline def sortWith(inline lt: (A, A) => Boolean): FArray[A] = FArrayOps.sortWithImpl[A](xs)(lt)
+    inline def sortBy[B](inline f: A => B)(using ord: Ordering[B]): FArray[A] = FArrayOps.sortByImpl[A, B](xs)(f)
+    inline def sorted[B >: A](using ord: Ordering[B]): FArray[A] = FArrayOps.sortedImpl[A, B](xs)
     inline def groupBy[K](inline f: A => K): Map[K, FArray[A]] =
       val m = scala.collection.mutable.LinkedHashMap.empty[K, scala.collection.mutable.Builder[A, List[A]]]
       xs.foreach(a => m.getOrElseUpdate(f(a), List.newBuilder[A]) += a)
