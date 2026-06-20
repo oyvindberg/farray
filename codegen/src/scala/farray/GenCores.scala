@@ -103,6 +103,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // Lazy nodes emit unboxed via <kind>At per element (RangeNode is closed-form, Int only). onOne/At
     // return the raw primitive, so no boxing — only the boxed `applyBoxed` path (iterator) ever boxes.
     val rngCase = if k.name == "Int" then "\n       |        case rng: RangeNode => { val rn = rng.length; var ri = 0; while (ri < rn) { onOne(rng.start + ri * rng.step); ri += 1 } }" else ""
+    // read the node's base directly (one dispatch), not through the node itself (which would re-dispatch per element)
+    val padRead = if k.name == "Ref" then "pad.base.applyBoxed(pi)" else s"${k.lc}At(pad.base, pi)"
+    val updRead = if k.name == "Ref" then "u.base.applyBoxed(ui)" else s"${k.lc}At(u.base, ui)"
     s"""  inline def dfs${k.name}(root: FBase)(inline onLeaf: (Array[${k.arr}], Int) => Unit)(inline onOne: ${k.arr} => Unit): Unit = {
        |    var stack = new Array[FBase](16); var tail = new Array[${k.arr}](16); var isTail = new Array[Boolean](16)
        |    stack(0) = root; var sp = 1
@@ -114,10 +117,10 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |        case p: ${k.name}Prepend => { onOne(p.elem); $grow; stack(sp) = p.base; isTail(sp) = false; sp += 1 }
        |        case a: ${k.name}Append => { $grow; tail(sp) = a.elem; isTail(sp) = true; sp += 1; stack(sp) = a.base; isTail(sp) = false; sp += 1 }
        |        case c: Concat => { $grow; stack(sp) = c.right; isTail(sp) = false; sp += 1; stack(sp) = c.left; isTail(sp) = false; sp += 1 }
-       |        case rev: ReverseNode => { val rn = rev.length; var ri = 0; while (ri < rn) { onOne(${k.lc}At(rev.base, rn - 1 - ri)); ri += 1 } }
-       |        case pad: ${k.name}Pad => { val pn = pad.length; var pi = 0; while (pi < pn) { onOne(${k.lc}At(pad, pi)); pi += 1 } }
-       |        case u: ${k.name}Updated => { val un = u.length; var ui = 0; while (ui < un) { onOne(${k.lc}At(u, ui)); ui += 1 } }
-       |        case s: SliceNode => { val sn = s.length; var si = 0; while (si < sn) { onOne(${k.lc}At(s.base, s.offset + si)); si += 1 } }$rngCase
+       |        case rev: ReverseNode => { val rn = rev.length; rev.base match { case lf: ${k.name}Arr => { val la = lf.arr; var ri = 0; while (ri < rn) { onOne(la(rn - 1 - ri)); ri += 1 } }; case _ => { var ri = 0; while (ri < rn) { onOne(${k.lc}At(rev.base, rn - 1 - ri)); ri += 1 } } } }
+       |        case pad: ${k.name}Pad => { val bl = pad.base.length; pad.base match { case lf: ${k.name}Arr => { val la = lf.arr; var pi = 0; while (pi < bl) { onOne(la(pi)); pi += 1 } }; case _ => { var pi = 0; while (pi < bl) { onOne($padRead); pi += 1 } } }; val pf = pad.filler; var pj = bl; val pn = pad.length; while (pj < pn) { onOne(pf); pj += 1 } }
+       |        case u: ${k.name}Updated => { val un = u.length; u.base match { case lf: ${k.name}Arr => { val la = lf.arr; var ui = 0; while (ui < un) { onOne(if (ui == u.index) u.elem else la(ui)); ui += 1 } }; case _ => { var ui = 0; while (ui < un) { onOne(if (ui == u.index) u.elem else $updRead); ui += 1 } } } }
+       |        case s: SliceNode => { val sn = s.length; val so = s.offset; s.base match { case lf: ${k.name}Arr => { val la = lf.arr; var si = 0; while (si < sn) { onOne(la(so + si)); si += 1 } }; case _ => { var si = 0; while (si < sn) { onOne(${k.lc}At(s.base, so + si)); si += 1 } } } }$rngCase
        |        case _ => ()
        |      }
        |    }

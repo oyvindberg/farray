@@ -1,0 +1,14 @@
+package farray
+
+import org.openjdk.jmh.annotations.Benchmark
+
+// range then map. FArray.range is a closed-form RangeNode, so map reads start+i*step straight into the
+// result — the N ints are never materialised as an intermediate. List/Vector/Array build the range first,
+// then map (two passes + an intermediate allocation). Scala's Range is lazy too, so it fuses similarly.
+class RangeMapBenchmark extends IntInputs {
+  @Benchmark def farray(): FArray[Int]         = FArray.range(0, size).map(_ + 1)
+  @Benchmark def scalaRange(): IndexedSeq[Int] = (0 until size).map(_ + 1)
+  @Benchmark def list(): List[Int]             = List.range(0, size).map(_ + 1)
+  @Benchmark def vector(): Vector[Int]         = Vector.range(0, size).map(_ + 1)
+  @Benchmark def array(): Array[Int]           = Array.range(0, size).map(_ + 1)
+}
