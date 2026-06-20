@@ -199,9 +199,7 @@ object FArray:
         while ok && i < m do { if FArrayOps.applyAtImpl[A](xs, off + i) != FArrayOps.applyAtImpl[B](that, i) then ok = false; i += 1 }
         ok
 
-    inline def padTo[B >: A](len: Int, elem: B): FArray[B] =
-      if len <= xs.length then xs.asInstanceOf[FArray[B]]
-      else FArray.tabulate[B](len)(i => if i < xs.length then FArrayOps.applyAtImpl[A](xs, i) else elem)
+    inline def padTo[B >: A](len: Int, elem: B): FArray[B] = FArrayOps.padToImpl[A, B](xs, len, elem)
     inline def diff[B >: A](that: FArray[B]): FArray[A] =
       val rem = scala.collection.mutable.HashMap.empty[Any, Int]
       that.foreach(b => rem.update(b, rem.getOrElse(b, 0) + 1))
