@@ -204,9 +204,7 @@ object FArray:
        FArray.tabulate(xs.length)(i => ev(FArrayOps.applyAtImpl[A](xs, i))._2),
        FArray.tabulate(xs.length)(i => ev(FArrayOps.applyAtImpl[A](xs, i))._3))
     inline def flatten[B](using ev: A <:< FArray[B]): FArray[B] =
-      var acc: FBase = FArrayOps.emptyImpl[B]
-      xs.foreach(a => acc = acc.concat(ev(a)))
-      acc
+      FArrayOps.flatMapImpl[A, B](xs)(a => ev(a).asInstanceOf[FBase])
     inline def transpose[B](using ev: A <:< FArray[B]): FArray[FArray[B]] =
       val n = xs.length
       if n == 0 then FArray.empty[FArray[B]]

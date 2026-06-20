@@ -220,9 +220,14 @@ object GenCores extends BleepCodegenScript("GenCores") {
       else s"{ val e = r.unwrap(elem); xs match { case leaf: ${k.name}Arr => { val ar = leaf.arr; val ln = leaf.length; var i = 0; var res = false; while (i < ln) { if (ar(i) == e) { res = true; i = ln } else i += 1 }; res }; case _ => { val ln = xs.length; var i = 0; var res = false; while (i < ln) { if (${k.lc}At(xs, i) == e) { res = true; i = ln } else i += 1 }; res } } }")
     val applyAt = dispatchA(k =>
       if k.name == "Ref" then s"r.wrap(${k.lc}At(xs, i).asInstanceOf[A])" else s"r.wrap(${k.lc}At(xs, i))")
-    val flatMapEmpty = dispatchB(k => s"(${k.name}Arr.EMPTY: FBase)")
-    val flatMapRead = dispatchA(k =>
-      s"dfs${k.name}(xs)((a, n) => { var i = 0; while (i < n) { acc = acc.concat(f(${read(k)})); i += 1 } })(v => { acc = acc.concat(f(${readOne(k)})) })")
+    // flatMap = map f to collect inner FBases (one per element, count known) + total length, then ONE flat
+    // result array filled by System.arraycopy of each inner's leaves. No Concat chain -> O(1) index, O(total).
+    val flatMapV = "summonFrom {\n" + opKinds.map { ka =>
+      val inner = "summonFrom {\n" + opKinds.map { kb =>
+        s"          case rb: ${kb.name}Repr[B] => { val cnt = xs.length; val inners = new Array[FBase](cnt); var total = 0; var kk = 0; dfs${ka.name}(xs)((a, ln) => { var i = 0; while (i < ln) { val inr = f(${read(ka)}); inners(kk) = inr; total += inr.length; kk += 1; i += 1 } })(v => { val inr = f(${readOne(ka)}); inners(kk) = inr; total += inr.length; kk += 1 }); if (total == 0) ${kb.name}Arr.EMPTY else { val out = new Array[${kb.arr}](total); var off = 0; var j = 0; while (j < cnt) { dfs${kb.name}(inners(j))((a, ln) => { System.arraycopy(a, 0, out, off, ln); off += ln })(v => { out(off) = v; off += 1 }); j += 1 }; new ${kb.name}Arr(out, total) } }"
+      }.mkString("\n") + "\n        }"
+      s"      case r: ${ka.name}Repr[A] => $inner"
+    }.mkString("\n") + "\n    }"
     val updated = dispatchB(k => s"new ${k.name}Updated(xs, index, ${wr(k, "r.unwrap(elem)")})")
     val append = dispatchB(k => s"new ${k.name}Append(xs, r.unwrap(elem))")
     val prepend = dispatchA(k => s"new ${k.name}Prepend(r.unwrap(elem), xs)")
@@ -282,11 +287,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  }
        |  inline def containsImpl[A](xs: FBase, elem: A): Boolean = $contains
        |  inline def applyAtImpl[A](xs: FBase, i: Int): A = $applyAt
-       |  inline def flatMapImpl[A, B](xs: FBase)(inline f: A => FBase): FBase = {
-       |    var acc: FBase = $flatMapEmpty
-       |    $flatMapRead
-       |    acc
-       |  }
+       |  inline def flatMapImpl[A, B](xs: FBase)(inline f: A => FBase): FBase = $flatMapV
        |  inline def updatedImpl[A, B](xs: FBase, index: Int, elem: B): FBase = $updated
        |  inline def appendImpl[A, B](xs: FBase, elem: B): FBase = $append
        |  inline def prependImpl[A](elem: A, xs: FBase): FBase = $prepend
