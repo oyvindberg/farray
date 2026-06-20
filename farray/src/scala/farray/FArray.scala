@@ -9,11 +9,6 @@ import scala.reflect.ClassTag
  * like `map`. Only inherently-materializing structures (the Map/Set behind `groupBy`/`distinct`, the
  * sort order) box; the user's lambda never does.
  */
-/** Step result for [[FArray.foreachBreakable]]: `Break` stops the traversal, `Continue` proceeds.
- *  Both are singletons, so returning one never allocates. */
-enum Step:
-  case Break, Continue
-
 opaque type FArray[+A] <: AnyRef = FBase
 
 object FArray:
@@ -69,7 +64,6 @@ object FArray:
     def lastOption: Option[A] = if xs.length == 0 then None else Some((xs: FBase).applyBoxed(xs.length - 1).asInstanceOf[A])
     inline def foldLeft[Z](z: Z)(inline op: (Z, A) => Z): Z = FArrayOps.foldLeftImpl[A, Z](xs, z)(op)
     inline def foreach(inline f: A => Unit): Unit = FArrayOps.foreachImpl[A](xs)(f)
-    inline def foreachBreakable(inline f: A => Step): Unit = FArrayOps.foreachBreakableImpl[A](xs)(f)
     inline def map[B](inline f: A => B): FArray[B] = FArrayOps.mapImpl[A, B](xs)(f)
     inline def filter(inline p: A => Boolean): FArray[A] = FArrayOps.filterImpl[A](xs)(p)
     inline def filterNot(inline p: A => Boolean): FArray[A] = FArrayOps.filterImpl[A](xs)(a => !p(a))
@@ -90,16 +84,11 @@ object FArray:
 
     inline def count(inline p: A => Boolean): Int =
       var n = 0; xs.foreach(a => if p(a) then n += 1); n
-    inline def exists(inline p: A => Boolean): Boolean =
-      var r = false; xs.foreachBreakable(a => if p(a) then { r = true; Step.Break } else Step.Continue); r
-    inline def forall(inline p: A => Boolean): Boolean =
-      var r = true; xs.foreachBreakable(a => if p(a) then Step.Continue else { r = false; Step.Break }); r
-    inline def find(inline p: A => Boolean): Option[A] =
-      var r: Option[A] = None; xs.foreachBreakable(a => if p(a) then { r = Some(a); Step.Break } else Step.Continue); r
-    inline def indexWhere(inline p: A => Boolean): Int =
-      var idx = -1; var i = 0; xs.foreachBreakable(a => if p(a) then { idx = i; Step.Break } else { i += 1; Step.Continue }); idx
-    inline def indexOf[B >: A](elem: B): Int =
-      var idx = -1; var i = 0; xs.foreachBreakable(a => if a == elem then { idx = i; Step.Break } else { i += 1; Step.Continue }); idx
+    inline def exists(inline p: A => Boolean): Boolean = FArrayOps.existsImpl[A](xs)(p)
+    inline def forall(inline p: A => Boolean): Boolean = FArrayOps.forallImpl[A](xs)(p)
+    inline def find(inline p: A => Boolean): Option[A] = FArrayOps.findImpl[A](xs)(p)
+    inline def indexWhere(inline p: A => Boolean): Int = FArrayOps.indexWhereImpl[A](xs)(p)
+    inline def indexOf[B >: A](elem: B): Int = FArrayOps.indexOfImpl[A, B](xs, elem)
     inline def maxBy[B](inline f: A => B)(using ord: Ordering[B]): A =
       var best: A = FArrayOps.applyAtImpl[A](xs, 0); var bk: B = f(best)
       xs.drop(1).foreach((a: A) => { val k = f(a); if ord.gt(k, bk) then { best = a; bk = k } }); best
@@ -116,16 +105,13 @@ object FArray:
         var ok = true; var i = 0
         while ok && i < xs.length do { if !p(FArrayOps.applyAtImpl[A](xs, i), FArrayOps.applyAtImpl[B](that, i)) then ok = false; i += 1 }
         ok
-    inline def collectFirst[B](pf: PartialFunction[A, B]): Option[B] =
-      var r: Option[B] = None; xs.foreachBreakable(a => if pf.isDefinedAt(a) then { r = Some(pf(a)); Step.Break } else Step.Continue); r
+    inline def collectFirst[B](pf: PartialFunction[A, B]): Option[B] = FArrayOps.collectFirstImpl[A, B](xs)(pf)
 
     // ---- FArray-building lambda ops: lambda applied via filter/take/drop/foreach (unboxed) ----
-    inline def takeWhile(inline p: A => Boolean): FArray[A] =
-      var n = 0; xs.foreachBreakable(a => if p(a) then { n += 1; Step.Continue } else Step.Break); xs.take(n)
-    inline def dropWhile(inline p: A => Boolean): FArray[A] =
-      var n = 0; xs.foreachBreakable(a => if p(a) then { n += 1; Step.Continue } else Step.Break); xs.drop(n)
+    inline def takeWhile(inline p: A => Boolean): FArray[A] = xs.take(FArrayOps.prefixLengthImpl[A](xs)(p))
+    inline def dropWhile(inline p: A => Boolean): FArray[A] = xs.drop(FArrayOps.prefixLengthImpl[A](xs)(p))
     inline def span(inline p: A => Boolean): (FArray[A], FArray[A]) =
-      var n = 0; xs.foreachBreakable(a => if p(a) then { n += 1; Step.Continue } else Step.Break); (xs.take(n), xs.drop(n))
+      val n = FArrayOps.prefixLengthImpl[A](xs)(p); (xs.take(n), xs.drop(n))
     inline def partition(inline p: A => Boolean): (FArray[A], FArray[A]) = (xs.filter(p), xs.filterNot(p))
     inline def collect[B](pf: PartialFunction[A, B]): FArray[B] = xs.filter(a => pf.isDefinedAt(a)).map(a => pf(a))
     inline def distinct: FArray[A] =

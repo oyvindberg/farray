@@ -195,9 +195,17 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val foreach = dispatchA(k =>
       s"dfs${k.name}(xs)((a, n) => { var i = 0; while (i < n) { f(${read(k)}); i += 1 } })(v => { f(${readOne(k)}) })")
     // short-circuiting traversal: f returns Step.Break to stop. Leaf fast-path (tight loop + break);
-    // other shapes read via <kind>At per element with break. No boxing (Step.Break is a singleton).
-    val foreachBreakable = dispatchA(k =>
-      s"xs match { case leaf: ${k.name}Arr => { val ar = leaf.arr; val ln = leaf.length; var i = 0; var go = true; while (i < ln && go) { if (f(${readVal(k, "ar(i)")}) eq Step.Break) go = false; i += 1 } }; case _ => { val ln = xs.length; var i = 0; var go = true; while (i < ln && go) { if (f(${readVal(k, s"${k.lc}At(xs, i)")}) eq Step.Break) go = false; i += 1 } } }")
+    // Fused short-circuiting scan: predicate-and-break in ONE branch per element (like Array's `if (p) return`),
+    // no Step round-trip. `a` = element, break via `i = ln`. Leaf fast-path (tight) + <kind>At fallback.
+    def scan(k: Kind, init: String, step: String, result: String): String =
+      s"xs match { case leaf: ${k.name}Arr => { val ar = leaf.arr; val ln = leaf.length; var i = 0; $init; while (i < ln) { val a = ${readVal(k, "ar(i)")}; $step }; $result }; case _ => { val ln = xs.length; var i = 0; $init; while (i < ln) { val a = ${readVal(k, s"${k.lc}At(xs, i)")}; $step }; $result } }"
+    val existsV       = dispatchA(k => scan(k, "var res = false", "if (p(a)) { res = true; i = ln } else i += 1", "res"))
+    val forallV       = dispatchA(k => scan(k, "var res = true", "if (p(a)) i += 1 else { res = false; i = ln }", "res"))
+    val findV         = dispatchA(k => scan(k, "var res: Option[A] = None", "if (p(a)) { res = Some(a); i = ln } else i += 1", "res"))
+    val indexWhereV   = dispatchA(k => scan(k, "var res = -1", "if (p(a)) { res = i; i = ln } else i += 1", "res"))
+    val indexOfV      = dispatchA(k => scan(k, "var res = -1", "if (a == elem) { res = i; i = ln } else i += 1", "res"))
+    val collectFirstV = dispatchA(k => scan(k, "var res: Option[B] = None", "if (pf.isDefinedAt(a)) { res = Some(pf(a)); i = ln } else i += 1", "res"))
+    val prefixLenV    = dispatchA(k => scan(k, "var res = ln", "if (p(a)) i += 1 else { res = i; i = ln }", "res"))
     val mapM = "summonFrom {\n" + opKinds.map { ka =>
       val inner = "summonFrom {\n" + opKinds.map { kb =>
         s"          case rb: ${kb.name}Repr[B] => { val out = ${alloc(kb, "rb")}; var o = 0; dfs${ka.name}(xs)((a, len) => { var i = 0; while (i < len) { out(o) = ${wr(kb, s"rb.unwrap(f(${read(ka)}))")}; o += 1; i += 1 } })(v => { out(o) = ${wr(kb, s"rb.unwrap(f(${readOne(ka)}))")}; o += 1 }); new ${kb.name}Arr(out, n) }"
@@ -206,9 +214,10 @@ object GenCores extends BleepCodegenScript("GenCores") {
     }.mkString("\n") + "\n    }"
     val filter = dispatchA(k =>
       s"{ val out = ${alloc(k, "r")}; var o = 0; dfs${k.name}(xs)((a, len) => { var i = 0; while (i < len) { val e = ${read(k)}; if (p(e)) { out(o) = ${wr(k, "r.unwrap(e)")}; o += 1 }; i += 1 } })(v => { val e = ${readOne(k)}; if (p(e)) { out(o) = ${wr(k, "r.unwrap(e)")}; o += 1 } }); if (o == n) xs else if (o == 0) ${k.name}Arr.EMPTY else new ${k.name}Arr(java.util.Arrays.copyOf(out, o), o) }")
+    // fused short-circuiting contains (prim compares unboxed against the unwrapped elem)
     val contains = dispatchA(k =>
-      if k.name == "Ref" then s"dfs${k.name}(xs)((a, n) => { var i = 0; while (i < n) { if (${read(k)} == elem) found = true; i += 1 } })(v => { if (${readOne(k)} == elem) found = true })"
-      else s"{ val e = r.unwrap(elem); dfs${k.name}(xs)((a, n) => { var i = 0; while (i < n) { if (a(i) == e) found = true; i += 1 } })(v => { if (v == e) found = true }) }")
+      if k.name == "Ref" then s"xs match { case leaf: RefArr => { val ar = leaf.arr; val ln = leaf.length; var i = 0; var res = false; while (i < ln) { if (ar(i) == elem) { res = true; i = ln } else i += 1 }; res }; case _ => { val ln = xs.length; var i = 0; var res = false; while (i < ln) { if (refAt(xs, i) == elem) { res = true; i = ln } else i += 1 }; res } }"
+      else s"{ val e = r.unwrap(elem); xs match { case leaf: ${k.name}Arr => { val ar = leaf.arr; val ln = leaf.length; var i = 0; var res = false; while (i < ln) { if (ar(i) == e) { res = true; i = ln } else i += 1 }; res }; case _ => { val ln = xs.length; var i = 0; var res = false; while (i < ln) { if (${k.lc}At(xs, i) == e) { res = true; i = ln } else i += 1 }; res } } }")
     val applyAt = dispatchA(k =>
       if k.name == "Ref" then s"r.wrap(${k.lc}At(xs, i).asInstanceOf[A])" else s"r.wrap(${k.lc}At(xs, i))")
     val flatMapEmpty = dispatchB(k => s"(${k.name}Arr.EMPTY: FBase)")
@@ -256,7 +265,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    acc
        |  }
        |  inline def foreachImpl[A](xs: FBase)(inline f: A => Unit): Unit = $foreach
-       |  inline def foreachBreakableImpl[A](xs: FBase)(inline f: A => Step): Unit = $foreachBreakable
+       |  inline def existsImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = $existsV
+       |  inline def forallImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = $forallV
+       |  inline def findImpl[A](xs: FBase)(inline p: A => Boolean): Option[A] = $findV
+       |  inline def indexWhereImpl[A](xs: FBase)(inline p: A => Boolean): Int = $indexWhereV
+       |  inline def indexOfImpl[A, B](xs: FBase, elem: B): Int = $indexOfV
+       |  inline def collectFirstImpl[A, B](xs: FBase)(pf: PartialFunction[A, B]): Option[B] = $collectFirstV
+       |  inline def prefixLengthImpl[A](xs: FBase)(inline p: A => Boolean): Int = $prefixLenV
        |  inline def mapImpl[A, B](xs: FBase)(inline f: A => B): FBase = {
        |    val n = xs.length
        |    $mapM
@@ -265,11 +280,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    val n = xs.length
        |    $filter
        |  }
-       |  inline def containsImpl[A](xs: FBase, elem: A): Boolean = {
-       |    var found = false
-       |    $contains
-       |    found
-       |  }
+       |  inline def containsImpl[A](xs: FBase, elem: A): Boolean = $contains
        |  inline def applyAtImpl[A](xs: FBase, i: Int): A = $applyAt
        |  inline def flatMapImpl[A, B](xs: FBase)(inline f: A => FBase): FBase = {
        |    var acc: FBase = $flatMapEmpty

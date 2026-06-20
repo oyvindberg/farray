@@ -16,4 +16,12 @@ class ShortCircuitBenchmark extends IntInputs {
 
   @Benchmark def farray_find(): Option[Int] = farrayInput.find(_ == 5)
   @Benchmark def list_find(): Option[Int]   = listInput.find(_ == 5)
+
+  // full scan (no match): measures pure per-iteration throughput, not per-call overhead
+  @Benchmark def farray_exists_full(): Boolean = farrayInput.exists(_ == -1)
+  @Benchmark def array_exists_full(): Boolean   = arrayInput.exists(_ == -1)
+
+  // realistic match position (index 1000): real iteration work, per-call dispatch amortized
+  @Benchmark def farray_exists_mid(): Boolean = farrayInput.exists(_ == 1000)
+  @Benchmark def array_exists_mid(): Boolean   = arrayInput.exists(_ == 1000)
 }
