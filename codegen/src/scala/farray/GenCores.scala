@@ -119,7 +119,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |        case c: Concat => { $grow; stack(sp) = c.right; isTail(sp) = false; sp += 1; stack(sp) = c.left; isTail(sp) = false; sp += 1 }
        |        case rev: ReverseNode => { val rn = rev.length; rev.base match { case lf: ${k.name}Arr => { val la = lf.arr; var ri = 0; while (ri < rn) { onOne(la(rn - 1 - ri)); ri += 1 } }; case _ => { var ri = 0; while (ri < rn) { onOne(${k.lc}At(rev.base, rn - 1 - ri)); ri += 1 } } } }
        |        case pad: ${k.name}Pad => { val bl = pad.base.length; pad.base match { case lf: ${k.name}Arr => { val la = lf.arr; var pi = 0; while (pi < bl) { onOne(la(pi)); pi += 1 } }; case _ => { var pi = 0; while (pi < bl) { onOne($padRead); pi += 1 } } }; val pf = pad.filler; var pj = bl; val pn = pad.length; while (pj < pn) { onOne(pf); pj += 1 } }
-       |        case u: ${k.name}Updated => { val un = u.length; u.base match { case lf: ${k.name}Arr => { val la = lf.arr; var ui = 0; while (ui < un) { onOne(if (ui == u.index) u.elem else la(ui)); ui += 1 } }; case _ => { var ui = 0; while (ui < un) { onOne(if (ui == u.index) u.elem else $updRead); ui += 1 } } } }
+       |        case u: ${k.name}Updated => { val un = u.length; u.base match { case lf: ${k.name}Arr => { val la = lf.arr; var ui = 0; while (ui < un) { onOne(if (ui == u.index) u.elem else la(ui)); ui += 1 } }; case _ => { val mout = materialize${k.name}(u); onLeaf(mout, mout.length) } } }
        |        case s: SliceNode => { val sn = s.length; val so = s.offset; s.base match { case lf: ${k.name}Arr => { val la = lf.arr; var si = 0; while (si < sn) { onOne(la(so + si)); si += 1 } }; case _ => { var si = 0; while (si < sn) { onOne(${k.lc}At(s.base, so + si)); si += 1 } } } }$rngCase
        |        case _ => ()
        |      }
@@ -146,6 +146,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
   private def farrayOps: String = {
     val dfs = opKinds.map(dfsDef).mkString("\n")
     val ats = opKinds.map(atDef).mkString("\n")
+    // Flatten a (possibly deep) Updated chain to a fresh leaf array, ONCE, so dfs can emit it tight via
+    // onLeaf instead of walking the chain per element. Recursion applies overrides bottom-up => outer wins.
+    val mat = opKinds.map(k =>
+      s"""  def materialize${k.name}(node: FBase): Array[${k.arr}] = node match {
+         |    case u: ${k.name}Updated => { val out = materialize${k.name}(u.base); out(u.index) = u.elem; out }
+         |    case _ => { val out = new Array[${k.arr}](node.length); var o = 0; dfs${k.name}(node)((a, len) => { System.arraycopy(a, 0, out, o, len); o += len })(v => { out(o) = v; o += 1 }); out }
+         |  }""".stripMargin).mkString("\n")
 
     // Reference reads cast the leaf array to Array[A] (checkcast hoisted out of the loop at the
     // concrete inline call site; empty leaves never evaluate it). Primitive arrays can't cast to
@@ -200,6 +207,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |object FArrayOps {
        |$dfs
        |$ats
+       |$mat
        |
        |  inline def emptyImpl[A]: FBase = $emptyB
        |  inline def applyImpl[A](as: Seq[A]): FBase = $applyVar
