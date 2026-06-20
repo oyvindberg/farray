@@ -201,12 +201,9 @@ object FArray:
       val n = math.min(xs.length, math.min(ys.length, zs.length))
       FArray.tabulate(n)(i => (FArrayOps.applyAtImpl[A](xs, i), FArrayOps.applyAtImpl[B](ys, i), FArrayOps.applyAtImpl[C](zs, i)))
     inline def unzip[A1, A2](using ev: A <:< (A1, A2)): (FArray[A1], FArray[A2]) =
-      (FArray.tabulate(xs.length)(i => ev(FArrayOps.applyAtImpl[A](xs, i))._1),
-       FArray.tabulate(xs.length)(i => ev(FArrayOps.applyAtImpl[A](xs, i))._2))
+      FArrayOps.unzipImpl[A, A1, A2](xs)(ev)
     inline def unzip3[A1, A2, A3](using ev: A <:< (A1, A2, A3)): (FArray[A1], FArray[A2], FArray[A3]) =
-      (FArray.tabulate(xs.length)(i => ev(FArrayOps.applyAtImpl[A](xs, i))._1),
-       FArray.tabulate(xs.length)(i => ev(FArrayOps.applyAtImpl[A](xs, i))._2),
-       FArray.tabulate(xs.length)(i => ev(FArrayOps.applyAtImpl[A](xs, i))._3))
+      FArrayOps.unzip3Impl[A, A1, A2, A3](xs)(ev)
     inline def flatten[B](using ev: A <:< FArray[B]): FArray[B] =
       FArrayOps.flatMapImpl[A, B](xs)(a => ev(a).asInstanceOf[FBase])
     inline def transpose[B](using ev: A <:< FArray[B]): FArray[FArray[B]] =

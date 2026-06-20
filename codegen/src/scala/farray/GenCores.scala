@@ -253,6 +253,26 @@ object GenCores extends BleepCodegenScript("GenCores") {
         s"      case r: ${ka.name}Repr[A] => $inner"
       }.mkString("\n") + "\n    }"
     }
+    // single-pass unzip/unzip3: read each tuple ONCE, fill the 2/3 output arrays unboxed. Dispatch on the
+    // component kinds (resolves to one case per concrete site). Source leaf fast-path / applyBoxed.
+    def allocFor(k: Kind, rv: String): String = if k.name == "Ref" then s"$rv.ct.newArray(n).asInstanceOf[Array[Object]]" else s"new Array[${k.arr}](n)"
+    val unzipV = "summonFrom {\n" + opKinds.map { k1 =>
+      val inner = "summonFrom {\n" + opKinds.map { k2 =>
+        val fill = s"o1(i) = ${wr(k1, "r1.unwrap(t._1)")}; o2(i) = ${wr(k2, "r2.unwrap(t._2)")}"
+        s"          case r2: ${k2.name}Repr[A2] => { val o1 = ${allocFor(k1, "r1")}; val o2 = ${allocFor(k2, "r2")}; xs match { case leaf: RefArr => { val sa = leaf.arr; var i = 0; while (i < n) { val t = ev(sa(i).asInstanceOf[A]); $fill; i += 1 } }; case _ => { var i = 0; while (i < n) { val t = ev((xs: FBase).applyBoxed(i).asInstanceOf[A]); $fill; i += 1 } } }; (new ${k1.name}Arr(o1, n), new ${k2.name}Arr(o2, n)) }"
+      }.mkString("\n") + "\n        }"
+      s"      case r1: ${k1.name}Repr[A1] => $inner"
+    }.mkString("\n") + "\n    }"
+    val unzip3V = "summonFrom {\n" + opKinds.map { k1 =>
+      val m2 = "summonFrom {\n" + opKinds.map { k2 =>
+        val m3 = "summonFrom {\n" + opKinds.map { k3 =>
+          val fill = s"o1(i) = ${wr(k1, "r1.unwrap(t._1)")}; o2(i) = ${wr(k2, "r2.unwrap(t._2)")}; o3(i) = ${wr(k3, "r3.unwrap(t._3)")}"
+          s"              case r3: ${k3.name}Repr[A3] => { val o1 = ${allocFor(k1, "r1")}; val o2 = ${allocFor(k2, "r2")}; val o3 = ${allocFor(k3, "r3")}; xs match { case leaf: RefArr => { val sa = leaf.arr; var i = 0; while (i < n) { val t = ev(sa(i).asInstanceOf[A]); $fill; i += 1 } }; case _ => { var i = 0; while (i < n) { val t = ev((xs: FBase).applyBoxed(i).asInstanceOf[A]); $fill; i += 1 } } }; (new ${k1.name}Arr(o1, n), new ${k2.name}Arr(o2, n), new ${k3.name}Arr(o3, n)) }"
+        }.mkString("\n") + "\n            }"
+        s"          case r2: ${k2.name}Repr[A2] => $m3"
+      }.mkString("\n") + "\n        }"
+      s"      case r1: ${k1.name}Repr[A1] => $m2"
+    }.mkString("\n") + "\n    }"
     val updated = dispatchB(k => s"new ${k.name}Updated(xs, index, ${wr(k, "r.unwrap(elem)")})")
     val append = dispatchB(k => s"new ${k.name}Append(xs, r.unwrap(elem))")
     val prepend = dispatchA(k => s"new ${k.name}Prepend(r.unwrap(elem), xs)")
@@ -321,6 +341,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  }
        |  inline def containsImpl[A](xs: FBase, elem: A): Boolean = $contains
        |  inline def mapConserveImpl[A](xs: FBase)(inline f: A => A): FBase = $mapConserve
+       |  inline def unzipImpl[A, A1, A2](xs: FBase)(ev: A <:< (A1, A2)): (FBase, FBase) = { val n = xs.length; $unzipV }
+       |  inline def unzip3Impl[A, A1, A2, A3](xs: FBase)(ev: A <:< (A1, A2, A3)): (FBase, FBase, FBase) = { val n = xs.length; $unzip3V }
        |  inline def applyAtImpl[A](xs: FBase, i: Int): A = $applyAt
        |  inline def flatMapImpl[A, B](xs: FBase)(inline f: A => FBase): FBase = { val cnt = xs.length; $flatMapOne }
        |  inline def updatedImpl[A, B](xs: FBase, index: Int, elem: B): FBase = $updated
