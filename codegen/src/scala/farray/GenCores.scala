@@ -194,6 +194,10 @@ object GenCores extends BleepCodegenScript("GenCores") {
       s"dfs${k.name}(xs)((a, n) => { var i = 0; while (i < n) { acc = op(acc, ${read(k)}); i += 1 } })(v => { acc = op(acc, ${readOne(k)}) })")
     val foreach = dispatchA(k =>
       s"dfs${k.name}(xs)((a, n) => { var i = 0; while (i < n) { f(${read(k)}); i += 1 } })(v => { f(${readOne(k)}) })")
+    // short-circuiting traversal: f returns Step.Break to stop. Leaf fast-path (tight loop + break);
+    // other shapes read via <kind>At per element with break. No boxing (Step.Break is a singleton).
+    val foreachBreakable = dispatchA(k =>
+      s"xs match { case leaf: ${k.name}Arr => { val ar = leaf.arr; val ln = leaf.length; var i = 0; var go = true; while (i < ln && go) { if (f(${readVal(k, "ar(i)")}) eq Step.Break) go = false; i += 1 } }; case _ => { val ln = xs.length; var i = 0; var go = true; while (i < ln && go) { if (f(${readVal(k, s"${k.lc}At(xs, i)")}) eq Step.Break) go = false; i += 1 } } }")
     val mapM = "summonFrom {\n" + opKinds.map { ka =>
       val inner = "summonFrom {\n" + opKinds.map { kb =>
         s"          case rb: ${kb.name}Repr[B] => { val out = ${alloc(kb, "rb")}; var o = 0; dfs${ka.name}(xs)((a, len) => { var i = 0; while (i < len) { out(o) = ${wr(kb, s"rb.unwrap(f(${read(ka)}))")}; o += 1; i += 1 } })(v => { out(o) = ${wr(kb, s"rb.unwrap(f(${readOne(ka)}))")}; o += 1 }); new ${kb.name}Arr(out, n) }"
@@ -252,6 +256,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    acc
        |  }
        |  inline def foreachImpl[A](xs: FBase)(inline f: A => Unit): Unit = $foreach
+       |  inline def foreachBreakableImpl[A](xs: FBase)(inline f: A => Step): Unit = $foreachBreakable
        |  inline def mapImpl[A, B](xs: FBase)(inline f: A => B): FBase = {
        |    val n = xs.length
        |    $mapM
