@@ -40,6 +40,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       Files.writeString(dir.resolve("Concat.java"), concat)
       Files.writeString(dir.resolve("RangeNode.java"), rangeNode)
       Files.writeString(dir.resolve("ReverseNode.java"), reverseNode)
+      Files.writeString(dir.resolve("Hashing.java"), hashing)
       prims.foreach { p =>
         Files.writeString(dir.resolve(s"${p.name}Arr.java"), primCore(p))
         Files.writeString(dir.resolve(s"${p.name}Append.java"), primAppend(p))
@@ -290,11 +291,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    @Override public FBase reverse() { return length < 2 ? this : new ReverseNode(this); }
        |    @Override public FBase init() { return new $cls(arr, length - 1); }
        |
-       |    @Override public int hashCode() {
-       |        int result = 1;
-       |        for (int i = 0; i < length; i++) result = 31 * result + ${p.boxed}.hashCode(arr[i]);
-       |        return result;
-       |    }
+       |    @Override public int hashCode() { return Hashing.hashOf(this); }
        |    @Override public boolean equals(Object obj) {
        |        if (this == obj) return true;
        |        if (!(obj instanceof $cls)) return Concat.elementwiseEquals(this, obj);
@@ -344,11 +341,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    @Override public FBase reverse() { return length < 2 ? this : new ReverseNode(this); }
        |    @Override public FBase init() { return new RefArr(arr, length - 1); }
        |
-       |    @Override public int hashCode() {
-       |        int result = 1;
-       |        for (int i = 0; i < length; i++) { Object e = arr[i]; result = 31 * result + (e == null ? 0 : e.hashCode()); }
-       |        return result;
-       |    }
+       |    @Override public int hashCode() { return Hashing.hashOf(this); }
        |    @Override public boolean equals(Object obj) {
        |        if (this == obj) return true;
        |        if (!(obj instanceof RefArr)) return Concat.elementwiseEquals(this, obj);
@@ -404,11 +397,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    @Override public FBase init() { return take(length - 1); }
 
        |
-       |    @Override public int hashCode() {
-       |        int result = 1;
-       |        for (int i = 0; i < length; i++) { Object e = applyBoxed(i); result = 31 * result + (e == null ? 0 : e.hashCode()); }
-       |        return result;
-       |    }
+       |    @Override public int hashCode() { return Hashing.hashOf(this); }
        |    @Override public boolean equals(Object obj) { return elementwiseEquals(this, obj); }
        |    @Override public String toString() { return render(this); }
        |
@@ -457,7 +446,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    }
        |    @Override public FBase reverse() { return length < 2 ? this : new RangeNode(start + (length - 1) * step, -step, length); }
        |    @Override public FBase init() { return take(length - 1); }
-       |    @Override public int hashCode() { int r = 1; for (int i = 0; i < length; i++) r = 31 * r + Integer.hashCode(start + i * step); return r; }
+       |    @Override public int hashCode() { return Hashing.hashOf(this); }
        |    @Override public boolean equals(Object o) { return Concat.elementwiseEquals(this, o); }
        |    @Override public String toString() { return Concat.render(this); }
        |}
@@ -489,11 +478,79 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    }
        |    @Override public FBase reverse() { return base; }
        |    @Override public FBase init() { return take(length - 1); }
-       |    @Override public int hashCode() { int r = 1; for (int i = 0; i < length; i++) { Object e = applyBoxed(i); r = 31 * r + (e == null ? 0 : e.hashCode()); } return r; }
+       |    @Override public int hashCode() { return Hashing.hashOf(this); }
        |    @Override public boolean equals(Object o) { return Concat.elementwiseEquals(this, o); }
        |    @Override public String toString() { return Concat.render(this); }
        |}
        |""".stripMargin
+
+  /** Unboxed, order-dependent hash: dispatch on each node's runtime kind and hash raw primitives.
+    * Replaces the per-node applyBoxed loops (which boxed every element). `rev` flips order for ReverseNode. */
+  private def hashing: String = {
+    def eh(p: Prim, e: String): String = p.name match
+      case "Long"    => s"scala.runtime.Statics.longHash($e)"
+      case "Double"  => s"scala.runtime.Statics.doubleHash($e)"
+      case "Float"   => s"scala.runtime.Statics.floatHash($e)"
+      case "Boolean" => s"($e ? 1231 : 1237)"
+      case _         => e // Int/Short/Byte/Char: ## is the (widened) value
+    val leafFill = prims.map(p =>
+      s"""       |        if (node instanceof ${p.name}Arr a) { if (rev) for (int i = a.length - 1; i >= 0; i--) hs[pos++] = ${eh(p, "a.arr[i]")}; else for (int i = 0; i < a.length; i++) hs[pos++] = ${eh(p, "a.arr[i]")}; return pos; }""").mkString("\n")
+    val appendFill = prims.map(p =>
+      s"""       |        if (node instanceof ${p.name}Append ap) { if (rev) { hs[pos++] = ${eh(p, "ap.elem")}; return fill(ap.base, true, hs, pos); } else { pos = fill(ap.base, false, hs, pos); hs[pos++] = ${eh(p, "ap.elem")}; return pos; } }""").mkString("\n")
+    val prependFill = prims.map(p =>
+      s"""       |        if (node instanceof ${p.name}Prepend pp) { if (rev) { pos = fill(pp.base, true, hs, pos); hs[pos++] = ${eh(p, "pp.elem")}; return pos; } else { hs[pos++] = ${eh(p, "pp.elem")}; return fill(pp.base, false, hs, pos); } }""").mkString("\n")
+    s"""package farray;
+       |
+       |// GENERATED by GenCores — do not edit. Hash byte-for-byte equal to Scala Seq.hashCode (List/Vector):
+       |// collect each element's ## (unboxed, via scala.runtime.Statics) into an int[], then run MurmurHash3's
+       |// ordered hash INCLUDING its arithmetic-progression optimisation (a constant-stride hash sequence ->
+       |// rangeHash). A standalone RangeNode hashes in O(1) via rangeHash (no million-element walk). The int[]
+       |// holds primitive element-hashes — no element is ever boxed.
+       |final class Hashing {
+       |    private static final int SEED = "Seq".hashCode();
+       |    static int hashOf(FBase node) {
+       |        if (node instanceof RangeNode rg) {
+       |            if (rg.length == 0) return finalizeHash(SEED, 0);
+       |            if (rg.length == 1) return finalizeHash(mix(SEED, rg.start), 1);
+       |            return rangeHash(rg.start, rg.step, rg.start + (rg.length - 1) * rg.step, SEED);
+       |        }
+       |        int[] hs = new int[node.length];
+       |        fill(node, false, hs, 0);
+       |        return ordered(hs);
+       |    }
+       |    private static int mix(int h, int d) { return scala.util.hashing.MurmurHash3$$.MODULE$$.mix(h, d); }
+       |    private static int finalizeHash(int h, int n) { return scala.util.hashing.MurmurHash3$$.MODULE$$.finalizeHash(h, n); }
+       |    private static int rangeHash(int start, int step, int last, int seed) { return scala.util.hashing.MurmurHash3$$.MODULE$$.rangeHash(start, step, last, seed); }
+       |    /** Exactly scala.util.hashing.MurmurHash3.orderedHash, hoisted to an int[] of element-hashes. */
+       |    private static int ordered(int[] h) {
+       |        int n = h.length;
+       |        if (n == 0) return finalizeHash(SEED, 0);
+       |        if (n == 1) return finalizeHash(mix(SEED, h[0]), 1);
+       |        int diff = h[1] - h[0];
+       |        boolean isRange = true;
+       |        for (int i = 2; i < n; i++) if (h[i] - h[i - 1] != diff) { isRange = false; break; }
+       |        if (isRange) return rangeHash(h[0], diff, h[n - 1], SEED);
+       |        int acc = SEED;
+       |        for (int i = 0; i < n; i++) acc = mix(acc, h[i]);
+       |        return finalizeHash(acc, n);
+       |    }
+       |    /** Append each element's ## to hs in sequence order (rev flips it); returns the next free index. */
+       |    private static int fill(FBase node, boolean rev, int[] hs, int pos) {
+$leafFill
+       |        if (node instanceof RefArr a) { if (rev) for (int i = a.length - 1; i >= 0; i--) hs[pos++] = scala.runtime.Statics.anyHash(a.arr[i]); else for (int i = 0; i < a.length; i++) hs[pos++] = scala.runtime.Statics.anyHash(a.arr[i]); return pos; }
+       |        if (node instanceof Concat c) { if (rev) { pos = fill(c.right, true, hs, pos); return fill(c.left, true, hs, pos); } else { pos = fill(c.left, false, hs, pos); return fill(c.right, false, hs, pos); } }
+$appendFill
+$prependFill
+       |        if (node instanceof RefAppend ap) { if (rev) { hs[pos++] = scala.runtime.Statics.anyHash(ap.elem); return fill(ap.base, true, hs, pos); } else { pos = fill(ap.base, false, hs, pos); hs[pos++] = scala.runtime.Statics.anyHash(ap.elem); return pos; } }
+       |        if (node instanceof RefPrepend pp) { if (rev) { pos = fill(pp.base, true, hs, pos); hs[pos++] = scala.runtime.Statics.anyHash(pp.elem); return pos; } else { hs[pos++] = scala.runtime.Statics.anyHash(pp.elem); return fill(pp.base, false, hs, pos); } }
+       |        if (node instanceof ReverseNode r) { return fill(r.base, !rev, hs, pos); }
+       |        if (node instanceof RangeNode rg) { if (rev) for (int i = rg.length - 1; i >= 0; i--) hs[pos++] = rg.start + i * rg.step; else for (int i = 0; i < rg.length; i++) hs[pos++] = rg.start + i * rg.step; return pos; }
+       |        for (int i = 0; i < node.length; i++) hs[pos++] = scala.runtime.Statics.anyHash(node.applyBoxed(rev ? node.length - 1 - i : i));
+       |        return pos;
+       |    }
+       |}
+       |""".stripMargin
+  }
 
   private def primAppend(p: Prim): String = {
     val cls = s"${p.name}Append"
@@ -518,11 +575,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    }
        |    @Override public FBase reverse() { return new ${p.name}Prepend(elem, base.reverse()); }
        |    @Override public FBase init() { return base; }
-       |    @Override public int hashCode() {
-       |        int result = 1;
-       |        for (int i = 0; i < length; i++) { Object e = applyBoxed(i); result = 31 * result + (e == null ? 0 : e.hashCode()); }
-       |        return result;
-       |    }
+       |    @Override public int hashCode() { return Hashing.hashOf(this); }
        |    @Override public boolean equals(Object obj) { return Concat.elementwiseEquals(this, obj); }
        |    @Override public String toString() { return Concat.render(this); }
        |}
@@ -556,11 +609,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    }
        |    @Override public FBase reverse() { return new ${p.name}Append(base.reverse(), elem); }
        |    @Override public FBase init() { return take(length - 1); }
-       |    @Override public int hashCode() {
-       |        int result = 1;
-       |        for (int i = 0; i < length; i++) { Object e = applyBoxed(i); result = 31 * result + (e == null ? 0 : e.hashCode()); }
-       |        return result;
-       |    }
+       |    @Override public int hashCode() { return Hashing.hashOf(this); }
        |    @Override public boolean equals(Object obj) { return Concat.elementwiseEquals(this, obj); }
        |    @Override public String toString() { return Concat.render(this); }
        |}
@@ -597,11 +646,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    }
        |    @Override public FBase reverse() { $reverse }
        |    @Override public FBase init() { $init }
-       |    @Override public int hashCode() {
-       |        int result = 1;
-       |        for (int i = 0; i < length; i++) { Object e = applyBoxed(i); result = 31 * result + (e == null ? 0 : e.hashCode()); }
-       |        return result;
-       |    }
+       |    @Override public int hashCode() { return Hashing.hashOf(this); }
        |    @Override public boolean equals(Object obj) { return Concat.elementwiseEquals(this, obj); }
        |    @Override public String toString() { return Concat.render(this); }
        |}

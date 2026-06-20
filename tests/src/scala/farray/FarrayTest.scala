@@ -102,6 +102,40 @@ class FListTest:
   @Test def test_zip: Unit = test2(_ zip _)(_ zip _)
   @Test def test_zipWithIndex: Unit = test1(_.zipWithIndex)(_.zipWithIndex)
 
+  @Test def test_hashCode_matchesList(): Unit =
+    def chk(name: String, fa: FArray[Any], l: List[Any]): Unit =
+      assertEquals(name, l.hashCode.toLong, fa.hashCode.toLong)
+    chk("flat", FArray(1, 2, 3, 4, 5), List(1, 2, 3, 4, 5))
+    chk("concat", FArray(1, 2, 3) ++ FArray(4, 5), List(1, 2, 3, 4, 5))
+    chk("append", FArray(1, 2, 3) :+ 4, List(1, 2, 3, 4))
+    chk("prepend", 0 +: FArray(1, 2, 3), List(0, 1, 2, 3))
+    chk("append chain", FArray(1) :+ 2 :+ 3 :+ 4, List(1, 2, 3, 4))
+    chk("prepend chain", 1 +: 2 +: 3 +: FArray(4), List(1, 2, 3, 4))
+    chk("range", FArray.range(0, 10), List.range(0, 10))
+    chk("range step", FArray.range(2, 20, 3), List.range(2, 20, 3))
+    chk("range desc", FArray.range(10, 0, -2), List.range(10, 0, -2))
+    chk("reverse flat", FArray(1, 2, 3, 4).reverse, List(1, 2, 3, 4).reverse)
+    chk("reverse range", FArray.range(0, 10).reverse, List.range(0, 10).reverse)
+    chk("reverse concat", (FArray(1, 2) ++ FArray(3, 4)).reverse, List(4, 3, 2, 1))
+    chk("nested concat", (FArray(1) ++ FArray(2)) ++ (FArray(3) ++ FArray(4)), List(1, 2, 3, 4))
+    val cpx = ((FArray.range(0, 5) :+ 99) ++ FArray(-1, -2)).reverse
+    chk("complex", cpx, (((0 to 4).toList :+ 99) ::: List(-1, -2)).reverse)
+    chk("strings", FArray("a", "b", "c") ++ FArray("d"), List("a", "b", "c", "d"))
+    chk("strings non-arith", FArray("xy", "q", "zzz"), List("xy", "q", "zzz"))
+    chk("longs", FArray(1L, 2L, 3L) :+ 4L, List(1L, 2L, 3L, 4L))
+    chk("doubles", FArray(1.5, 2.5) ++ FArray(3.5), List(1.5, 2.5, 3.5))
+    chk("long-as-int unify", FArray(1L, 2L, 3L), List(1, 2, 3))
+    chk("empty", FArray.empty[Int], List.empty[Int])
+    chk("single", FArray(42), List(42))
+    // a standalone million-element range hashes in O(1) and still equals the materialised List
+    chk("range 1e6", FArray.range(0, 1000000), List.range(0, 1000000))
+    // structure-independence: same contents, different shapes, same hash
+    assertEquals(
+      "struct-indep",
+      FArray(1, 2, 3, 4, 5).hashCode.toLong,
+      (FArray(1, 2) ++ (FArray(3) :+ 4 :+ 5)).hashCode.toLong
+    )
+
   @Test def testRange(): Unit = {
     assertEquals("", List.range(0, 5, 1), FArray.range(0, 5, 1).toList)
     assertEquals("", List.range(0, 5, 2), FArray.range(0, 5, 2).toList)
