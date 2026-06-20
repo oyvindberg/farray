@@ -165,22 +165,42 @@ object GenCores extends BleepCodegenScript("GenCores") {
          |  def flatMapCopyOne${k.name}(node: FBase, out: Array[${k.arr}], off0: Int): Unit = {
          |    var o = off0; dfs${k.name}(node)((a, ln) => { System.arraycopy(a, 0, out, o, ln); o += ln })(v => { out(o) = v; o += 1 })
          |  }""".stripMargin).mkString("\n")
+    // Natural (run-adaptive) bottom-up mergesort, fully unboxed via the inline comparator. Detects existing
+    // ascending runs and reverses strictly-descending ones in place (so already/reverse-sorted input is
+    // O(n)), then merges runs pairwise with ping-pong buffers. Stable: equal elements keep their order (the
+    // merge prefers the left run; ascending-run detection is non-strict, descending is strict).
     val sortArr = opKinds.map(k =>
       s"""  inline def sort${k.name}(a: Array[${k.arr}], n: Int)(inline less: (${k.arr}, ${k.arr}) => Boolean): Array[${k.arr}] = {
-         |    var src = a; var dst = new Array[${k.arr}](n); var width = 1
-         |    while (width < n) {
-         |      var lo = 0
-         |      while (lo < n) {
-         |        val mid = if (lo + width < n) lo + width else n; val hi = if (lo + 2 * width < n) lo + 2 * width else n
-         |        var i = lo; var j = mid; var k = lo
-         |        while (i < mid && j < hi) { if (less(src(j), src(i))) { dst(k) = src(j); j += 1 } else { dst(k) = src(i); i += 1 }; k += 1 }
-         |        while (i < mid) { dst(k) = src(i); i += 1; k += 1 }
-         |        while (j < hi) { dst(k) = src(j); j += 1; k += 1 }
-         |        lo += 2 * width
+         |    if (n < 2) a else {
+         |      var sruns = new Array[Int](n + 1); var nr = 0; var i = 0
+         |      while (i < n) {
+         |        sruns(nr) = i; nr += 1; var j = i + 1
+         |        if (j < n) {
+         |          if (less(a(j), a(i))) { j += 1; while (j < n && less(a(j), a(j - 1))) j += 1; var lo = i; var hi = j - 1; while (lo < hi) { val t = a(lo); a(lo) = a(hi); a(hi) = t; lo += 1; hi -= 1 } }
+         |          else { j += 1; while (j < n && !less(a(j), a(j - 1))) j += 1 }
+         |        }
+         |        i = j
          |      }
-         |      val t = src; src = dst; dst = t; width *= 2
+         |      sruns(nr) = n
+         |      var src = a; var dst = new Array[${k.arr}](n); var druns = new Array[Int](nr + 1)
+         |      while (nr > 1) {
+         |        var r = 0; var w = 0
+         |        while (r < nr) {
+         |          druns(w) = sruns(r); w += 1
+         |          if (r + 1 < nr) {
+         |            val lo = sruns(r); val mid = sruns(r + 1); val hi = sruns(r + 2)
+         |            var x = lo; var y = mid; var k = lo
+         |            while (x < mid && y < hi) { if (less(src(y), src(x))) { dst(k) = src(y); y += 1 } else { dst(k) = src(x); x += 1 }; k += 1 }
+         |            while (x < mid) { dst(k) = src(x); x += 1; k += 1 }
+         |            while (y < hi) { dst(k) = src(y); y += 1; k += 1 }
+         |            r += 2
+         |          } else { val lo = sruns(r); System.arraycopy(src, lo, dst, lo, n - lo); r += 1 }
+         |        }
+         |        druns(w) = n
+         |        val ts = src; src = dst; dst = ts; val tr = sruns; sruns = druns; druns = tr; nr = w
+         |      }
+         |      src
          |    }
-         |    src
          |  }""".stripMargin).mkString("\n")
 
     // Reference reads cast the leaf array to Array[A] (checkcast hoisted out of the loop at the
@@ -280,13 +300,19 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // Sort on FArray's own representation: materialize the kind array ONCE, stable-sort an int[] index
     // array (no Vector, no boxed indices), then permute into a fresh leaf. sortWith's comparator is inline
     // (fully unboxed); sorted/sortBy box only per ord comparison.
-    // sortWith/sorted: sort the materialized kind array DIRECTLY (no index indirection).
-    def sortDirect(k: Kind, less: String): String =
-      s"{ val vals = materialize${k.name}(xs); val n = vals.length; if (n < 2) xs else new ${k.name}Arr(sort${k.name}(vals, n)((x, y) => $less), n) }"
-    val sortWith = dispatchA(k => sortDirect(k, s"lt(${readVal(k, "x")}, ${readVal(k, "y")})"))
-    val sortedV  = dispatchA(k => sortDirect(k, s"ord.lt(${readVal(k, "x")}, ${readVal(k, "y")})"))
-    // sortBy: keys differ from values, so sort an int[] index by the materialized keys, then permute.
-    val sortByV  = dispatchA(k => s"{ val vals = materialize${k.name}(xs); val n = vals.length; if (n < 2) xs else { val keys = mapImpl[A, B](xs)(f); val idx = new Array[Int](n); var t = 0; while (t < n) { idx(t) = t; t += 1 }; sortIndices(idx, n)((ii, jj) => ord.lt(applyAtImpl[B](keys, ii), applyAtImpl[B](keys, jj))); val out = ${allocPlain(k)}; var p = 0; while (p < n) { out(p) = vals(idx(p)); p += 1 }; new ${k.name}Arr(out, n) } }")
+    // sortWith/sorted: Ref arrays use java.util.Arrays.sort (TimSort — stable, run-detecting, no boxing on
+    // Object[]); primitive arrays keep the unboxed mergesort (a boxed-Integer TimSort would be slower).
+    def sortDirect(k: Kind, ltXY: String, ltYX: String): String =
+      if k.name == "Ref" then
+        s"{ val vals = materializeRef(xs); val n = vals.length; if (n < 2) xs else { java.util.Arrays.sort(vals, ((x: Object, y: Object) => { if ($ltXY) -1 else if ($ltYX) 1 else 0 }): java.util.Comparator[Object]); new RefArr(vals, n) } }"
+      else
+        s"{ val vals = materialize${k.name}(xs); val n = vals.length; if (n < 2) xs else new ${k.name}Arr(sort${k.name}(vals, n)((x, y) => $ltXY), n) }"
+    val sortWith = dispatchA(k => sortDirect(k, s"lt(${readVal(k, "x")}, ${readVal(k, "y")})", s"lt(${readVal(k, "y")}, ${readVal(k, "x")})"))
+    val sortedV  = dispatchA(k => sortDirect(k, s"ord.lt(${readVal(k, "x")}, ${readVal(k, "y")})", s"ord.lt(${readVal(k, "y")}, ${readVal(k, "x")})"))
+    // sortBy: keys differ from values -> sort an UNBOXED int[] index by the materialized keys, then permute.
+    // (Java's Arrays.sort can't sort an int[] by a comparator without boxing to Integer[], which is slower
+    // than this — Java TimSort only helps the direct Ref element sorts above, where the array IS Object[].)
+    val sortByV  = dispatchA(k => s"{ val vals = materialize${k.name}(xs); val n = vals.length; if (n < 2) xs else { val keys = mapImpl[A, B](xs)(f); val idx = new Array[Int](n); var t = 0; while (t < n) { idx(t) = t; t += 1 }; val sidx = sortInt(idx, n)((ii, jj) => ord.lt(applyAtImpl[B](keys, ii), applyAtImpl[B](keys, jj))); val out = ${allocPlain(k)}; var p = 0; while (p < n) { out(p) = vals(sidx(p)); p += 1 }; new ${k.name}Arr(out, n) } }")
     val emptyB = dispatchA(k => s"${k.name}Arr.EMPTY")
     val tabulate = dispatchA(k =>
       s"if (n <= 0) ${k.name}Arr.EMPTY else { val out = ${alloc(k, "r")}; var i = 0; while (i < n) { out(i) = ${wr(k, "r.unwrap(f(i))")}; i += 1 }; new ${k.name}Arr(out, n) }")
@@ -349,25 +375,6 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def appendImpl[A, B](xs: FBase, elem: B): FBase = $append
        |  inline def prependImpl[A](elem: A, xs: FBase): FBase = $prepend
        |  inline def padToImpl[A, B](xs: FBase, len: Int, elem: B): FBase = $padTo
-       |  // stable bottom-up mergesort over an int[] of indices; `less(i, j)` = element-at-i sorts before element-at-j
-       |  inline def sortIndices(idx: Array[Int], n: Int)(inline less: (Int, Int) => Boolean): Unit = {
-       |    val tmp = new Array[Int](n)
-       |    var width = 1
-       |    while (width < n) {
-       |      var lo = 0
-       |      while (lo < n) {
-       |        val mid = if (lo + width < n) lo + width else n
-       |        val hi = if (lo + 2 * width < n) lo + 2 * width else n
-       |        var i = lo; var j = mid; var k = lo
-       |        while (i < mid && j < hi) { if (less(idx(j), idx(i))) { tmp(k) = idx(j); j += 1 } else { tmp(k) = idx(i); i += 1 }; k += 1 }
-       |        while (i < mid) { tmp(k) = idx(i); i += 1; k += 1 }
-       |        while (j < hi) { tmp(k) = idx(j); j += 1; k += 1 }
-       |        lo += 2 * width
-       |      }
-       |      System.arraycopy(tmp, 0, idx, 0, n)
-       |      width *= 2
-       |    }
-       |  }
        |  inline def sortWithImpl[A](xs: FBase)(inline lt: (A, A) => Boolean): FBase = $sortWith
        |  inline def sortedImpl[A, B >: A](xs: FBase)(using ord: Ordering[B]): FBase = $sortedV
        |  inline def sortByImpl[A, B](xs: FBase)(inline f: A => B)(using ord: Ordering[B]): FBase = $sortByV
