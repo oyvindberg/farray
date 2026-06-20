@@ -230,6 +230,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
       else s"{ val e = r.unwrap(elem); xs match { case leaf: ${k.name}Arr => { val ar = leaf.arr; val ln = leaf.length; var i = 0; var res = false; while (i < ln) { if (ar(i) == e) { res = true; i = ln } else i += 1 }; res }; case _ => { val ln = xs.length; var i = 0; var res = false; while (i < ln) { if (${k.lc}At(xs, i) == e) { res = true; i = ln } else i += 1 }; res } } }")
     val applyAt = dispatchA(k =>
       if k.name == "Ref" then s"r.wrap(${k.lc}At(xs, i).asInstanceOf[A])" else s"r.wrap(${k.lc}At(xs, i))")
+    // mapConserve: scan for the first element f actually changes (reference !eq); if none, return xs with NO
+    // allocation. Only on a change do we copy + apply f from there. (Prims always "change" — boxed eq — so
+    // they materialize like map, which is correct: a primitive can't be conserved.)
+    val mapConserve = dispatchA { k =>
+      val applyFrom = s"var j = diff; while (j < n) { out(j) = ${wr(k, s"r.unwrap(f(${readVal(k, "out(j)")}))")}; j += 1 }; new ${k.name}Arr(out, n)"
+      s"xs match { case leaf: ${k.name}Arr => { val sa = leaf.arr; val n = leaf.length; var i = 0; var diff = -1; while (i < n && diff < 0) { val a = ${readVal(k, "sa(i)")}; if (!(f(a).asInstanceOf[AnyRef] eq a.asInstanceOf[AnyRef])) diff = i; i += 1 }; if (diff < 0) xs else { val out = java.util.Arrays.copyOf(sa, n); $applyFrom } }; case _ => { val n = xs.length; var i = 0; var diff = -1; while (i < n && diff < 0) { val a = ${readVal(k, s"${k.lc}At(xs, i)")}; if (!(f(a).asInstanceOf[AnyRef] eq a.asInstanceOf[AnyRef])) diff = i; i += 1 }; if (diff < 0) xs else { val out = materialize${k.name}(xs); $applyFrom } } }"
+    }
     // ONE pass, no inner buffer: dfs the source, and for each element append f(x)'s elements straight into a
     // growing output array (inline grow). The inner FArray is created, matched, and arraycopied within the
     // loop body, never stored -> escape analysis drops its wrapper, so each inner costs only its int[] (like
@@ -313,6 +320,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    $filter
        |  }
        |  inline def containsImpl[A](xs: FBase, elem: A): Boolean = $contains
+       |  inline def mapConserveImpl[A](xs: FBase)(inline f: A => A): FBase = $mapConserve
        |  inline def applyAtImpl[A](xs: FBase, i: Int): A = $applyAt
        |  inline def flatMapImpl[A, B](xs: FBase)(inline f: A => FBase): FBase = { val cnt = xs.length; $flatMapOne }
        |  inline def updatedImpl[A, B](xs: FBase, index: Int, elem: B): FBase = $updated

@@ -224,10 +224,7 @@ object FArray:
           outer(c) = (FArray.tabulate[B](n)(r => FArrayOps.applyAtImpl[B](inners(r).asInstanceOf[FBase], cc)): FArray[B]).asInstanceOf[Object]
           c += 1
         new RefArr(outer, cols).asInstanceOf[FArray[FArray[B]]]
-    inline def mapConserve(inline f: A => A): FArray[A] =
-      var changed = false
-      val out = xs.map { a => val b = f(a); if !(b.asInstanceOf[AnyRef] eq a.asInstanceOf[AnyRef]) then changed = true; b }
-      if changed then out else xs
+    inline def mapConserve(inline f: A => A): FArray[A] = FArrayOps.mapConserveImpl[A](xs)(f)
 
   extension [A](elem: A)
     inline def +: (xs: FArray[A]): FArray[A] = FArrayOps.prependImpl[A](elem, xs)
