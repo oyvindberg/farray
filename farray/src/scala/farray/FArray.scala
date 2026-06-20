@@ -1,20 +1,15 @@
 package farray
 
+import scala.reflect.ClassTag
+
 /**
- * `FArray` — opaque type over the sealed core hierarchy [[FBase]] (leaf cores `IntArr`/`RefArr`/…,
- * the `Concat` tree node, unary `…Append`/`…Prepend` nodes). `++`/`:+`/`+:` are O(1) (build a node,
- * base shared).
- *
- * This file is the stable, hand-written API surface. The per-kind specialized implementations — the
- * `erasedValue` dispatch, the explicit-stack `dfs<Kind>` traversals, the `map` read×write matrix —
- * are GENERATED into `FArrayOps` (one template per combinator in `GenCores`), so adding a primitive
- * is one row in `GenCores.opKinds`. Element ops forward into `FArrayOps`; structural ops forward to
- * the tree-aware `FBase` virtuals.
- *
- * Specialize-or-fail: the generated dispatch's reference branch is `case _: AnyRef`, so an abstract
- * `A` cannot reduce → COMPILE ERROR (no silent boxing, no covariant-access CCE).
+ * `FArray` — opaque type over the sealed core hierarchy [[FBase]]. Every lambda-taking op is `inline`
+ * with an `inline` function param and applies the lambda through the specialized `foldLeft`/`foreach`/
+ * `map`/`filter`/`take`/`drop` machinery — so the function inlines and primitives stay unboxed, exactly
+ * like `map`. Only inherently-materializing structures (the Map/Set behind `groupBy`/`distinct`, the
+ * sort order) box; the user's lambda never does.
  */
-opaque type FArray[+A] = FBase
+opaque type FArray[+A] <: AnyRef = FBase
 
 object FArray:
 
@@ -22,48 +17,214 @@ object FArray:
   inline def apply[A](as: A*): FArray[A] = FArrayOps.applyImpl[A](as)
   inline def tabulate[A](n: Int)(inline f: Int => A): FArray[A] = FArrayOps.tabulateImpl[A](n)(f)
   inline def fromArray[A](as: Array[A]): FArray[A] = FArrayOps.fromArrayImpl[A](as)
+  inline def fromIterable[A](it: Iterable[A]): FArray[A] = FArrayOps.applyImpl[A](it.toSeq)
+
+  def range(start: Int, end: Int, step: Int = 1): FArray[Int] =
+    require(step != 0, "step cannot be 0")
+    val count =
+      if start == end then 0
+      else
+        val diff = end.toLong - start.toLong
+        require((diff > 0) == (step > 0), "range start/end direction does not match step sign")
+        val c = diff / step
+        (if diff % step != 0 then c + 1 else c).toInt
+    FArrayOps.tabulateImpl[Int](count)(i => start + i * step)
+
+  // boxed materialization, ONLY for ops with no per-element lambda (toX / set-based) — never lambdas.
+  private def coreList[A](core: FBase): List[A] =
+    val b = List.newBuilder[A]
+    var i = 0
+    while i < core.length do { b += core.applyBoxed(i).asInstanceOf[A]; i += 1 }
+    b.result()
 
   extension [A](xs: FArray[A])
-    // shape — element type irrelevant
+    // ---- shape ----
     def length: Int = xs.length
     def size: Int = xs.length
     def isEmpty: Boolean = xs.length == 0
     def nonEmpty: Boolean = xs.length > 0
     def lengthCompare(len: Int): Int = Integer.compare(xs.length, len)
+    def lengthIs: Int = xs.length
+    def sizeIs: Int = xs.length
+    def indices: Range = 0 until xs.length
+    def isDefinedAt(i: Int): Boolean = i >= 0 && i < xs.length
 
-    // structural ops → tree-aware FBase virtuals (O(1)/O(log) over the tree)
+    // ---- structural (tree-aware FBase virtuals) ----
     def take(n: Int): FArray[A] = xs.take(n)
     def drop(n: Int): FArray[A] = xs.drop(n)
+    def takeRight(n: Int): FArray[A] = xs.drop(xs.length - (if n < 0 then 0 else n))
+    def dropRight(n: Int): FArray[A] = xs.take(xs.length - (if n < 0 then 0 else n))
     def slice(from: Int, until: Int): FArray[A] = xs.slice(from, until)
     def reverse: FArray[A] = xs.reverse
     def init: FArray[A] = xs.init
     def tail: FArray[A] = xs.drop(1)
+    def splitAt(n: Int): (FArray[A], FArray[A]) = (xs.take(n), xs.drop(n))
     def ++[B >: A](that: FArray[B]): FArray[B] = xs.concat(that)
+    def :::[B >: A](prefix: FArray[B]): FArray[B] = (xs: FBase).concat(prefix)
+    def reverse_:::[B >: A](prefix: FArray[B]): FArray[B] = (xs.reverse: FBase).concat(prefix)
 
-    // element ops → generated per-kind impls
+    // ---- specialized element ops (lambda inlined, unboxed) ----
     inline def apply(i: Int): A = FArrayOps.applyAtImpl[A](xs, i)
     inline def head: A = FArrayOps.applyAtImpl[A](xs, 0)
     inline def last: A = FArrayOps.applyAtImpl[A](xs, xs.length - 1)
+    def headOption: Option[A] = if xs.length == 0 then None else Some((xs: FBase).applyBoxed(0).asInstanceOf[A])
+    def lastOption: Option[A] = if xs.length == 0 then None else Some((xs: FBase).applyBoxed(xs.length - 1).asInstanceOf[A])
     inline def foldLeft[Z](z: Z)(inline op: (Z, A) => Z): Z = FArrayOps.foldLeftImpl[A, Z](xs, z)(op)
     inline def foreach(inline f: A => Unit): Unit = FArrayOps.foreachImpl[A](xs)(f)
     inline def map[B](inline f: A => B): FArray[B] = FArrayOps.mapImpl[A, B](xs)(f)
     inline def filter(inline p: A => Boolean): FArray[A] = FArrayOps.filterImpl[A](xs)(p)
     inline def filterNot(inline p: A => Boolean): FArray[A] = FArrayOps.filterImpl[A](xs)(a => !p(a))
     inline def contains(elem: A): Boolean = FArrayOps.containsImpl[A](xs, elem)
-    // f returns FArray[B] (opaque at the external inline site) — cast to the underlying FBase the impl wants.
     inline def flatMap[B](inline f: A => FArray[B]): FArray[B] = FArrayOps.flatMapImpl[A, B](xs)(a => f(a).asInstanceOf[FBase])
     inline def updated[B >: A](index: Int, elem: B): FArray[B] = FArrayOps.updatedImpl[A, B](xs, index, elem)
     inline def :+[B >: A](elem: B): FArray[B] = FArrayOps.appendImpl[A, B](xs, elem)
+
+    inline def foldRight[Z](z: Z)(inline op: (A, Z) => Z): Z =
+      xs.reverse.foldLeft(z)((acc, a) => op(a, acc))
+    inline def fold[B >: A](z: B)(inline op: (B, B) => B): B = xs.foldLeft[B](z)((acc, a) => op(acc, a))
+    inline def reduceLeft[B >: A](inline op: (B, A) => B): B = xs.drop(1).foldLeft[B](FArrayOps.applyAtImpl[A](xs, 0))(op)
+    inline def reduce[B >: A](inline op: (B, B) => B): B = xs.drop(1).foldLeft[B](FArrayOps.applyAtImpl[A](xs, 0))((acc, a) => op(acc, a))
+    inline def reduceRight[B >: A](inline op: (A, B) => B): B =
+      xs.dropRight(1).foldRight[B](FArrayOps.applyAtImpl[A](xs, xs.length - 1))(op)
+    inline def reduceOption[B >: A](inline op: (B, B) => B): Option[B] =
+      if xs.length == 0 then None else Some(xs.reduce[B](op))
+
+    inline def count(inline p: A => Boolean): Int =
+      var n = 0; xs.foreach(a => if p(a) then n += 1); n
+    inline def exists(inline p: A => Boolean): Boolean =
+      var r = false; xs.foreach(a => if p(a) then r = true); r
+    inline def forall(inline p: A => Boolean): Boolean =
+      var r = true; xs.foreach(a => if !p(a) then r = false); r
+    inline def find(inline p: A => Boolean): Option[A] =
+      var r: Option[A] = None; xs.foreach(a => if r.isEmpty && p(a) then r = Some(a)); r
+    inline def indexWhere(inline p: A => Boolean): Int =
+      var idx = -1; var i = 0; xs.foreach(a => { if idx < 0 && p(a) then idx = i; i += 1 }); idx
+    inline def indexOf[B >: A](elem: B): Int =
+      var idx = -1; var i = 0; xs.foreach(a => { if idx < 0 && a == elem then idx = i; i += 1 }); idx
+    inline def maxBy[B](inline f: A => B)(using ord: Ordering[B]): A =
+      var best: A = FArrayOps.applyAtImpl[A](xs, 0); var bk: B = f(best)
+      xs.drop(1).foreach((a: A) => { val k = f(a); if ord.gt(k, bk) then { best = a; bk = k } }); best
+    inline def minBy[B](inline f: A => B)(using ord: Ordering[B]): A =
+      var best: A = FArrayOps.applyAtImpl[A](xs, 0); var bk: B = f(best)
+      xs.drop(1).foreach((a: A) => { val k = f(a); if ord.lt(k, bk) then { best = a; bk = k } }); best
+    inline def max[B >: A](using ord: Ordering[B]): A =
+      var best: B = FArrayOps.applyAtImpl[A](xs, 0); xs.drop(1).foreach((a: A) => if ord.gt(a, best) then best = a); best.asInstanceOf[A]
+    inline def min[B >: A](using ord: Ordering[B]): A =
+      var best: B = FArrayOps.applyAtImpl[A](xs, 0); xs.drop(1).foreach((a: A) => if ord.lt(a, best) then best = a); best.asInstanceOf[A]
+    inline def corresponds[B](that: FArray[B])(inline p: (A, B) => Boolean): Boolean =
+      if xs.length != that.length then false
+      else
+        var ok = true; var i = 0
+        while i < xs.length do { if !p(FArrayOps.applyAtImpl[A](xs, i), FArrayOps.applyAtImpl[B](that, i)) then ok = false; i += 1 }
+        ok
+    inline def collectFirst[B](pf: PartialFunction[A, B]): Option[B] =
+      var r: Option[B] = None; xs.foreach(a => if r.isEmpty && pf.isDefinedAt(a) then r = Some(pf(a))); r
+
+    // ---- FArray-building lambda ops: lambda applied via filter/take/drop/foreach (unboxed) ----
+    inline def takeWhile(inline p: A => Boolean): FArray[A] =
+      var n = 0; var stop = false; xs.foreach(a => if !stop then { if p(a) then n += 1 else stop = true }); xs.take(n)
+    inline def dropWhile(inline p: A => Boolean): FArray[A] =
+      var n = 0; var stop = false; xs.foreach(a => if !stop then { if p(a) then n += 1 else stop = true }); xs.drop(n)
+    inline def span(inline p: A => Boolean): (FArray[A], FArray[A]) =
+      var n = 0; var stop = false; xs.foreach(a => if !stop then { if p(a) then n += 1 else stop = true }); (xs.take(n), xs.drop(n))
+    inline def partition(inline p: A => Boolean): (FArray[A], FArray[A]) = (xs.filter(p), xs.filterNot(p))
+    inline def collect[B](pf: PartialFunction[A, B]): FArray[B] = xs.filter(a => pf.isDefinedAt(a)).map(a => pf(a))
+    inline def distinct: FArray[A] =
+      val seen = scala.collection.mutable.HashSet.empty[Any]; xs.filter(a => seen.add(a))
+    inline def distinctBy[B](inline f: A => B): FArray[A] =
+      val seen = scala.collection.mutable.HashSet.empty[B]; xs.filter(a => seen.add(f(a)))
+    inline def zip[B](that: FArray[B]): FArray[(A, B)] =
+      val n = if xs.length < that.length then xs.length else that.length
+      FArray.tabulate(n)(i => (FArrayOps.applyAtImpl[A](xs, i), FArrayOps.applyAtImpl[B](that, i)))
+    inline def zipWithIndex: FArray[(A, Int)] =
+      FArray.tabulate(xs.length)(i => (FArrayOps.applyAtImpl[A](xs, i), i))
+    inline def sortWith(inline lt: (A, A) => Boolean): FArray[A] =
+      val order = (0 until xs.length).sortWith((i, j) => lt(FArrayOps.applyAtImpl[A](xs, i), FArrayOps.applyAtImpl[A](xs, j)))
+      FArray.tabulate(xs.length)(i => FArrayOps.applyAtImpl[A](xs, order(i)))
+    inline def sortBy[B](inline f: A => B)(using ord: Ordering[B]): FArray[A] =
+      val keys = xs.map(f) // f unboxed
+      val order = (0 until xs.length).sortBy(i => FArrayOps.applyAtImpl[B](keys, i))
+      FArray.tabulate(xs.length)(i => FArrayOps.applyAtImpl[A](xs, order(i)))
+    inline def sorted[B >: A](using ord: Ordering[B]): FArray[A] =
+      val order = (0 until xs.length).sortWith((i, j) => ord.lt(FArrayOps.applyAtImpl[A](xs, i), FArrayOps.applyAtImpl[A](xs, j)))
+      FArray.tabulate(xs.length)(i => FArrayOps.applyAtImpl[A](xs, order(i)))
+    inline def groupBy[K](inline f: A => K): Map[K, FArray[A]] =
+      val m = scala.collection.mutable.LinkedHashMap.empty[K, scala.collection.mutable.Builder[A, List[A]]]
+      xs.foreach(a => m.getOrElseUpdate(f(a), List.newBuilder[A]) += a)
+      m.iterator.map((k, b) => k -> FArray.fromIterable(b.result())).toMap
+    inline def groupMap[K, B](inline key: A => K)(inline f: A => B): Map[K, FArray[B]] =
+      val m = scala.collection.mutable.LinkedHashMap.empty[K, scala.collection.mutable.Builder[B, List[B]]]
+      xs.foreach(a => m.getOrElseUpdate(key(a), List.newBuilder[B]) += f(a))
+      m.iterator.map((k, b) => k -> FArray.fromIterable(b.result())).toMap
+    inline def partitionMap[A1, A2](inline f: A => Either[A1, A2]): (FArray[A1], FArray[A2]) =
+      val ls = List.newBuilder[A1]; val rs = List.newBuilder[A2]
+      xs.foreach(a => f(a) match { case Left(l) => ls += l; case Right(r) => rs += r })
+      (FArray.fromIterable(ls.result()), FArray.fromIterable(rs.result()))
 
     def iterator: Iterator[A] =
       val core: FBase = xs
       new Iterator[A]:
         private var i = 0
         def hasNext: Boolean = i < core.length
-        def next(): A =
-          val r = core.applyBoxed(i).asInstanceOf[A]
-          i += 1
-          r
+        def next(): A = { val r = core.applyBoxed(i).asInstanceOf[A]; i += 1; r }
+    def reverseIterator: Iterator[A] =
+      val core: FBase = xs
+      new Iterator[A]:
+        private var i = core.length - 1
+        def hasNext: Boolean = i >= 0
+        def next(): A = { val r = core.applyBoxed(i).asInstanceOf[A]; i -= 1; r }
+
+    // ---- conversions / structure ops (no per-element user lambda) ----
+    def toList: List[A] = coreList(xs)
+    def toVector: Vector[A] = coreList(xs).toVector
+    def toSeq: Seq[A] = coreList(xs)
+    def toSet[B >: A]: Set[B] = coreList[B](xs).toSet
+    def toMap[K, V](using ev: A <:< (K, V)): Map[K, V] = coreList(xs).map(ev).toMap
+    def toArray[B >: A](using ct: ClassTag[B]): Array[B] = coreList[B](xs).toArray
+    def mkString(start: String, sep: String, end: String): String = coreList(xs).mkString(start, sep, end)
+    def mkString(sep: String): String = coreList(xs).mkString(sep)
+    def mkString: String = coreList(xs).mkString
+    def startsWith[B >: A](that: FArray[B]): Boolean = coreList[B](xs).startsWith(coreList[B](that))
+    def endsWith[B >: A](that: FArray[B]): Boolean = coreList[B](xs).endsWith(coreList[B](that))
+
+    inline def padTo[B >: A](len: Int, elem: B): FArray[B] =
+      if len <= xs.length then xs.asInstanceOf[FArray[B]]
+      else FArray.tabulate[B](len)(i => if i < xs.length then FArrayOps.applyAtImpl[A](xs, i) else elem)
+    inline def diff[B >: A](that: FArray[B]): FArray[A] =
+      val rem = scala.collection.mutable.HashMap.empty[Any, Int]
+      that.foreach(b => rem.update(b, rem.getOrElse(b, 0) + 1))
+      xs.filter { a => rem.getOrElse(a, 0) match { case 0 => true; case c => rem.update(a, c - 1); false } }
+    inline def intersect[B >: A](that: FArray[B]): FArray[A] =
+      val keep = scala.collection.mutable.HashMap.empty[Any, Int]
+      that.foreach(b => keep.update(b, keep.getOrElse(b, 0) + 1))
+      xs.filter { a => keep.getOrElse(a, 0) match { case 0 => false; case c => keep.update(a, c - 1); true } }
+    inline def lazyZip[B, C](ys: FArray[B], zs: FArray[C]): FArray[(A, B, C)] =
+      val n = math.min(xs.length, math.min(ys.length, zs.length))
+      FArray.tabulate(n)(i => (FArrayOps.applyAtImpl[A](xs, i), FArrayOps.applyAtImpl[B](ys, i), FArrayOps.applyAtImpl[C](zs, i)))
+    inline def unzip[A1, A2](using ev: A <:< (A1, A2)): (FArray[A1], FArray[A2]) =
+      (FArray.tabulate(xs.length)(i => ev(FArrayOps.applyAtImpl[A](xs, i))._1),
+       FArray.tabulate(xs.length)(i => ev(FArrayOps.applyAtImpl[A](xs, i))._2))
+    inline def unzip3[A1, A2, A3](using ev: A <:< (A1, A2, A3)): (FArray[A1], FArray[A2], FArray[A3]) =
+      (FArray.tabulate(xs.length)(i => ev(FArrayOps.applyAtImpl[A](xs, i))._1),
+       FArray.tabulate(xs.length)(i => ev(FArrayOps.applyAtImpl[A](xs, i))._2),
+       FArray.tabulate(xs.length)(i => ev(FArrayOps.applyAtImpl[A](xs, i))._3))
+    inline def flatten[B](using ev: A <:< FArray[B]): FArray[B] =
+      var acc: FBase = FArrayOps.emptyImpl[B]
+      xs.foreach(a => acc = acc.concat(ev(a)))
+      acc
+    inline def transpose[B](using ev: A <:< FArray[B]): FArray[FArray[B]] =
+      val _ = ev
+      val rows: List[List[Any]] = coreList[FBase](xs).map(r => coreList[Any](r))
+      val cols = rows.transpose
+      val outer = new Array[Object](cols.length)
+      var i = 0
+      cols.foreach { col => outer(i) = new RefArr(col.map(_.asInstanceOf[Object]).toArray, col.length); i += 1 }
+      new RefArr(outer, outer.length).asInstanceOf[FArray[FArray[B]]]
+    inline def mapConserve(inline f: A => A): FArray[A] =
+      var changed = false
+      val out = xs.map { a => val b = f(a); if !(b.asInstanceOf[AnyRef] eq a.asInstanceOf[AnyRef]) then changed = true; b }
+      if changed then out else xs
 
   extension [A](elem: A)
     inline def +: (xs: FArray[A]): FArray[A] = FArrayOps.prependImpl[A](elem, xs)
+    inline def :: (xs: FArray[A]): FArray[A] = FArrayOps.prependImpl[A](elem, xs)
