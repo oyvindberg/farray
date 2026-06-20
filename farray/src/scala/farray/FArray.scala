@@ -28,7 +28,7 @@ object FArray:
         require((diff > 0) == (step > 0), "range start/end direction does not match step sign")
         val c = diff / step
         (if diff % step != 0 then c + 1 else c).toInt
-    FArrayOps.tabulateImpl[Int](count)(i => start + i * step)
+    new RangeNode(start, step, count)
 
   extension [A](xs: FArray[A])
     // ---- shape ----
