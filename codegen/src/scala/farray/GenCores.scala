@@ -151,6 +151,52 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |${dfsBody(k, "c.onLeaf", "c.onOne")}
        |  }""".stripMargin
 
+  // Pull-mode flattening cursor mirroring dfsBody: tree iteration is O(n), not O(n·depth). A "current run"
+  // is a leaf array (mode 1, unboxed reads), a Prepend/Append singleton (mode 2), or an indexed lazy node
+  // (mode 3: Reverse/Pad/Slice/Updated/Range, read via <kind>At). Concat/Append defer a sibling on the stack.
+  private def cursorClass(k: Kind): String = {
+    val ensure = s"if (stack == null) { stack = new Array[FBase](16); tail = new Array[${k.arr}](16); isTail = new Array[Boolean](16) } else if (sp == stack.length) { val nl = sp * 2; stack = java.util.Arrays.copyOf(stack, nl); tail = java.util.Arrays.copyOf(tail, nl); isTail = java.util.Arrays.copyOf(isTail, nl) }"
+    val rngCase = if k.name == "Int" then "\n       |        case rng: RangeNode => { val l = rng.length; cur = null; if (l > 0) { node = rng; pos = 0; len = l; mode = 3; return } }" else ""
+    val nextBoxed = if k.name == "Ref" then s"next${k.name}()" else k.box(s"next${k.name}()")
+    s"""final class ${k.name}Cursor(root: FBase) extends scala.collection.AbstractIterator[Any] {
+       |  private var cur: FBase = root
+       |  private var stack: Array[FBase] = null; private var tail: Array[${k.arr}] = null; private var isTail: Array[Boolean] = null; private var sp = 0
+       |  private var mode = 0; private var arr: Array[${k.arr}] = null; private var node: FBase = null; private var pos = 0; private var len = 0; private var single: ${k.arr} = ${k.dflt}
+       |  private var remaining = root.length
+       |  advance()
+       |  private def advance(): Unit = {
+       |    while (true) {
+       |      if (cur == null) {
+       |        if (sp == 0) { mode = 0; return }
+       |        sp -= 1
+       |        if (isTail(sp)) { single = tail(sp); pos = 0; len = 1; mode = 2; return }
+       |        cur = stack(sp)
+       |      }
+       |      cur match {
+       |        case leaf: ${k.name}Arr => { val l = leaf.length; cur = null; if (l > 0) { arr = leaf.arr; pos = 0; len = l; mode = 1; return } }
+       |        case p: ${k.name}Prepend => { single = p.elem; pos = 0; len = 1; mode = 2; cur = p.base; return }
+       |        case a: ${k.name}Append => { $ensure; tail(sp) = a.elem; isTail(sp) = true; sp += 1; cur = a.base }
+       |        case c: Concat => { $ensure; stack(sp) = c.right; isTail(sp) = false; sp += 1; cur = c.left }
+       |        case rev: ReverseNode => { val l = rev.length; cur = null; if (l > 0) { node = rev; pos = 0; len = l; mode = 3; return } }
+       |        case pd: ${k.name}Pad => { val l = pd.length; cur = null; if (l > 0) { node = pd; pos = 0; len = l; mode = 3; return } }
+       |        case u: ${k.name}Updated => { val l = u.length; cur = null; if (l > 0) { node = u; pos = 0; len = l; mode = 3; return } }
+       |        case s: SliceNode => { val l = s.length; cur = null; if (l > 0) { node = s; pos = 0; len = l; mode = 3; return } }$rngCase
+       |        case _ => { cur = null }
+       |      }
+       |    }
+       |  }
+       |  def hasNext: Boolean = mode != 0
+       |  override def knownSize: Int = remaining
+       |  def next${k.name}(): ${k.arr} = {
+       |    val r: ${k.arr} = mode match { case 1 => arr(pos); case 2 => single; case 3 => FArrayOps.${k.lc}At(node, pos); case _ => throw new java.util.NoSuchElementException("next on empty iterator") }
+       |    pos += 1; remaining -= 1
+       |    if (pos >= len) advance()
+       |    r
+       |  }
+       |  def next(): Any = $nextBoxed
+       |}""".stripMargin
+  }
+
   private def atDef(k: Kind): String = {
     val rngCase = if k.name == "Int" then "\n       |    case rng: RangeNode => rng.start + i * rng.step" else ""
     val padBase = if k.name == "Ref" then "pad.base.applyBoxed(i)" else s"${k.lc}At(pad.base, i)"
@@ -169,6 +215,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
 
   private def farrayOps: String = {
     val dfsConsumers = opKinds.map(dfsConsumer).mkString("\n")
+    val cursors = opKinds.map(cursorClass).mkString("\n")
     val dfsC = opKinds.map(dfsCDef).mkString("\n")
     val ats = opKinds.map(atDef).mkString("\n")
     // Flatten a (possibly deep) Updated chain to a fresh leaf array, ONCE, so dfs can emit it tight via
@@ -267,6 +314,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val collectFirstV = dispatchA(k => scan(k, "var res: Option[B] = None", "if (pf.isDefinedAt(a)) { res = Some(pf(a)); i = ln } else i += 1", "res"))
     val prefixLenV    = dispatchA(k => scan(k, "var res = ln", "if (p(a)) i += 1 else { res = i; i = ln }", "res"))
     val countV        = dispatchA(k => scan(k, "var n = 0", "if (p(a)) n += 1; i += 1", "n"))  // no break, tight leaf scan
+    val iteratorV     = dispatchA(k => s"new ${k.name}Cursor(xs)")
     // foldRight: leaf reads its backing array backward (no ReverseNode allocation); non-leaf walks <kind>At.
     val foldRightV = dispatchA(k =>
       s"xs match { case leaf: ${k.name}Arr => { val ar = leaf.arr; var acc = z; var i = leaf.length - 1; while (i >= 0) { acc = op(${readVal(k, "ar(i)")}, acc); i -= 1 }; acc }; case _ => { var acc = z; var i = xs.length - 1; while (i >= 0) { acc = op(${readVal(k, s"${k.lc}At(xs, i)")}, acc); i -= 1 }; acc } }")
@@ -407,6 +455,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |$lessTraits
        |// Per-kind leaf-run consumers for the non-inline dfsC traversals.
        |$dfsConsumers
+       |$cursors
        |object FArrayOps {
        |$dfsC
        |$ats
@@ -423,6 +472,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def fromArrayImpl[A](as: Array[A]): FBase = $fromArr
        |  inline def foldLeftImpl[A, Z](xs: FBase, z: Z)(inline op: (Z, A) => Z): Z = $foldLeft
        |  inline def foldRightImpl[A, Z](xs: FBase, z: Z)(inline op: (A, Z) => Z): Z = $foldRightV
+       |  inline def iteratorImpl[A](xs: FBase): Iterator[A] = ($iteratorV).asInstanceOf[Iterator[A]]
        |  inline def countImpl[A](xs: FBase)(inline p: A => Boolean): Int = $countV
        |  inline def foreachImpl[A](xs: FBase)(inline f: A => Unit): Unit = $foreach
        |  inline def existsImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = $existsV

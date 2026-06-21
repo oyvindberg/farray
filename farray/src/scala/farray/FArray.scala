@@ -140,20 +140,9 @@ object FArray:
       xs.foreach(a => f(a) match { case Left(l) => ls += l; case Right(r) => rs += r })
       (FArray.fromIterable(ls.result()), FArray.fromIterable(rs.result()))
 
-    def iterator: Iterator[A] =
-      val core: FBase = xs
-      new Iterator[A]:
-        private var i = 0
-        override def knownSize: Int = core.length - i   // O(1) length → consumers pre-size (List can't, it's -1)
-        def hasNext: Boolean = i < core.length
-        def next(): A = { val r = core.applyBoxed(i).asInstanceOf[A]; i += 1; r }
-    def reverseIterator: Iterator[A] =
-      val core: FBase = xs
-      new Iterator[A]:
-        private var i = core.length - 1
-        override def knownSize: Int = i + 1
-        def hasNext: Boolean = i >= 0
-        def next(): A = { val r = core.applyBoxed(i).asInstanceOf[A]; i -= 1; r }
+    // flattening cursor: O(n) over trees (not O(n·depth)), unboxed leaf reads, reports knownSize.
+    inline def iterator: Iterator[A] = FArrayOps.iteratorImpl[A](xs)
+    inline def reverseIterator: Iterator[A] = FArrayOps.iteratorImpl[A](xs.reverse)
 
     // ---- conversions / structure ops (specialized unboxed traversal into the target builder) ----
     // toList is used generically (abstract A, e.g. test harness) so it can't be inline; List boxes anyway.

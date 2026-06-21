@@ -27,6 +27,67 @@ class FListTest:
     val ss = "a" :: "bb" :: Nil                       // reference elements too
     assert((ss match { case h :: _ => h; case _ => "" }) == "a")
   }
+  @Test def test_iterator_trees: Unit = {
+    def check(fa: FArray[Int], expected: List[Int]): Unit =
+      assert(fa.iterator.toList == expected, s"iter ${fa.iterator.toList} != $expected")
+      assert(fa.reverseIterator.toList == expected.reverse, s"reviter ${fa.reverseIterator.toList} != ${expected.reverse}")
+    val a = FArray(1, 2, 3); val b = FArray(4, 5, 6)
+    check(a, List(1, 2, 3))
+    check(a ++ b, List(1, 2, 3, 4, 5, 6))                       // Concat
+    check(a :+ 7, List(1, 2, 3, 7))                             // Append
+    check(0 +: a, List(0, 1, 2, 3))                             // Prepend
+    check(a.reverse, List(3, 2, 1))                             // Reverse
+    check(a.drop(1), List(2, 3))                                // Slice
+    check((a ++ b).drop(1).take(3), List(2, 3, 4))              // Slice over Concat
+    check(0 +: (a ++ b) :+ 9, List(0, 1, 2, 3, 4, 5, 6, 9))     // Prepend + Concat + Append
+    check(a.padTo(5, 0), List(1, 2, 3, 0, 0))                   // Pad
+    check(a.updated(1, 9), List(1, 9, 3))                       // Updated
+    check(((a ++ b) ++ (a ++ b)).reverse, List(1,2,3,4,5,6,1,2,3,4,5,6).reverse) // Reverse of nested Concat
+    check(FArray.empty[Int], Nil)
+    val s = FArray("a", "b"); assert(((s :+ "c") ++ FArray("d")).iterator.toList == List("a", "b", "c", "d"))  // Ref cursor
+  }
+  @Test def test_iterator_fuzz: Unit = {
+    val rng = new java.util.Random(0xF00DL)
+    def clamp(k: Int, n: Int): Int = if k < 0 then 0 else if k > n then n else k
+    // build a random FArray and the equivalent List in lockstep, via deeply-nested complex ops
+    def gen(depth: Int): (FArray[Int], List[Int]) =
+      if depth <= 0 then
+        val n = rng.nextInt(12)
+        val xs = List.fill(n)(rng.nextInt(1000))
+        (FArray(xs*), xs)
+      else
+        val (fa, la) = gen(depth - 1)
+        rng.nextInt(9) match
+          case 0 => val (fb, lb) = gen(depth - 1); (fa ++ fb, la ++ lb)        // Concat
+          case 1 => val e = rng.nextInt(1000); (fa :+ e, la :+ e)              // Append
+          case 2 => val e = rng.nextInt(1000); (e +: fa, e :: la)             // Prepend
+          case 3 => (fa.reverse, la.reverse)                                   // Reverse
+          case 4 => val k = clamp(rng.nextInt(la.length + 2), la.length); (fa.drop(k), la.drop(k))
+          case 5 => val k = clamp(rng.nextInt(la.length + 2), la.length); (fa.take(k), la.take(k))
+          case 6 => { val lo = clamp(rng.nextInt(la.length + 2), la.length); val hi = clamp(lo + rng.nextInt(la.length + 2), la.length); (fa.slice(lo, hi), la.slice(lo, hi)) }  // Slice
+          case 7 => val len = la.length + rng.nextInt(4) - 1; val e = rng.nextInt(1000); (fa.padTo(len, e), la.padTo(len, e))
+          case _ => if la.isEmpty then (fa, la) else { val i = rng.nextInt(la.length); val e = rng.nextInt(1000); (fa.updated(i, e), la.updated(i, e)) }
+    var t = 0
+    while t < 5000 do
+      val (fa, la) = gen(rng.nextInt(7))
+      assert(fa.length == la.length, s"len ${fa.length} != ${la.length}")
+      assert(fa.iterator.toList == la, s"iter ${fa.iterator.toList} != $la")
+      assert(fa.reverseIterator.toList == la.reverse, s"reviter mismatch on $la")
+      var i = 0; while i < la.length do { assert(fa(i) == la(i), s"apply($i) ${fa(i)} != ${la(i)} on $la"); i += 1 }
+      t += 1
+    // a few genuinely long ones: 20k-element leaf put through many slice/concat/reverse layers
+    var bigF = FArray.tabulate(20000)(i => i); var bigL = (0 until 20000).toList
+    var r = 0
+    while r < 40 do
+      rng.nextInt(4) match
+        case 0 => bigF = bigF ++ bigF.take(100); bigL = bigL ++ bigL.take(100)
+        case 1 => bigF = bigF.reverse; bigL = bigL.reverse
+        case 2 => val k = rng.nextInt(50); bigF = bigF.drop(k); bigL = bigL.drop(k)
+        case _ => val e = rng.nextInt(9); bigF = e +: bigF; bigL = e :: bigL
+      r += 1
+    assert(bigF.iterator.toList == bigL, "big iter mismatch")
+    assert(bigF.reverseIterator.toList == bigL.reverse, "big reviter mismatch")
+  }
   @Test def test_apply: Unit = test1NonEmpty(_(0))(_(0))
   @Test def test_collect: Unit = test1(_.collect { case str if str.nonEmpty => str })(_.collect { case str if str.nonEmpty => str })
   @Test def test_collectFirst: Unit = test1(_.collectFirst { case str if str.nonEmpty => str })(_.collectFirst { case str if str.nonEmpty => str })
