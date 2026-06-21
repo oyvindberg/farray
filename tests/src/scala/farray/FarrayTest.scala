@@ -88,6 +88,20 @@ class FListTest:
     assert(bigF.iterator.toList == bigL, "big iter mismatch")
     assert(bigF.reverseIterator.toList == bigL.reverse, "big reviter mismatch")
   }
+  @Test def test_foreachWhile: Unit = {
+    val fa = FArray(1, 2, 3, 4, 5)
+    val seen = scala.collection.mutable.ListBuffer[Int]()
+    fa.foreachWhile(x => { seen += x; x < 3 })          // processes 1,2,3 (3 returns false), stops before 4
+    assert(seen.toList == List(1, 2, 3), s"foreachWhile stop: ${seen.toList}")
+    var sum = 0; fa.foreachWhile(x => { sum += x; true }) // never breaks: full pass
+    assert(sum == 15)
+    fa.foreachWhile(_ => false)                          // breaks immediately
+    FArray.empty[Int].foreachWhile(_ => { assert(false, "empty should not call f"); true })
+    // over a tree
+    val t = (FArray(1, 2) ++ FArray(3, 4)) :+ 5
+    val s2 = scala.collection.mutable.ListBuffer[Int](); t.foreachWhile(x => { s2 += x; x != 3 })
+    assert(s2.toList == List(1, 2, 3))
+  }
   @Test def test_apply: Unit = test1NonEmpty(_(0))(_(0))
   @Test def test_collect: Unit = test1(_.collect { case str if str.nonEmpty => str })(_.collect { case str if str.nonEmpty => str })
   @Test def test_collectFirst: Unit = test1(_.collectFirst { case str if str.nonEmpty => str })(_.collectFirst { case str if str.nonEmpty => str })

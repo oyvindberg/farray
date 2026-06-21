@@ -151,48 +151,16 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |${dfsBody(k, "c.onLeaf", "c.onOne")}
        |  }""".stripMargin
 
-  // Pull-mode flattening cursor mirroring dfsBody: tree iteration is O(n), not O(n·depth). A "current run"
-  // is a leaf array (mode 1, unboxed reads), a Prepend/Append singleton (mode 2), or an indexed lazy node
-  // (mode 3: Reverse/Pad/Slice/Updated/Range, read via <kind>At). Concat/Append defer a sibling on the stack.
+  // The iterator is a trivial flat-array cursor (2 fields → escape analysis scalar-replaces it when consumed
+  // inline → foreach speed). A leaf hands its backing array straight in (no copy, lazy); a tree is flattened
+  // ONCE via the dfs we already have (materialize). So the tree-walk lives only in dfsBody — no second walker.
   private def cursorClass(k: Kind): String = {
-    val ensure = s"if (stack == null) { stack = new Array[FBase](16); tail = new Array[${k.arr}](16); isTail = new Array[Boolean](16) } else if (sp == stack.length) { val nl = sp * 2; stack = java.util.Arrays.copyOf(stack, nl); tail = java.util.Arrays.copyOf(tail, nl); isTail = java.util.Arrays.copyOf(isTail, nl) }"
-    val rngCase = if k.name == "Int" then "\n       |        case rng: RangeNode => { val l = rng.length; cur = null; if (l > 0) { node = rng; pos = 0; len = l; mode = 3; return } }" else ""
     val nextBoxed = if k.name == "Ref" then s"next${k.name}()" else k.box(s"next${k.name}()")
-    s"""final class ${k.name}Cursor(root: FBase) extends scala.collection.AbstractIterator[Any] {
-       |  private var cur: FBase = root
-       |  private var stack: Array[FBase] = null; private var tail: Array[${k.arr}] = null; private var isTail: Array[Boolean] = null; private var sp = 0
-       |  private var mode = 0; private var arr: Array[${k.arr}] = null; private var node: FBase = null; private var pos = 0; private var len = 0; private var single: ${k.arr} = ${k.dflt}
-       |  private var remaining = root.length
-       |  advance()
-       |  private def advance(): Unit = {
-       |    while (true) {
-       |      if (cur == null) {
-       |        if (sp == 0) { mode = 0; return }
-       |        sp -= 1
-       |        if (isTail(sp)) { single = tail(sp); pos = 0; len = 1; mode = 2; return }
-       |        cur = stack(sp)
-       |      }
-       |      cur match {
-       |        case leaf: ${k.name}Arr => { val l = leaf.length; cur = null; if (l > 0) { arr = leaf.arr; pos = 0; len = l; mode = 1; return } }
-       |        case p: ${k.name}Prepend => { single = p.elem; pos = 0; len = 1; mode = 2; cur = p.base; return }
-       |        case a: ${k.name}Append => { $ensure; tail(sp) = a.elem; isTail(sp) = true; sp += 1; cur = a.base }
-       |        case c: Concat => { $ensure; stack(sp) = c.right; isTail(sp) = false; sp += 1; cur = c.left }
-       |        case rev: ReverseNode => { val l = rev.length; cur = null; if (l > 0) { node = rev; pos = 0; len = l; mode = 3; return } }
-       |        case pd: ${k.name}Pad => { val l = pd.length; cur = null; if (l > 0) { node = pd; pos = 0; len = l; mode = 3; return } }
-       |        case u: ${k.name}Updated => { val l = u.length; cur = null; if (l > 0) { node = u; pos = 0; len = l; mode = 3; return } }
-       |        case s: SliceNode => { val l = s.length; cur = null; if (l > 0) { node = s; pos = 0; len = l; mode = 3; return } }$rngCase
-       |        case _ => { cur = null }
-       |      }
-       |    }
-       |  }
-       |  def hasNext: Boolean = mode != 0
-       |  override def knownSize: Int = remaining
-       |  def next${k.name}(): ${k.arr} = {
-       |    val r: ${k.arr} = mode match { case 1 => arr(pos); case 2 => single; case 3 => FArrayOps.${k.lc}At(node, pos); case _ => throw new java.util.NoSuchElementException("next on empty iterator") }
-       |    pos += 1; remaining -= 1
-       |    if (pos >= len) advance()
-       |    r
-       |  }
+    s"""final class ${k.name}Cursor(a: Array[${k.arr}], len: Int) extends scala.collection.AbstractIterator[Any] {
+       |  private var pos = 0
+       |  def hasNext: Boolean = pos < len
+       |  override def knownSize: Int = len - pos
+       |  def next${k.name}(): ${k.arr} = { val r = a(pos); pos += 1; r }
        |  def next(): Any = $nextBoxed
        |}""".stripMargin
   }
@@ -301,7 +269,6 @@ object GenCores extends BleepCodegenScript("GenCores") {
       s"{ var acc = z; val c = new ${k.name}Dfs { def onLeaf(a: Array[${k.arr}], len: Int): Unit = { var i = 0; while (i < len) { acc = op(acc, ${read(k)}); i += 1 } }; def onOne(v: ${k.arr}): Unit = { acc = op(acc, ${readOne(k)}) } }; dfsC${k.name}(xs, c); acc }")
     val foreach = dispatchA(k =>
       s"{ val c = new ${k.name}Dfs { def onLeaf(a: Array[${k.arr}], len: Int): Unit = { var i = 0; while (i < len) { f(${read(k)}); i += 1 } }; def onOne(v: ${k.arr}): Unit = { f(${readOne(k)}) } }; dfsC${k.name}(xs, c) }")
-    // short-circuiting traversal: f returns Step.Break to stop. Leaf fast-path (tight loop + break);
     // Fused short-circuiting scan: predicate-and-break in ONE branch per element (like Array's `if (p) return`),
     // no Step round-trip. `a` = element, break via `i = ln`. Leaf fast-path (tight) + <kind>At fallback.
     def scan(k: Kind, init: String, step: String, result: String): String =
@@ -314,7 +281,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val collectFirstV = dispatchA(k => scan(k, "var res: Option[B] = None", "if (pf.isDefinedAt(a)) { res = Some(pf(a)); i = ln } else i += 1", "res"))
     val prefixLenV    = dispatchA(k => scan(k, "var res = ln", "if (p(a)) i += 1 else { res = i; i = ln }", "res"))
     val countV        = dispatchA(k => scan(k, "var n = 0", "if (p(a)) n += 1; i += 1", "n"))  // no break, tight leaf scan
-    val iteratorV     = dispatchA(k => s"new ${k.name}Cursor(xs)")
+    val iteratorV     = dispatchA(k => s"xs match { case leaf: ${k.name}Arr => new ${k.name}Cursor(leaf.arr, leaf.length); case _ => new ${k.name}Cursor(materialize${k.name}(xs), xs.length) }")
+    val foreachWhileV = dispatchA(k => scan(k, "()", "if (f(a)) i += 1 else i = ln", "()"))  // breakable push: f returns false to stop
     // foldRight: leaf reads its backing array backward (no ReverseNode allocation); non-leaf walks <kind>At.
     val foldRightV = dispatchA(k =>
       s"xs match { case leaf: ${k.name}Arr => { val ar = leaf.arr; var acc = z; var i = leaf.length - 1; while (i >= 0) { acc = op(${readVal(k, "ar(i)")}, acc); i -= 1 }; acc }; case _ => { var acc = z; var i = xs.length - 1; while (i >= 0) { acc = op(${readVal(k, s"${k.lc}At(xs, i)")}, acc); i -= 1 }; acc } }")
@@ -475,6 +443,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def iteratorImpl[A](xs: FBase): Iterator[A] = ($iteratorV).asInstanceOf[Iterator[A]]
        |  inline def countImpl[A](xs: FBase)(inline p: A => Boolean): Int = $countV
        |  inline def foreachImpl[A](xs: FBase)(inline f: A => Unit): Unit = $foreach
+       |  inline def foreachWhileImpl[A](xs: FBase)(inline f: A => Boolean): Unit = $foreachWhileV
        |  inline def existsImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = $existsV
        |  inline def forallImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = $forallV
        |  inline def findImpl[A](xs: FBase)(inline p: A => Boolean): Option[A] = $findV
