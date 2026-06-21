@@ -58,12 +58,12 @@ object GenCores extends BleepCodegenScript("GenCores") {
    *  absent for abstract A ⇒ summonFrom fails ⇒ compile error (specialize-or-fail). */
   private def reprSrc: String = {
     val subtraits = opKinds.map { k =>
-      if k.name == "Ref" then "trait RefRepr[A] extends Repr[A] { type Prim = A; def ct: scala.reflect.ClassTag[A] }"
+      if k.name == "Ref" then "trait RefRepr[A] extends Repr[A] { type Prim = A }"
       else s"trait ${k.name}Repr[A] extends Repr[A] { type Prim = ${k.arr} }"
     }.mkString("\n")
     val givens = opKinds.map { k =>
       if k.name == "Ref" then
-        "  given refRepr[A <: AnyRef](using c: scala.reflect.ClassTag[A]): RefRepr[A] with { def ct: scala.reflect.ClassTag[A] = c; inline def unwrap(a: A): A = a; inline def wrap(p: A): A = p }"
+        "  given refRepr[A <: AnyRef]: RefRepr[A] with { inline def unwrap(a: A): A = a; inline def wrap(p: A): A = p }"
       else
         s"  given ${k.lc}Repr: ${k.name}Repr[${k.arr}] with { inline def unwrap(a: ${k.arr}): ${k.arr} = a; inline def wrap(p: ${k.arr}): ${k.arr} = p }"
     }.mkString("\n")
