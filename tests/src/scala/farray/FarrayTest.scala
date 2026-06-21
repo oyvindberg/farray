@@ -136,6 +136,15 @@ class FListTest:
       (FArray(1, 2) ++ (FArray(3) :+ 4 :+ 5)).hashCode.toLong
     )
 
+  // regression: sort/reverse/materialize produce Object[]-backed RefArr; map/filter/fold over a concrete
+  // reference type must cast the element (Object->A), not the array (Array[A]), or it CCEs.
+  @Test def testRefArrayCastAfterMaterialize(): Unit =
+    val xs = FArray("b", "a", "c")
+    assertEquals("sorted.map", List("A", "B", "C"), xs.sortWith(_ < _).map(_.toUpperCase).toList)
+    assertEquals("reverse.map", List("c!", "a!", "b!"), xs.reverse.map(_ + "!").toList)
+    assertEquals("sorted.filter", List("a", "b"), xs.sortWith(_ < _).filter(_ < "c").toList)
+    assertEquals("sorted.fold", "abc", xs.sortWith(_ < _).foldLeft("")(_ + _))
+
   @Test def testRange(): Unit = {
     assertEquals("", List.range(0, 5, 1), FArray.range(0, 5, 1).toList)
     assertEquals("", List.range(0, 5, 2), FArray.range(0, 5, 2).toList)

@@ -215,7 +215,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // Reference reads cast the leaf array to Array[A] (checkcast hoisted out of the loop at the
     // concrete inline call site; empty leaves never evaluate it). Primitive arrays can't cast to
     // Array[A] (erases to Object[]), so they read directly.
-    def read(k: Kind): String = if k.name == "Ref" then "r.wrap(a.asInstanceOf[Array[A]](i))" else "r.wrap(a(i))"
+    // Ref reads cast the ELEMENT (Object -> A), valid for any backing array — an Array[A] (i.e. Array[String])
+    // cast would CCE on an Object[] backing (which materialize/sort produce, having no ClassTag).
+    def read(k: Kind): String = if k.name == "Ref" then "r.wrap(a(i).asInstanceOf[A])" else "r.wrap(a(i))"
     def readOne(k: Kind): String = if k.name == "Ref" then "r.wrap(v.asInstanceOf[A])" else "r.wrap(v)"
     def alloc(k: Kind, rv: String): String =
       if k.name == "Ref" then s"$rv.ct.newArray(n).asInstanceOf[Array[Object]]" else s"new Array[${k.arr}](n)"
