@@ -2,6 +2,7 @@ package farray
 
 import org.openjdk.jmh.annotations.*
 import java.util.concurrent.TimeUnit
+import scala.annotation.tailrec
 
 // FArray used exactly like a List: `x :: xs` to build, `case h :: t` to pick apart, via recursion.
 // Recursion lives in two objects so `ListSyntax.::` (FArray) and `scala.::` (List) don't collide.
@@ -68,3 +69,32 @@ class ListLikeStringBenchmark:
   @Benchmark def list_1mapLen(): Int   = ListRec.len1MapStr(listInput)
   @Benchmark def farray_2mapLen(): Int = FArrayRec.len2MapStr(farrayInput)
   @Benchmark def list_2mapLen(): Int   = ListRec.len2MapStr(listInput)
+
+// Scaling to 1e5 / 1e6: build iteratively and pick apart tail-recursively (natural `h + rec(t)` would
+// stack-overflow past ~1e4 on both List and FArray). Fair on both sides.
+object FArrayScale:
+  import farray.ListSyntax.*
+  def build(n: Int): FArray[Int] = { var xs: FArray[Int] = Nil; var i = 0; while i < n do { xs = i :: xs; i += 1 }; xs }
+  @tailrec def sum(xs: FArray[Int], acc: Int): Int = xs match { case h :: t => sum(t, acc + h); case _ => acc }
+
+object ListScale:
+  def build(n: Int): List[Int] = { var xs: List[Int] = Nil; var i = 0; while i < n do { xs = i :: xs; i += 1 }; xs }
+  @tailrec def sum(xs: List[Int], acc: Int): Int = xs match { case h :: t => sum(t, acc + h); case _ => acc }
+
+@State(Scope.Thread)
+@BenchmarkMode(Array(Mode.Throughput))
+@OutputTimeUnit(TimeUnit.SECONDS)
+@Warmup(iterations = 3, time = 400, timeUnit = TimeUnit.MILLISECONDS)
+@Measurement(iterations = 4, time = 400, timeUnit = TimeUnit.MILLISECONDS)
+@Fork(1)
+class ListLikeScalingBenchmark:
+  @Param(Array("1000", "100000", "1000000")) var size: Int = 1000
+  var farrayInput: FArray[Int] = _
+  var listInput: List[Int] = _
+  @Setup def setup(): Unit = { farrayInput = FArrayScale.build(size); listInput = ListScale.build(size) }
+  @Benchmark def farray_build(): FArray[Int] = FArrayScale.build(size)
+  @Benchmark def list_build(): List[Int]     = ListScale.build(size)
+  @Benchmark def farray_sum(): Int = FArrayScale.sum(farrayInput, 0)
+  @Benchmark def list_sum(): Int   = ListScale.sum(listInput, 0)
+  @Benchmark def farray_mapSum(): Int = FArrayScale.sum(farrayInput.map(_ + 1), 0)
+  @Benchmark def list_mapSum(): Int   = ListScale.sum(listInput.map(_ + 1), 0)
