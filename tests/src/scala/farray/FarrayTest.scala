@@ -12,6 +12,21 @@ class FListTest:
   @Test def test_:+ : Unit = test1(_ :+ "x")(_ :+ "x")
   @Test def test_:: : Unit = test1("x" :: _)("x" :: _)
   @Test def test_::: : Unit = test2(_ ::: _)(_ ::: _)
+  @Test def test_listSyntax: Unit = {
+    import farray.ListSyntax.*                       // method-local: shadows scala.:: only here
+    val xs = 1 :: 2 :: 3 :: Nil
+    assert(xs.toList == List(1, 2, 3))
+    xs match
+      case h :: t => assert(h == 1 && t.toList == List(2, 3))
+      case _      => assert(false, "should be non-empty")
+    val empty: FArray[Int] = Nil
+    assert(empty match { case _ :: _ => false; case _ => true })
+    def sum(ys: FArray[Int]): Int = ys match { case h :: t => h + sum(t); case _ => 0 }
+    assert(sum(xs) == 6)
+    assert(sum(xs.map(_ + 1)) == 9)                  // pick apart after a map (leaf, not Prepend)
+    val ss = "a" :: "bb" :: Nil                       // reference elements too
+    assert((ss match { case h :: _ => h; case _ => "" }) == "a")
+  }
   @Test def test_apply: Unit = test1NonEmpty(_(0))(_(0))
   @Test def test_collect: Unit = test1(_.collect { case str if str.nonEmpty => str })(_.collect { case str if str.nonEmpty => str })
   @Test def test_collectFirst: Unit = test1(_.collectFirst { case str if str.nonEmpty => str })(_.collectFirst { case str if str.nonEmpty => str })

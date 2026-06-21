@@ -12,12 +12,22 @@ object FArrayRec:
   def sumInt(xs: FArray[Int]): Int     = xs match { case h :: t => h + sumInt(t); case _ => 0 }
   def buildStr(n: Int): FArray[String] = if n == 0 then Nil else n.toString :: buildStr(n - 1)
   def lenStr(xs: FArray[String]): Int  = xs match { case h :: t => h.length + lenStr(t); case _ => 0 }
+  // a map (or two) between build and pick-apart: map materialises the chain to a leaf, so pick-apart
+  // then walks a leaf (tail = drop(1) = SliceNode), not a Prepend (tail = base).
+  def sum1MapInt(xs: FArray[Int]): Int   = sumInt(xs.map(_ + 1))
+  def sum2MapInt(xs: FArray[Int]): Int   = sumInt(xs.map(_ + 1).map(_ * 2))
+  def len1MapStr(xs: FArray[String]): Int = lenStr(xs.map(_ + "x"))
+  def len2MapStr(xs: FArray[String]): Int = lenStr(xs.map(_ + "x").map(_ + "y"))
 
 object ListRec:
   def buildInt(n: Int): List[Int]    = if n == 0 then Nil else n :: buildInt(n - 1)
   def sumInt(xs: List[Int]): Int     = xs match { case h :: t => h + sumInt(t); case _ => 0 }
   def buildStr(n: Int): List[String] = if n == 0 then Nil else n.toString :: buildStr(n - 1)
   def lenStr(xs: List[String]): Int  = xs match { case h :: t => h.length + lenStr(t); case _ => 0 }
+  def sum1MapInt(xs: List[Int]): Int   = sumInt(xs.map(_ + 1))
+  def sum2MapInt(xs: List[Int]): Int   = sumInt(xs.map(_ + 1).map(_ * 2))
+  def len1MapStr(xs: List[String]): Int = lenStr(xs.map(_ + "x"))
+  def len2MapStr(xs: List[String]): Int = lenStr(xs.map(_ + "x").map(_ + "y"))
 
 @State(Scope.Thread)
 @BenchmarkMode(Array(Mode.Throughput))
@@ -34,6 +44,10 @@ class ListLikeIntBenchmark:
   @Benchmark def list_build(): List[Int]     = ListRec.buildInt(size)
   @Benchmark def farray_sum(): Int = FArrayRec.sumInt(farrayInput)
   @Benchmark def list_sum(): Int   = ListRec.sumInt(listInput)
+  @Benchmark def farray_1mapSum(): Int = FArrayRec.sum1MapInt(farrayInput)
+  @Benchmark def list_1mapSum(): Int   = ListRec.sum1MapInt(listInput)
+  @Benchmark def farray_2mapSum(): Int = FArrayRec.sum2MapInt(farrayInput)
+  @Benchmark def list_2mapSum(): Int   = ListRec.sum2MapInt(listInput)
 
 @State(Scope.Thread)
 @BenchmarkMode(Array(Mode.Throughput))
@@ -50,3 +64,7 @@ class ListLikeStringBenchmark:
   @Benchmark def list_build(): List[String]     = ListRec.buildStr(size)
   @Benchmark def farray_len(): Int = FArrayRec.lenStr(farrayInput)
   @Benchmark def list_len(): Int   = ListRec.lenStr(listInput)
+  @Benchmark def farray_1mapLen(): Int = FArrayRec.len1MapStr(farrayInput)
+  @Benchmark def list_1mapLen(): Int   = ListRec.len1MapStr(listInput)
+  @Benchmark def farray_2mapLen(): Int = FArrayRec.len2MapStr(farrayInput)
+  @Benchmark def list_2mapLen(): Int   = ListRec.len2MapStr(listInput)
