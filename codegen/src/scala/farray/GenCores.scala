@@ -165,19 +165,22 @@ object GenCores extends BleepCodegenScript("GenCores") {
          |  def flatMapCopyOne${k.name}(node: FBase, out: Array[${k.arr}], off0: Int): Unit = {
          |    var o = off0; dfs${k.name}(node)((a, ln) => { System.arraycopy(a, 0, out, o, ln); o += ln })(v => { out(o) = v; o += 1 })
          |  }""".stripMargin).mkString("\n")
-    // Natural (run-adaptive) bottom-up mergesort, fully unboxed via the inline comparator. Detects existing
-    // ascending runs and reverses strictly-descending ones in place (so already/reverse-sorted input is
-    // O(n)), then merges runs pairwise with ping-pong buffers. Stable: equal elements keep their order (the
-    // merge prefers the left run; ascending-run detection is non-strict, descending is strict).
-    val sortArr = opKinds.map(k =>
-      s"""  inline def sort${k.name}(a: Array[${k.arr}], n: Int)(inline less: (${k.arr}, ${k.arr}) => Boolean): Array[${k.arr}] = {
+    // Natural (run-adaptive) bottom-up mergesort. NON-inline (compiled once, not dumped at every sort site,
+    // so multiple sorts in one method can't blow past the JIT method-size limit) with an unboxed primitive
+    // comparator (${k.name}Less SAM — no boxing). Detects ascending runs and reverses strictly-descending
+    // ones in place (already/reverse-sorted -> O(n)), then merges runs pairwise. Stable (merge prefers left;
+    // ascending detection non-strict, descending strict). Ref sorts use java.util.Arrays.sort instead.
+    val sortKinds = opKinds.filter(_.name != "Ref")
+    val lessTraits = sortKinds.map(k => s"trait ${k.name}Less { def lt(a: ${k.arr}, b: ${k.arr}): Boolean }").mkString("\n")
+    val sortArr = sortKinds.map(k =>
+      s"""  def sort${k.name}(a: Array[${k.arr}], n: Int, less: ${k.name}Less): Array[${k.arr}] = {
          |    if (n < 2) a else {
          |      var sruns = new Array[Int](n + 1); var nr = 0; var i = 0
          |      while (i < n) {
          |        sruns(nr) = i; nr += 1; var j = i + 1
          |        if (j < n) {
-         |          if (less(a(j), a(i))) { j += 1; while (j < n && less(a(j), a(j - 1))) j += 1; var lo = i; var hi = j - 1; while (lo < hi) { val t = a(lo); a(lo) = a(hi); a(hi) = t; lo += 1; hi -= 1 } }
-         |          else { j += 1; while (j < n && !less(a(j), a(j - 1))) j += 1 }
+         |          if (less.lt(a(j), a(i))) { j += 1; while (j < n && less.lt(a(j), a(j - 1))) j += 1; var lo = i; var hi = j - 1; while (lo < hi) { val t = a(lo); a(lo) = a(hi); a(hi) = t; lo += 1; hi -= 1 } }
+         |          else { j += 1; while (j < n && !less.lt(a(j), a(j - 1))) j += 1 }
          |        }
          |        i = j
          |      }
@@ -190,7 +193,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
          |          if (r + 1 < nr) {
          |            val lo = sruns(r); val mid = sruns(r + 1); val hi = sruns(r + 2)
          |            var x = lo; var y = mid; var k = lo
-         |            while (x < mid && y < hi) { if (less(src(y), src(x))) { dst(k) = src(y); y += 1 } else { dst(k) = src(x); x += 1 }; k += 1 }
+         |            while (x < mid && y < hi) { if (less.lt(src(y), src(x))) { dst(k) = src(y); y += 1 } else { dst(k) = src(x); x += 1 }; k += 1 }
          |            while (x < mid) { dst(k) = src(x); x += 1; k += 1 }
          |            while (y < hi) { dst(k) = src(y); y += 1; k += 1 }
          |            r += 2
@@ -306,13 +309,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
       if k.name == "Ref" then
         s"{ val vals = materializeRef(xs); val n = vals.length; if (n < 2) xs else { java.util.Arrays.sort(vals, ((x: Object, y: Object) => { if ($ltXY) -1 else if ($ltYX) 1 else 0 }): java.util.Comparator[Object]); new RefArr(vals, n) } }"
       else
-        s"{ val vals = materialize${k.name}(xs); val n = vals.length; if (n < 2) xs else new ${k.name}Arr(sort${k.name}(vals, n)((x, y) => $ltXY), n) }"
+        s"{ val vals = materialize${k.name}(xs); val n = vals.length; if (n < 2) xs else new ${k.name}Arr(sort${k.name}(vals, n, (x, y) => $ltXY), n) }"
     val sortWith = dispatchA(k => sortDirect(k, s"lt(${readVal(k, "x")}, ${readVal(k, "y")})", s"lt(${readVal(k, "y")}, ${readVal(k, "x")})"))
     val sortedV  = dispatchA(k => sortDirect(k, s"ord.lt(${readVal(k, "x")}, ${readVal(k, "y")})", s"ord.lt(${readVal(k, "y")}, ${readVal(k, "x")})"))
     // sortBy: keys differ from values -> sort an UNBOXED int[] index by the materialized keys, then permute.
     // (Java's Arrays.sort can't sort an int[] by a comparator without boxing to Integer[], which is slower
     // than this — Java TimSort only helps the direct Ref element sorts above, where the array IS Object[].)
-    val sortByV  = dispatchA(k => s"{ val vals = materialize${k.name}(xs); val n = vals.length; if (n < 2) xs else { val keys = mapImpl[A, B](xs)(f); val idx = new Array[Int](n); var t = 0; while (t < n) { idx(t) = t; t += 1 }; val sidx = sortInt(idx, n)((ii, jj) => ord.lt(applyAtImpl[B](keys, ii), applyAtImpl[B](keys, jj))); val out = ${allocPlain(k)}; var p = 0; while (p < n) { out(p) = vals(sidx(p)); p += 1 }; new ${k.name}Arr(out, n) } }")
+    val sortByV  = dispatchA(k => s"{ val vals = materialize${k.name}(xs); val n = vals.length; if (n < 2) xs else { val keys = mapImpl[A, B](xs)(f); val idx = new Array[Int](n); var t = 0; while (t < n) { idx(t) = t; t += 1 }; val sidx = sortInt(idx, n, (ii, jj) => ord.lt(applyAtImpl[B](keys, ii), applyAtImpl[B](keys, jj))); val out = ${allocPlain(k)}; var p = 0; while (p < n) { out(p) = vals(sidx(p)); p += 1 }; new ${k.name}Arr(out, n) } }")
     val emptyB = dispatchA(k => s"${k.name}Arr.EMPTY")
     val tabulate = dispatchA(k =>
       s"if (n <= 0) ${k.name}Arr.EMPTY else { val out = ${alloc(k, "r")}; var i = 0; while (i < n) { out(i) = ${wr(k, "r.unwrap(f(i))")}; i += 1 }; new ${k.name}Arr(out, n) }")
@@ -330,6 +333,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |import scala.compiletime.summonFrom
        |
        |// GENERATED by GenCores — do not edit. Per-kind specialized combinator implementations.
+       |// Unboxed primitive comparators (SAM) for the non-inline sorts.
+       |$lessTraits
        |object FArrayOps {
        |$dfs
        |$ats
