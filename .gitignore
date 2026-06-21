@@ -9,7 +9,3 @@ target
 sbt-build
 bleep-site/docs
 .vscode
-
-# benchmark report artifacts
-bench-report.html
-bench-results.json
