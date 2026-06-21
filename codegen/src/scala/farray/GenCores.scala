@@ -105,26 +105,26 @@ object GenCores extends BleepCodegenScript("GenCores") {
   private def dfsBody(k: Kind, onL: String, onO: String): String = {
     val rngCase = if k.name == "Int" then s"\n       |        case rng: RangeNode => { val rn = rng.length; var ri = 0; while (ri < rn) { $onO(rng.start + ri * rng.step); ri += 1 } }" else ""
     val padRead = if k.name == "Ref" then "pad.base.applyBoxed(pi)" else s"${k.lc}At(pad.base, pi)"
-    s"""    root match {
-       |     case leaf0: ${k.name}Arr => $onL(leaf0.arr, leaf0.length)  // fast path: leaf root needs no stack
-       |     case _ =>
-       |    var stack = new Array[FBase](16); var tail = new Array[${k.arr}](16); var isTail = new Array[Boolean](16)
-       |    stack(0) = root; var sp = 1
-       |    while (sp > 0) {
-       |      sp -= 1
-       |      if (isTail(sp)) $onO(tail(sp))
-       |      else stack(sp) match {
+    // `cur`-driven walk: Prepend is a tail (continue with base), Reverse/Pad/Slice/Range/Updated emit in a
+    // loop — none push. Only Concat/Append defer a sibling, so the stack stays null until one actually does.
+    val ensure = s"if (stack == null) { stack = new Array[FBase](16); tail = new Array[${k.arr}](16); isTail = new Array[Boolean](16) } else if (sp == stack.length) { val nl = sp * 2; stack = java.util.Arrays.copyOf(stack, nl); tail = java.util.Arrays.copyOf(tail, nl); isTail = java.util.Arrays.copyOf(isTail, nl) }"
+    s"""    var cur: FBase = root
+       |    var stack: Array[FBase] = null; var tail: Array[${k.arr}] = null; var isTail: Array[Boolean] = null; var sp = 0
+       |    while (cur != null) {
+       |      var cont: FBase = null
+       |      cur match {
        |        case leaf: ${k.name}Arr => $onL(leaf.arr, leaf.length)
-       |        case p: ${k.name}Prepend => { $onO(p.elem); $grow; stack(sp) = p.base; isTail(sp) = false; sp += 1 }
-       |        case a: ${k.name}Append => { $grow; tail(sp) = a.elem; isTail(sp) = true; sp += 1; stack(sp) = a.base; isTail(sp) = false; sp += 1 }
-       |        case c: Concat => { $grow; stack(sp) = c.right; isTail(sp) = false; sp += 1; stack(sp) = c.left; isTail(sp) = false; sp += 1 }
+       |        case p: ${k.name}Prepend => { $onO(p.elem); cont = p.base }
+       |        case a: ${k.name}Append => { $ensure; tail(sp) = a.elem; isTail(sp) = true; sp += 1; cont = a.base }
+       |        case c: Concat => { $ensure; stack(sp) = c.right; isTail(sp) = false; sp += 1; cont = c.left }
        |        case rev: ReverseNode => { val rn = rev.length; rev.base match { case lf: ${k.name}Arr => { val la = lf.arr; var ri = 0; while (ri < rn) { $onO(la(rn - 1 - ri)); ri += 1 } }; case _ => { var ri = 0; while (ri < rn) { $onO(${k.lc}At(rev.base, rn - 1 - ri)); ri += 1 } } } }
        |        case pad: ${k.name}Pad => { val bl = pad.base.length; pad.base match { case lf: ${k.name}Arr => { val la = lf.arr; var pi = 0; while (pi < bl) { $onO(la(pi)); pi += 1 } }; case _ => { var pi = 0; while (pi < bl) { $onO($padRead); pi += 1 } } }; val pf = pad.filler; var pj = bl; val pn = pad.length; while (pj < pn) { $onO(pf); pj += 1 } }
        |        case u: ${k.name}Updated => { val un = u.length; u.base match { case lf: ${k.name}Arr => { val la = lf.arr; var ui = 0; while (ui < un) { $onO(if (ui == u.index) u.elem else la(ui)); ui += 1 } }; case _ => { val mout = materialize${k.name}(u); $onL(mout, mout.length) } } }
        |        case s: SliceNode => { val sn = s.length; val so = s.offset; s.base match { case lf: ${k.name}Arr => { val la = lf.arr; var si = 0; while (si < sn) { $onO(la(so + si)); si += 1 } }; case _ => { var si = 0; while (si < sn) { $onO(${k.lc}At(s.base, so + si)); si += 1 } } } }$rngCase
        |        case _ => ()
        |      }
-       |    }
+       |      if (cont != null) cur = cont
+       |      else { cur = null; while (sp > 0 && cur == null) { sp -= 1; if (isTail(sp)) $onO(tail(sp)) else cur = stack(sp) } }
        |    }""".stripMargin
   }
   // consumer (2-method) form: non-inline, one compiled impl per kind. onLeaf fires per leaf-run, onOne per
