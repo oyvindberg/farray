@@ -123,10 +123,6 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |      }
        |    }""".stripMargin
   }
-  private def dfsDef(k: Kind): String =
-    s"""  inline def dfs${k.name}(root: FBase)(inline onLeaf: (Array[${k.arr}], Int) => Unit)(inline onOne: ${k.arr} => Unit): Unit = {
-       |${dfsBody(k, "onLeaf", "onOne")}
-       |  }""".stripMargin
   // consumer (2-method) form: non-inline, one compiled impl per kind. onLeaf fires per leaf-run, onOne per
   // single element — both cheap (O(#runs)); the per-element op stays inlined inside the consumer at the site.
   private def dfsConsumer(k: Kind): String =
@@ -153,7 +149,6 @@ object GenCores extends BleepCodegenScript("GenCores") {
   }
 
   private def farrayOps: String = {
-    val dfs = opKinds.map(dfsDef).mkString("\n")
     val dfsConsumers = opKinds.map(dfsConsumer).mkString("\n")
     val dfsC = opKinds.map(dfsCDef).mkString("\n")
     val ats = opKinds.map(atDef).mkString("\n")
@@ -162,7 +157,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val mat = opKinds.map(k =>
       s"""  def materialize${k.name}(node: FBase): Array[${k.arr}] = node match {
          |    case u: ${k.name}Updated => { val out = materialize${k.name}(u.base); out(u.index) = u.elem; out }
-         |    case _ => { val out = new Array[${k.arr}](node.length); var o = 0; dfs${k.name}(node)((a, len) => { System.arraycopy(a, 0, out, o, len); o += len })(v => { out(o) = v; o += 1 }); out }
+         |    case _ => { val out = new Array[${k.arr}](node.length); var o = 0; dfsC${k.name}(node, new ${k.name}Dfs { def onLeaf(a: Array[${k.arr}], len: Int): Unit = { System.arraycopy(a, 0, out, o, len); o += len }; def onOne(v: ${k.arr}): Unit = { out(o) = v; o += 1 } }); out }
          |  }""".stripMargin).mkString("\n")
     // Stable bottom-up mergesort directly on a kind array, ping-ponging between two buffers (no per-level
     // copy-back). `less(x, y)` = x sorts strictly before y. Returns the sorted buffer (may be the input or temp).
@@ -174,7 +169,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       s"""  def ensureCap${k.name}(out: Array[${k.arr}], needed: Int): Array[${k.arr}] =
          |    if (needed <= out.length) out else { var nc = out.length * 2; if (nc < needed) nc = needed; java.util.Arrays.copyOf(out, nc) }
          |  def flatMapCopyOne${k.name}(node: FBase, out: Array[${k.arr}], off0: Int): Unit = {
-         |    var o = off0; dfs${k.name}(node)((a, ln) => { System.arraycopy(a, 0, out, o, ln); o += ln })(v => { out(o) = v; o += 1 })
+         |    var o = off0; dfsC${k.name}(node, new ${k.name}Dfs { def onLeaf(a: Array[${k.arr}], ln: Int): Unit = { System.arraycopy(a, 0, out, o, ln); o += ln }; def onOne(v: ${k.arr}): Unit = { out(o) = v; o += 1 } })
          |  }""".stripMargin).mkString("\n")
     // Natural (run-adaptive) bottom-up mergesort. NON-inline (compiled once, not dumped at every sort site,
     // so multiple sorts in one method can't blow past the JIT method-size limit) with an unboxed primitive
@@ -349,7 +344,6 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |// Per-kind leaf-run consumers for the non-inline dfsC traversals.
        |$dfsConsumers
        |object FArrayOps {
-       |$dfs
        |$dfsC
        |$ats
        |$mat
