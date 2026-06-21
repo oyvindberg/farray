@@ -149,12 +149,14 @@ object FArray:
       val core: FBase = xs
       new Iterator[A]:
         private var i = 0
+        override def knownSize: Int = core.length - i   // O(1) length → consumers pre-size (List can't, it's -1)
         def hasNext: Boolean = i < core.length
         def next(): A = { val r = core.applyBoxed(i).asInstanceOf[A]; i += 1; r }
     def reverseIterator: Iterator[A] =
       val core: FBase = xs
       new Iterator[A]:
         private var i = core.length - 1
+        override def knownSize: Int = i + 1
         def hasNext: Boolean = i >= 0
         def next(): A = { val r = core.applyBoxed(i).asInstanceOf[A]; i -= 1; r }
 
