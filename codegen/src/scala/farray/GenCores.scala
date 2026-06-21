@@ -317,7 +317,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
       else
         s"{ val vals = materialize${k.name}(xs); val n = vals.length; if (n < 2) xs else new ${k.name}Arr(sort${k.name}(vals, n, (x, y) => $ltXY), n) }"
     val sortWith = dispatchA(k => sortDirect(k, s"lt(${readVal(k, "x")}, ${readVal(k, "y")})", s"lt(${readVal(k, "y")}, ${readVal(k, "x")})"))
-    val sortedV  = dispatchA(k => sortDirect(k, s"ord.lt(${readVal(k, "x")}, ${readVal(k, "y")})", s"ord.lt(${readVal(k, "y")}, ${readVal(k, "x")})"))
+    // sorted has an Ordering, which IS a Comparator -> for Ref hand it straight to Arrays.sort (1 compare per
+    // comparison; the lt-comparator would do up to 2). Primitives keep the unboxed natural mergesort.
+    val sortedV  = dispatchA(k =>
+      if k.name == "Ref" then
+        s"{ val vals = materializeRef(xs); val n = vals.length; if (n < 2) xs else { java.util.Arrays.sort(vals, ord.asInstanceOf[java.util.Comparator[Object]]); new RefArr(vals, n) } }"
+      else
+        s"{ val vals = materialize${k.name}(xs); val n = vals.length; if (n < 2) xs else new ${k.name}Arr(sort${k.name}(vals, n, (x, y) => ord.lt(${readVal(k, "x")}, ${readVal(k, "y")})), n) }")
     // sortBy: keys differ from values -> sort an UNBOXED int[] index by the materialized keys, then permute.
     // (Java's Arrays.sort can't sort an int[] by a comparator without boxing to Integer[], which is slower
     // than this — Java TimSort only helps the direct Ref element sorts above, where the array IS Object[].)
