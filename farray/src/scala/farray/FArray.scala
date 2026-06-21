@@ -157,10 +157,7 @@ object FArray:
 
     // ---- conversions / structure ops (specialized unboxed traversal into the target builder) ----
     // toList is used generically (abstract A, e.g. test harness) so it can't be inline; List boxes anyway.
-    def toList: List[A] =
-      val b = List.newBuilder[A]; val c: FBase = xs; var i = 0
-      while i < c.length do { b += c.applyBoxed(i).asInstanceOf[A]; i += 1 }
-      b.result()
+    inline def toList: List[A] = { val b = List.newBuilder[A]; xs.foreach(a => b += a); b.result() }
     inline def toVector: Vector[A] = { val b = Vector.newBuilder[A]; xs.foreach(a => b += a); b.result() }
     inline def toSeq: Seq[A] = xs.toVector
     inline def toSet[B >: A]: Set[B] = { val b = Set.newBuilder[B]; xs.foreach(a => b += a); b.result() }
