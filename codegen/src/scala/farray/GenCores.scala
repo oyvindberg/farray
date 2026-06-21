@@ -848,7 +848,7 @@ $updatedFill
        |    @Override public FBase drop(int n) {
        |        if (n <= 0) return this;
        |        if (n >= length) return base.take(0);
-       |        return base.drop(n - 1);
+       |        return n == 1 ? base : base.drop(n - 1);
        |    }
        |    @Override public FBase slice(int from, int until) {
        |        int lo = from < 0 ? 0 : from; int hi = until > length ? length : until;
@@ -875,7 +875,7 @@ $updatedFill
     val take = if isAppend then "return n >= length ? this : base.take(n);"
                else "if (n <= 0) return base.take(0); if (n >= length) return this; return new RefPrepend(elem, base.take(n - 1));"
     val drop = if isAppend then "if (n <= 0) return this; if (n >= length) return base.take(0); return new RefAppend(base.drop(n), elem);"
-               else "if (n <= 0) return this; if (n >= length) return base.take(0); return base.drop(n - 1);"
+               else "if (n <= 0) return this; if (n >= length) return base.take(0); return n == 1 ? base : base.drop(n - 1);"
     val reverse = if isAppend then "return new RefPrepend(elem, base.reverse());" else "return new RefAppend(base.reverse(), elem);"
     val init = if isAppend then "return base;" else "return take(length - 1);"
     s"""package farray;
