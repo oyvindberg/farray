@@ -271,13 +271,23 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // loop body, never stored -> escape analysis drops its wrapper, so each inner costs only its int[] (like
     // Array). dispatchA x dispatchB resolves to ONE case per concrete site (1 dfs inlined). Non-leaf inners
     // fall back to the non-inline flatMapCopyOne.
+    // One pass: size the output from the FIRST inner (cnt * firstLen) so a uniform flatMap (the common case)
+    // never grows or trims — only non-uniform inner sizes fall back to ensureCap growth.
     val flatMapOne = {
       def stepOf(kb: Kind, src: String): String =
         s"val inr = f($src); val ln = inr.length; out = ensureCap${kb.name}(out, off + ln); inr match { case lf: ${kb.name}Arr => System.arraycopy(lf.arr, 0, out, off, ln); case _ => flatMapCopyOne${kb.name}(inr, out, off) }; off += ln"
+      def branch(ka: Kind, kb: Kind, src0: String, srcI: String): String = {
+        val est = "{ val e = cnt * l0; if (e < 8) 8 else e }"
+        val alloc = if kb.name == "Ref" then s"rb.ct.newArray($est).asInstanceOf[Array[Object]]" else s"new Array[${kb.arr}]($est)"
+        val copy0 = s"inr0 match { case lf: ${kb.name}Arr => System.arraycopy(lf.arr, 0, out, 0, l0); case _ => flatMapCopyOne${kb.name}(inr0, out, 0) }"
+        s"{ val inr0 = f($src0); val l0 = inr0.length; out = $alloc; $copy0; off = l0; var i = 1; while (i < cnt) { ${stepOf(kb, srcI)}; i += 1 } }"
+      }
       "summonFrom {\n" + opKinds.map { ka =>
         val inner = "summonFrom {\n" + opKinds.map { kb =>
-          val cap = if kb.name == "Ref" then "rb.ct.newArray(if (cnt < 8) 8 else cnt).asInstanceOf[Array[Object]]" else s"new Array[${kb.arr}](if (cnt < 8) 8 else cnt)"
-          s"          case rb: ${kb.name}Repr[B] => { var out = $cap; var off = 0; xs match { case leaf: ${ka.name}Arr => { val sa = leaf.arr; var i = 0; while (i < cnt) { ${stepOf(kb, readVal(ka, "sa(i)"))}; i += 1 } }; case _ => { var i = 0; while (i < cnt) { ${stepOf(kb, readVal(ka, s"${ka.lc}At(xs, i)"))}; i += 1 } } }; if (off == out.length) new ${kb.name}Arr(out, off) else new ${kb.name}Arr(java.util.Arrays.copyOf(out, off), off) }"
+          val outType = if kb.name == "Ref" then "Array[Object]" else s"Array[${kb.arr}]"
+          val leafBranch = s"{ val sa = leaf.arr; ${branch(ka, kb, readVal(ka, "sa(0)"), readVal(ka, "sa(i)"))} }"
+          val nodeBranch = branch(ka, kb, readVal(ka, s"${ka.lc}At(xs, 0)"), readVal(ka, s"${ka.lc}At(xs, i)"))
+          s"          case rb: ${kb.name}Repr[B] => { if (cnt == 0) ${kb.name}Arr.EMPTY else { var out: $outType = null; var off = 0; xs match { case leaf: ${ka.name}Arr => $leafBranch; case _ => $nodeBranch }; if (off == out.length) new ${kb.name}Arr(out, off) else new ${kb.name}Arr(java.util.Arrays.copyOf(out, off), off) } }"
         }.mkString("\n") + "\n        }"
         s"      case r: ${ka.name}Repr[A] => $inner"
       }.mkString("\n") + "\n    }"
