@@ -124,11 +124,8 @@ object FArray:
       val seen = scala.collection.mutable.HashSet.empty[Any]; xs.filter(a => seen.add(a))
     inline def distinctBy[B](inline f: A => B): FArray[A] =
       val seen = scala.collection.mutable.HashSet.empty[B]; xs.filter(a => seen.add(f(a)))
-    inline def zip[B](that: FArray[B]): FArray[(A, B)] =
-      val n = if xs.length < that.length then xs.length else that.length
-      FArray.tabulate(n)(i => (FArrayOps.applyAtImpl[A](xs, i), FArrayOps.applyAtImpl[B](that, i)))
-    inline def zipWithIndex: FArray[(A, Int)] =
-      FArray.tabulate(xs.length)(i => (FArrayOps.applyAtImpl[A](xs, i), i))
+    inline def zip[B](that: FArray[B]): FArray[(A, B)] = FArrayOps.zipImpl[A, B](xs, that)
+    inline def zipWithIndex: FArray[(A, Int)] = FArrayOps.zipWithIndexImpl[A](xs)
     inline def sortWith(inline lt: (A, A) => Boolean): FArray[A] = FArrayOps.sortWithImpl[A](xs)(lt)
     inline def sortBy[B](inline f: A => B)(using ord: Ordering[B]): FArray[A] = FArrayOps.sortByImpl[A, B](xs)(f)
     inline def sorted[B >: A](using ord: Ordering[B]): FArray[A] = FArrayOps.sortedImpl[A, B](xs)

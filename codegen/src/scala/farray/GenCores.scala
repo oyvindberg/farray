@@ -86,14 +86,26 @@ object GenCores extends BleepCodegenScript("GenCores") {
   // ===== generated per-kind Scala combinators (the read×write matrix lives here, not hand-written) =====
 
   /** name=core prefix (Int/Long/Double/Ref); arr=Scala array elem type; pat=erasedValue pattern; dflt=zero. */
-  final case class Kind(name: String, arr: String, pat: String, dflt: String) { def lc = name.toLowerCase }
+  /** The primitive facet of a Kind (absent ⇒ a reference): the boxed wrapper type and the JVM specialization
+    * char used in stdlib @specialized class names (Tuple2$mcII$sp etc.). */
+  final case class Box(wrapper: String, specCh: String) { def apply(v: String): String = s"$wrapper.valueOf($v)" }
+  final case class Kind(name: String, arr: String, pat: String, dflt: String, prim: Option[Box]) {
+    def lc = name.toLowerCase
+    def isPrim: Boolean = prim.isDefined
+    /** box a `$arr`-typed value to an Object (pass-through for a reference). */
+    def box(v: String): String = prim match { case Some(b) => b(v); case None => v }
+    /** JVM specialization char ("L" = reference, the JVM descriptor for objects). */
+    def specCh: String = prim.map(_.specCh).getOrElse("L")
+    /** unbox an Object expression back to the `$arr` element type (auto-unboxes for prims). */
+    def unbox(v: String): String = s"($v).asInstanceOf[$arr]"
+  }
 
   // Start with the common numeric kinds + reference; add rows here to cover more primitives.
   val opKinds: List[Kind] = List(
-    Kind("Int", "Int", "Int", "0"),
-    Kind("Long", "Long", "Long", "0L"),
-    Kind("Double", "Double", "Double", "0.0"),
-    Kind("Ref", "Object", "AnyRef", "null")
+    Kind("Int", "Int", "Int", "0", Some(Box("java.lang.Integer", "I"))),
+    Kind("Long", "Long", "Long", "0L", Some(Box("java.lang.Long", "J"))),
+    Kind("Double", "Double", "Double", "0.0", Some(Box("java.lang.Double", "D"))),
+    Kind("Ref", "Object", "AnyRef", "null", None)
   )
 
   private val grow =
@@ -318,6 +330,29 @@ object GenCores extends BleepCodegenScript("GenCores") {
       }.mkString("\n") + "\n        }"
       s"      case r1: ${k1.name}Repr[A1] => $m2"
     }.mkString("\n") + "\n    }"
+    // zip / zipWithIndex: read both operands UNBOXED (leaf fast-path + <kind>At fallback) into a RefArr of
+    // tuples. For primitive×primitive we name the stdlib @specialized Tuple2 directly (Tuple2$mcXY$sp), which
+    // stores the two values unboxed — Scala 3 no longer picks it itself, so a uniform-int zip never boxes the
+    // elements into Integers; only the tuple object is allocated.
+    def mkT(ka: Kind, kb: Kind, v1: String, v2: String): String =
+      if (ka.isPrim && kb.isPrim) s"new scala.Tuple2$$mc${ka.specCh}${kb.specCh}$$sp($v1, $v2)"
+      else s"new scala.Tuple2(${ka.box(v1)}, ${kb.box(v2)})"
+    val zipV = "summonFrom {\n" + opKinds.map { ka =>
+      val inner = "summonFrom {\n" + opKinds.map { kb =>
+        val fast = s"val ax = xs.asInstanceOf[${ka.name}Arr].arr; val ay = that.asInstanceOf[${kb.name}Arr].arr; while (i < n) { out(i) = ${mkT(ka, kb, "ax(i)", "ay(i)")}; i += 1 }"
+        val slow = s"while (i < n) { out(i) = ${mkT(ka, kb, s"${ka.lc}At(xs, i)", s"${kb.lc}At(that, i)")}; i += 1 }"
+        s"          case rb: ${kb.name}Repr[B] => { val out = new Array[Object](n); var i = 0; if (xs.isInstanceOf[${ka.name}Arr] && that.isInstanceOf[${kb.name}Arr]) { $fast } else { $slow }; new RefArr(out, n) }"
+      }.mkString("\n") + "\n        }"
+      s"      case r: ${ka.name}Repr[A] => $inner"
+    }.mkString("\n") + "\n    }"
+    def mkTIdx(ka: Kind, v: String, idx: String): String =
+      if (ka.isPrim) s"new scala.Tuple2$$mc${ka.specCh}I$$sp($v, $idx)"
+      else s"new scala.Tuple2($v, ${opKinds.head.box(idx)})"  // index is Int
+    val zipIdxV = "summonFrom {\n" + opKinds.map { ka =>
+      val fast = s"val ax = xs.asInstanceOf[${ka.name}Arr].arr; while (i < n) { out(i) = ${mkTIdx(ka, "ax(i)", "i")}; i += 1 }"
+      val slow = s"while (i < n) { out(i) = ${mkTIdx(ka, s"${ka.lc}At(xs, i)", "i")}; i += 1 }"
+      s"      case r: ${ka.name}Repr[A] => { val out = new Array[Object](n); var i = 0; if (xs.isInstanceOf[${ka.name}Arr]) { $fast } else { $slow }; new RefArr(out, n) }"
+    }.mkString("\n") + "\n    }"
     val updated = dispatchB(k => s"new ${k.name}Updated(xs, index, ${wr(k, "r.unwrap(elem)")})")
     val append = dispatchB(k => s"new ${k.name}Append(xs, r.unwrap(elem))")
     val prepend = dispatchA(k => s"new ${k.name}Prepend(r.unwrap(elem), xs)")
@@ -400,6 +435,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def mapConserveImpl[A](xs: FBase)(inline f: A => A): FBase = $mapConserve
        |  inline def unzipImpl[A, A1, A2](xs: FBase)(ev: A <:< (A1, A2)): (FBase, FBase) = { val n = xs.length; $unzipV }
        |  inline def unzip3Impl[A, A1, A2, A3](xs: FBase)(ev: A <:< (A1, A2, A3)): (FBase, FBase, FBase) = { val n = xs.length; $unzip3V }
+       |  inline def zipImpl[A, B](xs: FBase, that: FBase): FBase = { val n = if (xs.length < that.length) xs.length else that.length; $zipV }
+       |  inline def zipWithIndexImpl[A](xs: FBase): FBase = { val n = xs.length; $zipIdxV }
        |  inline def applyAtImpl[A](xs: FBase, i: Int): A = $applyAt
        |  inline def flatMapImpl[A, B](xs: FBase)(inline f: A => FBase): FBase = { val cnt = xs.length; $flatMapOne }
        |  inline def updatedImpl[A, B](xs: FBase, index: Int, elem: B): FBase = $updated
