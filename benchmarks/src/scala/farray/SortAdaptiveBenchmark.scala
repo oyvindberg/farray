@@ -13,7 +13,12 @@ class SortAdaptiveIntBenchmark extends IntInputs {
   @Benchmark def array_reverse(): Array[Int]   = arrayInput.sortWith((a, b) => a > b)
   @Benchmark def vector_reverse(): Vector[Int] = vectorInput.sortWith((a, b) => a > b)
 
+  @Benchmark def ziochunk_sorted(): zio.Chunk[Int]  = zioChunkInput.sortWith((a, b) => a < b)
+  @Benchmark def ziochunk_reverse(): zio.Chunk[Int] = zioChunkInput.sortWith((a, b) => a > b)
+  // fs2.Chunk has no sortWith/sortBy
+
   // sortBy on the unboxed int[] index path is adaptive too (keys already in order)
   @Benchmark def farray_sortBy(): FArray[Int] = farrayInput.sortBy(x => x)
   @Benchmark def vector_sortBy(): Vector[Int] = vectorInput.sortBy(x => x)
+  @Benchmark def ziochunk_sortBy(): zio.Chunk[Int] = zioChunkInput.sortBy(x => x)
 }

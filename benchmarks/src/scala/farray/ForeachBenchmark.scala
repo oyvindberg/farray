@@ -24,4 +24,14 @@ class ForeachBenchmark extends Inputs {
     vectorInput.foreach(acc += _.length)
     acc
   }
+  @Benchmark def fs2chunk(): Int = {
+    var acc = 0
+    fs2ChunkInput.foreach(acc += _.length)
+    acc
+  }
+  @Benchmark def ziochunk(): Int = {
+    var acc = 0
+    zioChunkInput.foreach(acc += _.length)
+    acc
+  }
 }

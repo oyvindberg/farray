@@ -8,4 +8,6 @@ class DropTakeMapBenchmark extends Inputs {
   @Benchmark def farray(): FArray[String] = farrayInput.drop(1).take(size / 2).map(_ + "!")
   @Benchmark def iarray(): IArray[String] = iarrayInput.drop(1).take(size / 2).map(_ + "!")
   @Benchmark def vector(): Vector[String] = vectorInput.drop(1).take(size / 2).map(_ + "!")
+  @Benchmark def fs2chunk(): fs2.Chunk[String] = fs2ChunkInput.drop(1).take(size / 2).map(_ + "!")
+  @Benchmark def ziochunk(): zio.Chunk[String] = zioChunkInput.drop(1).take(size / 2).map(_ + "!")
 }

@@ -28,6 +28,8 @@ projects:
     dependencies:
       - org.openjdk.jmh:jmh-generator-bytecode:1.36
       - build.bleep::bleep-core:${BLEEP_VERSION}
+      - co.fs2::fs2-core:3.11.0
+      - dev.zio::zio:2.1.14
   benchmarks-runner:
     dependsOn: benchmarks
     extends: template-common

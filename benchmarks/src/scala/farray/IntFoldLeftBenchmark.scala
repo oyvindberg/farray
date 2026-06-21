@@ -10,4 +10,6 @@ class IntFoldLeftBenchmark extends IntInputs {
   @Benchmark def iarray(): Int = iarrayInput.foldLeft(0)(_ + _)
   @Benchmark def array(): Int  = { var acc = 0; var i = 0; val a = arrayInput; while (i < a.length) { acc += a(i); i += 1 }; acc }
   @Benchmark def farray(): Int = farrayInput.foldLeft(0)(_ + _)
+  @Benchmark def fs2chunk(): Int = fs2ChunkInput.foldLeft(0)(_ + _)
+  @Benchmark def ziochunk(): Int = zioChunkInput.foldLeft(0)(_ + _)
 }

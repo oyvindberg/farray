@@ -9,6 +9,8 @@ class FlatMapIntBenchmark extends IntInputs {
   @Benchmark def list(): Int   = listInput.flatMap(x => List(x, x)).foldLeft(0)(_ + _)
   @Benchmark def vector(): Int = vectorInput.flatMap(x => Vector(x, x)).foldLeft(0)(_ + _)
   @Benchmark def array(): Int  = arrayInput.flatMap(x => Array(x, x)).foldLeft(0)(_ + _)
+  @Benchmark def fs2chunk(): Int = fs2ChunkInput.flatMap(x => fs2.Chunk(x, x)).foldLeft(0)(_ + _)
+  @Benchmark def ziochunk(): Int = zioChunkInput.flatMap(x => zio.Chunk(x, x)).foldLeft(0)(_ + _)
 }
 
 class FlatMapStringBenchmark extends Inputs {
@@ -16,4 +18,6 @@ class FlatMapStringBenchmark extends Inputs {
   @Benchmark def list(): Int   = listInput.flatMap(s => List(s, s)).foldLeft(0)((acc, s) => acc + s.length)
   @Benchmark def vector(): Int = vectorInput.flatMap(s => Vector(s, s)).foldLeft(0)((acc, s) => acc + s.length)
   @Benchmark def iarray(): Int = iarrayInput.flatMap(s => IArray(s, s)).foldLeft(0)((acc, s) => acc + s.length)
+  @Benchmark def fs2chunk(): Int = fs2ChunkInput.flatMap(s => fs2.Chunk(s, s)).foldLeft(0)((acc, s) => acc + s.length)
+  @Benchmark def ziochunk(): Int = zioChunkInput.flatMap(s => zio.Chunk(s, s)).foldLeft(0)((acc, s) => acc + s.length)
 }

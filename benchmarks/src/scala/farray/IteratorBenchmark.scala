@@ -28,4 +28,16 @@ class IteratorBenchmark extends Inputs {
     while (it.hasNext) acc += it.next().length
     acc
   }
+  @Benchmark def fs2chunk(): Int = {
+    var acc = 0
+    val it = fs2ChunkInput.iterator
+    while (it.hasNext) acc += it.next().length
+    acc
+  }
+  @Benchmark def ziochunk(): Int = {
+    var acc = 0
+    val it = zioChunkInput.iterator
+    while (it.hasNext) acc += it.next().length
+    acc
+  }
 }

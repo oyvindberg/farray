@@ -12,16 +12,23 @@ class LongFoldLeftBenchmark extends CommonParams {
   var vectorInput: Vector[Long] = _
   var arrayInput: Array[Long] = _
   var farrayInput: FArray[Long] = _
+  var fs2ChunkInput: fs2.Chunk[Long] = _
+  var zioChunkInput: zio.Chunk[Long] = _
 
   @Setup def setup(): Unit = {
-    listInput = List.tabulate(size)(i => i.toLong)
-    vectorInput = Vector.tabulate(size)(i => i.toLong)
-    arrayInput = Array.tabulate(size)(i => i.toLong)
+    val arr = Array.tabulate(size)(i => i.toLong)
+    listInput = arr.toList
+    vectorInput = arr.toVector
+    arrayInput = arr
     farrayInput = FArray.tabulate(size)(i => i.toLong)
+    fs2ChunkInput = fs2.Chunk.array(arr)
+    zioChunkInput = zio.Chunk.fromArray(arr)
   }
 
   @Benchmark def list(): Long   = listInput.foldLeft(0L)(_ + _)
   @Benchmark def vector(): Long = vectorInput.foldLeft(0L)(_ + _)
   @Benchmark def array(): Long  = { var acc = 0L; var i = 0; val a = arrayInput; while (i < a.length) { acc += a(i); i += 1 }; acc }
   @Benchmark def farray(): Long = farrayInput.foldLeft(0L)(_ + _)
+  @Benchmark def fs2chunk(): Long = fs2ChunkInput.foldLeft(0L)(_ + _)
+  @Benchmark def ziochunk(): Long = zioChunkInput.foldLeft(0L)(_ + _)
 }

@@ -8,4 +8,6 @@ class FoldLeftBenchmark extends Inputs {
   @Benchmark def farray(): Int = farrayInput.foldLeft(0)(_ + _.length)
   @Benchmark def iarray(): Int = iarrayInput.foldLeft(0)(_ + _.length)
   @Benchmark def vector(): Int = vectorInput.foldLeft(0)(_ + _.length)
+  @Benchmark def fs2chunk(): Int = fs2ChunkInput.foldLeft(0)(_ + _.length)
+  @Benchmark def ziochunk(): Int = zioChunkInput.foldLeft(0)(_ + _.length)
 }

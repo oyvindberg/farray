@@ -8,4 +8,6 @@ class FilterMapReverseBenchmark extends Inputs {
   @Benchmark def farray(): FArray[String] = farrayInput.filter(_.nonEmpty).map(_.toUpperCase).reverse
   @Benchmark def iarray(): IArray[String] = iarrayInput.filter(_.nonEmpty).map(_.toUpperCase).reverse
   @Benchmark def vector(): Vector[String] = vectorInput.filter(_.nonEmpty).map(_.toUpperCase).reverse
+  @Benchmark def ziochunk(): zio.Chunk[String] = zioChunkInput.filter(_.nonEmpty).map(_.toUpperCase).reverse
+  // fs2.Chunk has no reverse
 }

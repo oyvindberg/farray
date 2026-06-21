@@ -20,6 +20,10 @@ class SortIntBenchmark extends IntInputs {
   @Benchmark def array_sorted(): Array[Int]   = arrayInput.sorted
   @Benchmark def list_sorted(): List[Int]     = listInput.sorted
   @Benchmark def vector_sorted(): Vector[Int] = vectorInput.sorted
+  @Benchmark def ziochunk_sortWith(): zio.Chunk[Int] = zioChunkInput.sortWith((a, b) => scramble(a) < scramble(b))
+  @Benchmark def ziochunk_sortBy(): zio.Chunk[Int]   = zioChunkInput.sortBy(scramble)
+  @Benchmark def ziochunk_sorted(): zio.Chunk[Int]   = zioChunkInput.sorted
+  // fs2.Chunk has no sortWith/sortBy/sorted
 }
 
 class SortStringBenchmark extends Inputs {
@@ -35,4 +39,8 @@ class SortStringBenchmark extends Inputs {
   @Benchmark def iarray_sorted(): IArray[String] = iarrayInput.sorted
   @Benchmark def list_sorted(): List[String]     = listInput.sorted
   @Benchmark def vector_sorted(): Vector[String] = vectorInput.sorted
+  @Benchmark def ziochunk_sortWith(): zio.Chunk[String] = zioChunkInput.sortWith((a, b) => a < b)
+  @Benchmark def ziochunk_sortBy(): zio.Chunk[String]   = zioChunkInput.sortBy(_.reverse)
+  @Benchmark def ziochunk_sorted(): zio.Chunk[String]   = zioChunkInput.sorted
+  // fs2.Chunk has no sortWith/sortBy/sorted
 }

@@ -12,13 +12,18 @@ abstract class IntInputs extends CommonParams {
   var iarrayInput: IArray[Int] = _
   var arrayInput: Array[Int] = _
   var farrayInput: FArray[Int] = _
+  var fs2ChunkInput: fs2.Chunk[Int] = _
+  var zioChunkInput: zio.Chunk[Int] = _
 
   @Setup
   def setup(): Unit = {
-    listInput = List.tabulate(size)(i => i)
-    vectorInput = Vector.tabulate(size)(i => i)
+    val arr = Array.tabulate(size)(i => i)
+    listInput = arr.toList
+    vectorInput = arr.toVector
     iarrayInput = IArray.tabulate(size)(i => i)
     arrayInput = Array.tabulate(size)(i => i)
     farrayInput = FArray.tabulate(size)(i => i)
+    fs2ChunkInput = fs2.Chunk.array(arr)
+    zioChunkInput = zio.Chunk.fromArray(arr)
   }
 }

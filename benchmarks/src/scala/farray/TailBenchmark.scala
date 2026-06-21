@@ -7,4 +7,6 @@ class TailBenchmark extends Inputs {
   @Benchmark def farray(): FArray[String] = farrayInput.tail
   @Benchmark def iarray(): IArray[String] = iarrayInput.tail
   @Benchmark def vector(): Vector[String] = vectorInput.tail
+  @Benchmark def ziochunk(): zio.Chunk[String] = zioChunkInput.tail
+  // fs2.Chunk has no tail (use drop(1) instead, but no direct tail)
 }

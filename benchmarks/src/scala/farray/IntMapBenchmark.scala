@@ -9,4 +9,6 @@ class IntMapBenchmark extends IntInputs {
   @Benchmark def vector(): Vector[Int] = vectorInput.map(_ + 1)
   @Benchmark def iarray(): IArray[Int] = iarrayInput.map(_ + 1)
   @Benchmark def farray(): FArray[Int] = farrayInput.map(_ + 1)
+  @Benchmark def fs2chunk(): fs2.Chunk[Int] = fs2ChunkInput.map(_ + 1)
+  @Benchmark def ziochunk(): zio.Chunk[Int] = zioChunkInput.map(_ + 1)
 }
