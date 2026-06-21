@@ -78,8 +78,7 @@ object FArray:
     inline def updated[B >: A](index: Int, elem: B): FArray[B] = FArrayOps.updatedImpl[A, B](xs, index, elem)
     inline def :+[B >: A](elem: B): FArray[B] = FArrayOps.appendImpl[A, B](xs, elem)
 
-    inline def foldRight[Z](z: Z)(inline op: (A, Z) => Z): Z =
-      xs.reverse.foldLeft(z)((acc, a) => op(a, acc))
+    inline def foldRight[Z](z: Z)(inline op: (A, Z) => Z): Z = FArrayOps.foldRightImpl[A, Z](xs, z)(op)
     inline def fold[B >: A](z: B)(inline op: (B, B) => B): B = xs.foldLeft[B](z)((acc, a) => op(acc, a))
     inline def reduceLeft[B >: A](inline op: (B, A) => B): B = xs.drop(1).foldLeft[B](FArrayOps.applyAtImpl[A](xs, 0))(op)
     inline def reduce[B >: A](inline op: (B, B) => B): B = xs.drop(1).foldLeft[B](FArrayOps.applyAtImpl[A](xs, 0))((acc, a) => op(acc, a))
@@ -88,8 +87,7 @@ object FArray:
     inline def reduceOption[B >: A](inline op: (B, B) => B): Option[B] =
       if xs.length == 0 then None else Some(xs.reduce[B](op))
 
-    inline def count(inline p: A => Boolean): Int =
-      var n = 0; xs.foreach(a => if p(a) then n += 1); n
+    inline def count(inline p: A => Boolean): Int = FArrayOps.countImpl[A](xs)(p)
     inline def exists(inline p: A => Boolean): Boolean = FArrayOps.existsImpl[A](xs)(p)
     inline def forall(inline p: A => Boolean): Boolean = FArrayOps.forallImpl[A](xs)(p)
     inline def find(inline p: A => Boolean): Option[A] = FArrayOps.findImpl[A](xs)(p)

@@ -86,26 +86,29 @@ object GenCores extends BleepCodegenScript("GenCores") {
   // ===== generated per-kind Scala combinators (the read×write matrix lives here, not hand-written) =====
 
   /** name=core prefix (Int/Long/Double/Ref); arr=Scala array elem type; pat=erasedValue pattern; dflt=zero. */
-  /** The primitive facet of a Kind (absent ⇒ a reference): the boxed wrapper type and the JVM specialization
-    * char used in stdlib @specialized class names (Tuple2$mcII$sp etc.). */
-  final case class Box(wrapper: String, specCh: String) { def apply(v: String): String = s"$wrapper.valueOf($v)" }
-  final case class Kind(name: String, arr: String, pat: String, dflt: String, prim: Option[Box]) {
+  /** the primitive boxing facet of a Kind (absent ⇒ a reference): the boxed wrapper type plus how to box
+    * (`to`) and unbox (`from`) the underlying `prim` value. */
+  final case class Box(wrapper: String, prim: String) {
+    def to(v: String): String   = s"$wrapper.valueOf($v)"                         // box:   prim -> Object
+    def from(v: String): String = s"scala.runtime.BoxesRunTime.unboxTo$prim($v)"  // unbox: Object -> prim
+  }
+  /** specCh: the JVM erasure descriptor char — I/J/D for primitives, L (object) for references — which is
+    * also the char in stdlib @specialized class names (Tuple2$mcII$sp etc.). prim: present iff a primitive. */
+  final case class Kind(name: String, arr: String, pat: String, dflt: String, specCh: String, prim: Option[Box]) {
     def lc = name.toLowerCase
     def isPrim: Boolean = prim.isDefined
     /** box a `$arr`-typed value to an Object (pass-through for a reference). */
-    def box(v: String): String = prim match { case Some(b) => b(v); case None => v }
-    /** JVM specialization char ("L" = reference, the JVM descriptor for objects). */
-    def specCh: String = prim.map(_.specCh).getOrElse("L")
-    /** unbox an Object expression back to the `$arr` element type (auto-unboxes for prims). */
-    def unbox(v: String): String = s"($v).asInstanceOf[$arr]"
+    def box(v: String): String = prim match { case Some(b) => b.to(v); case None => v }
+    /** unbox an Object expression to the element type (auto-unboxes for prims; cast for references). */
+    def unbox(v: String): String = prim match { case Some(b) => b.from(v); case None => s"($v).asInstanceOf[$arr]" }
   }
 
   // Start with the common numeric kinds + reference; add rows here to cover more primitives.
   val opKinds: List[Kind] = List(
-    Kind("Int", "Int", "Int", "0", Some(Box("java.lang.Integer", "I"))),
-    Kind("Long", "Long", "Long", "0L", Some(Box("java.lang.Long", "J"))),
-    Kind("Double", "Double", "Double", "0.0", Some(Box("java.lang.Double", "D"))),
-    Kind("Ref", "Object", "AnyRef", "null", None)
+    Kind("Int", "Int", "Int", "0", "I", Some(Box("java.lang.Integer", "Int"))),
+    Kind("Long", "Long", "Long", "0L", "J", Some(Box("java.lang.Long", "Long"))),
+    Kind("Double", "Double", "Double", "0.0", "D", Some(Box("java.lang.Double", "Double"))),
+    Kind("Ref", "Object", "AnyRef", "null", "L", None)
   )
 
   private val grow =
@@ -263,6 +266,10 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val indexOfV      = dispatchA(k => scan(k, "var res = -1", "if (a == elem) { res = i; i = ln } else i += 1", "res"))
     val collectFirstV = dispatchA(k => scan(k, "var res: Option[B] = None", "if (pf.isDefinedAt(a)) { res = Some(pf(a)); i = ln } else i += 1", "res"))
     val prefixLenV    = dispatchA(k => scan(k, "var res = ln", "if (p(a)) i += 1 else { res = i; i = ln }", "res"))
+    val countV        = dispatchA(k => scan(k, "var n = 0", "if (p(a)) n += 1; i += 1", "n"))  // no break, tight leaf scan
+    // foldRight: leaf reads its backing array backward (no ReverseNode allocation); non-leaf walks <kind>At.
+    val foldRightV = dispatchA(k =>
+      s"xs match { case leaf: ${k.name}Arr => { val ar = leaf.arr; var acc = z; var i = leaf.length - 1; while (i >= 0) { acc = op(${readVal(k, "ar(i)")}, acc); i -= 1 }; acc }; case _ => { var acc = z; var i = xs.length - 1; while (i >= 0) { acc = op(${readVal(k, s"${k.lc}At(xs, i)")}, acc); i -= 1 }; acc } }")
     val mapM = "summonFrom {\n" + opKinds.map { ka =>
       val inner = "summonFrom {\n" + opKinds.map { kb =>
         s"          case rb: ${kb.name}Repr[B] => { val out = ${alloc(kb, "rb")}; var o = 0; val c = new ${ka.name}Dfs { def onLeaf(a: Array[${ka.arr}], len: Int): Unit = { var i = 0; while (i < len) { out(o) = ${wr(kb, s"rb.unwrap(f(${read(ka)}))")}; o += 1; i += 1 } }; def onOne(v: ${ka.arr}): Unit = { out(o) = ${wr(kb, s"rb.unwrap(f(${readOne(ka)}))")}; o += 1 } }; dfsC${ka.name}(xs, c); new ${kb.name}Arr(out, n) }"
@@ -415,6 +422,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def tabulateImpl[A](n: Int)(inline f: Int => A): FBase = $tabulate
        |  inline def fromArrayImpl[A](as: Array[A]): FBase = $fromArr
        |  inline def foldLeftImpl[A, Z](xs: FBase, z: Z)(inline op: (Z, A) => Z): Z = $foldLeft
+       |  inline def foldRightImpl[A, Z](xs: FBase, z: Z)(inline op: (A, Z) => Z): Z = $foldRightV
+       |  inline def countImpl[A](xs: FBase)(inline p: A => Boolean): Int = $countV
        |  inline def foreachImpl[A](xs: FBase)(inline f: A => Unit): Unit = $foreach
        |  inline def existsImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = $existsV
        |  inline def forallImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = $forallV
