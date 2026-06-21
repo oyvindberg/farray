@@ -105,7 +105,10 @@ object GenCores extends BleepCodegenScript("GenCores") {
   private def dfsBody(k: Kind, onL: String, onO: String): String = {
     val rngCase = if k.name == "Int" then s"\n       |        case rng: RangeNode => { val rn = rng.length; var ri = 0; while (ri < rn) { $onO(rng.start + ri * rng.step); ri += 1 } }" else ""
     val padRead = if k.name == "Ref" then "pad.base.applyBoxed(pi)" else s"${k.lc}At(pad.base, pi)"
-    s"""    var stack = new Array[FBase](16); var tail = new Array[${k.arr}](16); var isTail = new Array[Boolean](16)
+    s"""    root match {
+       |     case leaf0: ${k.name}Arr => $onL(leaf0.arr, leaf0.length)  // fast path: leaf root needs no stack
+       |     case _ =>
+       |    var stack = new Array[FBase](16); var tail = new Array[${k.arr}](16); var isTail = new Array[Boolean](16)
        |    stack(0) = root; var sp = 1
        |    while (sp > 0) {
        |      sp -= 1
@@ -121,6 +124,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |        case s: SliceNode => { val sn = s.length; val so = s.offset; s.base match { case lf: ${k.name}Arr => { val la = lf.arr; var si = 0; while (si < sn) { $onO(la(so + si)); si += 1 } }; case _ => { var si = 0; while (si < sn) { $onO(${k.lc}At(s.base, so + si)); si += 1 } } } }$rngCase
        |        case _ => ()
        |      }
+       |    }
        |    }""".stripMargin
   }
   // consumer (2-method) form: non-inline, one compiled impl per kind. onLeaf fires per leaf-run, onOne per
