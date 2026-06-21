@@ -220,7 +220,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     def read(k: Kind): String = if k.name == "Ref" then "r.wrap(a(i).asInstanceOf[A])" else "r.wrap(a(i))"
     def readOne(k: Kind): String = if k.name == "Ref" then "r.wrap(v.asInstanceOf[A])" else "r.wrap(v)"
     def alloc(k: Kind, rv: String): String =
-      if k.name == "Ref" then s"$rv.ct.newArray(n).asInstanceOf[Array[Object]]" else s"new Array[${k.arr}](n)"
+      if k.name == "Ref" then s"new Array[Object](n)" else s"new Array[${k.arr}](n)"
     // a ref write stores r.Prim (= A, runtime <: Object) into an Object[] — cast it (no-op); prims store directly.
     def wr(k: Kind, e: String): String = if k.name == "Ref" then s"($e).asInstanceOf[Object]" else e
     // wrap a raw kind-array element back to A (for an inline user comparator); plain kind-array alloc
@@ -280,7 +280,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
         s"val inr = f($src); val ln = inr.length; out = ensureCap${kb.name}(out, off + ln); inr match { case lf: ${kb.name}Arr => System.arraycopy(lf.arr, 0, out, off, ln); case _ => flatMapCopyOne${kb.name}(inr, out, off) }; off += ln"
       def branch(ka: Kind, kb: Kind, src0: String, srcI: String): String = {
         val est = "{ val e = cnt * l0; if (e < 8) 8 else e }"
-        val alloc = if kb.name == "Ref" then s"rb.ct.newArray($est).asInstanceOf[Array[Object]]" else s"new Array[${kb.arr}]($est)"
+        val alloc = if kb.name == "Ref" then s"new Array[Object]($est)" else s"new Array[${kb.arr}]($est)"
         val copy0 = s"inr0 match { case lf: ${kb.name}Arr => System.arraycopy(lf.arr, 0, out, 0, l0); case _ => flatMapCopyOne${kb.name}(inr0, out, 0) }"
         s"{ val inr0 = f($src0); val l0 = inr0.length; out = $alloc; $copy0; off = l0; var i = 1; while (i < cnt) { ${stepOf(kb, srcI)}; i += 1 } }"
       }
@@ -296,7 +296,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     }
     // single-pass unzip/unzip3: read each tuple ONCE, fill the 2/3 output arrays unboxed. Dispatch on the
     // component kinds (resolves to one case per concrete site). Source leaf fast-path / applyBoxed.
-    def allocFor(k: Kind, rv: String): String = if k.name == "Ref" then s"$rv.ct.newArray(n).asInstanceOf[Array[Object]]" else s"new Array[${k.arr}](n)"
+    def allocFor(k: Kind, rv: String): String = if k.name == "Ref" then s"new Array[Object](n)" else s"new Array[${k.arr}](n)"
     val unzipV = "summonFrom {\n" + opKinds.map { k1 =>
       val inner = "summonFrom {\n" + opKinds.map { k2 =>
         val fill = s"o1(i) = ${wr(k1, "r1.unwrap(t._1)")}; o2(i) = ${wr(k2, "r2.unwrap(t._2)")}"
@@ -347,7 +347,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       s"if (as.isEmpty) ${k.name}Arr.EMPTY else { val n = as.length; val out = ${alloc(k, "r")}; var i = 0; while (i < n) { out(i) = ${wr(k, "r.unwrap(as(i))")}; i += 1 }; new ${k.name}Arr(out, n) }")
     val fromArr = dispatchA(k => s"new ${k.name}Arr(as.asInstanceOf[Array[${k.arr}]], as.length)")
     // small-arity construction without varargs/Seq/boxing (FArray(a, b) etc.) — the hot path inside flatMap
-    def allocN(k: Kind, n: Int): String = if k.name == "Ref" then s"r.ct.newArray($n).asInstanceOf[Array[Object]]" else s"new Array[${k.arr}]($n)"
+    def allocN(k: Kind, n: Int): String = if k.name == "Ref" then s"new Array[Object]($n)" else s"new Array[${k.arr}]($n)"
     val fromValues1 = dispatchA(k => s"{ val out = ${allocN(k, 1)}; out(0) = ${wr(k, "r.unwrap(a)")}; new ${k.name}Arr(out, 1) }")
     val fromValues2 = dispatchA(k => s"{ val out = ${allocN(k, 2)}; out(0) = ${wr(k, "r.unwrap(a)")}; out(1) = ${wr(k, "r.unwrap(b)")}; new ${k.name}Arr(out, 2) }")
     val fromValues3 = dispatchA(k => s"{ val out = ${allocN(k, 3)}; out(0) = ${wr(k, "r.unwrap(a)")}; out(1) = ${wr(k, "r.unwrap(b)")}; out(2) = ${wr(k, "r.unwrap(c)")}; new ${k.name}Arr(out, 3) }")
