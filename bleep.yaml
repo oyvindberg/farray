@@ -47,7 +47,7 @@ projects:
     scala:
       options: -encoding utf8 -feature -unchecked
       strict: true
-      version: 2.13.10
+      version: 3.8.3
 scripts:
   my-publish-local:
     main: PublishLocal
