@@ -94,14 +94,14 @@ FArray.tabulate(1_000_000)(i => i)
   .foldLeft(0)(_ + _)
 ```
 
-📊 **[Browse the full benchmark report →](bench-report.html)** — a self-contained page of bar charts, FArray vs `Array`/`IArray`/`List`/`Vector` for every operation (clone & open in a browser, or view through [htmlpreview](https://htmlpreview.github.io/)).
+📊 **[Browse the live benchmark report →](https://oyvindberg.github.io/farray/)** — a self-contained page of bar charts, FArray vs `Array`/`IArray`/`List`/`Vector` for every operation.
 
 Regenerate it on your own machine:
 ```bash
-scripts/benchmark-report.sh        # runs the JMH suite → bench-results.json + bench-report.html
-open bench-report.html
+scripts/benchmark-report.sh        # runs the JMH suite → docs/bench-results.json + docs/index.html
+open docs/index.html
 ```
-The raw `bench-results.json` also loads directly into <https://jmh.morethan.io> for an interactive view.
+The raw `docs/bench-results.json` also loads directly into <https://jmh.morethan.io> for an interactive view.
 
 ---
 
