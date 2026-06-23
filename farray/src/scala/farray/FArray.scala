@@ -2,13 +2,10 @@ package farray
 
 import scala.reflect.ClassTag
 
-/**
- * `FArray` — opaque type over the sealed core hierarchy [[FBase]]. Every lambda-taking op is `inline`
- * with an `inline` function param and applies the lambda through the specialized `foldLeft`/`foreach`/
- * `map`/`filter`/`take`/`drop` machinery — so the function inlines and primitives stay unboxed, exactly
- * like `map`. Only inherently-materializing structures (the Map/Set behind `groupBy`/`distinct`, the
- * sort order) box; the user's lambda never does.
- */
+/** `FArray` — opaque type over the sealed core hierarchy [[FBase]]. Every lambda-taking op is `inline` with an `inline` function param and applies the lambda
+  * through the specialized `foldLeft`/`foreach`/ `map`/`filter`/`take`/`drop` machinery — so the function inlines and primitives stay unboxed, exactly like
+  * `map`. Only inherently-materializing structures (the Map/Set behind `groupBy`/`distinct`, the sort order) box; the user's lambda never does.
+  */
 opaque type FArray[+A] <: AnyRef = FBase
 
 object FArray:
@@ -37,12 +34,20 @@ object FArray:
   // ---- factory methods mirroring the List companion (IterableFactory) ----
   /** build from any IterableOnce (Iterator / View / Iterable), like List.from. */
   inline def from[A](it: IterableOnce[A]): FArray[A] = FArrayOps.applyImpl[A](it.iterator.toSeq)
+
   /** n copies of elem; elem is re-evaluated per element (like List.fill). */
   inline def fill[A](n: Int)(inline elem: A): FArray[A] = FArray.tabulate(n)(_ => elem)
+
   /** start, f(start), f(f(start)), … — len elements. */
   inline def iterate[A](start: A, len: Int)(inline f: A => A): FArray[A] =
     if len <= 0 then FArray.empty[A]
-    else { var cur = start; FArray.tabulate(len) { i => val r = cur; if i + 1 < len then cur = f(cur); r } }
+    else {
+      var cur = start;
+      FArray.tabulate(len) { i =>
+        val r = cur; if i + 1 < len then cur = f(cur); r
+      }
+    }
+
   /** concatenate several FArrays; each `++` is an O(1) Concat node. */
   inline def concat[A](xss: FArray[A]*): FArray[A] = {
     var acc = FArray.empty[A]
@@ -50,6 +55,7 @@ object FArray:
     while i < xss.length do { acc = acc ++ xss(i); i += 1 }
     acc
   }
+
   /** generate from a seed until f returns None, like List.unfold. */
   inline def unfold[A, S](init: S)(inline f: S => Option[(A, S)]): FArray[A] = {
     val b = scala.collection.mutable.ArrayBuffer.empty[A]
@@ -91,10 +97,12 @@ object FArray:
     inline def last: A = FArrayOps.applyAtImpl[A](xs, xs.length - 1)
     def headOption: Option[A] = if xs.length == 0 then None else Some((xs: FBase).applyBoxed(0).asInstanceOf[A])
     def lastOption: Option[A] = if xs.length == 0 then None else Some((xs: FBase).applyBoxed(xs.length - 1).asInstanceOf[A])
+
     /** boxed element read; works for an abstract A (no specialization). Used by ListSyntax's extractor. */
     private[farray] def boxedAt(i: Int): A = (xs: FBase).applyBoxed(i).asInstanceOf[A]
     inline def foldLeft[Z](z: Z)(inline op: (Z, A) => Z): Z = FArrayOps.foldLeftImpl[A, Z](xs, z)(op)
     inline def foreach(inline f: A => Unit): Unit = FArrayOps.foreachImpl[A](xs)(f)
+
     /** breakable push: applies `f` to each element while it returns true; stops as soon as `f` returns false. */
     inline def foreachWhile(inline f: A => Boolean): Unit = FArrayOps.foreachWhileImpl[A](xs)(f)
     inline def map[B](inline f: A => B): FArray[B] = FArrayOps.mapImpl[A, B](xs)(f)
@@ -223,5 +231,5 @@ object FArray:
     inline def mapConserve(inline f: A => A): FArray[A] = FArrayOps.mapConserveImpl[A](xs)(f)
 
   extension [A](elem: A)
-    inline def +: (xs: FArray[A]): FArray[A] = FArrayOps.prependImpl[A](elem, xs)
-    inline def :: (xs: FArray[A]): FArray[A] = FArrayOps.prependImpl[A](elem, xs)
+    inline def +:(xs: FArray[A]): FArray[A] = FArrayOps.prependImpl[A](elem, xs)
+    inline def ::(xs: FArray[A]): FArray[A] = FArrayOps.prependImpl[A](elem, xs)

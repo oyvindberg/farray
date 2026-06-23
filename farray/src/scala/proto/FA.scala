@@ -2,14 +2,12 @@ package proto
 
 import scala.compiletime.erasedValue
 
-/**
- * Proof of compile-time per-primitive specialization with NO ClassTag.
- *
- * `inline erasedValue[A] match` reduces at the concrete call site and (we are testing) type-checks
- * only the selected branch — so the Int branch can read `int[]` and do unboxed int arithmetic that
- * would not type-check for an abstract A. The goal: `FA[Int].foldLeft` compiles to a tight `int[]`
- * loop with NO Integer boxing and NO checkcast, while `FA[String]` uses the Object[] path.
- */
+/** Proof of compile-time per-primitive specialization with NO ClassTag.
+  *
+  * `inline erasedValue[A] match` reduces at the concrete call site and (we are testing) type-checks only the selected branch — so the Int branch can read
+  * `int[]` and do unboxed int arithmetic that would not type-check for an abstract A. The goal: `FA[Int].foldLeft` compiles to a tight `int[]` loop with NO
+  * Integer boxing and NO checkcast, while `FA[String]` uses the Object[] path.
+  */
 opaque type FA[+A] = FBase
 
 object FA:

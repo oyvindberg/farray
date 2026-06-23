@@ -16,7 +16,7 @@ class UnzipIntBenchmark extends CommonParams {
     vectorInput = Vector.tabulate(size)(i => (i, i * 2))
     zioChunkInput = zio.Chunk.fromIterable(List.tabulate(size)(i => (i, i * 2)))
   @Benchmark def farray(): (FArray[Int], FArray[Int]) = farrayInput.unzip
-  @Benchmark def list(): (List[Int], List[Int])       = listInput.unzip
+  @Benchmark def list(): (List[Int], List[Int]) = listInput.unzip
   @Benchmark def vector(): (Vector[Int], Vector[Int]) = vectorInput.unzip
   @Benchmark def ziochunk(): (zio.Chunk[Int], zio.Chunk[Int]) = zioChunkInput.unzip
   // fs2.Chunk has no unzip
@@ -35,7 +35,7 @@ class UnzipStringBenchmark extends CommonParams {
     vectorInput = Vector.tabulate(size)(i => (i.toString, i))
     zioChunkInput = zio.Chunk.fromIterable(List.tabulate(size)(i => (i.toString, i)))
   @Benchmark def farray(): (FArray[String], FArray[Int]) = farrayInput.unzip
-  @Benchmark def list(): (List[String], List[Int])       = listInput.unzip
+  @Benchmark def list(): (List[String], List[Int]) = listInput.unzip
   @Benchmark def vector(): (Vector[String], Vector[Int]) = vectorInput.unzip
   @Benchmark def ziochunk(): (zio.Chunk[String], zio.Chunk[Int]) = zioChunkInput.unzip
   // fs2.Chunk has no unzip

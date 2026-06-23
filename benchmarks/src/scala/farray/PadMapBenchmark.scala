@@ -7,9 +7,9 @@ import org.openjdk.jmh.annotations.Benchmark
 // padded elements, then map them.
 class PadMapBenchmark extends IntInputs {
   @Benchmark def farray(): FArray[Int] = farrayInput.padTo(size * 2, -1).map(_ + 1)
-  @Benchmark def list(): List[Int]     = listInput.padTo(size * 2, -1).map(_ + 1)
+  @Benchmark def list(): List[Int] = listInput.padTo(size * 2, -1).map(_ + 1)
   @Benchmark def vector(): Vector[Int] = vectorInput.padTo(size * 2, -1).map(_ + 1)
-  @Benchmark def array(): Array[Int]   = arrayInput.padTo(size * 2, -1).map(_ + 1)
+  @Benchmark def array(): Array[Int] = arrayInput.padTo(size * 2, -1).map(_ + 1)
   @Benchmark def ziochunk(): zio.Chunk[Int] = zioChunkInput.padTo(size * 2, -1).map(_ + 1)
   // fs2.Chunk has no padTo
 }

@@ -29,7 +29,11 @@ class SortDispatchBenchmark {
       while lo < n do
         val mid = math.min(lo + width, n); val hi = math.min(lo + 2 * width, n)
         var i = lo; var j = mid; var k = lo
-        while i < mid && j < hi do { if less(src(j), src(i)) then { dst(k) = src(j); j += 1 } else { dst(k) = src(i); i += 1 }; k += 1 }
+        while i < mid && j < hi do {
+          if less(src(j), src(i)) then { dst(k) = src(j); j += 1 }
+          else { dst(k) = src(i); i += 1 };
+          k += 1
+        }
         while i < mid do { dst(k) = src(i); i += 1; k += 1 }
         while j < hi do { dst(k) = src(j); j += 1; k += 1 }
         lo += 2 * width
@@ -43,14 +47,18 @@ class SortDispatchBenchmark {
       while lo < n do
         val mid = math.min(lo + width, n); val hi = math.min(lo + 2 * width, n)
         var i = lo; var j = mid; var k = lo
-        while i < mid && j < hi do { if less.lt(src(j), src(i)) then { dst(k) = src(j); j += 1 } else { dst(k) = src(i); i += 1 }; k += 1 }
+        while i < mid && j < hi do {
+          if less.lt(src(j), src(i)) then { dst(k) = src(j); j += 1 }
+          else { dst(k) = src(i); i += 1 };
+          k += 1
+        }
         while i < mid do { dst(k) = src(i); i += 1; k += 1 }
         while j < hi do { dst(k) = src(j); j += 1; k += 1 }
         lo += 2 * width
       val t = src; src = dst; dst = t; width *= 2
     src
 
-  @Benchmark def inline_scrambled(): Array[Int]    = msInline(scrambled.clone(), size)((x, y) => x < y)
+  @Benchmark def inline_scrambled(): Array[Int] = msInline(scrambled.clone(), size)((x, y) => x < y)
   @Benchmark def nonInline_scrambled(): Array[Int] = msNonInline(scrambled.clone(), size, (x, y) => x < y)
 
   // 5 DISTINCT comparator classes (same order, different lambdas) -> the shared non-inline call site is

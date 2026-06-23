@@ -1,10 +1,8 @@
 package proto
 
-/**
- * Proof: fold an Int-kind tree (nested Concats over IntArr leaves) in ONE pass, no materialize, no
- * recursion — an explicit local stack drives a preorder DFS, and the inline `op` is spliced into the
- * tight per-leaf `int[]` loop so it stays unboxed.
- */
+/** Proof: fold an Int-kind tree (nested Concats over IntArr leaves) in ONE pass, no materialize, no recursion — an explicit local stack drives a preorder DFS,
+  * and the inline `op` is spliced into the tight per-leaf `int[]` loop so it stays unboxed.
+  */
 object TreeFold:
   inline def sumInt(xs: FBase)(inline op: (Int, Int) => Int): Int =
     var acc = 0

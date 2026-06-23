@@ -9,8 +9,8 @@ package farray
   *     case _      => ...
   * }}}
   *
-  * `case h :: t` goes through a name-based extractor over a `value class` view, so it allocates nothing,
-  * and on a cons-built chain `tail` is the O(1) `Prepend` base — head/tail recursion is as cheap as `List`.
+  * `case h :: t` goes through a name-based extractor over a `value class` view, so it allocates nothing, and on a cons-built chain `tail` is the O(1) `Prepend`
+  * base — head/tail recursion is as cheap as `List`.
   *
   * Keep FArray and `List` pattern matches in separate scopes: importing this shadows `scala.::`.
   */

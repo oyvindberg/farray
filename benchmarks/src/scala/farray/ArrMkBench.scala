@@ -20,7 +20,7 @@ class ArrMkBench {
   inline def mkInline[A](using ct: ClassTag[A]): Array[A] = new Array[A](2)
 
   @Benchmark def a_objectArr(): Int = { var i = 0; var s = 0; while (i < 1000) { s += new Array[Object](2).length; i += 1 }; s }
-  @Benchmark def b_staticStr(): Int  = { var i = 0; var s = 0; while (i < 1000) { s += new Array[String](2).length; i += 1 }; s }
+  @Benchmark def b_staticStr(): Int = { var i = 0; var s = 0; while (i < 1000) { s += new Array[String](2).length; i += 1 }; s }
   @Benchmark def c_reflectStr(): Int = { var i = 0; var s = 0; while (i < 1000) { s += ctStr.newArray(2).length; i += 1 }; s }
-  @Benchmark def d_inlineStr(): Int  = { var i = 0; var s = 0; while (i < 1000) { s += mkInline[String].length; i += 1 }; s }
+  @Benchmark def d_inlineStr(): Int = { var i = 0; var s = 0; while (i < 1000) { s += mkInline[String].length; i += 1 }; s }
 }

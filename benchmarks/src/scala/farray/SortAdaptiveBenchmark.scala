@@ -7,13 +7,13 @@ import org.openjdk.jmh.annotations.Benchmark
 // strictly-descending run (reversed in place). Both should be near-free vs sorting scrambled data.
 class SortAdaptiveIntBenchmark extends IntInputs {
   @Benchmark def farray_sorted(): FArray[Int] = farrayInput.sortWith((a, b) => a < b)
-  @Benchmark def array_sorted(): Array[Int]   = arrayInput.sortWith((a, b) => a < b)
+  @Benchmark def array_sorted(): Array[Int] = arrayInput.sortWith((a, b) => a < b)
   @Benchmark def vector_sorted(): Vector[Int] = vectorInput.sortWith((a, b) => a < b)
   @Benchmark def farray_reverse(): FArray[Int] = farrayInput.sortWith((a, b) => a > b)
-  @Benchmark def array_reverse(): Array[Int]   = arrayInput.sortWith((a, b) => a > b)
+  @Benchmark def array_reverse(): Array[Int] = arrayInput.sortWith((a, b) => a > b)
   @Benchmark def vector_reverse(): Vector[Int] = vectorInput.sortWith((a, b) => a > b)
 
-  @Benchmark def ziochunk_sorted(): zio.Chunk[Int]  = zioChunkInput.sortWith((a, b) => a < b)
+  @Benchmark def ziochunk_sorted(): zio.Chunk[Int] = zioChunkInput.sortWith((a, b) => a < b)
   @Benchmark def ziochunk_reverse(): zio.Chunk[Int] = zioChunkInput.sortWith((a, b) => a > b)
   // fs2.Chunk has no sortWith/sortBy
 

@@ -13,7 +13,7 @@ class FListTest:
   @Test def test_:: : Unit = test1("x" :: _)("x" :: _)
   @Test def test_::: : Unit = test2(_ ::: _)(_ ::: _)
   @Test def test_listSyntax: Unit = {
-    import farray.ListSyntax.*                       // method-local: shadows scala.:: only here
+    import farray.ListSyntax.* // method-local: shadows scala.:: only here
     val xs = 1 :: 2 :: 3 :: Nil
     assert(xs.toList == List(1, 2, 3))
     xs match
@@ -23,8 +23,8 @@ class FListTest:
     assert(empty match { case _ :: _ => false; case _ => true })
     def sum(ys: FArray[Int]): Int = ys match { case h :: t => h + sum(t); case _ => 0 }
     assert(sum(xs) == 6)
-    assert(sum(xs.map(_ + 1)) == 9)                  // pick apart after a map (leaf, not Prepend)
-    val ss = "a" :: "bb" :: Nil                       // reference elements too
+    assert(sum(xs.map(_ + 1)) == 9) // pick apart after a map (leaf, not Prepend)
+    val ss = "a" :: "bb" :: Nil // reference elements too
     assert((ss match { case h :: _ => h; case _ => "" }) == "a")
   }
   @Test def test_iterator_trees: Unit = {
@@ -33,21 +33,21 @@ class FListTest:
       assert(fa.reverseIterator.toList == expected.reverse, s"reviter ${fa.reverseIterator.toList} != ${expected.reverse}")
     val a = FArray(1, 2, 3); val b = FArray(4, 5, 6)
     check(a, List(1, 2, 3))
-    check(a ++ b, List(1, 2, 3, 4, 5, 6))                       // Concat
-    check(a :+ 7, List(1, 2, 3, 7))                             // Append
-    check(0 +: a, List(0, 1, 2, 3))                             // Prepend
-    check(a.reverse, List(3, 2, 1))                             // Reverse
-    check(a.drop(1), List(2, 3))                                // Slice
-    check((a ++ b).drop(1).take(3), List(2, 3, 4))              // Slice over Concat
-    check(0 +: (a ++ b) :+ 9, List(0, 1, 2, 3, 4, 5, 6, 9))     // Prepend + Concat + Append
-    check(a.padTo(5, 0), List(1, 2, 3, 0, 0))                   // Pad
-    check(a.updated(1, 9), List(1, 9, 3))                       // Updated
-    check(((a ++ b) ++ (a ++ b)).reverse, List(1,2,3,4,5,6,1,2,3,4,5,6).reverse) // Reverse of nested Concat
+    check(a ++ b, List(1, 2, 3, 4, 5, 6)) // Concat
+    check(a :+ 7, List(1, 2, 3, 7)) // Append
+    check(0 +: a, List(0, 1, 2, 3)) // Prepend
+    check(a.reverse, List(3, 2, 1)) // Reverse
+    check(a.drop(1), List(2, 3)) // Slice
+    check((a ++ b).drop(1).take(3), List(2, 3, 4)) // Slice over Concat
+    check(0 +: (a ++ b) :+ 9, List(0, 1, 2, 3, 4, 5, 6, 9)) // Prepend + Concat + Append
+    check(a.padTo(5, 0), List(1, 2, 3, 0, 0)) // Pad
+    check(a.updated(1, 9), List(1, 9, 3)) // Updated
+    check(((a ++ b) ++ (a ++ b)).reverse, List(1, 2, 3, 4, 5, 6, 1, 2, 3, 4, 5, 6).reverse) // Reverse of nested Concat
     check(FArray.empty[Int], Nil)
-    val s = FArray("a", "b"); assert(((s :+ "c") ++ FArray("d")).iterator.toList == List("a", "b", "c", "d"))  // Ref cursor
+    val s = FArray("a", "b"); assert(((s :+ "c") ++ FArray("d")).iterator.toList == List("a", "b", "c", "d")) // Ref cursor
   }
   @Test def test_iterator_fuzz: Unit = {
-    val rng = new java.util.Random(0xF00DL)
+    val rng = new java.util.Random(0xf00dL)
     def clamp(k: Int, n: Int): Int = if k < 0 then 0 else if k > n then n else k
     // build a random FArray and the equivalent List in lockstep, via deeply-nested complex ops
     def gen(depth: Int): (FArray[Int], List[Int]) =
@@ -58,13 +58,16 @@ class FListTest:
       else
         val (fa, la) = gen(depth - 1)
         rng.nextInt(9) match
-          case 0 => val (fb, lb) = gen(depth - 1); (fa ++ fb, la ++ lb)        // Concat
-          case 1 => val e = rng.nextInt(1000); (fa :+ e, la :+ e)              // Append
-          case 2 => val e = rng.nextInt(1000); (e +: fa, e :: la)             // Prepend
-          case 3 => (fa.reverse, la.reverse)                                   // Reverse
+          case 0 => val (fb, lb) = gen(depth - 1); (fa ++ fb, la ++ lb) // Concat
+          case 1 => val e = rng.nextInt(1000); (fa :+ e, la :+ e) // Append
+          case 2 => val e = rng.nextInt(1000); (e +: fa, e :: la) // Prepend
+          case 3 => (fa.reverse, la.reverse) // Reverse
           case 4 => val k = clamp(rng.nextInt(la.length + 2), la.length); (fa.drop(k), la.drop(k))
           case 5 => val k = clamp(rng.nextInt(la.length + 2), la.length); (fa.take(k), la.take(k))
-          case 6 => { val lo = clamp(rng.nextInt(la.length + 2), la.length); val hi = clamp(lo + rng.nextInt(la.length + 2), la.length); (fa.slice(lo, hi), la.slice(lo, hi)) }  // Slice
+          case 6 => {
+            val lo = clamp(rng.nextInt(la.length + 2), la.length); val hi = clamp(lo + rng.nextInt(la.length + 2), la.length);
+            (fa.slice(lo, hi), la.slice(lo, hi))
+          } // Slice
           case 7 => val len = la.length + rng.nextInt(4) - 1; val e = rng.nextInt(1000); (fa.padTo(len, e), la.padTo(len, e))
           case _ => if la.isEmpty then (fa, la) else { val i = rng.nextInt(la.length); val e = rng.nextInt(1000); (fa.updated(i, e), la.updated(i, e)) }
     var t = 0
@@ -91,11 +94,11 @@ class FListTest:
   @Test def test_foreachWhile: Unit = {
     val fa = FArray(1, 2, 3, 4, 5)
     val seen = scala.collection.mutable.ListBuffer[Int]()
-    fa.foreachWhile(x => { seen += x; x < 3 })          // processes 1,2,3 (3 returns false), stops before 4
+    fa.foreachWhile(x => { seen += x; x < 3 }) // processes 1,2,3 (3 returns false), stops before 4
     assert(seen.toList == List(1, 2, 3), s"foreachWhile stop: ${seen.toList}")
     var sum = 0; fa.foreachWhile(x => { sum += x; true }) // never breaks: full pass
     assert(sum == 15)
-    fa.foreachWhile(_ => false)                          // breaks immediately
+    fa.foreachWhile(_ => false) // breaks immediately
     FArray.empty[Int].foreachWhile(_ => { assert(false, "empty should not call f"); true })
     // over a tree
     val t = (FArray(1, 2) ++ FArray(3, 4)) :+ 5
@@ -103,25 +106,25 @@ class FListTest:
     assert(s2.toList == List(1, 2, 3))
   }
   @Test def test_match2_trees: Unit = {
-    val a = FArray(1, 2, 3, 4); val tree = FArray(1, 2) ++ FArray(3, 4)   // Concat (non-leaf)
-    assert(a.startsWith(tree) && tree.startsWith(a))                       // tree as `that` / as `xs`
+    val a = FArray(1, 2, 3, 4); val tree = FArray(1, 2) ++ FArray(3, 4) // Concat (non-leaf)
+    assert(a.startsWith(tree) && tree.startsWith(a)) // tree as `that` / as `xs`
     assert(tree.startsWith(FArray(1, 2)) && !tree.startsWith(FArray(1, 9)))
     assert(a.endsWith(FArray(3, 4)) && tree.endsWith(FArray(3, 4)) && !a.endsWith(FArray(9, 4)))
     assert(a.corresponds(tree)(_ == _) && tree.corresponds(a)(_ == _))
-    assert(!a.corresponds(FArray(1, 2, 3))(_ == _))                        // length mismatch
+    assert(!a.corresponds(FArray(1, 2, 3))(_ == _)) // length mismatch
     val s = FArray("a", "b", "c"); val st = FArray("a") ++ FArray("b", "c") // Ref tree
     assert(s.startsWith(st) && st.startsWith(s) && s.corresponds(st)(_ == _) && st.endsWith(FArray("c")))
   }
   @Test def test_factories: Unit = {
     assert(FArray.fill(3)(7).toList == List(7, 7, 7) && FArray.fill(0)(7).toList == Nil)
-    var c = 0; assert(FArray.fill(3)({ c += 1; c }).toList == List(1, 2, 3))   // elem re-evaluated per element
+    var c = 0; assert(FArray.fill(3)({ c += 1; c }).toList == List(1, 2, 3)) // elem re-evaluated per element
     assert(FArray.iterate(1, 4)(_ * 2).toList == List(1, 2, 4, 8) && FArray.iterate(1, 0)(_ * 2).toList == Nil)
     assert(FArray.from(List(1, 2, 3)).toList == List(1, 2, 3))
-    assert(FArray.from(Iterator(4, 5, 6)).toList == List(4, 5, 6))             // IterableOnce: Iterator
+    assert(FArray.from(Iterator(4, 5, 6)).toList == List(4, 5, 6)) // IterableOnce: Iterator
     assert(FArray.concat(FArray(1, 2), FArray(3), FArray(4, 5)).toList == List(1, 2, 3, 4, 5))
     assert(FArray.concat[Int]().toList == Nil)
     assert(FArray.unfold(1)(s => if s > 16 then None else Some((s, s * 2))).toList == List(1, 2, 4, 8, 16))
-    assert(FArray.fill(2)("x").toList == List("x", "x"))                       // reference element
+    assert(FArray.fill(2)("x").toList == List("x", "x")) // reference element
   }
   @Test def test_apply: Unit = test1NonEmpty(_(0))(_(0))
   @Test def test_collect: Unit = test1(_.collect { case str if str.nonEmpty => str })(_.collect { case str if str.nonEmpty => str })
@@ -168,8 +171,8 @@ class FListTest:
   @Test def test_lastOption: Unit = test1(_.lastOption)(_.lastOption)
   @Test def test_lazyZip: Unit = test3(_.lazyZip(_).lazyZip(_).toList)(_.lazyZip(_, _))
   @Test def test_lengthCompare: Unit = test1(_.lengthCompare(1))(_.lengthCompare(1))
-  @Test def `test_lengthIs >` : Unit = test1(_.lengthIs > 2)(_.lengthIs > 2)
-  @Test def `test_lengthIs <=` : Unit = test1(_.lengthIs <= 2)(_.lengthIs <= 2)
+  @Test def `test_lengthIs >`: Unit = test1(_.lengthIs > 2)(_.lengthIs > 2)
+  @Test def `test_lengthIs <=`: Unit = test1(_.lengthIs <= 2)(_.lengthIs <= 2)
   @Test def test_map: Unit = test1(_.map(_.toUpperCase))(_.map(_.toUpperCase))
   @Test def test_mapConserve: Unit = test1(xs => xs.mapConserve(x => x) eq xs)(xs => xs.mapConserve(x => x) eq xs)
   @Test def test_max: Unit = test1NonEmpty(_.max)(_.max)
@@ -186,11 +189,11 @@ class FListTest:
   @Test def test_reduceRight: Unit = test1NonEmpty(_.reduceRight((str, acc) => acc + str))(_.reduceRight((str, acc) => acc + str))
   @Test def test_reduceOption: Unit = test1(_.reduceOption((acc, str) => acc + str))(_.reduceOption((acc, str) => acc + str))
   @Test def test_reverse: Unit = test1(_.reverse)(_.reverse)
-  @Test def `test_reverse_:::` : Unit = test2(_.reverse_:::(_))(_.reverse_:::(_))
+  @Test def `test_reverse_:::`: Unit = test2(_.reverse_:::(_))(_.reverse_:::(_))
   @Test def test_reverseIterator: Unit = test1(_.reverseIterator.toList)(_.reverseIterator.toList)
   @Test def test_size: Unit = test1(_.size)(_.size)
-  @Test def `test_sizeIs >` : Unit = test1(_.sizeIs > 2)(_.sizeIs > 2)
-  @Test def `test_sizeIs <=` : Unit = test1(_.sizeIs <= 2)(_.sizeIs <= 2)
+  @Test def `test_sizeIs >`: Unit = test1(_.sizeIs > 2)(_.sizeIs > 2)
+  @Test def `test_sizeIs <=`: Unit = test1(_.sizeIs <= 2)(_.sizeIs <= 2)
   @Test def test_sortBy: Unit = test1(_.sortBy(x => x))(_.sortBy(x => x))
   @Test def test_sorted: Unit = test1(_.sorted)(_.sorted)
   @Test def test_sortWith: Unit = test1(_.sortWith((x, y) => x < y))(_.sortWith((x, y) => x < y))

@@ -6,9 +6,9 @@ import org.openjdk.jmh.annotations.Benchmark
 // result — no dropped-suffix copy is made. List walks N/2 nodes; Vector/Array allocate the tail slice first.
 class DropMapBenchmark extends IntInputs {
   @Benchmark def farray(): FArray[Int] = farrayInput.drop(size / 2).map(_ + 1)
-  @Benchmark def list(): List[Int]     = listInput.drop(size / 2).map(_ + 1)
+  @Benchmark def list(): List[Int] = listInput.drop(size / 2).map(_ + 1)
   @Benchmark def vector(): Vector[Int] = vectorInput.drop(size / 2).map(_ + 1)
-  @Benchmark def array(): Array[Int]   = arrayInput.drop(size / 2).map(_ + 1)
+  @Benchmark def array(): Array[Int] = arrayInput.drop(size / 2).map(_ + 1)
   @Benchmark def fs2chunk(): fs2.Chunk[Int] = fs2ChunkInput.drop(size / 2).map(_ + 1)
   @Benchmark def ziochunk(): zio.Chunk[Int] = zioChunkInput.drop(size / 2).map(_ + 1)
 }

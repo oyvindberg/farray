@@ -4,7 +4,7 @@ import org.openjdk.jmh.annotations.Benchmark
 
 // take -> drop -> foldLeft
 class TakeDropFoldBenchmark extends Inputs {
-  @Benchmark def list(): Int   = listInput.take(size - 1).drop(1).foldLeft(0)(_ + _.length)
+  @Benchmark def list(): Int = listInput.take(size - 1).drop(1).foldLeft(0)(_ + _.length)
   @Benchmark def farray(): Int = farrayInput.take(size - 1).drop(1).foldLeft(0)(_ + _.length)
   @Benchmark def iarray(): Int = iarrayInput.take(size - 1).drop(1).foldLeft(0)(_ + _.length)
   @Benchmark def vector(): Int = vectorInput.take(size - 1).drop(1).foldLeft(0)(_ + _.length)

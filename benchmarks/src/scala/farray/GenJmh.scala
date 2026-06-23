@@ -11,7 +11,6 @@ object GenJmh extends BleepCodegenScript("GenJmh") {
     val benchmarksProject = model.CrossProjectName(model.ProjectName("benchmarks"), None)
 
     targets.foreach { target =>
-
       val classesDir = started.projectPaths(benchmarksProject).classes
 
       // rebuild everything

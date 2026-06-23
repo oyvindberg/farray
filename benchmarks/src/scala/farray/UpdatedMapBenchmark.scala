@@ -7,9 +7,9 @@ import org.openjdk.jmh.annotations.Benchmark
 // Array copy the entire sequence to apply the single change, then map it.
 class UpdatedMapBenchmark extends IntInputs {
   @Benchmark def farray(): FArray[Int] = farrayInput.updated(size / 2, -1).map(_ + 1)
-  @Benchmark def list(): List[Int]     = listInput.updated(size / 2, -1).map(_ + 1)
+  @Benchmark def list(): List[Int] = listInput.updated(size / 2, -1).map(_ + 1)
   @Benchmark def vector(): Vector[Int] = vectorInput.updated(size / 2, -1).map(_ + 1)
-  @Benchmark def array(): Array[Int]   = arrayInput.updated(size / 2, -1).map(_ + 1)
+  @Benchmark def array(): Array[Int] = arrayInput.updated(size / 2, -1).map(_ + 1)
   @Benchmark def ziochunk(): zio.Chunk[Int] = zioChunkInput.updated(size / 2, -1).map(_ + 1)
   // fs2.Chunk has no updated
 }
