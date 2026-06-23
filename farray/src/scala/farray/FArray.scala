@@ -106,11 +106,7 @@ object FArray:
     inline def min[B >: A](using ord: Ordering[B]): A =
       var best: B = FArrayOps.applyAtImpl[A](xs, 0); xs.drop(1).foreach((a: A) => if ord.lt(a, best) then best = a); best.asInstanceOf[A]
     inline def corresponds[B](that: FArray[B])(inline p: (A, B) => Boolean): Boolean =
-      if xs.length != that.length then false
-      else
-        var ok = true; var i = 0
-        while ok && i < xs.length do { if !p(FArrayOps.applyAtImpl[A](xs, i), FArrayOps.applyAtImpl[B](that, i)) then ok = false; i += 1 }
-        ok
+      xs.length == that.length && FArrayOps.matchAll2Impl[A, B](xs, 0, that, xs.length)(p)
     inline def collectFirst[B](pf: PartialFunction[A, B]): Option[B] = FArrayOps.collectFirstImpl[A, B](xs)(pf)
 
     // ---- FArray-building lambda ops: lambda applied via filter/take/drop/foreach (unboxed) ----
@@ -161,19 +157,10 @@ object FArray:
     inline def mkString(sep: String): String = xs.mkString("", sep, "")
     inline def mkString: String = xs.mkString("", "", "")
     inline def startsWith[B >: A](that: FArray[B]): Boolean =
-      val m = that.length
-      if m > xs.length then false
-      else
-        var i = 0; var ok = true
-        while ok && i < m do { if FArrayOps.applyAtImpl[A](xs, i) != FArrayOps.applyAtImpl[B](that, i) then ok = false; i += 1 }
-        ok
+      that.length <= xs.length && FArrayOps.matchAll2Impl[A, B](xs, 0, that, that.length)((a, b) => a == b)
     inline def endsWith[B >: A](that: FArray[B]): Boolean =
-      val m = that.length; val off = xs.length - m
-      if off < 0 then false
-      else
-        var i = 0; var ok = true
-        while ok && i < m do { if FArrayOps.applyAtImpl[A](xs, off + i) != FArrayOps.applyAtImpl[B](that, i) then ok = false; i += 1 }
-        ok
+      val off = xs.length - that.length
+      off >= 0 && FArrayOps.matchAll2Impl[A, B](xs, off, that, that.length)((a, b) => a == b)
 
     inline def padTo[B >: A](len: Int, elem: B): FArray[B] = FArrayOps.padToImpl[A, B](xs, len, elem)
     inline def diff[B >: A](that: FArray[B]): FArray[A] =

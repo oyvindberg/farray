@@ -102,6 +102,16 @@ class FListTest:
     val s2 = scala.collection.mutable.ListBuffer[Int](); t.foreachWhile(x => { s2 += x; x != 3 })
     assert(s2.toList == List(1, 2, 3))
   }
+  @Test def test_match2_trees: Unit = {
+    val a = FArray(1, 2, 3, 4); val tree = FArray(1, 2) ++ FArray(3, 4)   // Concat (non-leaf)
+    assert(a.startsWith(tree) && tree.startsWith(a))                       // tree as `that` / as `xs`
+    assert(tree.startsWith(FArray(1, 2)) && !tree.startsWith(FArray(1, 9)))
+    assert(a.endsWith(FArray(3, 4)) && tree.endsWith(FArray(3, 4)) && !a.endsWith(FArray(9, 4)))
+    assert(a.corresponds(tree)(_ == _) && tree.corresponds(a)(_ == _))
+    assert(!a.corresponds(FArray(1, 2, 3))(_ == _))                        // length mismatch
+    val s = FArray("a", "b", "c"); val st = FArray("a") ++ FArray("b", "c") // Ref tree
+    assert(s.startsWith(st) && st.startsWith(s) && s.corresponds(st)(_ == _) && st.endsWith(FArray("c")))
+  }
   @Test def test_apply: Unit = test1NonEmpty(_(0))(_(0))
   @Test def test_collect: Unit = test1(_.collect { case str if str.nonEmpty => str })(_.collect { case str if str.nonEmpty => str })
   @Test def test_collectFirst: Unit = test1(_.collectFirst { case str if str.nonEmpty => str })(_.collectFirst { case str if str.nonEmpty => str })

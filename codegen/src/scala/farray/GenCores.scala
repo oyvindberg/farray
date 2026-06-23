@@ -376,6 +376,18 @@ object GenCores extends BleepCodegenScript("GenCores") {
       val slow = s"while (i < n) { out(i) = ${mkTIdx(ka, s"${ka.lc}At(xs, i)", "i")}; i += 1 }"
       s"      case r: ${ka.name}Repr[A] => { val out = new Array[Object](n); var i = 0; if (xs.isInstanceOf[${ka.name}Arr]) { $fast } else { $slow }; new RefArr(out, n) }"
     }.mkString("\n") + "\n    }"
+    // shared backbone for corresponds/startsWith/endsWith: walk xs[xsOff+i] vs that[i] for i in [0,m), calling
+    // pred (continue while true). 2D dispatch on both operand kinds + leaf+leaf fast-path reading both arrays
+    // unboxed (<kind>At fallback for trees) — kills the per-index applyAt O(n·depth) and the per-element match.
+    val matchAll2V = "summonFrom {\n" + opKinds.map { ka =>
+      val inner = "summonFrom {\n" + opKinds.map { kb =>
+        val rdB = (e: String) => if kb.name == "Ref" then s"r2.wrap($e.asInstanceOf[B])" else s"r2.wrap($e)"
+        val fast = s"val xa = xs.asInstanceOf[${ka.name}Arr].arr; val ta = that.asInstanceOf[${kb.name}Arr].arr; while (i < m && pred(${readVal(ka, "xa(i + xsOff)")}, ${rdB("ta(i)")})) i += 1"
+        val slow = s"while (i < m && pred(${readVal(ka, s"${ka.lc}At(xs, i + xsOff)")}, ${rdB(s"${kb.lc}At(that, i)")})) i += 1"
+        s"          case r2: ${kb.name}Repr[B] => { var i = 0; if (xs.isInstanceOf[${ka.name}Arr] && that.isInstanceOf[${kb.name}Arr]) { $fast } else { $slow }; i == m }"
+      }.mkString("\n") + "\n        }"
+      s"      case r: ${ka.name}Repr[A] => $inner"
+    }.mkString("\n") + "\n    }"
     val updated = dispatchB(k => s"new ${k.name}Updated(xs, index, ${wr(k, "r.unwrap(elem)")})")
     val append = dispatchB(k => s"new ${k.name}Append(xs, r.unwrap(elem))")
     val prepend = dispatchA(k => s"new ${k.name}Prepend(r.unwrap(elem), xs)")
@@ -465,6 +477,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def unzip3Impl[A, A1, A2, A3](xs: FBase)(ev: A <:< (A1, A2, A3)): (FBase, FBase, FBase) = { val n = xs.length; $unzip3V }
        |  inline def zipImpl[A, B](xs: FBase, that: FBase): FBase = { val n = if (xs.length < that.length) xs.length else that.length; $zipV }
        |  inline def zipWithIndexImpl[A](xs: FBase): FBase = { val n = xs.length; $zipIdxV }
+       |  inline def matchAll2Impl[A, B](xs: FBase, xsOff: Int, that: FBase, m: Int)(inline pred: (A, B) => Boolean): Boolean = $matchAll2V
        |  inline def applyAtImpl[A](xs: FBase, i: Int): A = $applyAt
        |  inline def flatMapImpl[A, B](xs: FBase)(inline f: A => FBase): FBase = { val cnt = xs.length; $flatMapOne }
        |  inline def updatedImpl[A, B](xs: FBase, index: Int, elem: B): FBase = $updated
