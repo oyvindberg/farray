@@ -34,6 +34,31 @@ object FArray:
         (if diff % step != 0 then c + 1 else c).toInt
     new RangeNode(start, step, count)
 
+  // ---- factory methods mirroring the List companion (IterableFactory) ----
+  /** build from any IterableOnce (Iterator / View / Iterable), like List.from. */
+  inline def from[A](it: IterableOnce[A]): FArray[A] = FArrayOps.applyImpl[A](it.iterator.toSeq)
+  /** n copies of elem; elem is re-evaluated per element (like List.fill). */
+  inline def fill[A](n: Int)(inline elem: A): FArray[A] = FArray.tabulate(n)(_ => elem)
+  /** start, f(start), f(f(start)), … — len elements. */
+  inline def iterate[A](start: A, len: Int)(inline f: A => A): FArray[A] =
+    if len <= 0 then FArray.empty[A]
+    else { var cur = start; FArray.tabulate(len) { i => val r = cur; if i + 1 < len then cur = f(cur); r } }
+  /** concatenate several FArrays; each `++` is an O(1) Concat node. */
+  inline def concat[A](xss: FArray[A]*): FArray[A] = {
+    var acc = FArray.empty[A]
+    var i = 0
+    while i < xss.length do { acc = acc ++ xss(i); i += 1 }
+    acc
+  }
+  /** generate from a seed until f returns None, like List.unfold. */
+  inline def unfold[A, S](init: S)(inline f: S => Option[(A, S)]): FArray[A] = {
+    val b = scala.collection.mutable.ArrayBuffer.empty[A]
+    var s = init
+    var go = true
+    while go do f(s) match { case Some((a, s2)) => b += a; s = s2; case None => go = false }
+    FArray.fromIterable(b)
+  }
+
   extension [A](xs: FArray[A])
     // ---- shape ----
     def length: Int = xs.length

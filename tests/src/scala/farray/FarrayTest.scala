@@ -112,6 +112,17 @@ class FListTest:
     val s = FArray("a", "b", "c"); val st = FArray("a") ++ FArray("b", "c") // Ref tree
     assert(s.startsWith(st) && st.startsWith(s) && s.corresponds(st)(_ == _) && st.endsWith(FArray("c")))
   }
+  @Test def test_factories: Unit = {
+    assert(FArray.fill(3)(7).toList == List(7, 7, 7) && FArray.fill(0)(7).toList == Nil)
+    var c = 0; assert(FArray.fill(3)({ c += 1; c }).toList == List(1, 2, 3))   // elem re-evaluated per element
+    assert(FArray.iterate(1, 4)(_ * 2).toList == List(1, 2, 4, 8) && FArray.iterate(1, 0)(_ * 2).toList == Nil)
+    assert(FArray.from(List(1, 2, 3)).toList == List(1, 2, 3))
+    assert(FArray.from(Iterator(4, 5, 6)).toList == List(4, 5, 6))             // IterableOnce: Iterator
+    assert(FArray.concat(FArray(1, 2), FArray(3), FArray(4, 5)).toList == List(1, 2, 3, 4, 5))
+    assert(FArray.concat[Int]().toList == Nil)
+    assert(FArray.unfold(1)(s => if s > 16 then None else Some((s, s * 2))).toList == List(1, 2, 4, 8, 16))
+    assert(FArray.fill(2)("x").toList == List("x", "x"))                       // reference element
+  }
   @Test def test_apply: Unit = test1NonEmpty(_(0))(_(0))
   @Test def test_collect: Unit = test1(_.collect { case str if str.nonEmpty => str })(_.collect { case str if str.nonEmpty => str })
   @Test def test_collectFirst: Unit = test1(_.collectFirst { case str if str.nonEmpty => str })(_.collectFirst { case str if str.nonEmpty => str })
