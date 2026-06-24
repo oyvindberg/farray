@@ -458,11 +458,21 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val sortWith = dispatchA(k => sortDirect(k, s"lt(${readVal(k, "x")}, ${readVal(k, "y")})", s"lt(${readVal(k, "y")}, ${readVal(k, "x")})"))
     // sorted has an Ordering, which IS a Comparator -> for Ref hand it straight to Arrays.sort (1 compare per
     // comparison; the lt-comparator would do up to 2). Primitives keep the unboxed natural mergesort.
+    // natural primitive orderings -> hand the materialised array straight to java.util.Arrays.sort
+    // (dual-pivot, no boxing). Stability is irrelevant for primitives. Double is excluded: the implicit
+    // Ordering[Double] is IEEE (NaN handling differs from Arrays.sort's total order), so it keeps the mergesort.
+    val sortedNat = Map("Int" -> "scala.math.Ordering.Int", "Long" -> "scala.math.Ordering.Long")
     val sortedV = dispatchA(k =>
       if k.name == "Ref" then
         s"{ val vals = materializeRef(xs); val n = vals.length; if (n < 2) xs else { java.util.Arrays.sort(vals, ord.asInstanceOf[java.util.Comparator[Object]]); new RefArr(vals, n) } }"
-      else
-        s"{ val vals = materialize${k.name}(xs); val n = vals.length; if (n < 2) xs else new ${k.name}Arr(sort${k.name}(vals, n, (x, y) => ord.lt(${readVal(k, "x")}, ${readVal(k, "y")})), n) }"
+      else {
+        val merge = s"new ${k.name}Arr(sort${k.name}(vals, n, (x, y) => ord.lt(${readVal(k, "x")}, ${readVal(k, "y")})), n)"
+        val body = sortedNat.get(k.name) match {
+          case Some(nat) => s"if (ord.asInstanceOf[AnyRef] eq $nat) { java.util.Arrays.sort(vals); new ${k.name}Arr(vals, n) } else $merge"
+          case None      => merge
+        }
+        s"{ val vals = materialize${k.name}(xs); val n = vals.length; if (n < 2) xs else $body }"
+      }
     )
     // sortBy: keys differ from values -> sort an UNBOXED int[] index by the materialized keys, then permute.
     // (Java's Arrays.sort can't sort an int[] by a comparator without boxing to Integer[], which is slower
