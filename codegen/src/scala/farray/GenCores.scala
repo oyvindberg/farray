@@ -658,6 +658,75 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val fromValues3 = dispatchA(k =>
       s"{ val out = ${allocN(k, 3)}; out(0) = ${wr(k, "r.unwrap(a)")}; out(1) = ${wr(k, "r.unwrap(b)")}; out(2) = ${wr(k, "r.unwrap(c)")}; new ${k.name}Arr(out, 3) }"
     )
+    // small-arity 4..32: unboxed direct-array construction, no varargs Seq / boxing (matches fs2.Chunk small applies)
+    def fromValuesN(names: Seq[String]): String = dispatchA { k =>
+      val sets = names.zipWithIndex.map((nm, i) => s"out($i) = ${wr(k, s"r.unwrap($nm)")}").mkString("; ")
+      s"{ val out = ${allocN(k, names.length)}; $sets; new ${k.name}Arr(out, ${names.length}) }"
+    }
+    val fromValues4 = fromValuesN(Seq("p1", "p2", "p3", "p4"))
+    val fromValues5 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5"))
+    val fromValues6 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6"))
+    val fromValues7 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7"))
+    val fromValues8 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8"))
+    val fromValues9 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9"))
+    val fromValues10 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10"))
+    val fromValues11 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11"))
+    val fromValues12 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12"))
+    val fromValues13 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13"))
+    val fromValues14 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14"))
+    val fromValues15 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15"))
+    val fromValues16 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16"))
+    val fromValues17 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17"))
+    val fromValues18 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18"))
+    val fromValues19 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19"))
+    val fromValues20 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19", "p20"))
+    val fromValues21 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19", "p20", "p21"))
+    val fromValues22 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19", "p20", "p21", "p22"))
+    val fromValues23 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19", "p20", "p21", "p22", "p23"))
+    val fromValues24 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19", "p20", "p21", "p22", "p23", "p24"))
+    val fromValues25 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19", "p20", "p21", "p22", "p23", "p24", "p25"))
+    val fromValues26 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19", "p20", "p21", "p22", "p23", "p24", "p25", "p26"))
+    val fromValues27 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19", "p20", "p21", "p22", "p23", "p24", "p25", "p26", "p27"))
+    val fromValues28 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19", "p20", "p21", "p22", "p23", "p24", "p25", "p26", "p27", "p28"))
+    val fromValues29 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19", "p20", "p21", "p22", "p23", "p24", "p25", "p26", "p27", "p28", "p29"))
+    val fromValues30 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19", "p20", "p21", "p22", "p23", "p24", "p25", "p26", "p27", "p28", "p29", "p30"))
+    val fromValues31 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19", "p20", "p21", "p22", "p23", "p24", "p25", "p26", "p27", "p28", "p29", "p30", "p31"))
+    val fromValues32 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19", "p20", "p21", "p22", "p23", "p24", "p25", "p26", "p27", "p28", "p29", "p30", "p31", "p32"))
+    // mkString: one StringBuilder pass via dfs. Primitive runs use StringBuilder.append(prim) overloads (NO
+    // boxing); Ref appends the Object via String.valueOf. The leading separator is handled by `first`.
+    val mkStringV = dispatchA { k =>
+      val appRun = if k.name == "Ref" then "sb.append(String.valueOf(a(j)))" else "sb.append(a(j))"
+      val appOne = if k.name == "Ref" then "sb.append(String.valueOf(v))" else "sb.append(v)"
+      s"""{ val sb = new java.lang.StringBuilder(start); var first = true
+         |      val c = new ${k.name}Dfs {
+         |        def onRunF(a: Array[${k.arr}], start: Int, count: Int): Unit = { var j = start; val e = start + count; while (j < e) { if (first) first = false else sb.append(sep); $appRun; j += 1 } }
+         |        def onRunB(a: Array[${k.arr}], start: Int, count: Int): Unit = { var j = start; val e = start - count; while (j > e) { if (first) first = false else sb.append(sep); $appRun; j -= 1 } }
+         |        def onOne(v: ${k.arr}): Unit = { if (first) first = false else sb.append(sep); $appOne }
+         |      }
+         |      dfsC${k.name}(xs, c); sb.append(end).toString }""".stripMargin
+    }
+    // toArray: when the requested element class matches the kind's storage, one materialize pass
+    // (System.arraycopy per run, no per-element boxing). Otherwise a typed element loop.
+    val toArrayV = dispatchA { k =>
+      if k.name == "Ref" then
+        s"""if (ct.runtimeClass eq classOf[Object]) materializeRef(xs).asInstanceOf[Array[B]]
+           |    else { val n = xs.length; val out = ct.newArray(n); xs match { case leaf: RefArr => System.arraycopy(leaf.arr, 0, out, 0, n); case _ => System.arraycopy(materializeRef(xs), 0, out.asInstanceOf[Array[Object]], 0, n) }; out }""".stripMargin
+      else
+        s"""if (ct.runtimeClass eq classOf[${k.arr}]) materialize${k.name}(xs).asInstanceOf[Array[B]]
+           |    else { val n = xs.length; val out = ct.newArray(n); var o0 = 0; val c = new ${k.name}Dfs { def onRunF(a: Array[${k.arr}], start: Int, count: Int): Unit = { var j = start; val e = start + count; while (j < e) { out(o0) = a(j).asInstanceOf[B]; o0 += 1; j += 1 } }; def onRunB(a: Array[${k.arr}], start: Int, count: Int): Unit = { var j = start; val e = start - count; while (j > e) { out(o0) = a(j).asInstanceOf[B]; o0 += 1; j -= 1 } }; def onOne(v: ${k.arr}): Unit = { out(o0) = v.asInstanceOf[B]; o0 += 1 } }; dfsC${k.name}(xs, c); out }""".stripMargin
+    }
+    // copyToArray: bounded materialize into dest. Fast leaf path = one arraycopy; trees/nodes copy via a dfs
+    // that stops once `n` elements are written (the `stop` flag short-circuits the driver).
+    val copyToArrayV = dispatchA { k =>
+      // dest is Array[B]; for the matching kind the run arrays are Array[k.arr] = Array[B] at runtime.
+      val leafFast =
+        if k.name == "Ref" then "case leaf: RefArr => System.arraycopy(leaf.arr, 0, dest.asInstanceOf[Array[Object]], start, n)"
+        else s"case leaf: ${k.name}Arr => System.arraycopy(leaf.arr, 0, dest.asInstanceOf[Array[${k.arr}]], start, n)"
+      val store = if k.name == "Ref" then "dest(start + w) = a(j).asInstanceOf[B]" else "dest(start + w) = a(j).asInstanceOf[B]"
+      val storeOne = "dest(start + w) = v.asInstanceOf[B]"
+      s"""{ val avail = dest.length - start; val n = if (len < xs.length) (if (len < avail) len else avail) else (if (xs.length < avail) xs.length else avail)
+         |    if (n <= 0) 0 else { xs match { $leafFast; case _ => { var w = 0; val c = new ${k.name}Dfs { def onRunF(a: Array[${k.arr}], st: Int, count: Int): Unit = { var j = st; val e = st + count; while (j < e && w < n) { $store; w += 1; j += 1 }; if (w >= n) stop = true }; def onRunB(a: Array[${k.arr}], st: Int, count: Int): Unit = { var j = st; val e = st - count; while (j > e && w < n) { $store; w += 1; j -= 1 }; if (w >= n) stop = true }; def onOne(v: ${k.arr}): Unit = { if (w < n) { $storeOne; w += 1 }; if (w >= n) stop = true } }; dfsC${k.name}(xs, c) } }; n } }""".stripMargin
+    }
 
     s"""package farray
        |
@@ -686,8 +755,40 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def fromValues1[A](a: A): FBase = $fromValues1
        |  inline def fromValues2[A](a: A, b: A): FBase = $fromValues2
        |  inline def fromValues3[A](a: A, b: A, c: A): FBase = $fromValues3
+       |  inline def fromValues4[A](p1: A, p2: A, p3: A, p4: A): FBase = $fromValues4
+       |  inline def fromValues5[A](p1: A, p2: A, p3: A, p4: A, p5: A): FBase = $fromValues5
+       |  inline def fromValues6[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A): FBase = $fromValues6
+       |  inline def fromValues7[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A): FBase = $fromValues7
+       |  inline def fromValues8[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A): FBase = $fromValues8
+       |  inline def fromValues9[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A): FBase = $fromValues9
+       |  inline def fromValues10[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A): FBase = $fromValues10
+       |  inline def fromValues11[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A): FBase = $fromValues11
+       |  inline def fromValues12[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A): FBase = $fromValues12
+       |  inline def fromValues13[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A): FBase = $fromValues13
+       |  inline def fromValues14[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A): FBase = $fromValues14
+       |  inline def fromValues15[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A): FBase = $fromValues15
+       |  inline def fromValues16[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A): FBase = $fromValues16
+       |  inline def fromValues17[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A): FBase = $fromValues17
+       |  inline def fromValues18[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A, p18: A): FBase = $fromValues18
+       |  inline def fromValues19[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A, p18: A, p19: A): FBase = $fromValues19
+       |  inline def fromValues20[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A, p18: A, p19: A, p20: A): FBase = $fromValues20
+       |  inline def fromValues21[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A, p18: A, p19: A, p20: A, p21: A): FBase = $fromValues21
+       |  inline def fromValues22[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A, p18: A, p19: A, p20: A, p21: A, p22: A): FBase = $fromValues22
+       |  inline def fromValues23[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A, p18: A, p19: A, p20: A, p21: A, p22: A, p23: A): FBase = $fromValues23
+       |  inline def fromValues24[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A, p18: A, p19: A, p20: A, p21: A, p22: A, p23: A, p24: A): FBase = $fromValues24
+       |  inline def fromValues25[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A, p18: A, p19: A, p20: A, p21: A, p22: A, p23: A, p24: A, p25: A): FBase = $fromValues25
+       |  inline def fromValues26[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A, p18: A, p19: A, p20: A, p21: A, p22: A, p23: A, p24: A, p25: A, p26: A): FBase = $fromValues26
+       |  inline def fromValues27[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A, p18: A, p19: A, p20: A, p21: A, p22: A, p23: A, p24: A, p25: A, p26: A, p27: A): FBase = $fromValues27
+       |  inline def fromValues28[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A, p18: A, p19: A, p20: A, p21: A, p22: A, p23: A, p24: A, p25: A, p26: A, p27: A, p28: A): FBase = $fromValues28
+       |  inline def fromValues29[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A, p18: A, p19: A, p20: A, p21: A, p22: A, p23: A, p24: A, p25: A, p26: A, p27: A, p28: A, p29: A): FBase = $fromValues29
+       |  inline def fromValues30[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A, p18: A, p19: A, p20: A, p21: A, p22: A, p23: A, p24: A, p25: A, p26: A, p27: A, p28: A, p29: A, p30: A): FBase = $fromValues30
+       |  inline def fromValues31[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A, p18: A, p19: A, p20: A, p21: A, p22: A, p23: A, p24: A, p25: A, p26: A, p27: A, p28: A, p29: A, p30: A, p31: A): FBase = $fromValues31
+       |  inline def fromValues32[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A, p18: A, p19: A, p20: A, p21: A, p22: A, p23: A, p24: A, p25: A, p26: A, p27: A, p28: A, p29: A, p30: A, p31: A, p32: A): FBase = $fromValues32
        |  inline def tabulateImpl[A](n: Int)(inline f: Int => A): FBase = $tabulate
        |  inline def fromArrayImpl[A](as: Array[A]): FBase = $fromArr
+       |  inline def mkStringImpl[A](xs: FBase, start: String, sep: String, end: String): String = if (xs.length == 0) start + end else $mkStringV
+       |  inline def toArrayImpl[A, B](xs: FBase)(ct: scala.reflect.ClassTag[B]): Array[B] = $toArrayV
+       |  inline def copyToArrayImpl[A, B](xs: FBase, dest: Array[B], start: Int, len: Int): Int = $copyToArrayV
        |  inline def foldLeftImpl[A, Z](xs: FBase, z: Z)(inline op: (Z, A) => Z): Z = { val n = xs.length; if (n == 0) z else if (n == 1) op(z, applyAtImpl[A](xs, 0)) else $foldLeft }
        |  inline def foldRightImpl[A, Z](xs: FBase, z: Z)(inline op: (A, Z) => Z): Z = { val n = xs.length; if (n == 0) z else if (n == 1) op(applyAtImpl[A](xs, 0), z) else $foldRightV }
        |  inline def iteratorImpl[A](xs: FBase): Iterator[A] = ($iteratorV).asInstanceOf[Iterator[A]]

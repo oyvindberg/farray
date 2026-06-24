@@ -15,6 +15,37 @@ object FArray:
   inline def apply[A](a: A): FArray[A] = FArrayOps.fromValues1[A](a)
   inline def apply[A](a: A, b: A): FArray[A] = FArrayOps.fromValues2[A](a, b)
   inline def apply[A](a: A, b: A, c: A): FArray[A] = FArrayOps.fromValues3[A](a, b, c)
+  inline def apply[A](p1: A, p2: A, p3: A, p4: A): FArray[A] = FArrayOps.fromValues4[A](p1, p2, p3, p4)
+  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A): FArray[A] = FArrayOps.fromValues5[A](p1, p2, p3, p4, p5)
+  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A): FArray[A] = FArrayOps.fromValues6[A](p1, p2, p3, p4, p5, p6)
+  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A): FArray[A] = FArrayOps.fromValues7[A](p1, p2, p3, p4, p5, p6, p7)
+  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A): FArray[A] = FArrayOps.fromValues8[A](p1, p2, p3, p4, p5, p6, p7, p8)
+  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A): FArray[A] = FArrayOps.fromValues9[A](p1, p2, p3, p4, p5, p6, p7, p8, p9)
+  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A): FArray[A] = FArrayOps.fromValues10[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10)
+  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A): FArray[A] = FArrayOps.fromValues11[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11)
+  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A): FArray[A] = FArrayOps.fromValues12[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12)
+  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A): FArray[A] = FArrayOps.fromValues13[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13)
+  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A): FArray[A] = FArrayOps.fromValues14[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14)
+  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A): FArray[A] = FArrayOps.fromValues15[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15)
+  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A): FArray[A] = FArrayOps.fromValues16[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16)
+  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A): FArray[A] = FArrayOps.fromValues17[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17)
+  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A, p18: A): FArray[A] = FArrayOps.fromValues18[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18)
+  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A, p18: A, p19: A): FArray[A] = FArrayOps.fromValues19[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19)
+  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A, p18: A, p19: A, p20: A): FArray[A] = FArrayOps.fromValues20[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19, p20)
+  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A, p18: A, p19: A, p20: A, p21: A): FArray[A] = FArrayOps.fromValues21[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19, p20, p21)
+  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A, p18: A, p19: A, p20: A, p21: A, p22: A): FArray[A] = FArrayOps.fromValues22[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19, p20, p21, p22)
+  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A, p18: A, p19: A, p20: A, p21: A, p22: A, p23: A): FArray[A] = FArrayOps.fromValues23[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19, p20, p21, p22, p23)
+  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A, p18: A, p19: A, p20: A, p21: A, p22: A, p23: A, p24: A): FArray[A] = FArrayOps.fromValues24[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19, p20, p21, p22, p23, p24)
+  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A, p18: A, p19: A, p20: A, p21: A, p22: A, p23: A, p24: A, p25: A): FArray[A] = FArrayOps.fromValues25[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19, p20, p21, p22, p23, p24, p25)
+  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A, p18: A, p19: A, p20: A, p21: A, p22: A, p23: A, p24: A, p25: A, p26: A): FArray[A] = FArrayOps.fromValues26[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19, p20, p21, p22, p23, p24, p25, p26)
+  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A, p18: A, p19: A, p20: A, p21: A, p22: A, p23: A, p24: A, p25: A, p26: A, p27: A): FArray[A] = FArrayOps.fromValues27[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19, p20, p21, p22, p23, p24, p25, p26, p27)
+  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A, p18: A, p19: A, p20: A, p21: A, p22: A, p23: A, p24: A, p25: A, p26: A, p27: A, p28: A): FArray[A] = FArrayOps.fromValues28[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19, p20, p21, p22, p23, p24, p25, p26, p27, p28)
+  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A, p18: A, p19: A, p20: A, p21: A, p22: A, p23: A, p24: A, p25: A, p26: A, p27: A, p28: A, p29: A): FArray[A] = FArrayOps.fromValues29[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19, p20, p21, p22, p23, p24, p25, p26, p27, p28, p29)
+  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A, p18: A, p19: A, p20: A, p21: A, p22: A, p23: A, p24: A, p25: A, p26: A, p27: A, p28: A, p29: A, p30: A): FArray[A] = FArrayOps.fromValues30[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19, p20, p21, p22, p23, p24, p25, p26, p27, p28, p29, p30)
+  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A, p18: A, p19: A, p20: A, p21: A, p22: A, p23: A, p24: A, p25: A, p26: A, p27: A, p28: A, p29: A, p30: A, p31: A): FArray[A] = FArrayOps.fromValues31[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19, p20, p21, p22, p23, p24, p25, p26, p27, p28, p29, p30, p31)
+  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A, p18: A, p19: A, p20: A, p21: A, p22: A, p23: A, p24: A, p25: A, p26: A, p27: A, p28: A, p29: A, p30: A, p31: A, p32: A): FArray[A] = FArrayOps.fromValues32[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19, p20, p21, p22, p23, p24, p25, p26, p27, p28, p29, p30, p31, p32)
+  // Larger literal arities go through applyMacro, which builds the typed backing array with unrolled
+  // primitive stores and wraps it into the leaf node directly (no varargs Seq, no boxing).
   inline def apply[A](as: A*): FArray[A] = ${ FArrayMacros.applyMacro[A]('as) }
   inline def tabulate[A](n: Int)(inline f: Int => A): FArray[A] = FArrayOps.tabulateImpl[A](n)(f)
   inline def fromArray[A](as: Array[A]): FArray[A] = FArrayOps.fromArrayImpl[A](as)
@@ -195,11 +226,8 @@ object FArray:
     def toSeq: Seq[A] = new FArraySeq[A](xs)
     inline def toSet[B >: A]: Set[B] = { val b = Set.newBuilder[B]; xs.foreach(a => b += a); b.result() }
     inline def toMap[K, V](using ev: A <:< (K, V)): Map[K, V] = { val b = Map.newBuilder[K, V]; xs.foreach(a => b += ev(a)); b.result() }
-    inline def toArray[B >: A](using ct: ClassTag[B]): Array[B] =
-      val arr = ct.newArray(xs.length); var i = 0; xs.foreach(a => { arr(i) = a; i += 1 }); arr
-    inline def mkString(start: String, sep: String, end: String): String =
-      val sb = new java.lang.StringBuilder(start); var first = true
-      xs.foreach(a => { if first then first = false else sb.append(sep); sb.append(String.valueOf(a.asInstanceOf[Object])) }); sb.append(end).toString
+    inline def toArray[B >: A](using ct: ClassTag[B]): Array[B] = FArrayOps.toArrayImpl[A, B](xs)(ct)
+    inline def mkString(start: String, sep: String, end: String): String = FArrayOps.mkStringImpl[A](xs, start, sep, end)
     inline def mkString(sep: String): String = xs.mkString("", sep, "")
     inline def mkString: String = xs.mkString("", "", "")
     inline def startsWith[B >: A](that: FArray[B]): Boolean =
@@ -290,13 +318,7 @@ object FArray:
       val f = if from < 0 then 0 else from
       xs.take(f) ++ that ++ xs.drop(f + (if replaced < 0 then 0 else replaced))
     def toIndexedSeq: IndexedSeq[A] = new FArraySeq[A](xs)
-    inline def copyToArray[B >: A](dest: Array[B], start: Int, len: Int): Int =
-      val n = math.min(len, math.min(xs.length, dest.length - start))
-      if n <= 0 then 0
-      else
-        var i = 0
-        xs.foreachWhile(a => if i < n then { dest(start + i) = a; i += 1; true } else false)
-        n
+    inline def copyToArray[B >: A](dest: Array[B], start: Int, len: Int): Int = FArrayOps.copyToArrayImpl[A, B](xs, dest, start, len)
     inline def combinations(k: Int): Iterator[FArray[A]] = xs.toVector.combinations(k).map(v => FArray.fromIterable(v))
     inline def permutations: Iterator[FArray[A]] = xs.toVector.permutations.map(v => FArray.fromIterable(v))
     inline def sum[B >: A](using num: Numeric[B]): B = FArrayOps.sumImpl[A, B](xs)

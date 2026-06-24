@@ -249,6 +249,58 @@ class FListTest:
       assertEquals(list.toString, da.toList, db.toList)
     }
 
+  // toArray / mkString / copyToArray across element kinds + tree shapes (specialized FArrayOps impls).
+  @Test def test_toArray_kinds(): Unit =
+    assert(FArray(1, 2, 3).toArray.sameElements(Array(1, 2, 3)))
+    assert((FArray(1, 2) ++ FArray(3, 4)).toArray.sameElements(Array(1, 2, 3, 4))) // Concat
+    assert((FArray(1, 2, 3) :+ 4).toArray.sameElements(Array(1, 2, 3, 4))) // Append
+    assert((0 +: FArray(1, 2, 3)).toArray.sameElements(Array(0, 1, 2, 3))) // Prepend
+    assert(FArray(1, 2, 3, 4).reverse.toArray.sameElements(Array(4, 3, 2, 1))) // Reverse (backward run)
+    assert(FArray.range(0, 5).toArray.sameElements(Array(0, 1, 2, 3, 4))) // RangeNode
+    assert(FArray(1L, 2L, 3L).toArray.sameElements(Array(1L, 2L, 3L)))
+    assert(FArray(1.5, 2.5).toArray.sameElements(Array(1.5, 2.5)))
+    assert(FArray("a", "b").toArray.sameElements(Array("a", "b")))
+    assert(FArray.empty[Int].toArray.sameElements(Array.empty[Int]))
+    val anyArr: Array[Any] = FArray(1, 2, 3).toArray[Any] // wide ClassTag -> typed-loop path
+    assert(anyArr.toList == List(1, 2, 3))
+
+  @Test def test_mkString_kinds(): Unit =
+    assert(FArray(1, 2, 3).mkString("[", ",", "]") == "[1,2,3]")
+    assert((FArray(1, 2) ++ FArray(3, 4)).mkString(",") == List(1, 2, 3, 4).mkString(","))
+    assert(FArray(1, 2, 3, 4).reverse.mkString(",") == "4,3,2,1")
+    assert(FArray(1L, 2L, 3L).mkString("-") == "1-2-3")
+    assert(FArray(1.5, 2.5).mkString(",") == "1.5,2.5")
+    assert(FArray("a", "b", "c").mkString == "abc")
+    assert(FArray.empty[Int].mkString("(", ",", ")") == "()")
+    assert(FArray.range(0, 4).mkString(",") == "0,1,2,3")
+
+  @Test def test_copyToArray_kinds(): Unit =
+    // primitive kind, partial len, non-trivial start, over a tree
+    val src = (FArray(1, 2) ++ FArray(3, 4)) :+ 5
+    val dst = Array.fill(8)(-1)
+    val n = src.copyToArray(dst, 2, 3) // copy first 3 into [2..4]
+    assert(n == 3 && dst.toList == List(-1, -1, 1, 2, 3, -1, -1, -1), dst.toList.toString)
+    val full = new Array[Int](5); assert(src.copyToArray(full, 0, 99) == 5 && full.toList == List(1, 2, 3, 4, 5))
+    val strDst = new Array[String](3); FArray("x", "y").copyToArray(strDst, 0, 2)
+    assert(strDst.toList == List("x", "y", null))
+
+  @Test def test_smallArity_apply(): Unit =
+    assert(FArray(1, 2, 3, 4).toList == List(1, 2, 3, 4))
+    assert(FArray(1, 2, 3, 4, 5).toList == List(1, 2, 3, 4, 5))
+    assert(FArray(1, 2, 3, 4, 5, 6).toList == List(1, 2, 3, 4, 5, 6))
+    assert(FArray(1, 2, 3, 4, 5, 6, 7).toList == List(1, 2, 3, 4, 5, 6, 7))
+    assert(FArray(1, 2, 3, 4, 5, 6, 7, 8).toList == List(1, 2, 3, 4, 5, 6, 7, 8))
+    assert(FArray("a", "b", "c", "d").toList == List("a", "b", "c", "d")) // Ref kind
+    assert(FArray(1L, 2L, 3L, 4L, 5L).toList == List(1L, 2L, 3L, 4L, 5L)) // Long kind
+    // exercise the 16- and 32-arg overloads (boundary cases)
+    val f16 = FArray(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16)
+    assert(f16.toList == (1 to 16).toList)
+    val f32 = FArray(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+      17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32)
+    assert(f32.toList == (1 to 32).toList && f32.length == 32)
+    val d16 = FArray(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0)
+    assert(d16.toList == (1 to 16).map(_.toDouble).toList) // Double kind, 16-arg
+
   // dfsCB break + global-index + foldRight must be correct on EVERY node shape, not just a flat leaf.
   @Test def test_shortCircuit_trees(): Unit =
     val flat = (0 until 12).toList

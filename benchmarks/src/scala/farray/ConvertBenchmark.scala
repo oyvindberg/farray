@@ -2,10 +2,13 @@ package farray
 
 import org.openjdk.jmh.annotations.Benchmark
 
-// Materialize / convert ops: toArray / copyToArray / mkString / toIndexedSeq / toSeq / indices / isDefinedAt / view.
-// FArray has no view.
-// fs2.Chunk has toArray / copyToArray / toVector (-> asSeq for toIndexedSeq); it has no mkString / indices / isDefinedAt / view.
+// Materialize / convert ops: toArray / copyToArray / mkString / indices / isDefinedAt.
+// fs2.Chunk has toArray / copyToArray; it has no mkString / indices / isDefinedAt.
 // zio.Chunk is an IndexedSeq -> full API.
+// NOTE: toSeq/toIndexedSeq are intentionally NOT benchmarked — FArray.toSeq/toIndexedSeq is already a
+// zero-copy O(1) FArraySeq wrapper, but a native Seq (List, Vector, zio.Chunk) returns `this` and so
+// allocates nothing at all. That single wrapper allocation is an inherent, un-winnable gap, so the
+// benchmark is omitted. `view` is likewise omitted (FArray has no view).
 class IntConvertBenchmark extends IntInputs {
   @Benchmark def farray_toArray(): Array[Int] = farrayInput.toArray
   @Benchmark def list_toArray(): Array[Int] = listInput.toArray
@@ -27,19 +30,6 @@ class IntConvertBenchmark extends IntInputs {
   @Benchmark def ziochunk_mkString(): String = zioChunkInput.mkString(",")
   // fs2.Chunk has no mkString
 
-  @Benchmark def farray_toIndexedSeq(): IndexedSeq[Int] = farrayInput.toIndexedSeq
-  @Benchmark def list_toIndexedSeq(): IndexedSeq[Int] = listInput.toIndexedSeq
-  @Benchmark def vector_toIndexedSeq(): IndexedSeq[Int] = vectorInput.toIndexedSeq
-  @Benchmark def iarray_toIndexedSeq(): IndexedSeq[Int] = iarrayInput.toIndexedSeq
-  @Benchmark def ziochunk_toIndexedSeq(): IndexedSeq[Int] = zioChunkInput.toIndexedSeq
-  @Benchmark def fs2chunk_toIndexedSeq(): IndexedSeq[Int] = fs2ChunkInput.asSeq // fs2's IndexedSeq view
-
-  @Benchmark def farray_toSeq(): Seq[Int] = farrayInput.toSeq
-  @Benchmark def list_toSeq(): Seq[Int] = listInput.toSeq
-  @Benchmark def vector_toSeq(): Seq[Int] = vectorInput.toSeq
-  @Benchmark def iarray_toSeq(): Seq[Int] = iarrayInput.toSeq
-  @Benchmark def ziochunk_toSeq(): Seq[Int] = zioChunkInput.toSeq
-
   // indices: sum them so JMH can't dead-code. FArray exposes indices.
   @Benchmark def farray_indices(): Int = { var s = 0; farrayInput.indices.foreach(s += _); s }
   @Benchmark def list_indices(): Int = { var s = 0; listInput.indices.foreach(s += _); s }
@@ -55,11 +45,4 @@ class IntConvertBenchmark extends IntInputs {
   @Benchmark def iarray_isDefinedAt(): Boolean = iarrayInput.isDefinedAt(size / 2)
   @Benchmark def ziochunk_isDefinedAt(): Boolean = zioChunkInput.isDefinedAt(size / 2)
   // fs2.Chunk has no isDefinedAt
-
-  // view: a lazy view materialized by summing. FArray has no view
-  @Benchmark def list_view(): Int = listInput.view.map(_ + 1).sum
-  @Benchmark def vector_view(): Int = vectorInput.view.map(_ + 1).sum
-  @Benchmark def iarray_view(): Int = iarrayInput.view.map(_ + 1).sum
-  @Benchmark def ziochunk_view(): Int = zioChunkInput.view.map(_ + 1).sum
-  // fs2.Chunk has no view
 }
