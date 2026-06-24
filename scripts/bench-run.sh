@@ -13,9 +13,10 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 WI="${1:-3}"; MI="${2:-5}"; FORKS="${3:-0}"
+MAXJ="${4:-6}"                                            # max shards running AT ONCE — caps peak memory (each -f1 fork ~2g)
 CORES="$(sysctl -n hw.ncpu 2>/dev/null || nproc)"
-DEF=$(( CORES - 1 )); [ "$DEF" -gt 10 ] && DEF=10; [ "$DEF" -lt 1 ] && DEF=1
-SHARDS="${4:-$DEF}"
+SHARDS=$(( CORES - 1 )); [ "$SHARDS" -lt 1 ] && SHARDS=1  # shard GROUPS (work distribution); concurrency is throttled to MAXJ
+throttle() { while [ "$(jobs -rp | grep -c .)" -ge "$MAXJ" ]; do sleep 0.5; done; }
 XMX="${XMX:-1g}"
 MAIN="org.openjdk.jmh.Main"
 
@@ -50,7 +51,7 @@ UPDATED='StrUpdatedBenchmark|IntUpdatedMapBenchmark|IntUpdated4MapBenchmark'  # 
 NORMAL=$(echo "$ALL" | grep -vE "^($EMPTY|$CHAINS|$UPDATED)$" || true)
 
 rm -rf docs/parts && mkdir -p docs/parts
-echo "  $(echo "$ALL" | grep -c .) classes → $SHARDS normal shards + edge + chain (XMX=$XMX, ${WI}w/${MI}m/${FORKS}f)"
+echo "  $(echo "$ALL" | grep -c .) classes → $SHARDS shards, ≤$MAXJ at once (XMX=$XMX, ${WI}w/${MI}m/${FORKS}f)"
 
 run_shard() {  # name  regex  extra-jmh-args...
   local name="$1" rx="$2"; shift 2
@@ -62,10 +63,10 @@ run_shard() {  # name  regex  extra-jmh-args...
 
 declare -a G; i=0
 for c in $NORMAL; do idx=$(( i % SHARDS )); G[$idx]="${G[$idx]:-}$c|"; i=$(( i + 1 )); done
-for idx in "${!G[@]}"; do run_shard "n$idx" "${G[$idx]%|}"; done
-echo "$ALL" | grep -qE "^($EMPTY)$"  && run_shard "edge"  "$EMPTY"  -p size=1,10,100,1000,10000,100000
-echo "$ALL" | grep -qE "^($CHAINS)$" && run_shard "chain" "$CHAINS" -p size=0,1,10,100,1000,10000
-echo "$ALL" | grep -qE "^($UPDATED)$" && run_shard "upd" "$UPDATED" -p size=10,100,1000,10000,100000
+for idx in "${!G[@]}"; do throttle; run_shard "n$idx" "${G[$idx]%|}"; done
+echo "$ALL" | grep -qE "^($EMPTY)$"  && { throttle; run_shard "edge"  "$EMPTY"  -p size=1,10,100,1000,10000,100000; }
+echo "$ALL" | grep -qE "^($CHAINS)$" && { throttle; run_shard "chain" "$CHAINS" -p size=0,1,10,100,1000,10000; }
+echo "$ALL" | grep -qE "^($UPDATED)$" && { throttle; run_shard "upd" "$UPDATED" -p size=10,100,1000,10000,100000; }
 
 echo "▶ $(jobs -rp 2>/dev/null | grep -c .) shards running in parallel across $CORES cores…"
 wait
