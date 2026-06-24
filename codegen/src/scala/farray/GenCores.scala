@@ -348,8 +348,10 @@ object GenCores extends BleepCodegenScript("GenCores") {
     )
     val foreachWhileV = dispatchA(k => scanB(k, "", "if (f(a0)) i += 1 else return false", "f(a0)", "()")) // f returns false to stop
     // foldRight: leaf reads its backing array backward (no ReverseNode allocation); non-leaf walks <kind>At.
+    // leaf reads its backing array backward (no alloc); any non-leaf materializes ONCE (iterative dfsC -> no
+    // stack overflow on deep chains, O(n)) then folds the flat array backward -> O(n) on every shape, no kindAt.
     val foldRightV = dispatchA(k =>
-      s"xs match { case leaf: ${k.name}Arr => { val ar = leaf.arr; var acc = z; var i = leaf.length - 1; while (i >= 0) { acc = op(${readVal(k, "ar(i)")}, acc); i -= 1 }; acc }; case _ => { var acc = z; var i = xs.length - 1; while (i >= 0) { acc = op(${readVal(k, s"${k.lc}At(xs, i)")}, acc); i -= 1 }; acc } }"
+      s"xs match { case leaf: ${k.name}Arr => { val ar = leaf.arr; var acc = z; var i = leaf.length - 1; while (i >= 0) { acc = op(${readVal(k, "ar(i)")}, acc); i -= 1 }; acc }; case _ => { val ar = materialize${k.name}(xs); var acc = z; var i = ar.length - 1; while (i >= 0) { acc = op(${readVal(k, "ar(i)")}, acc); i -= 1 }; acc } }"
     )
     val mapM = "summonFrom {\n" + opKinds
       .map { ka =>
