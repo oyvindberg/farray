@@ -160,18 +160,19 @@ object FArray:
     inline def sortWith(inline lt: (A, A) => Boolean): FArray[A] = FArrayOps.sortWithImpl[A](xs)(lt)
     inline def sortBy[B](inline f: A => B)(using ord: Ordering[B]): FArray[A] = FArrayOps.sortByImpl[A, B](xs)(f)
     inline def sorted[B >: A](using ord: Ordering[B]): FArray[A] = FArrayOps.sortedImpl[A, B](xs)
+    // One unboxed pass: each group's elements land directly in their final primitive array (no List builder,
+    // no second per-element rebuild, HashMap not LinkedHashMap — groupBy promises no encounter order, matching
+    // List/Vector). See FArrayOps.groupByImpl / groupMapAcc.
     inline def groupBy[K](inline f: A => K): Map[K, FArray[A]] =
-      val m = scala.collection.mutable.LinkedHashMap.empty[K, scala.collection.mutable.Builder[A, List[A]]]
-      xs.foreach(a => m.getOrElseUpdate(f(a), List.newBuilder[A]) += a)
-      m.iterator.map((k, b) => k -> FArray.fromIterable(b.result())).toMap
+      FArrayOps.groupByImpl[A, K](xs)(f).asInstanceOf[Map[K, FArray[A]]]
     inline def groupMap[K, B](inline key: A => K)(inline f: A => B): Map[K, FArray[B]] =
-      val m = scala.collection.mutable.LinkedHashMap.empty[K, scala.collection.mutable.Builder[B, List[B]]]
-      xs.foreach(a => m.getOrElseUpdate(key(a), List.newBuilder[B]) += f(a))
-      m.iterator.map((k, b) => k -> FArray.fromIterable(b.result())).toMap
+      val acc = FArrayOps.groupMapAcc[K, B]
+      xs.foreach(a => acc.add(key(a), f(a)))
+      acc.result.asInstanceOf[Map[K, FArray[B]]]
     inline def partitionMap[A1, A2](inline f: A => Either[A1, A2]): (FArray[A1], FArray[A2]) =
-      val ls = List.newBuilder[A1]; val rs = List.newBuilder[A2]
+      val ls = scala.collection.mutable.ArrayBuffer.empty[A1]; val rs = scala.collection.mutable.ArrayBuffer.empty[A2]
       xs.foreach(a => f(a) match { case Left(l) => ls += l; case Right(r) => rs += r })
-      (FArray.fromIterable(ls.result()), FArray.fromIterable(rs.result()))
+      (FArray.fromIterable(ls), FArray.fromIterable(rs))
 
     // flattening cursor: O(n) over trees (not O(n·depth)), unboxed leaf reads, reports knownSize.
     inline def iterator: Iterator[A] = FArrayOps.iteratorImpl[A](xs)

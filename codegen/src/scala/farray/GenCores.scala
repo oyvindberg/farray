@@ -177,6 +177,21 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |}""".stripMargin
   }
 
+  // Per-kind growable, unboxed accumulator for groupBy/groupMap. One instance per group; `add` appends an
+  // already-unwrapped Prim, doubling the backing array on demand (starts tiny: most groups are small). `toLeaf`
+  // wraps the buffer into a leaf node WITHOUT a second per-element pass — it reuses the backing array verbatim
+  // when full, else trims with a single Arrays.copyOf. This is what kills the old double-build: elements land
+  // unboxed in their final array on the first (only) pass; finalisation is O(#groups), not O(n).
+  private def groupBufClass(k: Kind): String = {
+    val arrT = if k.name == "Ref" then "Object" else k.arr
+    s"""final class ${k.name}Group {
+       |  var arr: Array[$arrT] = new Array[$arrT](4)
+       |  var size: Int = 0
+       |  def add(v: $arrT): Unit = { if (size == arr.length) arr = java.util.Arrays.copyOf(arr, size * 2); arr(size) = v; size += 1 }
+       |  def toLeaf: FBase = if (size == 0) Empty.INSTANCE else new ${k.name}Arr(if (size == arr.length) arr else java.util.Arrays.copyOf(arr, size), size)
+       |}""".stripMargin
+  }
+
   private def atDef(k: Kind): String = {
     val rngCase = if k.name == "Int" then "\n       |    case rng: RangeNode => rng.start + i * rng.step" else ""
     val padBase = if k.name == "Ref" then "pad.base.applyBoxed(i)" else s"${k.lc}At(pad.base, i)"
@@ -197,6 +212,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
   private def farrayOps: String = {
     val dfsConsumers = opKinds.map(dfsConsumer).mkString("\n")
     val cursors = opKinds.map(cursorClass).mkString("\n")
+    val groupBufs = opKinds.map(groupBufClass).mkString("\n")
     val dfsC = opKinds.map(dfsCDef).mkString("\n")
     val ats = opKinds.map(atDef).mkString("\n")
     // Flatten a (possibly deep) Updated chain to a fresh leaf array, ONCE, so dfs can emit it tight via
@@ -510,6 +526,20 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val sortByV = dispatchA(k =>
       s"{ val vals = materialize${k.name}(xs); val n = vals.length; if (n < 2) xs else { val keys = mapImpl[A, B](xs)(f); val idx = new Array[Int](n); var t = 0; while (t < n) { idx(t) = t; t += 1 }; val sidx = sortInt(idx, n, (ii, jj) => ord.lt(applyAtImpl[B](keys, ii), applyAtImpl[B](keys, jj))); val out = ${allocPlain(k)}; var p = 0; while (p < n) { out(p) = vals(sidx(p)); p += 1 }; new ${k.name}Arr(out, n) } }"
     )
+    // groupBy/groupMap: ONE unboxed pass. Each element's key picks (or creates) a per-group `${Kind}Group`
+    // buffer in a HashMap (no encounter-order promise — matches List/Vector groupBy, which use HashMap); the
+    // element (groupBy) or f(element) (groupMap) is unwrapped and appended directly into that group's primitive
+    // array. A final O(#groups) pass wraps each buffer into a leaf — no second per-element rebuild. dispatch on
+    // the VALUE kind: A for groupBy, B for groupMap.
+    val groupBy = dispatchA(k =>
+      s"{ val m = new java.util.HashMap[K, ${k.name}Group](); val c = new ${k.name}Dfs { def onLeaf(a: Array[${k.arr}], len: Int): Unit = { var i = 0; while (i < len) { val e = ${read(k)}; val key = f(e); var g = m.get(key); if (g == null) { g = new ${k.name}Group(); m.put(key, g) }; g.add(${wr(k, "r.unwrap(e)")}); i += 1 } }; def onOne(v: ${k.arr}): Unit = { val e = ${readOne(k)}; val key = f(e); var g = m.get(key); if (g == null) { g = new ${k.name}Group(); m.put(key, g) }; g.add(${wr(k, "r.unwrap(e)")}) } }; dfsC${k.name}(xs, c); val b = Map.newBuilder[K, FBase]; val it = m.entrySet().iterator(); while (it.hasNext) { val en = it.next(); b += ((en.getKey, en.getValue.toLeaf)) }; b.result() }"
+    )
+    // groupMap dispatches on the VALUE kind B (the unboxed buffer). The SOURCE A is read through the already
+    // inlined/unboxed `xs.foreach` at the FArray call site, which hands each `a: A` to this accumulator. So the
+    // value array stays unboxed for primitive B; A reads cost no extra boxing beyond what foreach already does.
+    val groupMapAcc = dispatchB(k =>
+      s"new GroupMapAcc[K, B] { private val m = new java.util.HashMap[K, ${k.name}Group](); def add(key: K, v: B): Unit = { var g = m.get(key); if (g == null) { g = new ${k.name}Group(); m.put(key, g) }; g.add(${wr(k, "r.unwrap(v)")}) }; def result: Map[K, FBase] = { val b = Map.newBuilder[K, FBase]; val it = m.entrySet().iterator(); while (it.hasNext) { val en = it.next(); b += ((en.getKey, en.getValue.toLeaf)) }; b.result() } }"
+    )
     val emptyB = dispatchA(k => s"Empty.INSTANCE")
     val tabulate = dispatchA(k =>
       s"if (n <= 0) Empty.INSTANCE else { val out = ${alloc(k, "r")}; var i = 0; while (i < n) { out(i) = ${wr(k, "r.unwrap(f(i))")}; i += 1 }; new ${k.name}Arr(out, n) }"
@@ -538,6 +568,11 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |// Per-kind leaf-run consumers for the non-inline dfsC traversals.
        |$dfsConsumers
        |$cursors
+       |// Per-group unboxed accumulators for groupBy/groupMap (one backing array per group, doubling on demand).
+       |$groupBufs
+       |// groupMap accumulator: dispatched on the VALUE kind B so the stored values stay unboxed; the SOURCE A
+       |// is supplied element-by-element by the inlined `xs.foreach` at the FArray call site.
+       |trait GroupMapAcc[K, B] { def add(key: K, v: B): Unit; def result: Map[K, FBase] }
        |object FArrayOps {
        |$dfsC
        |$ats
@@ -592,6 +627,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def sumImpl[A, B](xs: FBase)(using num: Numeric[B]): B = if (xs.length == 0) num.zero else $sumV
        |  inline def productImpl[A, B](xs: FBase)(using num: Numeric[B]): B = if (xs.length == 0) num.one else $productV
        |  inline def scanLeftImpl[A, B](xs: FBase, z: B)(inline op: (B, A) => B): FBase = { val n = xs.length; $scanLeftV }
+       |  inline def groupByImpl[A, K](xs: FBase)(inline f: A => K): Map[K, FBase] = $groupBy
+       |  inline def groupMapAcc[K, B]: GroupMapAcc[K, B] = $groupMapAcc
        |}
        |""".stripMargin
   }
