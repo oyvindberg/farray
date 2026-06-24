@@ -10,7 +10,7 @@ abstract class Inputs extends CommonParams {
   var fs2ChunkInput: fs2.Chunk[String] = _
   var zioChunkInput: zio.Chunk[String] = _
 
-  @Param(Array("1", "10", "100", "1000", "10000", "100000", "1000000"))
+  @Param(Array("0", "1", "10", "100", "1000", "10000", "100000"))
   var size: Int = 1000
 
   @Setup

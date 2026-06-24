@@ -4,7 +4,7 @@ import org.openjdk.jmh.annotations.{Param, Setup}
 
 /** Primitive-Int inputs, to exercise FArray's specialized IntArr path against boxed competitors. */
 abstract class IntInputs extends CommonParams {
-  @Param(Array("1", "10", "100", "1000", "10000", "100000", "1000000"))
+  @Param(Array("0", "1", "10", "100", "1000", "10000", "100000"))
   var size: Int = 1000
 
   var listInput: List[Int] = _

@@ -3,7 +3,7 @@ package farray
 import org.openjdk.jmh.annotations.Benchmark
 
 // All sort ops (sortWith / sortBy / sorted), both Int and String, vs IArray / Array / List / Vector.
-class SortIntBenchmark extends IntInputs {
+class IntSortBenchmark extends IntInputs {
   private inline def scramble(x: Int): Int = (x * 1103515245 + 12345) & 0x7fffffff
   @Benchmark def farray_sortWith(): FArray[Int] = farrayInput.sortWith((a, b) => scramble(a) < scramble(b))
   @Benchmark def iarray_sortWith(): IArray[Int] = iarrayInput.sortWith((a, b) => scramble(a) < scramble(b))
@@ -26,7 +26,7 @@ class SortIntBenchmark extends IntInputs {
   // fs2.Chunk has no sortWith/sortBy/sorted
 }
 
-class SortStringBenchmark extends Inputs {
+class StrSortBenchmark extends Inputs {
   @Benchmark def farray_sortWith(): FArray[String] = farrayInput.sortWith((a, b) => a < b)
   @Benchmark def iarray_sortWith(): IArray[String] = iarrayInput.sortWith((a, b) => a < b)
   @Benchmark def list_sortWith(): List[String] = listInput.sortWith((a, b) => a < b)

@@ -5,7 +5,7 @@ import org.openjdk.jmh.annotations.Benchmark
 // flatMap + flatMap + map chained, then fold to force it. Each FArray flatMap produces ONE flat leaf, so
 // the next flatMap/map reads a tight array (no Concat-chain pointer-chasing compounding across the chain).
 
-class FlatMapChainIntBenchmark extends IntInputs {
+class IntFlatMapChainBenchmark extends IntInputs {
   @Benchmark def farray(): Int = farrayInput.flatMap(x => FArray(x, x + 1)).flatMap(y => FArray(y, y * 2)).map(_ + 1).foldLeft(0)(_ + _)
   @Benchmark def list(): Int = listInput.flatMap(x => List(x, x + 1)).flatMap(y => List(y, y * 2)).map(_ + 1).foldLeft(0)(_ + _)
   @Benchmark def vector(): Int = vectorInput.flatMap(x => Vector(x, x + 1)).flatMap(y => Vector(y, y * 2)).map(_ + 1).foldLeft(0)(_ + _)
@@ -14,7 +14,7 @@ class FlatMapChainIntBenchmark extends IntInputs {
   @Benchmark def ziochunk(): Int = zioChunkInput.flatMap(x => zio.Chunk(x, x + 1)).flatMap(y => zio.Chunk(y, y * 2)).map(_ + 1).foldLeft(0)(_ + _)
 }
 
-class FlatMapChainStringBenchmark extends Inputs {
+class StrFlatMapChainBenchmark extends Inputs {
   @Benchmark def farray(): Int = farrayInput.flatMap(s => FArray(s, s)).flatMap(t => FArray(t, t + "x")).map(_.length).foldLeft(0)(_ + _)
   @Benchmark def list(): Int = listInput.flatMap(s => List(s, s)).flatMap(t => List(t, t + "x")).map(_.length).foldLeft(0)(_ + _)
   @Benchmark def vector(): Int = vectorInput.flatMap(s => Vector(s, s)).flatMap(t => Vector(t, t + "x")).map(_.length).foldLeft(0)(_ + _)

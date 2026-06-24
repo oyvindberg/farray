@@ -3,7 +3,7 @@ package farray
 import org.openjdk.jmh.annotations.Benchmark
 
 // Match near the START (element 5). A short-circuiting op stops at ~index 5; a full scan walks all N.
-class ShortCircuitIntBenchmark extends IntInputs {
+class IntShortCircuitBenchmark extends IntInputs {
   @Benchmark def farray_exists(): Boolean = farrayInput.exists(_ == 5)
   @Benchmark def list_exists(): Boolean = listInput.exists(_ == 5)
   @Benchmark def vector_exists(): Boolean = vectorInput.exists(_ == 5)
@@ -20,7 +20,7 @@ class ShortCircuitIntBenchmark extends IntInputs {
   @Benchmark def ziochunk_find(): Option[Int] = zioChunkInput.find(_ == 5)
 }
 
-class ShortCircuitStringBenchmark extends Inputs {
+class StrShortCircuitBenchmark extends Inputs {
   @Benchmark def farray_exists(): Boolean = farrayInput.exists(_ == "5")
   @Benchmark def list_exists(): Boolean = listInput.exists(_ == "5")
   @Benchmark def vector_exists(): Boolean = vectorInput.exists(_ == "5")
