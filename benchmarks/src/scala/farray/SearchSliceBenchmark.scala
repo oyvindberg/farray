@@ -2,21 +2,22 @@ package farray
 
 import org.openjdk.jmh.annotations.{Benchmark, Setup}
 
-// Search / compare ops. FArray exposes startsWith / endsWith only; it has NONE of
-// segmentLength / lastIndexWhere / sameElements / indexOfSlice / lastIndexOf / lastIndexOfSlice / containsSlice (API gap).
+// Search / compare ops: segmentLength / lastIndexWhere / sameElements / indexOfSlice / lastIndexOf / lastIndexOfSlice / containsSlice.
 // fs2.Chunk has startsWith only. zio.Chunk is an IndexedSeq -> full API.
 //
 // The slice-search ops need a needle. We build a 3-element needle drawn from the middle of the haystack,
 // plus a full-copy "same" sequence for sameElements, in extra setup.
 class IntSearchSliceBenchmark extends IntInputs {
-  // needle (a small slice taken from the middle), one per impl. FArray/fs2 have no slice-search ops,
-  // so only the stdlib + zio needles are used below.
+  // needle (a small slice taken from the middle), one per impl. fs2 has no slice-search ops,
+  // so only the FArray + stdlib + zio needles are used below.
+  var farraySlice: FArray[Int] = _
   var listSlice: List[Int] = _
   var vectorSlice: Vector[Int] = _
   var iarraySlice: IArray[Int] = _
   var zioSlice: zio.Chunk[Int] = _
 
   // full-length copies for sameElements
+  var farraySame: FArray[Int] = _
   var listSame: List[Int] = _
   var vectorSame: Vector[Int] = _
   var iarraySame: IArray[Int] = _
@@ -26,12 +27,14 @@ class IntSearchSliceBenchmark extends IntInputs {
   def setupSlices(): Unit = {
     val mid = size / 2
     val sliceArr = Array.tabulate(math.min(3, size))(i => mid + i)
+    farraySlice = FArray.fromArray(sliceArr.clone())
     listSlice = sliceArr.toList
     vectorSlice = sliceArr.toVector
     iarraySlice = IArray.unsafeFromArray(sliceArr.clone())
     zioSlice = zio.Chunk.fromArray(sliceArr.clone())
 
     val sameArr = Array.tabulate(size)(i => i)
+    farraySame = FArray.fromArray(sameArr.clone())
     listSame = sameArr.toList
     vectorSame = sameArr.toVector
     iarraySame = IArray.unsafeFromArray(sameArr.clone())
@@ -53,43 +56,43 @@ class IntSearchSliceBenchmark extends IntInputs {
   @Benchmark def iarray_endsWith(): Boolean = iarrayInput.endsWith(IArray(size - 3, size - 2, size - 1))
   @Benchmark def ziochunk_endsWith(): Boolean = zioChunkInput.endsWith(zio.Chunk(size - 3, size - 2, size - 1))
 
-  // segmentLength: FArray has none (API gap)
+  @Benchmark def farray_segmentLength(): Int = farrayInput.segmentLength(_ < size / 2)
   @Benchmark def list_segmentLength(): Int = listInput.segmentLength(_ < size / 2)
   @Benchmark def vector_segmentLength(): Int = vectorInput.segmentLength(_ < size / 2)
   @Benchmark def iarray_segmentLength(): Int = iarrayInput.segmentLength(_ < size / 2)
   @Benchmark def ziochunk_segmentLength(): Int = zioChunkInput.segmentLength(_ < size / 2)
 
-  // lastIndexWhere: FArray has none (API gap)
+  @Benchmark def farray_lastIndexWhere(): Int = farrayInput.lastIndexWhere(_ == 5)
   @Benchmark def list_lastIndexWhere(): Int = listInput.lastIndexWhere(_ == 5)
   @Benchmark def vector_lastIndexWhere(): Int = vectorInput.lastIndexWhere(_ == 5)
   @Benchmark def iarray_lastIndexWhere(): Int = iarrayInput.lastIndexWhere(_ == 5)
   @Benchmark def ziochunk_lastIndexWhere(): Int = zioChunkInput.lastIndexWhere(_ == 5)
 
-  // sameElements: FArray has none (has corresponds; API gap for sameElements)
+  @Benchmark def farray_sameElements(): Boolean = farrayInput.sameElements(farraySame)
   @Benchmark def list_sameElements(): Boolean = listInput.sameElements(listSame)
   @Benchmark def vector_sameElements(): Boolean = vectorInput.sameElements(vectorSame)
   @Benchmark def iarray_sameElements(): Boolean = iarrayInput.sameElements(iarraySame)
   @Benchmark def ziochunk_sameElements(): Boolean = zioChunkInput.sameElements(zioSame)
 
-  // indexOfSlice: FArray has none (API gap)
+  @Benchmark def farray_indexOfSlice(): Int = farrayInput.indexOfSlice(farraySlice)
   @Benchmark def list_indexOfSlice(): Int = listInput.indexOfSlice(listSlice)
   @Benchmark def vector_indexOfSlice(): Int = vectorInput.indexOfSlice(vectorSlice)
   @Benchmark def iarray_indexOfSlice(): Int = iarrayInput.indexOfSlice(iarraySlice)
   @Benchmark def ziochunk_indexOfSlice(): Int = zioChunkInput.indexOfSlice(zioSlice)
 
-  // lastIndexOf: FArray has none (API gap)
+  @Benchmark def farray_lastIndexOf(): Int = farrayInput.lastIndexOf(5)
   @Benchmark def list_lastIndexOf(): Int = listInput.lastIndexOf(5)
   @Benchmark def vector_lastIndexOf(): Int = vectorInput.lastIndexOf(5)
   @Benchmark def iarray_lastIndexOf(): Int = iarrayInput.lastIndexOf(5)
   @Benchmark def ziochunk_lastIndexOf(): Int = zioChunkInput.lastIndexOf(5)
 
-  // lastIndexOfSlice: FArray has none (API gap)
+  @Benchmark def farray_lastIndexOfSlice(): Int = farrayInput.lastIndexOfSlice(farraySlice)
   @Benchmark def list_lastIndexOfSlice(): Int = listInput.lastIndexOfSlice(listSlice)
   @Benchmark def vector_lastIndexOfSlice(): Int = vectorInput.lastIndexOfSlice(vectorSlice)
   @Benchmark def iarray_lastIndexOfSlice(): Int = iarrayInput.lastIndexOfSlice(iarraySlice)
   @Benchmark def ziochunk_lastIndexOfSlice(): Int = zioChunkInput.lastIndexOfSlice(zioSlice)
 
-  // containsSlice: FArray has none (API gap)
+  @Benchmark def farray_containsSlice(): Boolean = farrayInput.containsSlice(farraySlice)
   @Benchmark def list_containsSlice(): Boolean = listInput.containsSlice(listSlice)
   @Benchmark def vector_containsSlice(): Boolean = vectorInput.containsSlice(vectorSlice)
   @Benchmark def iarray_containsSlice(): Boolean = iarrayInput.containsSlice(iarraySlice)

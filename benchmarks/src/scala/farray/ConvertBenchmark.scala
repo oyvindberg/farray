@@ -3,7 +3,7 @@ package farray
 import org.openjdk.jmh.annotations.Benchmark
 
 // Materialize / convert ops: toArray / copyToArray / mkString / toIndexedSeq / toSeq / indices / isDefinedAt / view.
-// FArray exposes toArray / mkString / toSeq / indices / isDefinedAt; it has NO copyToArray / toIndexedSeq / view (API gaps).
+// FArray has no view.
 // fs2.Chunk has toArray / copyToArray / toVector (-> asSeq for toIndexedSeq); it has no mkString / indices / isDefinedAt / view.
 // zio.Chunk is an IndexedSeq -> full API.
 class IntConvertBenchmark extends IntInputs {
@@ -14,7 +14,7 @@ class IntConvertBenchmark extends IntInputs {
   @Benchmark def ziochunk_toArray(): Array[Int] = zioChunkInput.toArray
   @Benchmark def fs2chunk_toArray(): Array[Int] = fs2ChunkInput.toArray
 
-  // copyToArray: FArray has none (API gap)
+  @Benchmark def farray_copyToArray(): Array[Int] = { val a = new Array[Int](size); farrayInput.copyToArray(a, 0, size); a }
   @Benchmark def list_copyToArray(): Array[Int] = { val a = new Array[Int](size); listInput.copyToArray(a); a }
   @Benchmark def vector_copyToArray(): Array[Int] = { val a = new Array[Int](size); vectorInput.copyToArray(a); a }
   @Benchmark def ziochunk_copyToArray(): Array[Int] = { val a = new Array[Int](size); zioChunkInput.copyToArray(a); a }
@@ -27,7 +27,7 @@ class IntConvertBenchmark extends IntInputs {
   @Benchmark def ziochunk_mkString(): String = zioChunkInput.mkString(",")
   // fs2.Chunk has no mkString
 
-  // toIndexedSeq: FArray has none (has toSeq/toVector; API gap)
+  @Benchmark def farray_toIndexedSeq(): IndexedSeq[Int] = farrayInput.toIndexedSeq
   @Benchmark def list_toIndexedSeq(): IndexedSeq[Int] = listInput.toIndexedSeq
   @Benchmark def vector_toIndexedSeq(): IndexedSeq[Int] = vectorInput.toIndexedSeq
   @Benchmark def iarray_toIndexedSeq(): IndexedSeq[Int] = iarrayInput.toIndexedSeq
@@ -56,7 +56,7 @@ class IntConvertBenchmark extends IntInputs {
   @Benchmark def ziochunk_isDefinedAt(): Boolean = zioChunkInput.isDefinedAt(size / 2)
   // fs2.Chunk has no isDefinedAt
 
-  // view: a lazy view materialized by summing. FArray has no view (API gap).
+  // view: a lazy view materialized by summing. FArray has no view
   @Benchmark def list_view(): Int = listInput.view.map(_ + 1).sum
   @Benchmark def vector_view(): Int = vectorInput.view.map(_ + 1).sum
   @Benchmark def iarray_view(): Int = iarrayInput.view.map(_ + 1).sum

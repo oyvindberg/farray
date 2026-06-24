@@ -2,7 +2,7 @@ package farray
 
 import org.openjdk.jmh.annotations.Benchmark
 
-// Aggregations. FArray exposes max / min / maxBy / minBy but NOT sum / product (API gap).
+// Aggregations: max / min / maxBy / minBy / sum / product.
 // fs2.Chunk has none of these. zio.Chunk is an IndexedSeq -> full API.
 class IntAggregateBenchmark extends IntInputs {
   @Benchmark def farray_max(): Int = farrayInput.max
@@ -29,12 +29,13 @@ class IntAggregateBenchmark extends IntInputs {
   @Benchmark def iarray_minBy(): Int = iarrayInput.minBy(x => -x)
   @Benchmark def ziochunk_minBy(): Int = zioChunkInput.minBy(x => -x)
 
-  // sum / product: FArray has neither (API gap)
+  @Benchmark def farray_sum(): Int = farrayInput.sum
   @Benchmark def list_sum(): Int = listInput.sum
   @Benchmark def vector_sum(): Int = vectorInput.sum
   @Benchmark def iarray_sum(): Int = iarrayInput.sum
   @Benchmark def ziochunk_sum(): Int = zioChunkInput.sum
 
+  @Benchmark def farray_product(): Int = farrayInput.product
   @Benchmark def list_product(): Int = listInput.product
   @Benchmark def vector_product(): Int = vectorInput.product
   @Benchmark def iarray_product(): Int = iarrayInput.product

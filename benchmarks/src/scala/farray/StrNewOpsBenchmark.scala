@@ -5,7 +5,6 @@ import org.openjdk.jmh.annotations.Benchmark
 // Reference-element (String) variant of a representative slice of the new ops, so the boxed / Object[]
 // array path is measured alongside the primitive-Int path. Mirrors families: reduce, maxBy/minBy,
 // distinct, groupBy, toSet, mkString, toArray. IArray is the raw-array baseline here.
-// FArray gaps (sum/product/grouped/sliding/inits/tails/patch/etc.) are documented in the Int files.
 class StrNewOpsBenchmark extends Inputs {
   @Benchmark def farray_reduce(): String = farrayInput.reduce(_ + _)
   @Benchmark def list_reduce(): String = listInput.reduce(_ + _)

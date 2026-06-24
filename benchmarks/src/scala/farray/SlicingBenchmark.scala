@@ -3,7 +3,6 @@ package farray
 import org.openjdk.jmh.annotations.Benchmark
 
 // partition / span / splitAt / distinct, plus grouped / sliding.
-// FArray exposes partition / span / splitAt / distinct but NOT grouped / sliding (API gap).
 // fs2.Chunk has splitAt only (no partition/span/distinct/grouped/sliding). zio.Chunk -> full IndexedSeq API.
 class IntSlicingBenchmark extends IntInputs {
   @Benchmark def farray_partition(): (FArray[Int], FArray[Int]) = farrayInput.partition(_ % 2 == 0)
