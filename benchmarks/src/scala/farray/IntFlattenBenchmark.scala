@@ -21,6 +21,7 @@ class IntFlattenBenchmark:
   var farrayOuter: FArray[FArray[Int]] = _
   var ziochunkOuter: zio.Chunk[zio.Chunk[Int]] = _
   var fs2chunkOuter: fs2.Chunk[fs2.Chunk[Int]] = _
+  var iarrayOuter: IArray[IArray[Int]] = _
   var vectorOuter: Vector[Vector[Int]] = _
   var listOuter: List[List[Int]] = _
 
@@ -32,11 +33,13 @@ class IntFlattenBenchmark:
     fs2chunkOuter = fs2.Chunk.from(
       (0 until numChunks).map(c => fs2.Chunk.from((0 until innerSize).map(i => c * innerSize + i)))
     )
+    iarrayOuter = IArray.tabulate(numChunks)(c => IArray.tabulate(innerSize)(i => c * innerSize + i))
     vectorOuter = Vector.tabulate(numChunks)(c => Vector.tabulate(innerSize)(i => c * innerSize + i))
     listOuter = List.tabulate(numChunks)(c => List.tabulate(innerSize)(i => c * innerSize + i))
 
   @Benchmark def farray_flatten(): FArray[Int] = farrayOuter.flatMap(x => x)
   @Benchmark def ziochunk_flatten(): zio.Chunk[Int] = ziochunkOuter.flatten
   @Benchmark def fs2chunk_flatten(): fs2.Chunk[Int] = fs2chunkOuter.flatten
+  @Benchmark def iarray_flatten(): IArray[Int] = iarrayOuter.flatten
   @Benchmark def vector_flatten(): Vector[Int] = vectorOuter.flatten
   @Benchmark def list_flatten(): List[Int] = listOuter.flatten
