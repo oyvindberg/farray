@@ -302,20 +302,23 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val indexOfV = dispatchA(k => scan(k, "var res = -1", "if (a == elem) { res = i; i = ln } else i += 1", "res"))
     val collectFirstV = dispatchA(k => scan(k, "var res: Option[B] = None", "if (pf.isDefinedAt(a)) { res = Some(pf(a)); i = ln } else i += 1", "res"))
     val prefixLenV = dispatchA(k => scan(k, "var res = ln", "if (p(a)) i += 1 else { res = i; i = ln }", "res"))
-    val countV = dispatchA(k => scan(k, "var n = 0", "if (p(a)) n += 1; i += 1", "n")) // no break, tight leaf scan
-    // sum/product: fully unboxed for primitives (raw `+`/`*`, result boxed once); Ref folds through the Numeric.
+    // count/sum/product: full forward accumulate over dfsC -> O(n) on EVERY shape (leaf / wrapper / tree),
+    // no per-element kindAt. (No early exit needed; only the short-circuit family wants the breakable walk.)
+    val countV = dispatchA(k =>
+      s"{ var n = 0; val c = new ${k.name}Dfs { def onLeaf(a: Array[${k.arr}], len: Int): Unit = { var i = 0; while (i < len) { if (p(${read(k)})) n += 1; i += 1 } }; def onOne(v: ${k.arr}): Unit = { if (p(${readOne(k)})) n += 1 } }; dfsC${k.name}(xs, c); n }"
+    )
     val sumV = dispatchA { k =>
       if k.prim.isDefined then
-        s"{ var acc: ${k.arr} = ${k.dflt}; xs match { case leaf: ${k.name}Arr => { val ar = leaf.arr; val ln = leaf.length; var i = 0; while (i < ln) { acc += ar(i); i += 1 } }; case _ => { val ln = xs.length; var i = 0; while (i < ln) { acc += ${k.lc}At(xs, i); i += 1 } } }; acc.asInstanceOf[B] }"
+        s"{ var acc: ${k.arr} = ${k.dflt}; val c = new ${k.name}Dfs { def onLeaf(a: Array[${k.arr}], len: Int): Unit = { var i = 0; while (i < len) { acc += a(i); i += 1 } }; def onOne(v: ${k.arr}): Unit = { acc += v } }; dfsC${k.name}(xs, c); acc.asInstanceOf[B] }"
       else
-        s"{ var acc: B = num.zero; xs match { case leaf: RefArr => { val ar = leaf.arr; val ln = leaf.length; var i = 0; while (i < ln) { acc = num.plus(acc, ar(i).asInstanceOf[B]); i += 1 } }; case _ => { val ln = xs.length; var i = 0; while (i < ln) { acc = num.plus(acc, ${k.lc}At(xs, i).asInstanceOf[B]); i += 1 } } }; acc }"
+        s"{ var acc: B = num.zero; val c = new ${k.name}Dfs { def onLeaf(a: Array[${k.arr}], len: Int): Unit = { var i = 0; while (i < len) { acc = num.plus(acc, a(i).asInstanceOf[B]); i += 1 } }; def onOne(v: ${k.arr}): Unit = { acc = num.plus(acc, v.asInstanceOf[B]) } }; dfsC${k.name}(xs, c); acc }"
     }
     val productV = dispatchA { k =>
       val one = k.name match { case "Long" => "1L"; case "Double" => "1.0"; case _ => "1" }
       if k.prim.isDefined then
-        s"{ var acc: ${k.arr} = $one; xs match { case leaf: ${k.name}Arr => { val ar = leaf.arr; val ln = leaf.length; var i = 0; while (i < ln) { acc *= ar(i); i += 1 } }; case _ => { val ln = xs.length; var i = 0; while (i < ln) { acc *= ${k.lc}At(xs, i); i += 1 } } }; acc.asInstanceOf[B] }"
+        s"{ var acc: ${k.arr} = $one; val c = new ${k.name}Dfs { def onLeaf(a: Array[${k.arr}], len: Int): Unit = { var i = 0; while (i < len) { acc *= a(i); i += 1 } }; def onOne(v: ${k.arr}): Unit = { acc *= v } }; dfsC${k.name}(xs, c); acc.asInstanceOf[B] }"
       else
-        s"{ var acc: B = num.one; xs match { case leaf: RefArr => { val ar = leaf.arr; val ln = leaf.length; var i = 0; while (i < ln) { acc = num.times(acc, ar(i).asInstanceOf[B]); i += 1 } }; case _ => { val ln = xs.length; var i = 0; while (i < ln) { acc = num.times(acc, ${k.lc}At(xs, i).asInstanceOf[B]); i += 1 } } }; acc }"
+        s"{ var acc: B = num.one; val c = new ${k.name}Dfs { def onLeaf(a: Array[${k.arr}], len: Int): Unit = { var i = 0; while (i < len) { acc = num.times(acc, a(i).asInstanceOf[B]); i += 1 } }; def onOne(v: ${k.arr}): Unit = { acc = num.times(acc, v.asInstanceOf[B]) } }; dfsC${k.name}(xs, c); acc }"
     }
     // scanLeft: out[0..n] with a running accumulator, unboxed B-array storage (mirrors mapM's dispatchA x dispatchB).
     val scanLeftV = "summonFrom {\n" + opKinds.map { ka =>
