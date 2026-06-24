@@ -142,19 +142,30 @@ object GenCores extends BleepCodegenScript("GenCores") {
       else
         s"\n       |        case rng: RangeNode => { val rn = rng.length; var ri = rn - 1; while (ri >= 0) { ${onO("rng.start + ri * rng.step")}; ri -= 1 } }"
     val padRead = if k.name == "Ref" then "pad.base.applyBoxed(pi)" else s"${k.lc}At(pad.base, pi)"
-    val ensure =
-      s"if (stack == null) { stack = new Array[FBase](16); tail = new Array[${k.arr}](16); isTail = new Array[Boolean](16) } else if (sp == stack.length) { val nl = sp * 2; stack = java.util.Arrays.copyOf(stack, nl); tail = java.util.Arrays.copyOf(tail, nl); isTail = java.util.Arrays.copyOf(isTail, nl) }"
+    // The explicit stack holds deferred Concat children (the common case) and Append/Prepend tail elements
+    // (rare). `stack` carries the FBase children; `tail`/`isTail` are allocated LAZILY only once a tail element
+    // is actually deferred — so a pure Concat tree (the overwhelmingly common shape) pays ONE small array, not
+    // three. The pop loop reads a slot as a tail element only when `isTail` exists and the flag is set.
+    // ensureStack: room for one more `stack` slot, growing all live arrays in lockstep so indices stay aligned.
+    val ensureStack =
+      s"if (stack == null) stack = new Array[FBase](16) else if (sp == stack.length) { val nl = sp * 2; stack = java.util.Arrays.copyOf(stack, nl); if (isTail != null) { tail = java.util.Arrays.copyOf(tail, nl); isTail = java.util.Arrays.copyOf(isTail, nl) } }"
+    // ensureTail: lazily materialize `tail`/`isTail` to match `stack.length` the first time a tail is deferred.
+    val ensureTail = s"if (isTail == null) { tail = new Array[${k.arr}](stack.length); isTail = new Array[Boolean](stack.length) }"
+    val pushTail = (e: String) => s"$ensureStack; $ensureTail; tail(sp) = $e; isTail(sp) = true; sp += 1"
     // --- per-node arms (mirrored by `backward`) ---
     val oneCase = s"case o: ${k.name}One => ${onO("o.elem")}"
     val prependCase =
       if !backward then s"case p: ${k.name}Prepend => { ${onO("p.elem")}; cont = p.base }"
-      else s"case p: ${k.name}Prepend => { $ensure; tail(sp) = p.elem; isTail(sp) = true; sp += 1; cont = p.base }"
+      else s"case p: ${k.name}Prepend => { ${pushTail("p.elem")}; cont = p.base }"
     val appendCase =
-      if !backward then s"case a: ${k.name}Append => { $ensure; tail(sp) = a.elem; isTail(sp) = true; sp += 1; cont = a.base }"
+      if !backward then s"case a: ${k.name}Append => { ${pushTail("a.elem")}; cont = a.base }"
       else s"case a: ${k.name}Append => { ${onO("a.elem")}; cont = a.base }"
+    // Concat pushes an FBase child (never a tail). If a tail array exists, clear the stale flag at this slot —
+    // a popped tail can leave `isTail(sp)` set, and we must not misread this Concat child as a tail element.
+    val clearTail = "if (isTail != null) isTail(sp) = false"
     val concatCase =
-      if !backward then s"case c: Concat => { $ensure; stack(sp) = c.right; isTail(sp) = false; sp += 1; cont = c.left }"
-      else s"case c: Concat => { $ensure; stack(sp) = c.left; isTail(sp) = false; sp += 1; cont = c.right }"
+      if !backward then s"case c: Concat => { $ensureStack; $clearTail; stack(sp) = c.right; sp += 1; cont = c.left }"
+      else s"case c: Concat => { $ensureStack; $clearTail; stack(sp) = c.left; sp += 1; cont = c.right }"
     // ReverseNode: descend into base in the OPPOSITE direction via a plain call (JVM stack carries it). If the
     // sub-walk set `stop` (short-circuit), bail the whole walk too.
     val reverseCase = s"case rev: ReverseNode => { dfsC${k.name}$other(rev.base, c); if (c.stop) return }"
@@ -191,7 +202,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |        case _ => ()
        |      }
        |      if (cont != null) cur = cont
-       |      else { cur = null; while (sp > 0 && cur == null) { sp -= 1; if (isTail(sp)) ${onO("tail(sp)")} else cur = stack(sp) } }
+       |      else { cur = null; while (sp > 0 && cur == null) { sp -= 1; if (isTail != null && isTail(sp)) ${onO("tail(sp)")} else cur = stack(sp) } }
        |    }""".stripMargin
   }
   // ONE direction-aware DFS pair. An op that wants to stop early sets the consumer's `stop` flag (inside its run
