@@ -130,14 +130,14 @@ object FArray:
     inline def indexOf[B >: A](elem: B): Int = FArrayOps.indexOfImpl[A, B](xs, elem)
     inline def maxBy[B](inline f: A => B)(using ord: Ordering[B]): A =
       var best: A = FArrayOps.applyAtImpl[A](xs, 0); var bk: B = f(best)
-      xs.drop(1).foreach((a: A) => { val k = f(a); if ord.gt(k, bk) then { best = a; bk = k } }); best
+      xs.foreach((a: A) => { val k = f(a); if ord.gt(k, bk) then { best = a; bk = k } }); best
     inline def minBy[B](inline f: A => B)(using ord: Ordering[B]): A =
       var best: A = FArrayOps.applyAtImpl[A](xs, 0); var bk: B = f(best)
-      xs.drop(1).foreach((a: A) => { val k = f(a); if ord.lt(k, bk) then { best = a; bk = k } }); best
+      xs.foreach((a: A) => { val k = f(a); if ord.lt(k, bk) then { best = a; bk = k } }); best
     inline def max[B >: A](using ord: Ordering[B]): A =
-      var best: B = FArrayOps.applyAtImpl[A](xs, 0); xs.drop(1).foreach((a: A) => if ord.gt(a, best) then best = a); best.asInstanceOf[A]
+      var best: B = FArrayOps.applyAtImpl[A](xs, 0); xs.foreach((a: A) => if ord.gt(a, best) then best = a); best.asInstanceOf[A]
     inline def min[B >: A](using ord: Ordering[B]): A =
-      var best: B = FArrayOps.applyAtImpl[A](xs, 0); xs.drop(1).foreach((a: A) => if ord.lt(a, best) then best = a); best.asInstanceOf[A]
+      var best: B = FArrayOps.applyAtImpl[A](xs, 0); xs.foreach((a: A) => if ord.lt(a, best) then best = a); best.asInstanceOf[A]
     inline def corresponds[B](that: FArray[B])(inline p: (A, B) => Boolean): Boolean =
       xs.length == that.length && FArrayOps.matchAll2Impl[A, B](xs, 0, that, xs.length)(p)
     inline def collectFirst[B](pf: PartialFunction[A, B]): Option[B] = FArrayOps.collectFirstImpl[A, B](xs)(pf)
@@ -179,7 +179,7 @@ object FArray:
     // toList is used generically (abstract A, e.g. test harness) so it can't be inline; List boxes anyway.
     inline def toList: List[A] = { val b = List.newBuilder[A]; xs.foreach(a => b += a); b.result() }
     inline def toVector: Vector[A] = { val b = Vector.newBuilder[A]; xs.foreach(a => b += a); b.result() }
-    inline def toSeq: Seq[A] = xs.toVector
+    def toSeq: Seq[A] = new FArraySeq[A](xs)
     inline def toSet[B >: A]: Set[B] = { val b = Set.newBuilder[B]; xs.foreach(a => b += a); b.result() }
     inline def toMap[K, V](using ev: A <:< (K, V)): Map[K, V] = { val b = Map.newBuilder[K, V]; xs.foreach(a => b += ev(a)); b.result() }
     inline def toArray[B >: A](using ct: ClassTag[B]): Array[B] =
@@ -278,7 +278,7 @@ object FArray:
     def patch[B >: A](from: Int, that: FArray[B], replaced: Int): FArray[B] =
       val f = if from < 0 then 0 else from
       xs.take(f) ++ that ++ xs.drop(f + (if replaced < 0 then 0 else replaced))
-    inline def toIndexedSeq: IndexedSeq[A] = xs.toVector
+    def toIndexedSeq: IndexedSeq[A] = new FArraySeq[A](xs)
     inline def copyToArray[B >: A](dest: Array[B], start: Int, len: Int): Int =
       val n = math.min(len, math.min(xs.length, dest.length - start))
       if n <= 0 then 0
