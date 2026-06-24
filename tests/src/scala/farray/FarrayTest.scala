@@ -249,6 +249,31 @@ class FListTest:
       assertEquals(list.toString, da.toList, db.toList)
     }
 
+  // dfsCB break + global-index + foldRight must be correct on EVERY node shape, not just a flat leaf.
+  @Test def test_shortCircuit_trees(): Unit =
+    val flat = (0 until 12).toList
+    val shapes: List[(String, FArray[Int], List[Int])] = List(
+      ("concat", FArray.tabulate(5)(identity) ++ FArray.tabulate(7)(_ + 5), flat),
+      ("appendChain", { var a = FArray(0); for i <- 1 until 12 do a = a :+ i; a }, flat),
+      ("prependChain", { var a = FArray(11); for i <- (0 until 11).reverse do a = i +: a; a }, flat),
+      ("reverse", FArray.tabulate(12)(i => 11 - i).reverse, flat),
+      ("slice", FArray.tabulate(16)(identity).slice(2, 14), (2 until 14).toList),
+      ("nested", ((FArray(0, 1) ++ FArray(2)) :+ 3) ++ (4 +: FArray(5, 6)), (0 to 6).toList)
+    )
+    for (name, fa, la) <- shapes do
+      assertEquals(s"$name exists-hit", la.exists(_ == 7), fa.exists(_ == 7))
+      assertEquals(s"$name exists-miss", la.exists(_ == 99), fa.exists(_ == 99))
+      assertEquals(s"$name forall-t", la.forall(_ < 100), fa.forall(_ < 100))
+      assertEquals(s"$name forall-f", la.forall(_ < 5), fa.forall(_ < 5))
+      assertEquals(s"$name find", la.find(_ > 6), fa.find(_ > 6))
+      assertEquals(s"$name indexWhere", la.indexWhere(_ == 6).toLong, fa.indexWhere(_ == 6).toLong)
+      assertEquals(s"$name indexOf", la.indexOf(8).toLong, fa.indexOf(8).toLong)
+      assertEquals(s"$name segmentLength", la.segmentLength(_ < 5, 0).toLong, fa.segmentLength(_ < 5).toLong)
+      assertEquals(s"$name count", la.count(_ % 2 == 0).toLong, fa.count(_ % 2 == 0).toLong)
+      assertEquals(s"$name contains", la.contains(9), fa.contains(9))
+      assertEquals(s"$name sum", la.sum.toLong, fa.sum.toLong)
+      assertEquals(s"$name foldRight", la.foldRight("")(_.toString + _), fa.foldRight("")(_.toString + _))
+
   @Test def test_hashCode_matchesList(): Unit =
     def chk(name: String, fa: FArray[Any], l: List[Any]): Unit =
       assertEquals(name, l.hashCode.toLong, fa.hashCode.toLong)
