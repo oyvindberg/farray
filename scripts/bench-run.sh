@@ -20,6 +20,15 @@ throttle() { while [ "$(jobs -rp | grep -c .)" -ge "$MAXJ" ]; do sleep 0.5; done
 XMX="${XMX:-1g}"
 MAIN="org.openjdk.jmh.Main"
 
+# Fast-iteration mode: if results already exist, re-measure ONLY the farray methods and
+# patch them into the cached json (keeping every competitor entry). Otherwise full suite.
+RESULTS="docs/bench-results.json"
+if [ -f "$RESULTS" ]; then
+  MODE="farray"; echo "▶ Mode: farray-only patch ($RESULTS exists)"
+else
+  MODE="full";   echo "▶ Mode: full suite (no $RESULTS yet)"
+fi
+
 echo "▶ Compiling…"
 bleep compile benchmarks-runner >/tmp/bench-compile.log 2>&1 || { echo "compile failed:"; tail -20 /tmp/bench-compile.log; exit 1; }
 
@@ -56,8 +65,12 @@ echo "  $(echo "$ALL" | grep -c .) classes → $SHARDS shards, ≤$MAXJ at once 
 run_shard() {  # name  regex  extra-jmh-args...
   local name="$1" rx="$2"; shift 2
   local td="/tmp/jmh-$name"; rm -rf "$td"; mkdir -p "$td"
+  # In farray-only mode, constrain the class regex to `.farray*` methods so each shard
+  # measures just the FArray implementation; full mode runs all impls in each class.
+  local filter
+  if [ "$MODE" = "farray" ]; then filter="(farray\.($rx)\.farray[A-Za-z]*_?)"; else filter="($rx)"; fi
   "$JAVA" -Xmx"$XMX" -Djava.io.tmpdir="$td" -Djmh.ignoreLock=true -cp "$CP" "$MAIN" \
-    "($rx)" -wi "$WI" -i "$MI" -f "$FORKS" -r 300ms -w 300ms \
+    "$filter" -wi "$WI" -i "$MI" -f "$FORKS" -r 300ms -w 300ms \
     -rf json -rff "docs/parts/part-$name.json" "$@" >"docs/parts/log-$name.txt" 2>&1 &
 }
 
@@ -71,14 +84,27 @@ echo "$ALL" | grep -qE "^($UPDATED)$" && { throttle; run_shard "upd" "$UPDATED" 
 echo "▶ $(jobs -rp 2>/dev/null | grep -c .) shards running in parallel across $CORES cores…"
 wait
 echo "▶ Merging + rendering…"
-python3 - <<'PY'
-import json, glob
-out, files = [], sorted(glob.glob("docs/parts/part-*.json"))
+MODE="$MODE" python3 - <<'PY'
+import json, glob, os
+mode = os.environ["MODE"]
+new, files = [], sorted(glob.glob("docs/parts/part-*.json"))
 for f in files:
-    try: out += json.load(open(f))
+    try: new += json.load(open(f))
     except Exception as e: print("  skip", f, e)
-json.dump(out, open("docs/bench-results.json", "w"))
-print(f"  merged {len(out)} results from {len(files)} shards")
+
+def is_farray(b):  # farray_map, farray_scanLeft, bare farray, plus farrayMat_*/farrayTree_* variants
+    return b["benchmark"].split(".")[-1].split("_")[0].startswith("farray")
+
+dst = "docs/bench-results.json"
+if mode == "farray":
+    old = json.load(open(dst))
+    kept = [b for b in old if not is_farray(b)]
+    out = kept + new
+    json.dump(out, open(dst, "w"))
+    print(f"  farray-only patch: refreshed {len(new)} farray entries, kept {len(kept)} competitor entries")
+else:
+    json.dump(new, open(dst, "w"))
+    print(f"  full suite: merged {len(new)} results from {len(files)} shards")
 PY
 python3 scripts/bench_report.py docs/bench-results.json docs/index.html
 echo "✔ Done → docs/index.html  (publish: git add docs/ && git commit && git push)"
