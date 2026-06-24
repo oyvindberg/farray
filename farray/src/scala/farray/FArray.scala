@@ -267,8 +267,11 @@ object FArray:
       val n = xs.length; val step = if size < 1 then 1 else size
       Iterator.range(0, n, step).map(i => xs.slice(i, math.min(i + step, n)))
     def sliding(size: Int, step: Int): Iterator[FArray[A]] =
-      val n = xs.length; val st = if step < 1 then 1 else step
-      if n == 0 then Iterator.empty else Iterator.range(0, n, st).map(i => xs.slice(i, math.min(i + size, n)))
+      val n = xs.length; val sz = if size < 1 then 1 else size; val st = if step < 1 then 1 else step
+      if n == 0 then Iterator.empty
+      else
+        val w = if n <= sz then 1 else (n - sz + st - 1) / st + 1 // ceil((n-sz)/st)+1 windows, matching List.sliding
+        Iterator.range(0, w).map(i => xs.slice(i * st, math.min(i * st + sz, n)))
     def sliding(size: Int): Iterator[FArray[A]] = sliding(size, 1)
     def inits: Iterator[FArray[A]] = Iterator.range(xs.length, -1, -1).map(i => xs.take(i))
     def tails: Iterator[FArray[A]] = Iterator.range(0, xs.length + 1).map(i => xs.drop(i))

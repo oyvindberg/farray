@@ -216,6 +216,39 @@ class FListTest:
   @Test def test_zip: Unit = test2(_ zip _)(_ zip _)
   @Test def test_zipWithIndex: Unit = test1(_.zipWithIndex)(_.zipWithIndex)
 
+  // ---- newly-added IndexedSeq ops, each checked against List on the same inputs ----
+  @Test def test_sum: Unit = test1(_.map(_.length).sum)(_.map(_.length).sum)
+  @Test def test_product: Unit = test1(_.map(_.length).product)(_.map(_.length).product)
+  @Test def test_scanLeft: Unit = test1(_.scanLeft("z")(_ + _))(_.scanLeft("z")(_ + _))
+  @Test def test_scan: Unit = test1(_.scan("z")(_ + _))(_.scan("z")(_ + _))
+  @Test def test_scanRight: Unit = test1(_.scanRight("z")(_ + _))(_.scanRight("z")(_ + _))
+  @Test def test_reduceLeftOption: Unit = test1(_.reduceLeftOption(_ + _))(_.reduceLeftOption(_ + _))
+  @Test def test_reduceRightOption: Unit = test1(_.reduceRightOption((s, acc) => s + acc))(_.reduceRightOption((s, acc) => s + acc))
+  @Test def test_segmentLength: Unit = test1(_.segmentLength(_.nonEmpty, 1))(_.segmentLength(_.nonEmpty, 1))
+  @Test def test_lastIndexWhere: Unit = test1(_.lastIndexWhere(_ == "a"))(_.lastIndexWhere(_ == "a"))
+  @Test def test_lastIndexOf: Unit = test1(_.lastIndexOf("a"))(_.lastIndexOf("a"))
+  @Test def test_sameElements: Unit = test1(xs => xs.sameElements(xs.take(2)))(xs => xs.sameElements(xs.take(2)))
+  @Test def test_indexOfSlice: Unit = test1(xs => xs.indexOfSlice(xs.slice(2, 4)))(xs => xs.indexOfSlice(xs.slice(2, 4)))
+  @Test def test_lastIndexOfSlice: Unit = test1(xs => xs.lastIndexOfSlice(xs.slice(1, 3)))(xs => xs.lastIndexOfSlice(xs.slice(1, 3)))
+  @Test def test_containsSlice: Unit = test1(xs => xs.containsSlice(xs.slice(1, 3)))(xs => xs.containsSlice(xs.slice(1, 3)))
+  @Test def test_grouped: Unit = test1(_.grouped(2))(_.grouped(2))
+  @Test def test_sliding: Unit = test1(_.sliding(2, 1))(_.sliding(2, 1))
+  @Test def test_sliding_step: Unit = test1(_.sliding(3, 2))(_.sliding(3, 2))
+  @Test def test_inits: Unit = test1(_.inits)(_.inits)
+  @Test def test_tails: Unit = test1(_.tails)(_.tails)
+  @Test def test_patch: Unit = test1(xs => xs.patch(1, xs.take(2), 2))(xs => xs.patch(1, xs.take(2), 2))
+  @Test def test_toIndexedSeq: Unit = test1(_.toIndexedSeq)(_.toIndexedSeq)
+  @Test def test_combinations: Unit = test1(_.combinations(2))(_.combinations(2))
+  @Test def test_permutations: Unit = test1(_.permutations)(_.permutations)
+  @Test def test_copyToArray: Unit =
+    lists.foreach { list =>
+      val fa = FArray.fromIterable(list)
+      val da = new Array[String](list.length + 2); val db = new Array[String](list.length + 2)
+      val na = list.copyToArray(da, 1, list.length); val nb = fa.copyToArray(db, 1, list.length)
+      assertEquals(list.toString, na.toLong, nb.toLong)
+      assertEquals(list.toString, da.toList, db.toList)
+    }
+
   @Test def test_hashCode_matchesList(): Unit =
     def chk(name: String, fa: FArray[Any], l: List[Any]): Unit =
       assertEquals(name, l.hashCode.toLong, fa.hashCode.toLong)
