@@ -30,13 +30,15 @@ class IntSlicingBenchmark extends IntInputs {
   @Benchmark def iarray_distinct(): IArray[Int] = iarrayInput.distinct
   @Benchmark def ziochunk_distinct(): zio.Chunk[Int] = zioChunkInput.distinct
 
-  // grouped(size/2): FArray has no grouped (API gap)
+  // grouped(size/2)
+  @Benchmark def farray_grouped(): Int = { var n = 0; farrayInput.grouped(math.max(1, size / 2)).foreach(_ => n += 1); n }
   @Benchmark def list_grouped(): Int = { var n = 0; listInput.grouped(math.max(1, size / 2)).foreach(_ => n += 1); n }
   @Benchmark def vector_grouped(): Int = { var n = 0; vectorInput.grouped(math.max(1, size / 2)).foreach(_ => n += 1); n }
   @Benchmark def iarray_grouped(): Int = { var n = 0; iarrayInput.grouped(math.max(1, size / 2)).foreach(_ => n += 1); n }
   @Benchmark def ziochunk_grouped(): Int = { var n = 0; zioChunkInput.grouped(math.max(1, size / 2)).foreach(_ => n += 1); n }
 
-  // sliding(2, 3): FArray has no sliding (API gap)
+  // sliding(2, 3)
+  @Benchmark def farray_sliding(): Int = { var n = 0; farrayInput.sliding(2, 3).foreach(_ => n += 1); n }
   @Benchmark def list_sliding(): Int = { var n = 0; listInput.sliding(2, 3).foreach(_ => n += 1); n }
   @Benchmark def vector_sliding(): Int = { var n = 0; vectorInput.sliding(2, 3).foreach(_ => n += 1); n }
   @Benchmark def iarray_sliding(): Int = { var n = 0; iarrayInput.sliding(2, 3).foreach(_ => n += 1); n }
