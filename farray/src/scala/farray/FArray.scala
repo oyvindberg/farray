@@ -242,11 +242,11 @@ object FArray:
       FArrayOps.prefixLengthImpl[A](xs.drop(if from < 0 then 0 else from))(p)
     // one forward dfs pass recording the last match — no ReverseNode alloc
     inline def lastIndexWhere(inline p: A => Boolean): Int =
-      var res = -1; var i = 0
-      xs.foreach((a: A) => { if p(a) then res = i; i += 1 }); res
+      // reverse is an O(1) node; indexWhere on it is now a BACKWARD early-exit leaf scan (the fixed traversal),
+      // so we stop at the last match instead of scanning the whole array. remap the index back.
+      val i = FArrayOps.indexWhereImpl[A](xs.reverse)(p); if i < 0 then -1 else xs.length - 1 - i
     inline def lastIndexOf[B >: A](elem: B): Int =
-      var res = -1; var i = 0
-      xs.foreach((a: A) => { if a == elem then res = i; i += 1 }); res
+      val i = FArrayOps.indexOfImpl[A, B](xs.reverse, elem); if i < 0 then -1 else xs.length - 1 - i
     inline def sameElements[B >: A](that: FArray[B]): Boolean =
       xs.length == that.length && FArrayOps.matchAll2Impl[A, B](xs, 0, that, xs.length)((a, b) => a == b)
     inline def indexOfSlice[B >: A](that: FArray[B]): Int =
