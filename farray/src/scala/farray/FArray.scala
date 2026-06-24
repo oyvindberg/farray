@@ -15,7 +15,7 @@ object FArray:
   inline def apply[A](a: A): FArray[A] = FArrayOps.fromValues1[A](a)
   inline def apply[A](a: A, b: A): FArray[A] = FArrayOps.fromValues2[A](a, b)
   inline def apply[A](a: A, b: A, c: A): FArray[A] = FArrayOps.fromValues3[A](a, b, c)
-  inline def apply[A](as: A*): FArray[A] = FArrayOps.applyImpl[A](as)
+  inline def apply[A](as: A*): FArray[A] = ${ FArrayMacros.applyMacro[A]('as) }
   inline def tabulate[A](n: Int)(inline f: Int => A): FArray[A] = FArrayOps.tabulateImpl[A](n)(f)
   inline def fromArray[A](as: Array[A]): FArray[A] = FArrayOps.fromArrayImpl[A](as)
   inline def fromIterable[A](it: Iterable[A]): FArray[A] = FArrayOps.applyImpl[A](it.toSeq)
