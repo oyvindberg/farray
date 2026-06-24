@@ -261,7 +261,14 @@ class FListTest:
       // forward (slice) and backward (reverse) array-backed runs over a leaf base — exercises both onRun paths
       ("sliceLeaf", FArray.tabulate(20)(identity).slice(3, 15), (3 until 15).toList),
       ("reverseLeaf", FArray.tabulate(20)(identity).slice(0, 12).reverse, (0 until 12).reverse.toList),
-      ("nested", ((FArray(0, 1) ++ FArray(2)) :+ 3) ++ (4 +: FArray(5, 6)), (0 to 6).toList)
+      ("nested", ((FArray(0, 1) ++ FArray(2)) :+ 3) ++ (4 +: FArray(5, 6)), (0 to 6).toList),
+      // reverse-of-TREE: a backward walk flips to FORWARD over the concat (exercises mutual Reverse recursion)
+      ("reverseConcat", (FArray.tabulate(5)(identity) ++ FArray.tabulate(7)(_ + 5)).reverse, flat.reverse),
+      ("reverseAppend", ({ var a = FArray(0); for i <- 1 until 12 do a = a :+ i; a }).reverse, flat.reverse),
+      // nested reverse (reverse-of-reverse-of-tree); reverse-of-pad; reverse-of-updated
+      ("revRevConcat", (FArray.tabulate(5)(identity) ++ FArray.tabulate(7)(_ + 5)).reverse.reverse, flat),
+      ("reversePad", FArray.tabulate(8)(identity).padTo(12, 99).reverse, ((0 until 8).toList ::: List.fill(4)(99)).reverse),
+      ("reverseUpdated", FArray.tabulate(12)(identity).updated(6, 6).reverse, flat.reverse)
     )
     for (name, fa, la) <- shapes do
       assertEquals(s"$name exists-hit", la.exists(_ == 7), fa.exists(_ == 7))

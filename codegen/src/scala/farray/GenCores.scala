@@ -120,48 +120,102 @@ object GenCores extends BleepCodegenScript("GenCores") {
   private val grow =
     "if (sp + 2 > stack.length) { val ns = stack.length * 2; stack = java.util.Arrays.copyOf(stack, ns); tail = java.util.Arrays.copyOf(tail, ns); isTail = java.util.Arrays.copyOf(isTail, ns) }"
 
-  // The traversal body, parameterized by how a leaf-run (onL) and a single element (onO) are consumed, so we
-  // can emit it as both the inline `dfs${k}` (callbacks inlined) and the non-inline `dfsC${k}` (consumer
-  // method calls — compiled once, so combinators don't dump the whole walk at every use-site).
-  private def dfsBody(k: Kind, onL: String => String, onO: String => String): String = {
-    val rngCase = if k.name == "Int" then
-      s"\n       |        case rng: RangeNode => { val rn = rng.length; var ri = 0; while (ri < rn) { ${onO("rng.start + ri * rng.step")}; ri += 1 } }"
-    else ""
+  // The traversal body for ONE direction (forward when backward=false, reverse when backward=true), parameterized
+  // by how an array-backed RUN (onRF forward / onRB backward) and a single element (onO) are consumed. The two
+  // directions are exact mirrors and MUTUALLY RECURSIVE: a ReverseNode is visited by CALLING the opposite-direction
+  // traversal on its base (the JVM stack carries that nesting — only literal reverse-of-reverse recurses, which the
+  // smart constructor collapses, so depth is ~0-1). Each direction keeps its OWN local explicit stack purely for
+  // its own Concat/Append/Prepend deferrals (a Reverse subtree is self-contained, so it never spills into the
+  // caller's stack). This kills the materialize/kindAt fallbacks for backward ops over trees.
+  //   forward : Concat l-then-r · Append defer-elem · Prepend elem-then-base · runs ascending · Pad base-then-fill
+  //   backward: Concat r-then-l · Append elem-then-base · Prepend defer-elem · runs descending · Pad fill-then-base
+  private def dfsBody(k: Kind, backward: Boolean, onRF: (String, String, String) => String, onRB: (String, String, String) => String, onO: String => String): String = {
+    // a forward run over a leaf window emits onRF(arr, start, count); a backward run emits onRB(arr, start, count)
+    // where start is the FIRST index visited (high end for backward).
+    def runFwd(a: String, start: String, count: String): String = onRF(a, start, count)
+    def runBwd(a: String, start: String, count: String): String = onRB(a, start, count)
+    val other = if backward then "Fwd" else "Back"
+    val rngCase =
+      if k.name != "Int" then ""
+      else if !backward then
+        s"\n       |        case rng: RangeNode => { val rn = rng.length; var ri = 0; while (ri < rn) { ${onO("rng.start + ri * rng.step")}; ri += 1 } }"
+      else
+        s"\n       |        case rng: RangeNode => { val rn = rng.length; var ri = rn - 1; while (ri >= 0) { ${onO("rng.start + ri * rng.step")}; ri -= 1 } }"
     val padRead = if k.name == "Ref" then "pad.base.applyBoxed(pi)" else s"${k.lc}At(pad.base, pi)"
-    // `cur`-driven walk: Prepend is a tail (continue with base), Reverse/Pad/Slice/Range/Updated emit in a
-    // loop — none push. Only Concat/Append defer a sibling, so the stack stays null until one actually does.
     val ensure =
       s"if (stack == null) { stack = new Array[FBase](16); tail = new Array[${k.arr}](16); isTail = new Array[Boolean](16) } else if (sp == stack.length) { val nl = sp * 2; stack = java.util.Arrays.copyOf(stack, nl); tail = java.util.Arrays.copyOf(tail, nl); isTail = java.util.Arrays.copyOf(isTail, nl) }"
+    // --- per-node arms (mirrored by `backward`) ---
+    val oneCase = s"case o: ${k.name}One => ${onO("o.elem")}"
+    val prependCase =
+      if !backward then s"case p: ${k.name}Prepend => { ${onO("p.elem")}; cont = p.base }"
+      else s"case p: ${k.name}Prepend => { $ensure; tail(sp) = p.elem; isTail(sp) = true; sp += 1; cont = p.base }"
+    val appendCase =
+      if !backward then s"case a: ${k.name}Append => { $ensure; tail(sp) = a.elem; isTail(sp) = true; sp += 1; cont = a.base }"
+      else s"case a: ${k.name}Append => { ${onO("a.elem")}; cont = a.base }"
+    val concatCase =
+      if !backward then s"case c: Concat => { $ensure; stack(sp) = c.right; isTail(sp) = false; sp += 1; cont = c.left }"
+      else s"case c: Concat => { $ensure; stack(sp) = c.left; isTail(sp) = false; sp += 1; cont = c.right }"
+    // ReverseNode: descend into base in the OPPOSITE direction via a plain call (JVM stack carries it). If the
+    // sub-walk set `stop` (short-circuit), bail the whole walk too.
+    val reverseCase = s"case rev: ReverseNode => { dfsC${k.name}$other(rev.base, c); if (c.stop) return }"
+    // leaf / slice / pad-base / updated-segments: array-backed runs (forward asc, backward desc).
+    val leafCase =
+      if !backward then s"case leaf: ${k.name}Arr => ${runFwd("leaf.arr", "0", "leaf.length")}"
+      else s"case leaf: ${k.name}Arr => ${runBwd("leaf.arr", "leaf.length - 1", "leaf.length")}"
+    val sliceCase =
+      if !backward then
+        s"case s: SliceNode => { val sn = s.length; val so = s.offset; s.base match { case lf: ${k.name}Arr => ${runFwd("lf.arr", "so", "sn")}; case _ => { var si = 0; while (si < sn) { ${onO(s"${k.lc}At(s.base, so + si)")}; si += 1 } } } }"
+      else
+        s"case s: SliceNode => { val sn = s.length; val so = s.offset; s.base match { case lf: ${k.name}Arr => ${runBwd("lf.arr", "so + sn - 1", "sn")}; case _ => { var si = sn - 1; while (si >= 0) { ${onO(s"${k.lc}At(s.base, so + si)")}; si -= 1 } } } }"
+    // Pad: forward = base then fillers; backward = fillers then base.
+    val padCase =
+      if !backward then
+        s"case pad: ${k.name}Pad => { val bl = pad.base.length; pad.base match { case lf: ${k.name}Arr => ${runFwd("lf.arr", "0", "bl")}; case _ => { var pi = 0; while (pi < bl) { ${onO(padRead)}; pi += 1 } } }; val pf = pad.filler; var pj = bl; val pn = pad.length; while (pj < pn) { ${onO("pf")}; pj += 1 } }"
+      else
+        s"case pad: ${k.name}Pad => { val bl = pad.base.length; val pf = pad.filler; var pj = pad.length; while (pj > bl) { ${onO("pf")}; pj -= 1 }; pad.base match { case lf: ${k.name}Arr => ${runBwd("lf.arr", "bl - 1", "bl")}; case _ => { var pi = bl - 1; while (pi >= 0) { ${onO(padRead)}; pi -= 1 } } } }"
+    // Updated: forward = [0,ui) , elem , (ui,len) ; backward mirrors.
+    val updatedCase =
+      if !backward then
+        s"case u: ${k.name}Updated => { u.base match { case lf: ${k.name}Arr => { val la = lf.arr; val ui = u.index; ${runFwd("la", "0", "ui")}; ${onO("u.elem")}; ${runFwd("la", "ui + 1", "u.length - ui - 1")} }; case _ => { val mout = materialize${k.name}(u); ${runFwd("mout", "0", "mout.length")} } } }"
+      else
+        s"case u: ${k.name}Updated => { u.base match { case lf: ${k.name}Arr => { val la = lf.arr; val ui = u.index; ${runBwd("la", "u.length - 1", "u.length - ui - 1")}; ${onO("u.elem")}; ${runBwd("la", "ui - 1", "ui")} }; case _ => { val mout = materialize${k.name}(u); ${runBwd("mout", "mout.length - 1", "mout.length")} } } }"
+    val cases = List(leafCase, oneCase, prependCase, appendCase, concatCase, reverseCase, padCase, updatedCase, sliceCase)
+      .map(c => s"        $c")
+      .mkString("\n       |") + rngCase
     s"""    var cur: FBase = root
        |    var stack: Array[FBase] = null; var tail: Array[${k.arr}] = null; var isTail: Array[Boolean] = null; var sp = 0
        |    while (cur != null) {
        |      var cont: FBase = null
        |      cur match {
-       |        case leaf: ${k.name}Arr => ${onL("leaf.arr, leaf.length")}
-       |        case o: ${k.name}One => ${onO("o.elem")}
-       |        case p: ${k.name}Prepend => { ${onO("p.elem")}; cont = p.base }
-       |        case a: ${k.name}Append => { $ensure; tail(sp) = a.elem; isTail(sp) = true; sp += 1; cont = a.base }
-       |        case c: Concat => { $ensure; stack(sp) = c.right; isTail(sp) = false; sp += 1; cont = c.left }
-       |        case rev: ReverseNode => { val rn = rev.length; rev.base match { case lf: ${k.name}Arr => { val la = lf.arr; var ri = 0; while (ri < rn) { ${onO("la(rn - 1 - ri)")}; ri += 1 } }; case _ => { var ri = 0; while (ri < rn) { ${onO(s"${k.lc}At(rev.base, rn - 1 - ri)")}; ri += 1 } } } }
-       |        case pad: ${k.name}Pad => { val bl = pad.base.length; pad.base match { case lf: ${k.name}Arr => { val la = lf.arr; var pi = 0; while (pi < bl) { ${onO("la(pi)")}; pi += 1 } }; case _ => { var pi = 0; while (pi < bl) { ${onO(padRead)}; pi += 1 } } }; val pf = pad.filler; var pj = bl; val pn = pad.length; while (pj < pn) { ${onO("pf")}; pj += 1 } }
-       |        case u: ${k.name}Updated => { val un = u.length; u.base match { case lf: ${k.name}Arr => { val la = lf.arr; var ui = 0; while (ui < un) { ${onO("if (ui == u.index) u.elem else la(ui)")}; ui += 1 } }; case _ => { val mout = materialize${k.name}(u); ${onL("mout, mout.length")} } } }
-       |        case s: SliceNode => { val sn = s.length; val so = s.offset; s.base match { case lf: ${k.name}Arr => { val la = lf.arr; var si = 0; while (si < sn) { ${onO("la(so + si)")}; si += 1 } }; case _ => { var si = 0; while (si < sn) { ${onO(s"${k.lc}At(s.base, so + si)")}; si += 1 } } } }$rngCase
+       |$cases
        |        case _ => ()
        |      }
        |      if (cont != null) cur = cont
        |      else { cur = null; while (sp > 0 && cur == null) { sp -= 1; if (isTail(sp)) ${onO("tail(sp)")} else cur = stack(sp) } }
        |    }""".stripMargin
   }
-  // ONE forward DFS. dfsBody is the only traversal machine; an op that wants to stop early sets the consumer's
-  // `stop` flag (and breaks its own leaf-run loop), and the driver bails after each onLeaf/onOne. Non-short-circuit
-  // ops never touch `stop`, paying only a predictable always-false branch per run. onLeaf fires per leaf-run,
-  // onOne per single element — both cheap (O(#runs)); the per-element op stays inlined inside the consumer.
+  // ONE direction-aware DFS pair. An op that wants to stop early sets the consumer's `stop` flag (inside its run
+  // loop), and the driver bails after each run/element. onRunF / onRunB are the forward/backward array-run handlers
+  // (empty-body, constant-stride — the JIT-friendly shape); onOne handles genuine singletons.
   private def dfsConsumer(k: Kind): String =
-    s"abstract class ${k.name}Dfs { var stop = false; def onLeaf(a: Array[${k.arr}], len: Int): Unit; def onOne(v: ${k.arr}): Unit }"
-  private def dfsCDef(k: Kind): String =
-    s"""  def dfsC${k.name}(root: FBase, c: ${k.name}Dfs): Unit = {
-       |${dfsBody(k, args => s"{ c.onLeaf($args); if (c.stop) return }", args => s"{ c.onOne($args); if (c.stop) return }")}
-       |  }""".stripMargin
+    s"abstract class ${k.name}Dfs { var stop = false; def onRunF(a: Array[${k.arr}], start: Int, count: Int): Unit; def onRunB(a: Array[${k.arr}], start: Int, count: Int): Unit; def onOne(v: ${k.arr}): Unit }"
+  private def dfsCDef(k: Kind): String = {
+    def body(backward: Boolean): String =
+      dfsBody(
+        k,
+        backward,
+        (a, st, cnt) => s"{ c.onRunF($a, $st, $cnt); if (c.stop) return }",
+        (a, st, cnt) => s"{ c.onRunB($a, $st, $cnt); if (c.stop) return }",
+        args => s"{ c.onOne($args); if (c.stop) return }"
+      )
+    s"""  def dfsC${k.name}Fwd(root: FBase, c: ${k.name}Dfs): Unit = {
+       |${body(false)}
+       |  }
+       |  def dfsC${k.name}Back(root: FBase, c: ${k.name}Dfs): Unit = {
+       |${body(true)}
+       |  }
+       |  inline def dfsC${k.name}(root: FBase, c: ${k.name}Dfs): Unit = dfsC${k.name}Fwd(root, c)""".stripMargin
+  }
 
   // The iterator is a trivial flat-array cursor (2 fields → escape analysis scalar-replaces it when consumed
   // inline → foreach speed). A leaf hands its backing array straight in (no copy, lazy); a tree is flattened
@@ -216,12 +270,12 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val dfsC = opKinds.map(dfsCDef).mkString("\n")
     val ats = opKinds.map(atDef).mkString("\n")
     // Flatten a (possibly deep) Updated chain to a fresh leaf array, ONCE, so dfs can emit it tight via
-    // onLeaf instead of walking the chain per element. Recursion applies overrides bottom-up => outer wins.
+    // onRunF instead of walking the chain per element. Recursion applies overrides bottom-up => outer wins.
     val mat = opKinds
       .map(k =>
         s"""  def materialize${k.name}(node: FBase): Array[${k.arr}] = node match {
          |    case u: ${k.name}Updated => { val out = materialize${k.name}(u.base); out(u.index) = u.elem; out }
-         |    case _ => { val out = new Array[${k.arr}](node.length); var o = 0; dfsC${k.name}(node, new ${k.name}Dfs { def onLeaf(a: Array[${k.arr}], len: Int): Unit = { System.arraycopy(a, 0, out, o, len); o += len }; def onOne(v: ${k.arr}): Unit = { out(o) = v; o += 1 } }); out }
+         |    case _ => { val out = new Array[${k.arr}](node.length); var o = 0; dfsC${k.name}(node, new ${k.name}Dfs { def onRunF(a: Array[${k.arr}], start: Int, count: Int): Unit = { System.arraycopy(a, start, out, o, count); o += count }; def onRunB(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val e = start - count; while (i > e) { out(o) = a(i); o += 1; i -= 1 } }; def onOne(v: ${k.arr}): Unit = { out(o) = v; o += 1 } }); out }
          |  }""".stripMargin
       )
       .mkString("\n")
@@ -236,7 +290,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
         s"""  def ensureCap${k.name}(out: Array[${k.arr}], needed: Int): Array[${k.arr}] =
          |    if (needed <= out.length) out else { var nc = out.length * 2; if (nc < needed) nc = needed; java.util.Arrays.copyOf(out, nc) }
          |  def flatMapCopyOne${k.name}(node: FBase, out: Array[${k.arr}], off0: Int): Unit = {
-         |    var o = off0; dfsC${k.name}(node, new ${k.name}Dfs { def onLeaf(a: Array[${k.arr}], ln: Int): Unit = { System.arraycopy(a, 0, out, o, ln); o += ln }; def onOne(v: ${k.arr}): Unit = { out(o) = v; o += 1 } })
+         |    var o = off0; dfsC${k.name}(node, new ${k.name}Dfs { def onRunF(a: Array[${k.arr}], start: Int, count: Int): Unit = { System.arraycopy(a, start, out, o, count); o += count }; def onRunB(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val e = start - count; while (i > e) { out(o) = a(i); o += 1; i -= 1 } }; def onOne(v: ${k.arr}): Unit = { out(o) = v; o += 1 } })
          |  }""".stripMargin
       )
       .mkString("\n")
@@ -298,16 +352,26 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // wrap a raw kind-array element back to A (for an inline user comparator); plain kind-array alloc
     def readVal(k: Kind, e: String): String = if k.name == "Ref" then s"r.wrap($e.asInstanceOf[A])" else s"r.wrap($e)"
     def allocPlain(k: Kind): String = s"new Array[${k.arr}](n)"
+    // ---- run-method builders: emit the onRunF/onRunB pair for a consumer from ONE per-element body. `body`
+    // reads the wrapped element via `read(k)` (which references `a(i)`); `i` runs start..start+count (fwd) or
+    // start..start-count (bwd, descending). Two constant-stride loops keep the JIT-friendly shape.
+    // fullRun: process EVERY element (no early stop). rawA=true reads a(i) directly (sum/product), else read(k).
+    def runMethods(k: Kind, body: String => String, rawA: Boolean = false): String = {
+      val rd = if rawA then "a(i)" else read(k)
+      val fwd = s"def onRunF(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val e = start + count; while (i < e) { ${body(rd)}; i += 1 } }"
+      val bwd = s"def onRunB(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val e = start - count; while (i > e) { ${body(rd)}; i -= 1 } }"
+      s"$fwd; $bwd"
+    }
     def dispatchA(body: Kind => String): String =
       "summonFrom {\n" + opKinds.map(k => s"      case r: ${k.name}Repr[A] => ${body(k)}").mkString("\n") + "\n    }"
     def dispatchB(body: Kind => String): String =
       "summonFrom {\n" + opKinds.map(k => s"      case r: ${k.name}Repr[B] => ${body(k)}").mkString("\n") + "\n    }"
 
     val foldLeft = dispatchA(k =>
-      s"{ var acc = z; val c = new ${k.name}Dfs { def onLeaf(a: Array[${k.arr}], len: Int): Unit = { var i = 0; while (i < len) { acc = op(acc, ${read(k)}); i += 1 } }; def onOne(v: ${k.arr}): Unit = { acc = op(acc, ${readOne(k)}) } }; dfsC${k.name}(xs, c); acc }"
+      s"{ var acc = z; val c = new ${k.name}Dfs { ${runMethods(k, e => s"acc = op(acc, $e)")}; def onOne(v: ${k.arr}): Unit = { acc = op(acc, ${readOne(k)}) } }; dfsC${k.name}(xs, c); acc }"
     )
     val foreach = dispatchA(k =>
-      s"{ val c = new ${k.name}Dfs { def onLeaf(a: Array[${k.arr}], len: Int): Unit = { var i = 0; while (i < len) { f(${read(k)}); i += 1 } }; def onOne(v: ${k.arr}): Unit = { f(${readOne(k)}) } }; dfsC${k.name}(xs, c) }"
+      s"{ val c = new ${k.name}Dfs { ${runMethods(k, e => s"f($e)")}; def onOne(v: ${k.arr}): Unit = { f(${readOne(k)}) } }; dfsC${k.name}(xs, c) }"
     )
     // Short-circuiting scan over the unified dfsC: each leaf-run scans tight; setting `stop` (the consumer flag)
     // ends both the run and the whole tree walk. O(n) + early-exit on EVERY shape, no kindAt.
@@ -315,8 +379,11 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // while condition, then we inspect WHY it stopped once, after the loop. No mid-loop res/stop write -> no
     // loop-carried dependency -> the only shape HotSpot optimizes to ~iarray speed (a body write is ~1.45x slower,
     // measured). `gi` is the run's global start; the leaf scans local i, so the found global index is gi + i.
-    def scanB(k: Kind, init: String, cont: String => String, hit: (String, String) => String, oneStep: String, result: String): String =
-      s"{ var gi = 0; $init; val c = new ${k.name}Dfs { def onLeaf(a: Array[${k.arr}], len: Int): Unit = { var i = 0; while (i < len && ${cont(read(k))}) i += 1; if (i < len) { val a0 = ${read(k)}; ${hit("a0", "gi + i")}; stop = true }; gi += i }; def onOne(v: ${k.arr}): Unit = { val a0 = ${readOne(k)}; $oneStep; gi += 1 } }; dfsC${k.name}(xs, c); $result }"
+    def scanB(k: Kind, init: String, cont: String => String, hit: (String, String) => String, oneStep: String, result: String): String = {
+      val fwd = s"def onRunF(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val e = start + count; while (i < e && ${cont(read(k))}) i += 1; if (i < e) { val a0 = ${read(k)}; ${hit("a0", "gi + (i - start)")}; stop = true }; gi += count }"
+      val bwd = s"def onRunB(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val e = start - count; while (i > e && ${cont(read(k))}) i -= 1; if (i > e) { val a0 = ${read(k)}; ${hit("a0", "gi + (start - i)")}; stop = true }; gi += count }"
+      s"{ var gi = 0; $init; val c = new ${k.name}Dfs { $fwd; $bwd; def onOne(v: ${k.arr}): Unit = { val a0 = ${readOne(k)}; $oneStep; gi += 1 } }; dfsC${k.name}(xs, c); $result }"
+    }
     val existsV = dispatchA(k => scanB(k, "var res = false", a0 => s"!p($a0)", (a0, _) => "res = true", "if (p(a0)) { res = true; stop = true }", "res"))
     val forallV = dispatchA(k => scanB(k, "var res = true", a0 => s"p($a0)", (a0, _) => "res = false", "if (!p(a0)) { res = false; stop = true }", "res"))
     val findV = dispatchA(k => scanB(k, "var res: Option[A] = None", a0 => s"!p($a0)", (a0, _) => s"res = Some($a0)", "if (p(a0)) { res = Some(a0); stop = true }", "res"))
@@ -326,59 +393,46 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // prefixLength accumulates (res += matched count) rather than setting an index, so it scans empty-body but
     // doesn't fit hit(): res += i after each run, stop only when a run has a non-match (i < len).
     val prefixLenV = dispatchA(k =>
-      s"{ var res = 0; val c = new ${k.name}Dfs { def onLeaf(a: Array[${k.arr}], len: Int): Unit = { var i = 0; while (i < len && p(${read(k)})) i += 1; res += i; if (i < len) stop = true }; def onOne(v: ${k.arr}): Unit = { if (p(${readOne(k)})) res += 1 else stop = true } }; dfsC${k.name}(xs, c); res }"
+      s"{ var res = 0; val c = new ${k.name}Dfs { def onRunF(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val e = start + count; while (i < e && p(${read(k)})) i += 1; res += (i - start); if (i < e) stop = true }; def onRunB(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val e = start - count; while (i > e && p(${read(k)})) i -= 1; res += (start - i); if (i > e) stop = true }; def onOne(v: ${k.arr}): Unit = { if (p(${readOne(k)})) res += 1 else stop = true } }; dfsC${k.name}(xs, c); res }"
     )
-    // lastIndexWhere/lastIndexOf scan BACKWARD (last match wins). The array-backed shapes scan their backing
-    // array directly with the EMPTY-BODY shape and ZERO allocation, mapping the local hit index back to a global
-    // index:
-    //   leaf            -> scan ar(len-1..0)                         hit i        -> i
-    //   slice-of-leaf   -> scan ar(off+len-1..off)                   hit off+j    -> j   (j = local)
-    //   reverse-of-leaf -> reverse's LAST is base's FIRST, so scan base FORWARD ar(0..bl-1)  hit j -> len-1-j
-    // Only genuine TREES (Concat/Append/Prepend/Pad/Updated/Range) fall back to materialize-once (rare for a
-    // backward search; a dedicated backward dfs walk would avoid even that — TODO if it shows up hot).
-    def lastBackward(k: Kind, contLeaf: String => String, fwdHit: String, fallback: String): String = {
-      val leafScan = s"{ val ar = lf.arr; var i = (off) + (ln) - 1; val lo = (off); while (i >= lo && ${contLeaf(readVal(k, "ar(i)"))}) i -= 1; if (i >= lo) i - (off) else -1 }"
-      // forward scan of a leaf (for reverse-of-leaf): returns local j of first hit, or -1
-      val fwdScan = s"{ val ar = lf.arr; var j = 0; while (j < (bl) && ${contLeaf(readVal(k, "ar(j)"))}) j += 1; if (j < (bl)) j else -1 }"
-      s"""xs match {
-         |      case lf: ${k.name}Arr => { val off = 0; val ln = lf.length; $leafScan }
-         |      case s: SliceNode => s.base match { case lf: ${k.name}Arr => { val off = s.offset; val ln = s.length; $leafScan }; case _ => { $fallback } }
-         |      case rev: ReverseNode => rev.base match { case lf: ${k.name}Arr => { val bl = lf.length; val j = $fwdScan; $fwdHit }; case _ => { $fallback } }
-         |      case _ => { $fallback }
-         |    }""".stripMargin
+    // lastIndexWhere/lastIndexOf scan BACKWARD via dfsCBack — visiting elements last-to-first, so the FIRST hit is
+    // the last occurrence. ZERO allocation on EVERY shape (no materialize): the direction-aware traversal turns a
+    // reverse-of-tree into a forward walk, a tree into a real backward walk, etc. `gi` counts the global index
+    // DOWN from length-1; a backward run starting at run-position `start` (high) maps run-local steps to gi - j.
+    def lastBackwardScan(k: Kind, cont: String => String): String = {
+      // onRunB drives backward array runs (start = highest index visited). onRunF can fire too (reverse-of-tree
+      // flips a backward walk into forward sub-walks): there a forward run of `count` elements still consumes the
+      // next `count` global indices counting DOWN, but visited LOW-to-HIGH, so the first forward hit is at the
+      // LOWEST global index of that run -> gi - (count-1) + (i - start). We compute the hit's global index and,
+      // because backward order means earlier-found == larger global index, just take it (stop on first hit).
+      val rb = s"def onRunB(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val e = start - count; while (i > e && ${cont(read(k))}) i -= 1; if (i > e) { res = gi - (start - i); stop = true }; gi -= count }"
+      val rf = s"def onRunF(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val e = start + count; while (i < e && ${cont(read(k))}) i += 1; if (i < e) { res = gi - (i - start); stop = true }; gi -= count }"
+      s"{ var res = -1; var gi = xs.length - 1; val c = new ${k.name}Dfs { $rb; $rf; def onOne(v: ${k.arr}): Unit = { val a0 = ${readOne(k)}; if (!(${cont("a0")})) { res = gi; stop = true }; gi -= 1 } }; dfsC${k.name}Back(xs, c); res }"
     }
-    val lastIndexWhereV = dispatchA { k =>
-      val cont = (a0: String) => s"!p($a0)"
-      val fallback = s"val ar = materialize${k.name}(xs); var i = ar.length - 1; while (i >= 0 && !p(${readVal(k, "ar(i)")})) i -= 1; i"
-      lastBackward(k, cont, "if (j < 0) -1 else rev.length - 1 - j", fallback)
-    }
-    val lastIndexOfV = dispatchA { k =>
-      val cont = (a0: String) => s"$a0 != elem"
-      val fallback = s"val ar = materialize${k.name}(xs); var i = ar.length - 1; while (i >= 0 && ${readVal(k, "ar(i)")} != elem) i -= 1; i"
-      lastBackward(k, cont, "if (j < 0) -1 else rev.length - 1 - j", fallback)
-    }
+    val lastIndexWhereV = dispatchA(k => lastBackwardScan(k, a0 => s"!p($a0)"))
+    val lastIndexOfV = dispatchA(k => lastBackwardScan(k, a0 => s"$a0 != elem"))
     // count/sum/product: full forward accumulate over dfsC -> O(n) on EVERY shape (leaf / wrapper / tree),
     // no per-element kindAt. (No early exit needed; only the short-circuit family wants the breakable walk.)
     val countV = dispatchA(k =>
-      s"{ var n = 0; val c = new ${k.name}Dfs { def onLeaf(a: Array[${k.arr}], len: Int): Unit = { var i = 0; while (i < len) { if (p(${read(k)})) n += 1; i += 1 } }; def onOne(v: ${k.arr}): Unit = { if (p(${readOne(k)})) n += 1 } }; dfsC${k.name}(xs, c); n }"
+      s"{ var n = 0; val c = new ${k.name}Dfs { ${runMethods(k, e => s"if (p($e)) n += 1")}; def onOne(v: ${k.arr}): Unit = { if (p(${readOne(k)})) n += 1 } }; dfsC${k.name}(xs, c); n }"
     )
     val sumV = dispatchA { k =>
       if k.prim.isDefined then
-        s"{ var acc: ${k.arr} = ${k.dflt}; val c = new ${k.name}Dfs { def onLeaf(a: Array[${k.arr}], len: Int): Unit = { var i = 0; while (i < len) { acc += a(i); i += 1 } }; def onOne(v: ${k.arr}): Unit = { acc += v } }; dfsC${k.name}(xs, c); acc.asInstanceOf[B] }"
+        s"{ var acc: ${k.arr} = ${k.dflt}; val c = new ${k.name}Dfs { ${runMethods(k, e => s"acc += $e", rawA = true)}; def onOne(v: ${k.arr}): Unit = { acc += v } }; dfsC${k.name}(xs, c); acc.asInstanceOf[B] }"
       else
-        s"{ var acc: B = num.zero; val c = new ${k.name}Dfs { def onLeaf(a: Array[${k.arr}], len: Int): Unit = { var i = 0; while (i < len) { acc = num.plus(acc, a(i).asInstanceOf[B]); i += 1 } }; def onOne(v: ${k.arr}): Unit = { acc = num.plus(acc, v.asInstanceOf[B]) } }; dfsC${k.name}(xs, c); acc }"
+        s"{ var acc: B = num.zero; val c = new ${k.name}Dfs { ${runMethods(k, e => s"acc = num.plus(acc, $e.asInstanceOf[B])", rawA = true)}; def onOne(v: ${k.arr}): Unit = { acc = num.plus(acc, v.asInstanceOf[B]) } }; dfsC${k.name}(xs, c); acc }"
     }
     val productV = dispatchA { k =>
       val one = k.name match { case "Long" => "1L"; case "Double" => "1.0"; case _ => "1" }
       if k.prim.isDefined then
-        s"{ var acc: ${k.arr} = $one; val c = new ${k.name}Dfs { def onLeaf(a: Array[${k.arr}], len: Int): Unit = { var i = 0; while (i < len) { acc *= a(i); i += 1 } }; def onOne(v: ${k.arr}): Unit = { acc *= v } }; dfsC${k.name}(xs, c); acc.asInstanceOf[B] }"
+        s"{ var acc: ${k.arr} = $one; val c = new ${k.name}Dfs { ${runMethods(k, e => s"acc *= $e", rawA = true)}; def onOne(v: ${k.arr}): Unit = { acc *= v } }; dfsC${k.name}(xs, c); acc.asInstanceOf[B] }"
       else
-        s"{ var acc: B = num.one; val c = new ${k.name}Dfs { def onLeaf(a: Array[${k.arr}], len: Int): Unit = { var i = 0; while (i < len) { acc = num.times(acc, a(i).asInstanceOf[B]); i += 1 } }; def onOne(v: ${k.arr}): Unit = { acc = num.times(acc, v.asInstanceOf[B]) } }; dfsC${k.name}(xs, c); acc }"
+        s"{ var acc: B = num.one; val c = new ${k.name}Dfs { ${runMethods(k, e => s"acc = num.times(acc, $e.asInstanceOf[B])", rawA = true)}; def onOne(v: ${k.arr}): Unit = { acc = num.times(acc, v.asInstanceOf[B]) } }; dfsC${k.name}(xs, c); acc }"
     }
     // scanLeft: out[0..n] with a running accumulator, unboxed B-array storage (mirrors mapM's dispatchA x dispatchB).
     val scanLeftV = "summonFrom {\n" + opKinds.map { ka =>
       val inner = "summonFrom {\n" + opKinds.map { kb =>
-        s"          case rb: ${kb.name}Repr[B] => { val out = new Array[${kb.arr}](n + 1); var acc: B = z; out(0) = ${wr(kb, "rb.unwrap(z)")}; var o = 1; val c = new ${ka.name}Dfs { def onLeaf(a: Array[${ka.arr}], len: Int): Unit = { var i = 0; while (i < len) { acc = op(acc, ${read(ka)}); out(o) = ${wr(kb, "rb.unwrap(acc)")}; o += 1; i += 1 } }; def onOne(v: ${ka.arr}): Unit = { acc = op(acc, ${readOne(ka)}); out(o) = ${wr(kb, "rb.unwrap(acc)")}; o += 1 } }; dfsC${ka.name}(xs, c); new ${kb.name}Arr(out, n + 1) }"
+        s"          case rb: ${kb.name}Repr[B] => { val out = new Array[${kb.arr}](n + 1); var acc: B = z; out(0) = ${wr(kb, "rb.unwrap(z)")}; var o = 1; val c = new ${ka.name}Dfs { ${runMethods(ka, e => s"acc = op(acc, $e); out(o) = ${wr(kb, "rb.unwrap(acc)")}; o += 1")}; def onOne(v: ${ka.arr}): Unit = { acc = op(acc, ${readOne(ka)}); out(o) = ${wr(kb, "rb.unwrap(acc)")}; o += 1 } }; dfsC${ka.name}(xs, c); new ${kb.name}Arr(out, n + 1) }"
       }.mkString("\n") + "\n        }"
       s"      case r: ${ka.name}Repr[A] => $inner"
     }.mkString("\n") + "\n    }"
@@ -386,33 +440,32 @@ object GenCores extends BleepCodegenScript("GenCores") {
       s"xs match { case leaf: ${k.name}Arr => new ${k.name}Cursor(leaf.arr, leaf.length); case _ => new ${k.name}Cursor(materialize${k.name}(xs), xs.length) }"
     )
     val foreachWhileV = dispatchA(k =>
-      s"{ val c = new ${k.name}Dfs { def onLeaf(a: Array[${k.arr}], len: Int): Unit = { var i = 0; while (i < len && f(${read(k)})) i += 1; if (i < len) stop = true }; def onOne(v: ${k.arr}): Unit = { if (!f(${readOne(k)})) stop = true } }; dfsC${k.name}(xs, c) }"
+      s"{ val c = new ${k.name}Dfs { def onRunF(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val e = start + count; while (i < e && f(${read(k)})) i += 1; if (i < e) stop = true }; def onRunB(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val e = start - count; while (i > e && f(${read(k)})) i -= 1; if (i > e) stop = true }; def onOne(v: ${k.arr}): Unit = { if (!f(${readOne(k)})) stop = true } }; dfsC${k.name}(xs, c) }"
     ) // f returns false to stop
-    // foldRight: leaf reads its backing array backward (no ReverseNode allocation); non-leaf walks <kind>At.
-    // leaf reads its backing array backward (no alloc); any non-leaf materializes ONCE (iterative dfsC -> no
-    // stack overflow on deep chains, O(n)) then folds the flat array backward -> O(n) on every shape, no kindAt.
+    // foldRight: a BACKWARD walk (dfsCBack) hands elements last-to-first — exactly foldRight order — applying
+    // op(elem, acc). ZERO allocation on every shape (the direction-aware traversal needs no materialize).
     val foldRightV = dispatchA(k =>
-      s"xs match { case leaf: ${k.name}Arr => { val ar = leaf.arr; var acc = z; var i = leaf.length - 1; while (i >= 0) { acc = op(${readVal(k, "ar(i)")}, acc); i -= 1 }; acc }; case _ => { val ar = materialize${k.name}(xs); var acc = z; var i = ar.length - 1; while (i >= 0) { acc = op(${readVal(k, "ar(i)")}, acc); i -= 1 }; acc } }"
+      s"{ var acc = z; val c = new ${k.name}Dfs { ${runMethods(k, e => s"acc = op($e, acc)")}; def onOne(v: ${k.arr}): Unit = { acc = op(${readOne(k)}, acc) } }; dfsC${k.name}Back(xs, c); acc }"
     )
     val mapM = "summonFrom {\n" + opKinds
       .map { ka =>
         val inner = "summonFrom {\n" + opKinds
           .map { kb =>
-            s"          case rb: ${kb.name}Repr[B] => { val out = ${alloc(kb, "rb")}; var o = 0; val c = new ${ka.name}Dfs { def onLeaf(a: Array[${ka.arr}], len: Int): Unit = { var i = 0; while (i < len) { out(o) = ${wr(kb, s"rb.unwrap(f(${read(ka)}))")}; o += 1; i += 1 } }; def onOne(v: ${ka.arr}): Unit = { out(o) = ${wr(kb, s"rb.unwrap(f(${readOne(ka)}))")}; o += 1 } }; dfsC${ka.name}(xs, c); new ${kb.name}Arr(out, n) }"
+            s"          case rb: ${kb.name}Repr[B] => { val out = ${alloc(kb, "rb")}; var o = 0; val c = new ${ka.name}Dfs { ${runMethods(ka, e => s"out(o) = ${wr(kb, s"rb.unwrap(f($e))")}; o += 1")}; def onOne(v: ${ka.arr}): Unit = { out(o) = ${wr(kb, s"rb.unwrap(f(${readOne(ka)}))")}; o += 1 } }; dfsC${ka.name}(xs, c); new ${kb.name}Arr(out, n) }"
           }
           .mkString("\n") + "\n        }"
         s"      case r: ${ka.name}Repr[A] => $inner"
       }
       .mkString("\n") + "\n    }"
     val filter = dispatchA(k =>
-      s"{ val out = ${alloc(k, "r")}; var o = 0; val c = new ${k.name}Dfs { def onLeaf(a: Array[${k.arr}], len: Int): Unit = { var i = 0; while (i < len) { val e = ${read(k)}; if (p(e)) { out(o) = ${wr(k, "r.unwrap(e)")}; o += 1 }; i += 1 } }; def onOne(v: ${k.arr}): Unit = { val e = ${readOne(k)}; if (p(e)) { out(o) = ${wr(k, "r.unwrap(e)")}; o += 1 } } }; dfsC${k.name}(xs, c); if (o == n) xs else if (o == 0) Empty.INSTANCE else new ${k.name}Arr(java.util.Arrays.copyOf(out, o), o) }"
+      s"{ val out = ${alloc(k, "r")}; var o = 0; val c = new ${k.name}Dfs { ${runMethods(k, e0 => s"val e = $e0; if (p(e)) { out(o) = ${wr(k, "r.unwrap(e)")}; o += 1 }")}; def onOne(v: ${k.arr}): Unit = { val e = ${readOne(k)}; if (p(e)) { out(o) = ${wr(k, "r.unwrap(e)")}; o += 1 } } }; dfsC${k.name}(xs, c); if (o == n) xs else if (o == 0) Empty.INSTANCE else new ${k.name}Arr(java.util.Arrays.copyOf(out, o), o) }"
     )
-    // fused short-circuiting contains (prim compares unboxed against the unwrapped elem)
+    // fused short-circuiting contains (prim compares unboxed against the unwrapped elem). Empty-body scan.
     val contains = dispatchA(k =>
       if k.name == "Ref" then
-        s"{ var res = false; val c = new RefDfs { def onLeaf(a: Array[Object], len: Int): Unit = { var i = 0; while (i < len && a(i) != elem) i += 1; if (i < len) { res = true; stop = true } }; def onOne(v: Object): Unit = { if (v == elem) { res = true; stop = true } } }; dfsCRef(xs, c); res }"
+        s"{ var res = false; val c = new RefDfs { def onRunF(a: Array[Object], start: Int, count: Int): Unit = { var i = start; val en = start + count; while (i < en && a(i) != elem) i += 1; if (i < en) { res = true; stop = true } }; def onRunB(a: Array[Object], start: Int, count: Int): Unit = { var i = start; val en = start - count; while (i > en && a(i) != elem) i -= 1; if (i > en) { res = true; stop = true } }; def onOne(v: Object): Unit = { if (v == elem) { res = true; stop = true } } }; dfsCRef(xs, c); res }"
       else
-        s"{ val e = r.unwrap(elem); var res = false; val c = new ${k.name}Dfs { def onLeaf(a: Array[${k.arr}], len: Int): Unit = { var i = 0; while (i < len && a(i) != e) i += 1; if (i < len) { res = true; stop = true } }; def onOne(v: ${k.arr}): Unit = { if (v == e) { res = true; stop = true } } }; dfsC${k.name}(xs, c); res }"
+        s"{ val e = r.unwrap(elem); var res = false; val c = new ${k.name}Dfs { def onRunF(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val en = start + count; while (i < en && a(i) != e) i += 1; if (i < en) { res = true; stop = true } }; def onRunB(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val en = start - count; while (i > en && a(i) != e) i -= 1; if (i > en) { res = true; stop = true } }; def onOne(v: ${k.arr}): Unit = { if (v == e) { res = true; stop = true } } }; dfsC${k.name}(xs, c); res }"
     )
     val applyAt = dispatchA(k => if k.name == "Ref" then s"r.wrap(${k.lc}At(xs, i).asInstanceOf[A])" else s"r.wrap(${k.lc}At(xs, i))")
     // mapConserve: scan for the first element f actually changes (reference !eq); if none, return xs with NO
@@ -569,7 +622,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // array. A final O(#groups) pass wraps each buffer into a leaf — no second per-element rebuild. dispatch on
     // the VALUE kind: A for groupBy, B for groupMap.
     val groupBy = dispatchA(k =>
-      s"{ val m = new java.util.HashMap[K, ${k.name}Group](); val c = new ${k.name}Dfs { def onLeaf(a: Array[${k.arr}], len: Int): Unit = { var i = 0; while (i < len) { val e = ${read(k)}; val key = f(e); var g = m.get(key); if (g == null) { g = new ${k.name}Group(); m.put(key, g) }; g.add(${wr(k, "r.unwrap(e)")}); i += 1 } }; def onOne(v: ${k.arr}): Unit = { val e = ${readOne(k)}; val key = f(e); var g = m.get(key); if (g == null) { g = new ${k.name}Group(); m.put(key, g) }; g.add(${wr(k, "r.unwrap(e)")}) } }; dfsC${k.name}(xs, c); val b = Map.newBuilder[K, FBase]; val it = m.entrySet().iterator(); while (it.hasNext) { val en = it.next(); b += ((en.getKey, en.getValue.toLeaf)) }; b.result() }"
+      s"{ val m = new java.util.HashMap[K, ${k.name}Group](); val c = new ${k.name}Dfs { ${runMethods(k, e0 => s"val e = $e0; val key = f(e); var g = m.get(key); if (g == null) { g = new ${k.name}Group(); m.put(key, g) }; g.add(${wr(k, "r.unwrap(e)")})")}; def onOne(v: ${k.arr}): Unit = { val e = ${readOne(k)}; val key = f(e); var g = m.get(key); if (g == null) { g = new ${k.name}Group(); m.put(key, g) }; g.add(${wr(k, "r.unwrap(e)")}) } }; dfsC${k.name}(xs, c); val b = Map.newBuilder[K, FBase]; val it = m.entrySet().iterator(); while (it.hasNext) { val en = it.next(); b += ((en.getKey, en.getValue.toLeaf)) }; b.result() }"
     )
     // groupMap dispatches on the VALUE kind B (the unboxed buffer). The SOURCE A is read through the already
     // inlined/unboxed `xs.foreach` at the FArray call site, which hands each `a: A` to this accumulator. So the
