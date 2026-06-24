@@ -285,6 +285,12 @@ object FArray:
         n
     inline def combinations(k: Int): Iterator[FArray[A]] = xs.toVector.combinations(k).map(v => FArray.fromIterable(v))
     inline def permutations: Iterator[FArray[A]] = xs.toVector.permutations.map(v => FArray.fromIterable(v))
+    inline def sum[B >: A](using num: Numeric[B]): B = FArrayOps.sumImpl[A, B](xs)
+    inline def product[B >: A](using num: Numeric[B]): B = FArrayOps.productImpl[A, B](xs)
+    inline def scanLeft[B](z: B)(inline op: (B, A) => B): FArray[B] = FArrayOps.scanLeftImpl[A, B](xs, z)(op)
+    inline def scan[B >: A](z: B)(inline op: (B, B) => B): FArray[B] = xs.scanLeft[B](z)((acc, a) => op(acc, a))
+    inline def scanRight[B](z: B)(inline op: (A, B) => B): FArray[B] =
+      xs.reverse.scanLeft[B](z)((acc, a) => op(a, acc)).reverse
 
   extension [A](elem: A)
     inline def +:(xs: FArray[A]): FArray[A] = FArrayOps.prependImpl[A](elem, xs)

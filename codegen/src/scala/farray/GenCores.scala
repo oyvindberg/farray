@@ -303,6 +303,27 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val collectFirstV = dispatchA(k => scan(k, "var res: Option[B] = None", "if (pf.isDefinedAt(a)) { res = Some(pf(a)); i = ln } else i += 1", "res"))
     val prefixLenV = dispatchA(k => scan(k, "var res = ln", "if (p(a)) i += 1 else { res = i; i = ln }", "res"))
     val countV = dispatchA(k => scan(k, "var n = 0", "if (p(a)) n += 1; i += 1", "n")) // no break, tight leaf scan
+    // sum/product: fully unboxed for primitives (raw `+`/`*`, result boxed once); Ref folds through the Numeric.
+    val sumV = dispatchA { k =>
+      if k.prim.isDefined then
+        s"{ var acc: ${k.arr} = ${k.dflt}; xs match { case leaf: ${k.name}Arr => { val ar = leaf.arr; val ln = leaf.length; var i = 0; while (i < ln) { acc += ar(i); i += 1 } }; case _ => { val ln = xs.length; var i = 0; while (i < ln) { acc += ${k.lc}At(xs, i); i += 1 } } }; acc.asInstanceOf[B] }"
+      else
+        s"{ var acc: B = num.zero; xs match { case leaf: RefArr => { val ar = leaf.arr; val ln = leaf.length; var i = 0; while (i < ln) { acc = num.plus(acc, ar(i).asInstanceOf[B]); i += 1 } }; case _ => { val ln = xs.length; var i = 0; while (i < ln) { acc = num.plus(acc, ${k.lc}At(xs, i).asInstanceOf[B]); i += 1 } } }; acc }"
+    }
+    val productV = dispatchA { k =>
+      val one = k.name match { case "Long" => "1L"; case "Double" => "1.0"; case _ => "1" }
+      if k.prim.isDefined then
+        s"{ var acc: ${k.arr} = $one; xs match { case leaf: ${k.name}Arr => { val ar = leaf.arr; val ln = leaf.length; var i = 0; while (i < ln) { acc *= ar(i); i += 1 } }; case _ => { val ln = xs.length; var i = 0; while (i < ln) { acc *= ${k.lc}At(xs, i); i += 1 } } }; acc.asInstanceOf[B] }"
+      else
+        s"{ var acc: B = num.one; xs match { case leaf: RefArr => { val ar = leaf.arr; val ln = leaf.length; var i = 0; while (i < ln) { acc = num.times(acc, ar(i).asInstanceOf[B]); i += 1 } }; case _ => { val ln = xs.length; var i = 0; while (i < ln) { acc = num.times(acc, ${k.lc}At(xs, i).asInstanceOf[B]); i += 1 } } }; acc }"
+    }
+    // scanLeft: out[0..n] with a running accumulator, unboxed B-array storage (mirrors mapM's dispatchA x dispatchB).
+    val scanLeftV = "summonFrom {\n" + opKinds.map { ka =>
+      val inner = "summonFrom {\n" + opKinds.map { kb =>
+        s"          case rb: ${kb.name}Repr[B] => { val out = new Array[${kb.arr}](n + 1); var acc: B = z; out(0) = ${wr(kb, "rb.unwrap(z)")}; var o = 1; val c = new ${ka.name}Dfs { def onLeaf(a: Array[${ka.arr}], len: Int): Unit = { var i = 0; while (i < len) { acc = op(acc, ${read(ka)}); out(o) = ${wr(kb, "rb.unwrap(acc)")}; o += 1; i += 1 } }; def onOne(v: ${ka.arr}): Unit = { acc = op(acc, ${readOne(ka)}); out(o) = ${wr(kb, "rb.unwrap(acc)")}; o += 1 } }; dfsC${ka.name}(xs, c); new ${kb.name}Arr(out, n + 1) }"
+      }.mkString("\n") + "\n        }"
+      s"      case r: ${ka.name}Repr[A] => $inner"
+    }.mkString("\n") + "\n    }"
     val iteratorV = dispatchA(k =>
       s"xs match { case leaf: ${k.name}Arr => new ${k.name}Cursor(leaf.arr, leaf.length); case _ => new ${k.name}Cursor(materialize${k.name}(xs), xs.length) }"
     )
@@ -562,6 +583,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def sortWithImpl[A](xs: FBase)(inline lt: (A, A) => Boolean): FBase = $sortWith
        |  inline def sortedImpl[A, B >: A](xs: FBase)(using ord: Ordering[B]): FBase = $sortedV
        |  inline def sortByImpl[A, B](xs: FBase)(inline f: A => B)(using ord: Ordering[B]): FBase = $sortByV
+       |  inline def sumImpl[A, B](xs: FBase)(using num: Numeric[B]): B = if (xs.length == 0) num.zero else $sumV
+       |  inline def productImpl[A, B](xs: FBase)(using num: Numeric[B]): B = if (xs.length == 0) num.one else $productV
+       |  inline def scanLeftImpl[A, B](xs: FBase, z: B)(inline op: (B, A) => B): FBase = { val n = xs.length; $scanLeftV }
        |}
        |""".stripMargin
   }
