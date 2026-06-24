@@ -258,6 +258,9 @@ class FListTest:
       ("prependChain", { var a = FArray(11); for i <- (0 until 11).reverse do a = i +: a; a }, flat),
       ("reverse", FArray.tabulate(12)(i => 11 - i).reverse, flat),
       ("slice", FArray.tabulate(16)(identity).slice(2, 14), (2 until 14).toList),
+      // forward (slice) and backward (reverse) array-backed runs over a leaf base — exercises both onRun paths
+      ("sliceLeaf", FArray.tabulate(20)(identity).slice(3, 15), (3 until 15).toList),
+      ("reverseLeaf", FArray.tabulate(20)(identity).slice(0, 12).reverse, (0 until 12).reverse.toList),
       ("nested", ((FArray(0, 1) ++ FArray(2)) :+ 3) ++ (4 +: FArray(5, 6)), (0 to 6).toList)
     )
     for (name, fa, la) <- shapes do
@@ -272,7 +275,14 @@ class FListTest:
       assertEquals(s"$name count", la.count(_ % 2 == 0).toLong, fa.count(_ % 2 == 0).toLong)
       assertEquals(s"$name contains", la.contains(9), fa.contains(9))
       assertEquals(s"$name sum", la.sum.toLong, fa.sum.toLong)
+      assertEquals(s"$name foldLeft", la.foldLeft("")(_ + _.toString), fa.foldLeft("")(_ + _.toString))
       assertEquals(s"$name foldRight", la.foldRight("")(_.toString + _), fa.foldRight("")(_.toString + _))
+      assertEquals(s"$name map", la.map(_.toString), fa.map(_.toString).toList)
+      assertEquals(s"$name lastIndexWhere", la.lastIndexWhere(_ == 6).toLong, fa.lastIndexWhere(_ == 6).toLong)
+      assertEquals(s"$name lastIndexWhere-miss", la.lastIndexWhere(_ == 99).toLong, fa.lastIndexWhere(_ == 99).toLong)
+      assertEquals(s"$name lastIndexOf", la.lastIndexOf(6).toLong, fa.lastIndexOf(6).toLong)
+      assertEquals(s"$name lastIndexOf-miss", la.lastIndexOf(99).toLong, fa.lastIndexOf(99).toLong)
+      if la.nonEmpty then assertEquals(s"$name reduceRight", la.reduceRight(_ - _).toLong, fa.reduceRight(_ - _).toLong)
       assertEquals(s"$name zip", la.zip(la), fa.zip(fa).toList)
       assertEquals(s"$name zipWithIndex", la.zipWithIndex, fa.zipWithIndex.toList)
       assertEquals(s"$name corresponds", la.corresponds(la)(_ == _), fa.corresponds(fa)(_ == _))

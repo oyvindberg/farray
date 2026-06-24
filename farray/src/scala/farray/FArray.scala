@@ -241,13 +241,10 @@ object FArray:
     inline def segmentLength(inline p: A => Boolean): Int = FArrayOps.prefixLengthImpl[A](xs)(p)
     inline def segmentLength(inline p: A => Boolean, from: Int): Int =
       FArrayOps.prefixLengthImpl[A](xs.drop(if from < 0 then 0 else from))(p)
-    // one forward dfs pass recording the last match — no ReverseNode alloc
-    inline def lastIndexWhere(inline p: A => Boolean): Int =
-      // reverse is an O(1) node; indexWhere on it is now a BACKWARD early-exit leaf scan (the fixed traversal),
-      // so we stop at the last match instead of scanning the whole array. remap the index back.
-      val i = FArrayOps.indexWhereImpl[A](xs.reverse)(p); if i < 0 then -1 else xs.length - 1 - i
-    inline def lastIndexOf[B >: A](elem: B): Int =
-      val i = FArrayOps.indexOfImpl[A, B](xs.reverse, elem); if i < 0 then -1 else xs.length - 1 - i
+    // backward leaf scan (empty-body, predicate-in-condition — matches a native Array's lastIndexWhere speed);
+    // a non-leaf materializes once then scans the flat array backward. No ReverseNode + remap round-trip.
+    inline def lastIndexWhere(inline p: A => Boolean): Int = FArrayOps.lastIndexWhereImpl[A](xs)(p)
+    inline def lastIndexOf[B >: A](elem: B): Int = FArrayOps.lastIndexOfImpl[A, B](xs, elem)
     inline def sameElements[B >: A](that: FArray[B]): Boolean =
       xs.length == that.length && FArrayOps.matchAll2Impl[A, B](xs, 0, that, xs.length)((a, b) => a == b)
     inline def indexOfSlice[B >: A](that: FArray[B]): Int =
