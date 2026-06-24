@@ -152,23 +152,15 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |      else { cur = null; while (sp > 0 && cur == null) { sp -= 1; if (isTail(sp)) ${onO("tail(sp)")} else cur = stack(sp) } }
        |    }""".stripMargin
   }
-  // forward walk where each onLeaf/onOne returns continue?; a false short-circuits the whole walk via `return`.
-  // Braced so the `if (!…) return` is statement-safe in every context (match arm, loop body, the unwind's if/else).
-  private def dfsBodyBreak(k: Kind): String =
-    dfsBody(k, args => s"{ if (!c.onLeaf($args)) return }", args => s"{ if (!c.onOne($args)) return }")
-  // consumer (2-method) form: non-inline, one compiled impl per kind. onLeaf fires per leaf-run, onOne per
-  // single element — both cheap (O(#runs)); the per-element op stays inlined inside the consumer at the site.
+  // ONE forward DFS. dfsBody is the only traversal machine; an op that wants to stop early sets the consumer's
+  // `stop` flag (and breaks its own leaf-run loop), and the driver bails after each onLeaf/onOne. Non-short-circuit
+  // ops never touch `stop`, paying only a predictable always-false branch per run. onLeaf fires per leaf-run,
+  // onOne per single element — both cheap (O(#runs)); the per-element op stays inlined inside the consumer.
   private def dfsConsumer(k: Kind): String =
-    s"abstract class ${k.name}Dfs { def onLeaf(a: Array[${k.arr}], len: Int): Unit; def onOne(v: ${k.arr}): Unit }"
-  private def dfsConsumerB(k: Kind): String =
-    s"abstract class ${k.name}DfsB { def onLeaf(a: Array[${k.arr}], len: Int): Boolean; def onOne(v: ${k.arr}): Boolean }"
+    s"abstract class ${k.name}Dfs { var stop = false; def onLeaf(a: Array[${k.arr}], len: Int): Unit; def onOne(v: ${k.arr}): Unit }"
   private def dfsCDef(k: Kind): String =
     s"""  def dfsC${k.name}(root: FBase, c: ${k.name}Dfs): Unit = {
-       |${dfsBody(k, args => s"c.onLeaf($args)", args => s"c.onOne($args)")}
-       |  }""".stripMargin
-  private def dfsCBDef(k: Kind): String =
-    s"""  def dfsCB${k.name}(root: FBase, c: ${k.name}DfsB): Unit = {
-       |${dfsBodyBreak(k)}
+       |${dfsBody(k, args => s"{ c.onLeaf($args); if (c.stop) return }", args => s"{ c.onOne($args); if (c.stop) return }")}
        |  }""".stripMargin
 
   // The iterator is a trivial flat-array cursor (2 fields → escape analysis scalar-replaces it when consumed
@@ -204,10 +196,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
 
   private def farrayOps: String = {
     val dfsConsumers = opKinds.map(dfsConsumer).mkString("\n")
-    val dfsConsumersB = opKinds.map(dfsConsumerB).mkString("\n")
     val cursors = opKinds.map(cursorClass).mkString("\n")
     val dfsC = opKinds.map(dfsCDef).mkString("\n")
-    val dfsCB = opKinds.map(dfsCBDef).mkString("\n")
     val ats = opKinds.map(atDef).mkString("\n")
     // Flatten a (possibly deep) Updated chain to a fresh leaf array, ONCE, so dfs can emit it tight via
     // onLeaf instead of walking the chain per element. Recursion applies overrides bottom-up => outer wins.
@@ -305,19 +295,17 @@ object GenCores extends BleepCodegenScript("GenCores") {
     )
     // Fused short-circuiting scan: predicate-and-break in ONE branch per element (like Array's `if (p) return`),
     // no Step round-trip. `a` = element, break via `i = ln`. Leaf fast-path (tight) + <kind>At fallback.
-    def scan(k: Kind, init: String, step: String, result: String): String =
-      s"xs match { case leaf: ${k.name}Arr => { val ar = leaf.arr; val ln = leaf.length; var i = 0; $init; while (i < ln) { val a = ${readVal(k, "ar(i)")}; $step }; $result }; case _ => { val ln = xs.length; var i = 0; $init; while (i < ln) { val a = ${readVal(k, s"${k.lc}At(xs, i)")}; $step }; $result } }"
-    // Short-circuiting scan over dfsCB: each leaf-run scans tight with an internal `return false` break, and
-    // onLeaf/onOne returning false short-circuits the whole tree walk. O(n) + early-exit on EVERY shape, no kindAt.
+    // Short-circuiting scan over the unified dfsC: each leaf-run scans tight while `!stop`; setting `stop` (the
+    // consumer flag) ends both the run and the whole tree walk. O(n) + early-exit on EVERY shape, no kindAt.
     def scanB(k: Kind, init: String, leafStep: String, oneStep: String, result: String): String =
-      s"{ $init; val c = new ${k.name}DfsB { def onLeaf(a: Array[${k.arr}], len: Int): Boolean = { var i = 0; while (i < len) { val a0 = ${read(k)}; $leafStep }; true }; def onOne(v: ${k.arr}): Boolean = { val a0 = ${readOne(k)}; $oneStep } }; dfsCB${k.name}(xs, c); $result }"
-    val existsV = dispatchA(k => scanB(k, "var res = false", "if (p(a0)) { res = true; return false } else i += 1", "if (p(a0)) { res = true; false } else true", "res"))
-    val forallV = dispatchA(k => scanB(k, "var res = true", "if (p(a0)) i += 1 else { res = false; return false }", "if (p(a0)) true else { res = false; false }", "res"))
-    val findV = dispatchA(k => scanB(k, "var res: Option[A] = None", "if (p(a0)) { res = Some(a0); return false } else i += 1", "if (p(a0)) { res = Some(a0); false } else true", "res"))
-    val indexWhereV = dispatchA(k => scanB(k, "var res = -1; var gi = 0", "if (p(a0)) { res = gi; return false } else { gi += 1; i += 1 }", "if (p(a0)) { res = gi; false } else { gi += 1; true }", "res"))
-    val indexOfV = dispatchA(k => scanB(k, "var res = -1; var gi = 0", "if (a0 == elem) { res = gi; return false } else { gi += 1; i += 1 }", "if (a0 == elem) { res = gi; false } else { gi += 1; true }", "res"))
-    val collectFirstV = dispatchA(k => scanB(k, "var res: Option[B] = None", "if (pf.isDefinedAt(a0)) { res = Some(pf(a0)); return false } else i += 1", "if (pf.isDefinedAt(a0)) { res = Some(pf(a0)); false } else true", "res"))
-    val prefixLenV = dispatchA(k => scanB(k, "var res = 0", "if (p(a0)) { res += 1; i += 1 } else return false", "if (p(a0)) { res += 1; true } else false", "res"))
+      s"{ $init; val c = new ${k.name}Dfs { def onLeaf(a: Array[${k.arr}], len: Int): Unit = { var i = 0; while (i < len && !stop) { val a0 = ${read(k)}; $leafStep } }; def onOne(v: ${k.arr}): Unit = { val a0 = ${readOne(k)}; $oneStep } }; dfsC${k.name}(xs, c); $result }"
+    val existsV = dispatchA(k => scanB(k, "var res = false", "if (p(a0)) { res = true; stop = true } else i += 1", "if (p(a0)) { res = true; stop = true }", "res"))
+    val forallV = dispatchA(k => scanB(k, "var res = true", "if (p(a0)) i += 1 else { res = false; stop = true }", "if (!p(a0)) { res = false; stop = true }", "res"))
+    val findV = dispatchA(k => scanB(k, "var res: Option[A] = None", "if (p(a0)) { res = Some(a0); stop = true } else i += 1", "if (p(a0)) { res = Some(a0); stop = true }", "res"))
+    val indexWhereV = dispatchA(k => scanB(k, "var res = -1; var gi = 0", "if (p(a0)) { res = gi; stop = true } else { gi += 1; i += 1 }", "if (p(a0)) { res = gi; stop = true } else gi += 1", "res"))
+    val indexOfV = dispatchA(k => scanB(k, "var res = -1; var gi = 0", "if (a0 == elem) { res = gi; stop = true } else { gi += 1; i += 1 }", "if (a0 == elem) { res = gi; stop = true } else gi += 1", "res"))
+    val collectFirstV = dispatchA(k => scanB(k, "var res: Option[B] = None", "if (pf.isDefinedAt(a0)) { res = Some(pf(a0)); stop = true } else i += 1", "if (pf.isDefinedAt(a0)) { res = Some(pf(a0)); stop = true }", "res"))
+    val prefixLenV = dispatchA(k => scanB(k, "var res = 0", "if (p(a0)) { res += 1; i += 1 } else stop = true", "if (p(a0)) res += 1 else stop = true", "res"))
     // count/sum/product: full forward accumulate over dfsC -> O(n) on EVERY shape (leaf / wrapper / tree),
     // no per-element kindAt. (No early exit needed; only the short-circuit family wants the breakable walk.)
     val countV = dispatchA(k =>
@@ -346,7 +334,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val iteratorV = dispatchA(k =>
       s"xs match { case leaf: ${k.name}Arr => new ${k.name}Cursor(leaf.arr, leaf.length); case _ => new ${k.name}Cursor(materialize${k.name}(xs), xs.length) }"
     )
-    val foreachWhileV = dispatchA(k => scanB(k, "", "if (f(a0)) i += 1 else return false", "f(a0)", "()")) // f returns false to stop
+    val foreachWhileV = dispatchA(k => scanB(k, "", "if (f(a0)) i += 1 else stop = true", "if (!f(a0)) stop = true", "()")) // f returns false to stop
     // foldRight: leaf reads its backing array backward (no ReverseNode allocation); non-leaf walks <kind>At.
     // leaf reads its backing array backward (no alloc); any non-leaf materializes ONCE (iterative dfsC -> no
     // stack overflow on deep chains, O(n)) then folds the flat array backward -> O(n) on every shape, no kindAt.
@@ -369,9 +357,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // fused short-circuiting contains (prim compares unboxed against the unwrapped elem)
     val contains = dispatchA(k =>
       if k.name == "Ref" then
-        s"{ var res = false; val c = new RefDfsB { def onLeaf(a: Array[Object], len: Int): Boolean = { var i = 0; while (i < len) { if (a(i) == elem) { res = true; return false }; i += 1 }; true }; def onOne(v: Object): Boolean = { if (v == elem) { res = true; false } else true } }; dfsCBRef(xs, c); res }"
+        s"{ var res = false; val c = new RefDfs { def onLeaf(a: Array[Object], len: Int): Unit = { var i = 0; while (i < len && !stop) { if (a(i) == elem) { res = true; stop = true } else i += 1 } }; def onOne(v: Object): Unit = { if (v == elem) { res = true; stop = true } } }; dfsCRef(xs, c); res }"
       else
-        s"{ val e = r.unwrap(elem); var res = false; val c = new ${k.name}DfsB { def onLeaf(a: Array[${k.arr}], len: Int): Boolean = { var i = 0; while (i < len) { if (a(i) == e) { res = true; return false }; i += 1 }; true }; def onOne(v: ${k.arr}): Boolean = { if (v == e) { res = true; false } else true } }; dfsCB${k.name}(xs, c); res }"
+        s"{ val e = r.unwrap(elem); var res = false; val c = new ${k.name}Dfs { def onLeaf(a: Array[${k.arr}], len: Int): Unit = { var i = 0; while (i < len && !stop) { if (a(i) == e) { res = true; stop = true } else i += 1 } }; def onOne(v: ${k.arr}): Unit = { if (v == e) { res = true; stop = true } } }; dfsC${k.name}(xs, c); res }"
     )
     val applyAt = dispatchA(k => if k.name == "Ref" then s"r.wrap(${k.lc}At(xs, i).asInstanceOf[A])" else s"r.wrap(${k.lc}At(xs, i))")
     // mapConserve: scan for the first element f actually changes (reference !eq); if none, return xs with NO
@@ -553,11 +541,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |$lessTraits
        |// Per-kind leaf-run consumers for the non-inline dfsC traversals.
        |$dfsConsumers
-       |$dfsConsumersB
        |$cursors
        |object FArrayOps {
        |$dfsC
-       |$dfsCB
        |$ats
        |$mat
        |$flatMapCopyOne
