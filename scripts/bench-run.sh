@@ -14,7 +14,8 @@ cd "$(dirname "$0")/.."
 
 WI="${1:-3}"; MI="${2:-5}"; FORKS="${3:-0}"
 CORES="$(sysctl -n hw.ncpu 2>/dev/null || nproc)"
-SHARDS="${4:-$(( CORES > 2 ? CORES - 1 : 1 ))}"
+DEF=$(( CORES - 1 )); [ "$DEF" -gt 10 ] && DEF=10; [ "$DEF" -lt 1 ] && DEF=1
+SHARDS="${4:-$DEF}"
 XMX="${XMX:-1g}"
 MAIN="org.openjdk.jmh.Main"
 
@@ -45,7 +46,8 @@ ALL=$("$JAVA" -cp "$CP" "$MAIN" -l 2>/dev/null | grep -oE 'farray\.[A-Za-z0-9]+B
 
 EMPTY='StrHeadBenchmark|StrLastBenchmark|StrTailBenchmark|StrInitBenchmark|StrApplyBenchmark'
 CHAINS='IntAppendChainBenchmark|IntPrependChainBenchmark|IntUpdateChainBenchmark'
-NORMAL=$(echo "$ALL" | grep -vE "^($EMPTY|$CHAINS)$" || true)
+UPDATED='StrUpdatedBenchmark|IntUpdatedMapBenchmark|IntUpdated4MapBenchmark'  # updated(fixed index) needs non-empty
+NORMAL=$(echo "$ALL" | grep -vE "^($EMPTY|$CHAINS|$UPDATED)$" || true)
 
 rm -rf docs/parts && mkdir -p docs/parts
 echo "  $(echo "$ALL" | grep -c .) classes → $SHARDS normal shards + edge + chain (XMX=$XMX, ${WI}w/${MI}m/${FORKS}f)"
@@ -63,6 +65,7 @@ for c in $NORMAL; do idx=$(( i % SHARDS )); G[$idx]="${G[$idx]:-}$c|"; i=$(( i +
 for idx in "${!G[@]}"; do run_shard "n$idx" "${G[$idx]%|}"; done
 echo "$ALL" | grep -qE "^($EMPTY)$"  && run_shard "edge"  "$EMPTY"  -p size=1,10,100,1000,10000,100000
 echo "$ALL" | grep -qE "^($CHAINS)$" && run_shard "chain" "$CHAINS" -p size=0,1,10,100,1000,10000
+echo "$ALL" | grep -qE "^($UPDATED)$" && run_shard "upd" "$UPDATED" -p size=10,100,1000,10000,100000
 
 echo "▶ $(jobs -rp 2>/dev/null | grep -c .) shards running in parallel across $CORES cores…"
 wait
