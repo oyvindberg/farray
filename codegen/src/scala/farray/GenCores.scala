@@ -402,12 +402,16 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // single-pass unzip/unzip3: read each tuple ONCE, fill the 2/3 output arrays unboxed. Dispatch on the
     // component kinds (resolves to one case per concrete site). Source leaf fast-path / applyBoxed.
     def allocFor(k: Kind, rv: String): String = if k.name == "Ref" then s"new Array[Object](n)" else s"new Array[${k.arr}](n)"
+    val refK = opKinds.find(_.name == "Ref").get
+    // a node's contents as ONE flat backing array: a leaf hands its array straight in, anything else materializes
+    // via the single dfs ONCE. Lets zip/unzip/matchAll2 loop over a flat array on every shape — never kindAt.
+    def flatOf(k: Kind, node: String): String = s"($node match { case lf: ${k.name}Arr => lf.arr; case _ => materialize${k.name}($node) })"
     val unzipV = "summonFrom {\n" + opKinds
       .map { k1 =>
         val inner = "summonFrom {\n" + opKinds
           .map { k2 =>
             val fill = s"o1(i) = ${wr(k1, "r1.unwrap(t._1)")}; o2(i) = ${wr(k2, "r2.unwrap(t._2)")}"
-            s"          case r2: ${k2.name}Repr[A2] => { val o1 = ${allocFor(k1, "r1")}; val o2 = ${allocFor(k2, "r2")}; xs match { case leaf: RefArr => { val sa = leaf.arr; var i = 0; while (i < n) { val t = ev(sa(i).asInstanceOf[A]); $fill; i += 1 } }; case _ => { var i = 0; while (i < n) { val t = ev((xs: FBase).applyBoxed(i).asInstanceOf[A]); $fill; i += 1 } } }; (new ${k1.name}Arr(o1, n), new ${k2.name}Arr(o2, n)) }"
+            s"          case r2: ${k2.name}Repr[A2] => { val o1 = ${allocFor(k1, "r1")}; val o2 = ${allocFor(k2, "r2")}; val sa = ${flatOf(refK, "xs")}; var i = 0; while (i < n) { val t = ev(sa(i).asInstanceOf[A]); $fill; i += 1 }; (new ${k1.name}Arr(o1, n), new ${k2.name}Arr(o2, n)) }"
           }
           .mkString("\n") + "\n        }"
         s"      case r1: ${k1.name}Repr[A1] => $inner"
@@ -420,7 +424,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
             val m3 = "summonFrom {\n" + opKinds
               .map { k3 =>
                 val fill = s"o1(i) = ${wr(k1, "r1.unwrap(t._1)")}; o2(i) = ${wr(k2, "r2.unwrap(t._2)")}; o3(i) = ${wr(k3, "r3.unwrap(t._3)")}"
-                s"              case r3: ${k3.name}Repr[A3] => { val o1 = ${allocFor(k1, "r1")}; val o2 = ${allocFor(k2, "r2")}; val o3 = ${allocFor(k3, "r3")}; xs match { case leaf: RefArr => { val sa = leaf.arr; var i = 0; while (i < n) { val t = ev(sa(i).asInstanceOf[A]); $fill; i += 1 } }; case _ => { var i = 0; while (i < n) { val t = ev((xs: FBase).applyBoxed(i).asInstanceOf[A]); $fill; i += 1 } } }; (new ${k1.name}Arr(o1, n), new ${k2.name}Arr(o2, n), new ${k3.name}Arr(o3, n)) }"
+                s"              case r3: ${k3.name}Repr[A3] => { val o1 = ${allocFor(k1, "r1")}; val o2 = ${allocFor(k2, "r2")}; val o3 = ${allocFor(k3, "r3")}; val sa = ${flatOf(refK, "xs")}; var i = 0; while (i < n) { val t = ev(sa(i).asInstanceOf[A]); $fill; i += 1 }; (new ${k1.name}Arr(o1, n), new ${k2.name}Arr(o2, n), new ${k3.name}Arr(o3, n)) }"
               }
               .mkString("\n") + "\n            }"
             s"          case r2: ${k2.name}Repr[A2] => $m3"
@@ -440,10 +444,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       .map { ka =>
         val inner = "summonFrom {\n" + opKinds
           .map { kb =>
-            val fast =
-              s"val ax = xs.asInstanceOf[${ka.name}Arr].arr; val ay = that.asInstanceOf[${kb.name}Arr].arr; while (i < n) { out(i) = ${mkT(ka, kb, "ax(i)", "ay(i)")}; i += 1 }"
-            val slow = s"while (i < n) { out(i) = ${mkT(ka, kb, s"${ka.lc}At(xs, i)", s"${kb.lc}At(that, i)")}; i += 1 }"
-            s"          case rb: ${kb.name}Repr[B] => { val out = new Array[Object](n); var i = 0; if (xs.isInstanceOf[${ka.name}Arr] && that.isInstanceOf[${kb.name}Arr]) { $fast } else { $slow }; new RefArr(out, n) }"
+            s"          case rb: ${kb.name}Repr[B] => { val out = new Array[Object](n); val ax = ${flatOf(ka, "xs")}; val ay = ${flatOf(kb, "that")}; var i = 0; while (i < n) { out(i) = ${mkT(ka, kb, "ax(i)", "ay(i)")}; i += 1 }; new RefArr(out, n) }"
           }
           .mkString("\n") + "\n        }"
         s"      case r: ${ka.name}Repr[A] => $inner"
@@ -454,9 +455,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       else s"new scala.Tuple2($v, ${opKinds.head.box(idx)})" // index is Int
     val zipIdxV = "summonFrom {\n" + opKinds
       .map { ka =>
-        val fast = s"val ax = xs.asInstanceOf[${ka.name}Arr].arr; while (i < n) { out(i) = ${mkTIdx(ka, "ax(i)", "i")}; i += 1 }"
-        val slow = s"while (i < n) { out(i) = ${mkTIdx(ka, s"${ka.lc}At(xs, i)", "i")}; i += 1 }"
-        s"      case r: ${ka.name}Repr[A] => { val out = new Array[Object](n); var i = 0; if (xs.isInstanceOf[${ka.name}Arr]) { $fast } else { $slow }; new RefArr(out, n) }"
+        s"      case r: ${ka.name}Repr[A] => { val out = new Array[Object](n); val ax = ${flatOf(ka, "xs")}; var i = 0; while (i < n) { out(i) = ${mkTIdx(ka, "ax(i)", "i")}; i += 1 }; new RefArr(out, n) }"
       }
       .mkString("\n") + "\n    }"
     // shared backbone for corresponds/startsWith/endsWith: walk xs[xsOff+i] vs that[i] for i in [0,m), calling
@@ -467,10 +466,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
         val inner = "summonFrom {\n" + opKinds
           .map { kb =>
             val rdB = (e: String) => if kb.name == "Ref" then s"r2.wrap($e.asInstanceOf[B])" else s"r2.wrap($e)"
-            val fast =
-              s"val xa = xs.asInstanceOf[${ka.name}Arr].arr; val ta = that.asInstanceOf[${kb.name}Arr].arr; while (i < m && pred(${readVal(ka, "xa(i + xsOff)")}, ${rdB("ta(i)")})) i += 1"
-            val slow = s"while (i < m && pred(${readVal(ka, s"${ka.lc}At(xs, i + xsOff)")}, ${rdB(s"${kb.lc}At(that, i)")})) i += 1"
-            s"          case r2: ${kb.name}Repr[B] => { var i = 0; if (xs.isInstanceOf[${ka.name}Arr] && that.isInstanceOf[${kb.name}Arr]) { $fast } else { $slow }; i == m }"
+            s"          case r2: ${kb.name}Repr[B] => { val xa = ${flatOf(ka, "xs")}; val ta = ${flatOf(kb, "that")}; var i = 0; while (i < m && pred(${readVal(ka, "xa(i + xsOff)")}, ${rdB("ta(i)")})) i += 1; i == m }"
           }
           .mkString("\n") + "\n        }"
         s"      case r: ${ka.name}Repr[A] => $inner"

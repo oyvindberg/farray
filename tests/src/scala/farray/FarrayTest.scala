@@ -273,6 +273,11 @@ class FListTest:
       assertEquals(s"$name contains", la.contains(9), fa.contains(9))
       assertEquals(s"$name sum", la.sum.toLong, fa.sum.toLong)
       assertEquals(s"$name foldRight", la.foldRight("")(_.toString + _), fa.foldRight("")(_.toString + _))
+      assertEquals(s"$name zip", la.zip(la), fa.zip(fa).toList)
+      assertEquals(s"$name zipWithIndex", la.zipWithIndex, fa.zipWithIndex.toList)
+      assertEquals(s"$name corresponds", la.corresponds(la)(_ == _), fa.corresponds(fa)(_ == _))
+      assertEquals(s"$name startsWith", la.startsWith(la.take(3)), fa.startsWith(fa.take(3)))
+      assertEquals(s"$name unzip", la.map(x => (x, -x)).unzip._2, fa.map(x => (x, -x)).unzip._2.toList)
 
   @Test def test_hashCode_matchesList(): Unit =
     def chk(name: String, fa: FArray[Any], l: List[Any]): Unit =
