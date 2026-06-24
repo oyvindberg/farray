@@ -526,18 +526,18 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def tabulateImpl[A](n: Int)(inline f: Int => A): FBase = $tabulate
        |  inline def fromArrayImpl[A](as: Array[A]): FBase = $fromArr
        |  inline def foldLeftImpl[A, Z](xs: FBase, z: Z)(inline op: (Z, A) => Z): Z = { val n = xs.length; if (n == 0) z else if (n == 1) op(z, applyAtImpl[A](xs, 0)) else $foldLeft }
-       |  inline def foldRightImpl[A, Z](xs: FBase, z: Z)(inline op: (A, Z) => Z): Z = if (xs.length == 0) z else $foldRightV
+       |  inline def foldRightImpl[A, Z](xs: FBase, z: Z)(inline op: (A, Z) => Z): Z = { val n = xs.length; if (n == 0) z else if (n == 1) op(applyAtImpl[A](xs, 0), z) else $foldRightV }
        |  inline def iteratorImpl[A](xs: FBase): Iterator[A] = ($iteratorV).asInstanceOf[Iterator[A]]
-       |  inline def countImpl[A](xs: FBase)(inline p: A => Boolean): Int = if (xs.length == 0) 0 else $countV
+       |  inline def countImpl[A](xs: FBase)(inline p: A => Boolean): Int = { val n = xs.length; if (n == 0) 0 else if (n == 1) (if (p(applyAtImpl[A](xs, 0))) 1 else 0) else $countV }
        |  inline def foreachImpl[A](xs: FBase)(inline f: A => Unit): Unit = { val n = xs.length; if (n == 1) f(applyAtImpl[A](xs, 0)) else if (n > 1) { $foreach } }
-       |  inline def foreachWhileImpl[A](xs: FBase)(inline f: A => Boolean): Unit = if (xs.length != 0) { $foreachWhileV }
-       |  inline def existsImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = xs.length != 0 && { $existsV }
-       |  inline def forallImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = xs.length == 0 || { $forallV }
-       |  inline def findImpl[A](xs: FBase)(inline p: A => Boolean): Option[A] = if (xs.length == 0) None else { $findV }
-       |  inline def indexWhereImpl[A](xs: FBase)(inline p: A => Boolean): Int = if (xs.length == 0) -1 else { $indexWhereV }
-       |  inline def indexOfImpl[A, B](xs: FBase, elem: B): Int = $indexOfV
-       |  inline def collectFirstImpl[A, B](xs: FBase)(pf: PartialFunction[A, B]): Option[B] = $collectFirstV
-       |  inline def prefixLengthImpl[A](xs: FBase)(inline p: A => Boolean): Int = $prefixLenV
+       |  inline def foreachWhileImpl[A](xs: FBase)(inline f: A => Boolean): Unit = { val n = xs.length; if (n == 1) { f(applyAtImpl[A](xs, 0)); () } else if (n > 1) { $foreachWhileV } }
+       |  inline def existsImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = { val n = xs.length; n != 0 && (if (n == 1) p(applyAtImpl[A](xs, 0)) else { $existsV }) }
+       |  inline def forallImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = { val n = xs.length; n == 0 || (if (n == 1) p(applyAtImpl[A](xs, 0)) else { $forallV }) }
+       |  inline def findImpl[A](xs: FBase)(inline p: A => Boolean): Option[A] = { val n = xs.length; if (n == 0) None else if (n == 1) { val e = applyAtImpl[A](xs, 0); if (p(e)) Some(e) else None } else { $findV } }
+       |  inline def indexWhereImpl[A](xs: FBase)(inline p: A => Boolean): Int = { val n = xs.length; if (n == 0) -1 else if (n == 1) (if (p(applyAtImpl[A](xs, 0))) 0 else -1) else { $indexWhereV } }
+       |  inline def indexOfImpl[A, B](xs: FBase, elem: B): Int = { val n = xs.length; if (n == 0) -1 else if (n == 1) (if (applyAtImpl[A](xs, 0) == elem) 0 else -1) else $indexOfV }
+       |  inline def collectFirstImpl[A, B](xs: FBase)(pf: PartialFunction[A, B]): Option[B] = { val n = xs.length; if (n == 0) None else if (n == 1) pf.lift(applyAtImpl[A](xs, 0)) else $collectFirstV }
+       |  inline def prefixLengthImpl[A](xs: FBase)(inline p: A => Boolean): Int = { val n = xs.length; if (n == 0) 0 else if (n == 1) (if (p(applyAtImpl[A](xs, 0))) 1 else 0) else $prefixLenV }
        |  inline def mapImpl[A, B](xs: FBase)(inline f: A => B): FBase = {
        |    val n = xs.length
        |    if (n == 0) emptyImpl[B] else if (n == 1) fromValues1[B](f(applyAtImpl[A](xs, 0))) else { $mapM }
@@ -546,18 +546,18 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    val n = xs.length
        |    if (n == 0) emptyImpl[A] else if (n == 1) { val e = applyAtImpl[A](xs, 0); if (p(e)) fromValues1[A](e) else emptyImpl[A] } else { $filter }
        |  }
-       |  inline def containsImpl[A](xs: FBase, elem: A): Boolean = $contains
-       |  inline def mapConserveImpl[A](xs: FBase)(inline f: A => A): FBase = if (xs.length == 0) xs else $mapConserve
-       |  inline def unzipImpl[A, A1, A2](xs: FBase)(ev: A <:< (A1, A2)): (FBase, FBase) = { val n = xs.length; $unzipV }
-       |  inline def unzip3Impl[A, A1, A2, A3](xs: FBase)(ev: A <:< (A1, A2, A3)): (FBase, FBase, FBase) = { val n = xs.length; $unzip3V }
-       |  inline def zipImpl[A, B](xs: FBase, that: FBase): FBase = { val n = if (xs.length < that.length) xs.length else that.length; if (n == 0) Empty.INSTANCE else { $zipV } }
-       |  inline def zipWithIndexImpl[A](xs: FBase): FBase = { val n = xs.length; if (n == 0) Empty.INSTANCE else { $zipIdxV } }
+       |  inline def containsImpl[A](xs: FBase, elem: A): Boolean = { val n = xs.length; if (n == 0) false else if (n == 1) (applyAtImpl[A](xs, 0) == elem) else $contains }
+       |  inline def mapConserveImpl[A](xs: FBase)(inline f: A => A): FBase = { val n = xs.length; if (n == 0) xs else if (n == 1) { val e = applyAtImpl[A](xs, 0); val r = f(e); if (r.asInstanceOf[AnyRef] eq e.asInstanceOf[AnyRef]) xs else fromValues1[A](r) } else $mapConserve }
+       |  inline def unzipImpl[A, A1, A2](xs: FBase)(ev: A <:< (A1, A2)): (FBase, FBase) = { val n = xs.length; if (n == 0) (Empty.INSTANCE, Empty.INSTANCE) else $unzipV }
+       |  inline def unzip3Impl[A, A1, A2, A3](xs: FBase)(ev: A <:< (A1, A2, A3)): (FBase, FBase, FBase) = { val n = xs.length; if (n == 0) (Empty.INSTANCE, Empty.INSTANCE, Empty.INSTANCE) else $unzip3V }
+       |  inline def zipImpl[A, B](xs: FBase, that: FBase): FBase = { val n = if (xs.length < that.length) xs.length else that.length; if (n == 0) Empty.INSTANCE else if (n == 1) fromValues1[(A, B)]((applyAtImpl[A](xs, 0), applyAtImpl[B](that, 0))) else { $zipV } }
+       |  inline def zipWithIndexImpl[A](xs: FBase): FBase = { val n = xs.length; if (n == 0) Empty.INSTANCE else if (n == 1) fromValues1[(A, Int)]((applyAtImpl[A](xs, 0), 0)) else { $zipIdxV } }
        |  inline def matchAll2Impl[A, B](xs: FBase, xsOff: Int, that: FBase, m: Int)(inline pred: (A, B) => Boolean): Boolean = $matchAll2V
        |  inline def applyAtImpl[A](xs: FBase, i: Int): A = $applyAt
-       |  inline def flatMapImpl[A, B](xs: FBase)(inline f: A => FBase): FBase = { val cnt = xs.length; $flatMapOne }
-       |  inline def updatedImpl[A, B](xs: FBase, index: Int, elem: B): FBase = $updated
-       |  inline def appendImpl[A, B](xs: FBase, elem: B): FBase = $append
-       |  inline def prependImpl[A](elem: A, xs: FBase): FBase = $prepend
+       |  inline def flatMapImpl[A, B](xs: FBase)(inline f: A => FBase): FBase = { val cnt = xs.length; if (cnt == 1) f(applyAtImpl[A](xs, 0)) else $flatMapOne }
+       |  inline def updatedImpl[A, B](xs: FBase, index: Int, elem: B): FBase = if (xs.length == 1 && index == 0) fromValues1[B](elem) else $updated
+       |  inline def appendImpl[A, B](xs: FBase, elem: B): FBase = if (xs.length == 0) fromValues1[B](elem) else $append
+       |  inline def prependImpl[A](elem: A, xs: FBase): FBase = if (xs.length == 0) fromValues1[A](elem) else $prepend
        |  inline def padToImpl[A, B](xs: FBase, len: Int, elem: B): FBase = $padTo
        |  inline def sortWithImpl[A](xs: FBase)(inline lt: (A, A) => Boolean): FBase = $sortWith
        |  inline def sortedImpl[A, B >: A](xs: FBase)(using ord: Ordering[B]): FBase = $sortedV
