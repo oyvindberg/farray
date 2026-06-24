@@ -521,11 +521,11 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def fromValues3[A](a: A, b: A, c: A): FBase = $fromValues3
        |  inline def tabulateImpl[A](n: Int)(inline f: Int => A): FBase = $tabulate
        |  inline def fromArrayImpl[A](as: Array[A]): FBase = $fromArr
-       |  inline def foldLeftImpl[A, Z](xs: FBase, z: Z)(inline op: (Z, A) => Z): Z = if (xs.length == 0) z else $foldLeft
+       |  inline def foldLeftImpl[A, Z](xs: FBase, z: Z)(inline op: (Z, A) => Z): Z = { val n = xs.length; if (n == 0) z else if (n == 1) op(z, applyAtImpl[A](xs, 0)) else $foldLeft }
        |  inline def foldRightImpl[A, Z](xs: FBase, z: Z)(inline op: (A, Z) => Z): Z = if (xs.length == 0) z else $foldRightV
        |  inline def iteratorImpl[A](xs: FBase): Iterator[A] = ($iteratorV).asInstanceOf[Iterator[A]]
        |  inline def countImpl[A](xs: FBase)(inline p: A => Boolean): Int = if (xs.length == 0) 0 else $countV
-       |  inline def foreachImpl[A](xs: FBase)(inline f: A => Unit): Unit = if (xs.length != 0) { $foreach }
+       |  inline def foreachImpl[A](xs: FBase)(inline f: A => Unit): Unit = { val n = xs.length; if (n == 1) f(applyAtImpl[A](xs, 0)) else if (n > 1) { $foreach } }
        |  inline def foreachWhileImpl[A](xs: FBase)(inline f: A => Boolean): Unit = if (xs.length != 0) { $foreachWhileV }
        |  inline def existsImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = xs.length != 0 && { $existsV }
        |  inline def forallImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = xs.length == 0 || { $forallV }
@@ -536,11 +536,11 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def prefixLengthImpl[A](xs: FBase)(inline p: A => Boolean): Int = $prefixLenV
        |  inline def mapImpl[A, B](xs: FBase)(inline f: A => B): FBase = {
        |    val n = xs.length
-       |    if (n == 0) emptyImpl[B] else { $mapM }
+       |    if (n == 0) emptyImpl[B] else if (n == 1) fromValues1[B](f(applyAtImpl[A](xs, 0))) else { $mapM }
        |  }
        |  inline def filterImpl[A](xs: FBase)(inline p: A => Boolean): FBase = {
        |    val n = xs.length
-       |    if (n == 0) emptyImpl[A] else { $filter }
+       |    if (n == 0) emptyImpl[A] else if (n == 1) { val e = applyAtImpl[A](xs, 0); if (p(e)) fromValues1[A](e) else emptyImpl[A] } else { $filter }
        |  }
        |  inline def containsImpl[A](xs: FBase, elem: A): Boolean = $contains
        |  inline def mapConserveImpl[A](xs: FBase)(inline f: A => A): FBase = if (xs.length == 0) xs else $mapConserve
