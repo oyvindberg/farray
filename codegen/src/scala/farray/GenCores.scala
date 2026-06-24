@@ -510,7 +510,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
       s"if (n <= 0) Empty.INSTANCE else { val out = ${alloc(k, "r")}; var i = 0; while (i < n) { out(i) = ${wr(k, "r.unwrap(f(i))")}; i += 1 }; new ${k.name}Arr(out, n) }"
     )
     val applyVar = dispatchA(k =>
-      s"if (as.isEmpty) Empty.INSTANCE else { val n = as.length; val out = ${alloc(k, "r")}; var i = 0; while (i < n) { out(i) = ${wr(k, "r.unwrap(as(i))")}; i += 1 }; new ${k.name}Arr(out, n) }"
+      // iterate, never as(i): indexed access on a LinearSeq (List) is O(i) -> O(n^2). Iterator is O(1)/elem.
+      s"if (as.isEmpty) Empty.INSTANCE else { val n = as.length; val out = ${alloc(k, "r")}; val it = as.iterator; var i = 0; while (it.hasNext) { out(i) = ${wr(k, "r.unwrap(it.next())")}; i += 1 }; new ${k.name}Arr(out, n) }"
     )
     val fromArr = dispatchA(k => s"new ${k.name}Arr(as.asInstanceOf[Array[${k.arr}]], as.length)")
     // small-arity construction without varargs/Seq/boxing (FArray(a, b) etc.) — the hot path inside flatMap

@@ -118,7 +118,9 @@ object FArray:
     inline def reduceLeft[B >: A](inline op: (B, A) => B): B = xs.drop(1).foldLeft[B](FArrayOps.applyAtImpl[A](xs, 0))(op)
     inline def reduce[B >: A](inline op: (B, B) => B): B = xs.drop(1).foldLeft[B](FArrayOps.applyAtImpl[A](xs, 0))((acc, a) => op(acc, a))
     inline def reduceRight[B >: A](inline op: (A, B) => B): B =
-      xs.dropRight(1).foldRight[B](FArrayOps.applyAtImpl[A](xs, xs.length - 1))(op)
+      // whole-array foldRight (leaf read backward) with a skip-first flag — avoids dropRight's SliceNode + kindAt
+      var acc: B = FArrayOps.applyAtImpl[A](xs, xs.length - 1); var first = true
+      xs.foldRight(())((a, _) => { if first then first = false else acc = op(a, acc) }); acc
     inline def reduceOption[B >: A](inline op: (B, B) => B): Option[B] =
       if xs.length == 0 then None else Some(xs.reduce[B](op))
 
@@ -238,12 +240,13 @@ object FArray:
     inline def segmentLength(inline p: A => Boolean): Int = FArrayOps.prefixLengthImpl[A](xs)(p)
     inline def segmentLength(inline p: A => Boolean, from: Int): Int =
       FArrayOps.prefixLengthImpl[A](xs.drop(if from < 0 then 0 else from))(p)
+    // forward whole-array leaf scan recording the last match — avoids reverse's ReverseNode + per-element kindAt
     inline def lastIndexWhere(inline p: A => Boolean): Int =
-      val i = FArrayOps.indexWhereImpl[A](xs.reverse)(p)
-      if i < 0 then -1 else xs.length - 1 - i
+      var res = -1; var i = 0
+      xs.foreach((a: A) => { if p(a) then res = i; i += 1 }); res
     inline def lastIndexOf[B >: A](elem: B): Int =
-      val i = FArrayOps.indexOfImpl[A, B](xs.reverse, elem)
-      if i < 0 then -1 else xs.length - 1 - i
+      var res = -1; var i = 0
+      xs.foreach((a: A) => { if a == elem then res = i; i += 1 }); res
     inline def sameElements[B >: A](that: FArray[B]): Boolean =
       xs.length == that.length && FArrayOps.matchAll2Impl[A, B](xs, 0, that, xs.length)((a, b) => a == b)
     inline def indexOfSlice[B >: A](that: FArray[B]): Int =
