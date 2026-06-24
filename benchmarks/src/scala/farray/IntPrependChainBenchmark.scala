@@ -4,7 +4,7 @@ import org.openjdk.jmh.annotations.*
 import java.util.concurrent.TimeUnit
 
 // Adversarial "deep prepend-chain" stress: starting from a single element, prepend one element `size` times.
-// List prepend is O(1) — the natural winner; Array/Vector copy O(n) per prepend.
+// List prepend is O(1) — the natural winner; IArray/Vector copy O(n) per prepend.
 @State(Scope.Thread)
 @BenchmarkMode(Array(Mode.Throughput))
 @OutputTimeUnit(TimeUnit.SECONDS)
@@ -16,12 +16,6 @@ class IntPrependChainBenchmark:
 
   @Benchmark def farray_prepend(): FArray[Int] =
     var c: FArray[Int] = FArray(1)
-    var i = 0
-    while i < size do { c = i +: c; i += 1 }
-    c
-
-  @Benchmark def array_prepend(): Array[Int] =
-    var c: Array[Int] = Array(1)
     var i = 0
     while i < size do { c = i +: c; i += 1 }
     c

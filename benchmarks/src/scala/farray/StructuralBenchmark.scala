@@ -36,7 +36,6 @@ class IntInitsTailsPatchBenchmark extends IntInputs {
   var listPatch: List[Int] = _
   var vectorPatch: Vector[Int] = _
   var iarrayPatch: IArray[Int] = _
-  var arrayPatch: Array[Int] = _
   var zioPatch: zio.Chunk[Int] = _
 
   @Setup
@@ -46,7 +45,6 @@ class IntInitsTailsPatchBenchmark extends IntInputs {
     listPatch = p.toList
     vectorPatch = p.toVector
     iarrayPatch = IArray.unsafeFromArray(p.clone())
-    arrayPatch = p.clone()
     zioPatch = zio.Chunk.fromArray(p.clone())
   }
 
@@ -54,21 +52,18 @@ class IntInitsTailsPatchBenchmark extends IntInputs {
   @Benchmark def list_inits(): Int = { var n = 0; listInput.inits.foreach(_ => n += 1); n }
   @Benchmark def vector_inits(): Int = { var n = 0; vectorInput.inits.foreach(_ => n += 1); n }
   @Benchmark def iarray_inits(): Int = { var n = 0; iarrayInput.inits.foreach(_ => n += 1); n }
-  @Benchmark def array_inits(): Int = { var n = 0; arrayInput.inits.foreach(_ => n += 1); n }
   @Benchmark def ziochunk_inits(): Int = { var n = 0; zioChunkInput.inits.foreach(_ => n += 1); n }
 
   // tails: FArray has none (API gap)
   @Benchmark def list_tails(): Int = { var n = 0; listInput.tails.foreach(_ => n += 1); n }
   @Benchmark def vector_tails(): Int = { var n = 0; vectorInput.tails.foreach(_ => n += 1); n }
   @Benchmark def iarray_tails(): Int = { var n = 0; iarrayInput.tails.foreach(_ => n += 1); n }
-  @Benchmark def array_tails(): Int = { var n = 0; arrayInput.tails.foreach(_ => n += 1); n }
   @Benchmark def ziochunk_tails(): Int = { var n = 0; zioChunkInput.tails.foreach(_ => n += 1); n }
 
   // patch: FArray has none (API gap)
   @Benchmark def list_patch(): List[Int] = listInput.patch(size / 2, listPatch, 4)
   @Benchmark def vector_patch(): Vector[Int] = vectorInput.patch(size / 2, vectorPatch, 4)
   @Benchmark def iarray_patch(): IArray[Int] = iarrayInput.patch(size / 2, iarrayPatch, 4)
-  @Benchmark def array_patch(): Array[Int] = arrayInput.patch(size / 2, arrayPatch, 4)
   @Benchmark def ziochunk_patch(): zio.Chunk[Int] = zioChunkInput.patch(size / 2, zioPatch, 4)
 }
 
@@ -86,7 +81,6 @@ class IntCombinationsPermutationsBenchmark {
   var listInput: List[Int] = _
   var vectorInput: Vector[Int] = _
   var iarrayInput: IArray[Int] = _
-  var arrayInput: Array[Int] = _
   var zioChunkInput: zio.Chunk[Int] = _
 
   @Setup
@@ -95,7 +89,6 @@ class IntCombinationsPermutationsBenchmark {
     listInput = arr.toList
     vectorInput = arr.toVector
     iarrayInput = IArray.unsafeFromArray(arr.clone())
-    arrayInput = arr.clone()
     zioChunkInput = zio.Chunk.fromArray(arr.clone())
   }
 
@@ -103,13 +96,11 @@ class IntCombinationsPermutationsBenchmark {
   @Benchmark def list_combinations(): Int = { var c = 0; listInput.combinations(n / 2).foreach(_ => c += 1); c }
   @Benchmark def vector_combinations(): Int = { var c = 0; vectorInput.combinations(n / 2).foreach(_ => c += 1); c }
   @Benchmark def iarray_combinations(): Int = { var c = 0; iarrayInput.combinations(n / 2).foreach(_ => c += 1); c }
-  @Benchmark def array_combinations(): Int = { var c = 0; arrayInput.combinations(n / 2).foreach(_ => c += 1); c }
   @Benchmark def ziochunk_combinations(): Int = { var c = 0; zioChunkInput.combinations(n / 2).foreach(_ => c += 1); c }
 
   // permutations
   @Benchmark def list_permutations(): Int = { var c = 0; listInput.permutations.foreach(_ => c += 1); c }
   @Benchmark def vector_permutations(): Int = { var c = 0; vectorInput.permutations.foreach(_ => c += 1); c }
   @Benchmark def iarray_permutations(): Int = { var c = 0; iarrayInput.permutations.foreach(_ => c += 1); c }
-  @Benchmark def array_permutations(): Int = { var c = 0; arrayInput.permutations.foreach(_ => c += 1); c }
   @Benchmark def ziochunk_permutations(): Int = { var c = 0; zioChunkInput.permutations.foreach(_ => c += 1); c }
 }

@@ -10,7 +10,7 @@ import java.util.concurrent.TimeUnit
 // The tree is built by slicing a flat `0 until size` into uneven pieces via
 // take/drop and `++`-ing them back in an uneven order. For farray/ziochunk this
 // produces a Slice+Concat tree; we also keep a flattened twin (ziochunk via
-// `.materialize`, farray via `FArray.tabulate`). The flat impls (array/list/vector)
+// `.materialize`, farray via `FArray.tabulate`). The flat impls (iarray/list/vector)
 // just hold the flat structure.
 @State(Scope.Thread)
 @BenchmarkMode(Array(Mode.Throughput))
@@ -28,7 +28,7 @@ class IntMixedTreeBenchmark:
   var ziochunkMat: zio.Chunk[Int] = _
 
   // flat impls
-  var arrayInput: Array[Int] = _
+  var iarrayInput: IArray[Int] = _
   var listInput: List[Int] = _
   var vectorInput: Vector[Int] = _
 
@@ -68,7 +68,7 @@ class IntMixedTreeBenchmark:
       .reduce(_ ++ _)
     ziochunkMat = ziochunkTree.materialize
 
-    arrayInput = flat
+    iarrayInput = IArray.unsafeFromArray(flat.clone())
     listInput = flat.toList
     vectorInput = flat.toVector
 
@@ -77,7 +77,7 @@ class IntMixedTreeBenchmark:
   @Benchmark def farrayMat_map(): FArray[Int] = farrayMat.map(_ * 2)
   @Benchmark def ziochunkTree_map(): zio.Chunk[Int] = ziochunkTree.map(_ * 2)
   @Benchmark def ziochunkMat_map(): zio.Chunk[Int] = ziochunkMat.map(_ * 2)
-  @Benchmark def array_map(): Array[Int] = arrayInput.map(_ * 2)
+  @Benchmark def iarray_map(): IArray[Int] = iarrayInput.map(_ * 2)
   @Benchmark def list_map(): List[Int] = listInput.map(_ * 2)
   @Benchmark def vector_map(): Vector[Int] = vectorInput.map(_ * 2)
 
@@ -86,7 +86,7 @@ class IntMixedTreeBenchmark:
   @Benchmark def farrayMat_filter(): FArray[Int] = farrayMat.filter(_ % 2 == 0)
   @Benchmark def ziochunkTree_filter(): zio.Chunk[Int] = ziochunkTree.filter(_ % 2 == 0)
   @Benchmark def ziochunkMat_filter(): zio.Chunk[Int] = ziochunkMat.filter(_ % 2 == 0)
-  @Benchmark def array_filter(): Array[Int] = arrayInput.filter(_ % 2 == 0)
+  @Benchmark def iarray_filter(): IArray[Int] = iarrayInput.filter(_ % 2 == 0)
   @Benchmark def list_filter(): List[Int] = listInput.filter(_ % 2 == 0)
   @Benchmark def vector_filter(): Vector[Int] = vectorInput.filter(_ % 2 == 0)
 
@@ -95,7 +95,7 @@ class IntMixedTreeBenchmark:
   @Benchmark def farrayMat_foldLeft(): Int = farrayMat.foldLeft(0)(_ + _)
   @Benchmark def ziochunkTree_foldLeft(): Int = ziochunkTree.foldLeft(0)(_ + _)
   @Benchmark def ziochunkMat_foldLeft(): Int = ziochunkMat.foldLeft(0)(_ + _)
-  @Benchmark def array_foldLeft(): Int = arrayInput.foldLeft(0)(_ + _)
+  @Benchmark def iarray_foldLeft(): Int = iarrayInput.foldLeft(0)(_ + _)
   @Benchmark def list_foldLeft(): Int = listInput.foldLeft(0)(_ + _)
   @Benchmark def vector_foldLeft(): Int = vectorInput.foldLeft(0)(_ + _)
 
@@ -104,6 +104,6 @@ class IntMixedTreeBenchmark:
   @Benchmark def farrayMat_find(): Option[Int] = farrayMat.find(_ > 2)
   @Benchmark def ziochunkTree_find(): Option[Int] = ziochunkTree.find(_ > 2)
   @Benchmark def ziochunkMat_find(): Option[Int] = ziochunkMat.find(_ > 2)
-  @Benchmark def array_find(): Option[Int] = arrayInput.find(_ > 2)
+  @Benchmark def iarray_find(): Option[Int] = iarrayInput.find(_ > 2)
   @Benchmark def list_find(): Option[Int] = listInput.find(_ > 2)
   @Benchmark def vector_find(): Option[Int] = vectorInput.find(_ > 2)

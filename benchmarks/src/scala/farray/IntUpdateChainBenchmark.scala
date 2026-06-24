@@ -15,7 +15,6 @@ class IntUpdateChainBenchmark:
   @Param(Array("10000")) var size: Int = 10000
 
   var farrayBase: FArray[Int] = _
-  var arrayBase: Array[Int] = _
   var iarrayBase: IArray[Int] = _
   var listBase: List[Int] = _
   var vectorBase: Vector[Int] = _
@@ -23,7 +22,6 @@ class IntUpdateChainBenchmark:
 
   @Setup def setup(): Unit =
     farrayBase = FArray.fill(size)(0)
-    arrayBase = Array.fill(size)(0)
     iarrayBase = IArray.fill(size)(0)
     listBase = List.fill(size)(0)
     vectorBase = Vector.fill(size)(0)
@@ -31,10 +29,6 @@ class IntUpdateChainBenchmark:
 
   @Benchmark def farray_update(): FArray[Int] =
     var c = farrayBase; var i = 0
-    while i < size do { c = c.updated(i, i); i += 1 }; c
-
-  @Benchmark def array_update(): Array[Int] =
-    var c = arrayBase; var i = 0
     while i < size do { c = c.updated(i, i); i += 1 }; c
 
   @Benchmark def iarray_update(): IArray[Int] =

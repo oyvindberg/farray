@@ -4,13 +4,13 @@ import org.openjdk.jmh.annotations.Benchmark
 
 class IntZipBenchmark extends IntInputs:
   @Benchmark def farray_zip(): FArray[(Int, Int)] = farrayInput.zip(farrayInput)
-  @Benchmark def array_zip(): Array[(Int, Int)] = arrayInput.zip(arrayInput)
+  @Benchmark def iarray_zip(): IArray[(Int, Int)] = iarrayInput.zip(iarrayInput)
   @Benchmark def list_zip(): List[(Int, Int)] = listInput.zip(listInput)
   @Benchmark def vector_zip(): Vector[(Int, Int)] = vectorInput.zip(vectorInput)
   @Benchmark def fs2chunk_zip(): fs2.Chunk[(Int, Int)] = fs2ChunkInput.zip(fs2ChunkInput)
   @Benchmark def ziochunk_zip(): zio.Chunk[(Int, Int)] = zioChunkInput.zip(zioChunkInput)
   @Benchmark def farray_zipWithIndex(): FArray[(Int, Int)] = farrayInput.zipWithIndex
-  @Benchmark def array_zipWithIndex(): Array[(Int, Int)] = arrayInput.zipWithIndex
+  @Benchmark def iarray_zipWithIndex(): IArray[(Int, Int)] = iarrayInput.zipWithIndex
   @Benchmark def list_zipWithIndex(): List[(Int, Int)] = listInput.zipWithIndex
   @Benchmark def vector_zipWithIndex(): Vector[(Int, Int)] = vectorInput.zipWithIndex
   @Benchmark def fs2chunk_zipWithIndex(): fs2.Chunk[(Int, Int)] = fs2ChunkInput.zipWithIndex

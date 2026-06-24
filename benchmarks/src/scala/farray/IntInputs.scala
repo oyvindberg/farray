@@ -10,7 +10,6 @@ abstract class IntInputs extends CommonParams {
   var listInput: List[Int] = _
   var vectorInput: Vector[Int] = _
   var iarrayInput: IArray[Int] = _
-  var arrayInput: Array[Int] = _
   var farrayInput: FArray[Int] = _
   var fs2ChunkInput: fs2.Chunk[Int] = _
   var zioChunkInput: zio.Chunk[Int] = _
@@ -21,7 +20,6 @@ abstract class IntInputs extends CommonParams {
     listInput = arr.toList
     vectorInput = arr.toVector
     iarrayInput = IArray.tabulate(size)(i => i)
-    arrayInput = Array.tabulate(size)(i => i)
     farrayInput = FArray.tabulate(size)(i => i)
     fs2ChunkInput = fs2.Chunk.array(arr)
     zioChunkInput = zio.Chunk.fromArray(arr)

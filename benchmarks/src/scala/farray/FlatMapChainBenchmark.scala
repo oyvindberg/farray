@@ -9,7 +9,7 @@ class IntFlatMapChainBenchmark extends IntInputs {
   @Benchmark def farray(): Int = farrayInput.flatMap(x => FArray(x, x + 1)).flatMap(y => FArray(y, y * 2)).map(_ + 1).foldLeft(0)(_ + _)
   @Benchmark def list(): Int = listInput.flatMap(x => List(x, x + 1)).flatMap(y => List(y, y * 2)).map(_ + 1).foldLeft(0)(_ + _)
   @Benchmark def vector(): Int = vectorInput.flatMap(x => Vector(x, x + 1)).flatMap(y => Vector(y, y * 2)).map(_ + 1).foldLeft(0)(_ + _)
-  @Benchmark def array(): Int = arrayInput.flatMap(x => Array(x, x + 1)).flatMap(y => Array(y, y * 2)).map(_ + 1).foldLeft(0)(_ + _)
+  @Benchmark def iarray(): Int = iarrayInput.flatMap(x => IArray(x, x + 1)).flatMap(y => IArray(y, y * 2)).map(_ + 1).foldLeft(0)(_ + _)
   @Benchmark def fs2chunk(): Int = fs2ChunkInput.flatMap(x => fs2.Chunk(x, x + 1)).flatMap(y => fs2.Chunk(y, y * 2)).map(_ + 1).foldLeft(0)(_ + _)
   @Benchmark def ziochunk(): Int = zioChunkInput.flatMap(x => zio.Chunk(x, x + 1)).flatMap(y => zio.Chunk(y, y * 2)).map(_ + 1).foldLeft(0)(_ + _)
 }

@@ -8,7 +8,7 @@ import java.util.concurrent.TimeUnit
 //  - rightConcat: current = current ++ leaf  (right-growing chain)
 //  - balanced:    a balanced binary concat tree built recursively
 // Tree-backed structures (FArray, zio.Chunk, fs2.Chunk, Vector) should handle these far better than
-// flat copies (Array, IArray, List).
+// flat copies (IArray, List).
 @State(Scope.Thread)
 @BenchmarkMode(Array(Mode.Throughput))
 @OutputTimeUnit(TimeUnit.SECONDS)
@@ -20,7 +20,6 @@ class IntConcatTreeBenchmark:
 
   // --- balanced helpers: rec(n) builds a tree of n single-element leaves via ++ ---
   private def farrayRec(n: Int): FArray[Int] = if n <= 1 then FArray(1) else farrayRec(n / 2) ++ farrayRec(n - n / 2)
-  private def arrayRec(n: Int): Array[Int] = if n <= 1 then Array(1) else arrayRec(n / 2) ++ arrayRec(n - n / 2)
   private def iarrayRec(n: Int): IArray[Int] = if n <= 1 then IArray(1) else iarrayRec(n / 2) ++ iarrayRec(n - n / 2)
   private def listRec(n: Int): List[Int] = if n <= 1 then List(1) else listRec(n / 2) ++ listRec(n - n / 2)
   private def vectorRec(n: Int): Vector[Int] = if n <= 1 then Vector(1) else vectorRec(n / 2) ++ vectorRec(n - n / 2)
@@ -30,9 +29,6 @@ class IntConcatTreeBenchmark:
   // --- leftConcat ---
   @Benchmark def farray_leftConcat(): FArray[Int] =
     val leaf = FArray(1); var c: FArray[Int] = FArray(0); var i = 0
-    while i < size do { c = leaf ++ c; i += 1 }; c
-  @Benchmark def array_leftConcat(): Array[Int] =
-    val leaf = Array(1); var c: Array[Int] = Array(0); var i = 0
     while i < size do { c = leaf ++ c; i += 1 }; c
   @Benchmark def iarray_leftConcat(): IArray[Int] =
     val leaf = IArray(1); var c: IArray[Int] = IArray(0); var i = 0
@@ -54,9 +50,6 @@ class IntConcatTreeBenchmark:
   @Benchmark def farray_rightConcat(): FArray[Int] =
     val leaf = FArray(1); var c: FArray[Int] = FArray(0); var i = 0
     while i < size do { c = c ++ leaf; i += 1 }; c
-  @Benchmark def array_rightConcat(): Array[Int] =
-    val leaf = Array(1); var c: Array[Int] = Array(0); var i = 0
-    while i < size do { c = c ++ leaf; i += 1 }; c
   @Benchmark def iarray_rightConcat(): IArray[Int] =
     val leaf = IArray(1); var c: IArray[Int] = IArray(0); var i = 0
     while i < size do { c = c ++ leaf; i += 1 }; c
@@ -75,7 +68,6 @@ class IntConcatTreeBenchmark:
 
   // --- balanced ---
   @Benchmark def farray_balanced(): FArray[Int] = farrayRec(size)
-  @Benchmark def array_balanced(): Array[Int] = arrayRec(size)
   @Benchmark def iarray_balanced(): IArray[Int] = iarrayRec(size)
   @Benchmark def list_balanced(): List[Int] = listRec(size)
   @Benchmark def vector_balanced(): Vector[Int] = vectorRec(size)
