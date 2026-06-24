@@ -40,6 +40,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       Files.writeString(dir.resolve("ReverseNode.java"), reverseNode)
       Files.writeString(dir.resolve("SliceNode.java"), sliceNode)
       Files.writeString(dir.resolve("Hashing.java"), hashing)
+      Files.writeString(dir.resolve("Empty.java"), emptyNode)
       padKinds.foreach { case (name, jt, boxed) => Files.writeString(dir.resolve(s"${name}Pad.java"), padNode(name, jt, boxed)) }
       padKinds.foreach { case (name, jt, boxed) => Files.writeString(dir.resolve(s"${name}Updated.java"), updatedNode(name, jt, boxed)) }
       padKinds.foreach { case (name, jt, boxed) => Files.writeString(dir.resolve(s"${name}One.java"), oneNode(name, jt, boxed)) }
@@ -321,7 +322,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       }
       .mkString("\n") + "\n    }"
     val filter = dispatchA(k =>
-      s"{ val out = ${alloc(k, "r")}; var o = 0; val c = new ${k.name}Dfs { def onLeaf(a: Array[${k.arr}], len: Int): Unit = { var i = 0; while (i < len) { val e = ${read(k)}; if (p(e)) { out(o) = ${wr(k, "r.unwrap(e)")}; o += 1 }; i += 1 } }; def onOne(v: ${k.arr}): Unit = { val e = ${readOne(k)}; if (p(e)) { out(o) = ${wr(k, "r.unwrap(e)")}; o += 1 } } }; dfsC${k.name}(xs, c); if (o == n) xs else if (o == 0) ${k.name}Arr.EMPTY else new ${k.name}Arr(java.util.Arrays.copyOf(out, o), o) }"
+      s"{ val out = ${alloc(k, "r")}; var o = 0; val c = new ${k.name}Dfs { def onLeaf(a: Array[${k.arr}], len: Int): Unit = { var i = 0; while (i < len) { val e = ${read(k)}; if (p(e)) { out(o) = ${wr(k, "r.unwrap(e)")}; o += 1 }; i += 1 } }; def onOne(v: ${k.arr}): Unit = { val e = ${readOne(k)}; if (p(e)) { out(o) = ${wr(k, "r.unwrap(e)")}; o += 1 } } }; dfsC${k.name}(xs, c); if (o == n) xs else if (o == 0) Empty.INSTANCE else new ${k.name}Arr(java.util.Arrays.copyOf(out, o), o) }"
     )
     // fused short-circuiting contains (prim compares unboxed against the unwrapped elem)
     val contains = dispatchA(k =>
@@ -361,7 +362,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
               val outType = if kb.name == "Ref" then "Array[Object]" else s"Array[${kb.arr}]"
               val leafBranch = s"{ val sa = leaf.arr; ${branch(ka, kb, readVal(ka, "sa(0)"), readVal(ka, "sa(i)"))} }"
               val nodeBranch = branch(ka, kb, readVal(ka, s"${ka.lc}At(xs, 0)"), readVal(ka, s"${ka.lc}At(xs, i)"))
-              s"          case rb: ${kb.name}Repr[B] => { if (cnt == 0) ${kb.name}Arr.EMPTY else { var out: $outType = null; var off = 0; xs match { case leaf: ${ka.name}Arr => $leafBranch; case _ => $nodeBranch }; if (off == out.length) new ${kb.name}Arr(out, off) else new ${kb.name}Arr(java.util.Arrays.copyOf(out, off), off) } }"
+              s"          case rb: ${kb.name}Repr[B] => { if (cnt == 0) Empty.INSTANCE else { var out: $outType = null; var off = 0; xs match { case leaf: ${ka.name}Arr => $leafBranch; case _ => $nodeBranch }; if (off == out.length) new ${kb.name}Arr(out, off) else new ${kb.name}Arr(java.util.Arrays.copyOf(out, off), off) } }"
             }
             .mkString("\n") + "\n        }"
           s"      case r: ${ka.name}Repr[A] => $inner"
@@ -483,12 +484,12 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val sortByV = dispatchA(k =>
       s"{ val vals = materialize${k.name}(xs); val n = vals.length; if (n < 2) xs else { val keys = mapImpl[A, B](xs)(f); val idx = new Array[Int](n); var t = 0; while (t < n) { idx(t) = t; t += 1 }; val sidx = sortInt(idx, n, (ii, jj) => ord.lt(applyAtImpl[B](keys, ii), applyAtImpl[B](keys, jj))); val out = ${allocPlain(k)}; var p = 0; while (p < n) { out(p) = vals(sidx(p)); p += 1 }; new ${k.name}Arr(out, n) } }"
     )
-    val emptyB = dispatchA(k => s"${k.name}Arr.EMPTY")
+    val emptyB = dispatchA(k => s"Empty.INSTANCE")
     val tabulate = dispatchA(k =>
-      s"if (n <= 0) ${k.name}Arr.EMPTY else { val out = ${alloc(k, "r")}; var i = 0; while (i < n) { out(i) = ${wr(k, "r.unwrap(f(i))")}; i += 1 }; new ${k.name}Arr(out, n) }"
+      s"if (n <= 0) Empty.INSTANCE else { val out = ${alloc(k, "r")}; var i = 0; while (i < n) { out(i) = ${wr(k, "r.unwrap(f(i))")}; i += 1 }; new ${k.name}Arr(out, n) }"
     )
     val applyVar = dispatchA(k =>
-      s"if (as.isEmpty) ${k.name}Arr.EMPTY else { val n = as.length; val out = ${alloc(k, "r")}; var i = 0; while (i < n) { out(i) = ${wr(k, "r.unwrap(as(i))")}; i += 1 }; new ${k.name}Arr(out, n) }"
+      s"if (as.isEmpty) Empty.INSTANCE else { val n = as.length; val out = ${alloc(k, "r")}; var i = 0; while (i < n) { out(i) = ${wr(k, "r.unwrap(as(i))")}; i += 1 }; new ${k.name}Arr(out, n) }"
     )
     val fromArr = dispatchA(k => s"new ${k.name}Arr(as.asInstanceOf[Array[${k.arr}]], as.length)")
     // small-arity construction without varargs/Seq/boxing (FArray(a, b) etc.) — the hot path inside flatMap
@@ -549,8 +550,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def mapConserveImpl[A](xs: FBase)(inline f: A => A): FBase = if (xs.length == 0) xs else $mapConserve
        |  inline def unzipImpl[A, A1, A2](xs: FBase)(ev: A <:< (A1, A2)): (FBase, FBase) = { val n = xs.length; $unzipV }
        |  inline def unzip3Impl[A, A1, A2, A3](xs: FBase)(ev: A <:< (A1, A2, A3)): (FBase, FBase, FBase) = { val n = xs.length; $unzip3V }
-       |  inline def zipImpl[A, B](xs: FBase, that: FBase): FBase = { val n = if (xs.length < that.length) xs.length else that.length; if (n == 0) RefArr.EMPTY else { $zipV } }
-       |  inline def zipWithIndexImpl[A](xs: FBase): FBase = { val n = xs.length; if (n == 0) RefArr.EMPTY else { $zipIdxV } }
+       |  inline def zipImpl[A, B](xs: FBase, that: FBase): FBase = { val n = if (xs.length < that.length) xs.length else that.length; if (n == 0) Empty.INSTANCE else { $zipV } }
+       |  inline def zipWithIndexImpl[A](xs: FBase): FBase = { val n = xs.length; if (n == 0) Empty.INSTANCE else { $zipIdxV } }
        |  inline def matchAll2Impl[A, B](xs: FBase, xsOff: Int, that: FBase, m: Int)(inline pred: (A, B) => Boolean): Boolean = $matchAll2V
        |  inline def applyAtImpl[A](xs: FBase, i: Int): A = $applyAt
        |  inline def flatMapImpl[A, B](xs: FBase)(inline f: A => FBase): FBase = { val cnt = xs.length; $flatMapOne }
@@ -568,7 +569,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
   private def fbase: String = {
     val leaves = prims.flatMap(p => List(s"${p.name}Arr", s"${p.name}Append", s"${p.name}Prepend"))
     val permits =
-      (leaves ++ List("RefArr", "RefAppend", "RefPrepend", "Concat", "RangeNode", "ReverseNode", "SliceNode") ++ padKinds.map(_._1 + "Pad") ++ padKinds.map(
+      (List("Empty") ++ leaves ++ List("RefArr", "RefAppend", "RefPrepend", "Concat", "RangeNode", "ReverseNode", "SliceNode") ++ padKinds.map(_._1 + "Pad") ++ padKinds.map(
         _._1 + "Updated"
       ) ++ padKinds.map(_._1 + "One")).mkString(", ")
     s"""package farray;
@@ -605,13 +606,12 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |public final class $cls extends FBase {
        |    public final ${p.jt}[] arr;
        |    public $cls(${p.jt}[] arr, int length) { super(length); this.arr = arr; }
-       |    public static final $cls EMPTY = new $cls(new ${p.jt}[0], 0);
        |
        |    @Override public Object applyBoxed(int i) { return ${p.boxed}.valueOf(arr[i]); }
        |
-       |    @Override public FBase take(int n) { int m = n < 0 ? 0 : (n > length ? length : n); return m == 0 ? EMPTY : (m == length ? this : new SliceNode(this, 0, m)); }
-       |    @Override public FBase drop(int n) { int d = n < 0 ? 0 : (n > length ? length : n); return d == 0 ? this : (d == length ? EMPTY : new SliceNode(this, d, length - d)); }
-       |    @Override public FBase slice(int from, int until) { int lo = from < 0 ? 0 : from, hi = until > length ? length : until; if (lo >= hi) return EMPTY; return (lo == 0 && hi == length) ? this : new SliceNode(this, lo, hi - lo); }
+       |    @Override public FBase take(int n) { int m = n < 0 ? 0 : (n > length ? length : n); return m == 0 ? Empty.INSTANCE : (m == length ? this : new SliceNode(this, 0, m)); }
+       |    @Override public FBase drop(int n) { int d = n < 0 ? 0 : (n > length ? length : n); return d == 0 ? this : (d == length ? Empty.INSTANCE : new SliceNode(this, d, length - d)); }
+       |    @Override public FBase slice(int from, int until) { int lo = from < 0 ? 0 : from, hi = until > length ? length : until; if (lo >= hi) return Empty.INSTANCE; return (lo == 0 && hi == length) ? this : new SliceNode(this, lo, hi - lo); }
        |    @Override public FBase reverse() { return length < 2 ? this : new ReverseNode(this); }
        |    @Override public FBase init() { return new $cls(arr, length - 1); }
        |
@@ -638,13 +638,12 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |public final class RefArr extends FBase {
        |    public final Object[] arr;
        |    public RefArr(Object[] arr, int length) { super(length); this.arr = arr; }
-       |    public static final RefArr EMPTY = new RefArr(new Object[0], 0);
        |
        |    @Override public Object applyBoxed(int i) { return arr[i]; }
        |
-       |    @Override public FBase take(int n) { int m = n < 0 ? 0 : (n > length ? length : n); return m == 0 ? EMPTY : (m == length ? this : new SliceNode(this, 0, m)); }
-       |    @Override public FBase drop(int n) { int d = n < 0 ? 0 : (n > length ? length : n); return d == 0 ? this : (d == length ? EMPTY : new SliceNode(this, d, length - d)); }
-       |    @Override public FBase slice(int from, int until) { int lo = from < 0 ? 0 : from, hi = until > length ? length : until; if (lo >= hi) return EMPTY; return (lo == 0 && hi == length) ? this : new SliceNode(this, lo, hi - lo); }
+       |    @Override public FBase take(int n) { int m = n < 0 ? 0 : (n > length ? length : n); return m == 0 ? Empty.INSTANCE : (m == length ? this : new SliceNode(this, 0, m)); }
+       |    @Override public FBase drop(int n) { int d = n < 0 ? 0 : (n > length ? length : n); return d == 0 ? this : (d == length ? Empty.INSTANCE : new SliceNode(this, d, length - d)); }
+       |    @Override public FBase slice(int from, int until) { int lo = from < 0 ? 0 : from, hi = until > length ? length : until; if (lo >= hi) return Empty.INSTANCE; return (lo == 0 && hi == length) ? this : new SliceNode(this, lo, hi - lo); }
        |    @Override public FBase reverse() { return length < 2 ? this : new ReverseNode(this); }
        |    @Override public FBase init() { return new RefArr(arr, length - 1); }
        |
@@ -740,15 +739,15 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    @Override public Object applyBoxed(int i) { return Integer.valueOf(start + i * step); }
        |    @Override public FBase take(int n) {
        |        int m = n < 0 ? 0 : (n > length ? length : n);
-       |        return m == length ? this : (m == 0 ? IntArr.EMPTY : new RangeNode(start, step, m));
+       |        return m == length ? this : (m == 0 ? Empty.INSTANCE : new RangeNode(start, step, m));
        |    }
        |    @Override public FBase drop(int n) {
        |        int d = n < 0 ? 0 : (n > length ? length : n);
-       |        return d == 0 ? this : (d == length ? IntArr.EMPTY : new RangeNode(start + d * step, step, length - d));
+       |        return d == 0 ? this : (d == length ? Empty.INSTANCE : new RangeNode(start + d * step, step, length - d));
        |    }
        |    @Override public FBase slice(int from, int until) {
        |        int lo = from < 0 ? 0 : from, hi = until > length ? length : until;
-       |        if (lo >= hi) return IntArr.EMPTY;
+       |        if (lo >= hi) return Empty.INSTANCE;
        |        return new RangeNode(start + lo * step, step, hi - lo);
        |    }
        |    @Override public FBase reverse() { return length < 2 ? this : new RangeNode(start + (length - 1) * step, -step, length); }
@@ -878,11 +877,31 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    public final $jt elem;
        |    public ${name}One($jt elem) { super(1); this.elem = elem; }
        |    @Override public Object applyBoxed(int i) { return $boxedElem; }
-       |    @Override public FBase take(int n) { return n <= 0 ? ${name}Arr.EMPTY : this; }
-       |    @Override public FBase drop(int n) { return n <= 0 ? this : ${name}Arr.EMPTY; }
-       |    @Override public FBase slice(int from, int until) { return (from <= 0 && until >= 1) ? this : ${name}Arr.EMPTY; }
+       |    @Override public FBase take(int n) { return n <= 0 ? Empty.INSTANCE : this; }
+       |    @Override public FBase drop(int n) { return n <= 0 ? this : Empty.INSTANCE; }
+       |    @Override public FBase slice(int from, int until) { return (from <= 0 && until >= 1) ? this : Empty.INSTANCE; }
        |    @Override public FBase reverse() { return this; }
-       |    @Override public FBase init() { return ${name}Arr.EMPTY; }
+       |    @Override public FBase init() { return Empty.INSTANCE; }
+       |    @Override public int hashCode() { return Hashing.hashOf(this); }
+       |    @Override public boolean equals(Object o) { return Concat.elementwiseEquals(this, o); }
+       |    @Override public String toString() { return Concat.render(this); }
+       |}
+       |""".stripMargin
+
+  /** The one empty sequence — kind-agnostic (no elements), a single shared instance. */
+  private def emptyNode: String =
+    s"""package farray;
+       |
+       |// GENERATED by GenCores — do not edit. The single empty sequence (no elements, no kind).
+       |public final class Empty extends FBase {
+       |    public static final Empty INSTANCE = new Empty();
+       |    private Empty() { super(0); }
+       |    @Override public Object applyBoxed(int i) { throw new IndexOutOfBoundsException(Integer.toString(i)); }
+       |    @Override public FBase take(int n) { return this; }
+       |    @Override public FBase drop(int n) { return this; }
+       |    @Override public FBase slice(int from, int until) { return this; }
+       |    @Override public FBase reverse() { return this; }
+       |    @Override public FBase init() { return this; }
        |    @Override public int hashCode() { return Hashing.hashOf(this); }
        |    @Override public boolean equals(Object o) { return Concat.elementwiseEquals(this, o); }
        |    @Override public String toString() { return Concat.render(this); }
@@ -990,6 +1009,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    }
        |    /** Append each element's ## to hs in sequence order (rev flips it); returns the next free index. */
        |    private static int fill(FBase node, boolean rev, int[] hs, int pos) {
+       |        if (node instanceof Empty) return pos;
 $leafFill
        |        if (node instanceof RefArr a) { if (rev) for (int i = a.length - 1; i >= 0; i--) hs[pos++] = scala.runtime.Statics.anyHash(a.arr[i]); else for (int i = 0; i < a.length; i++) hs[pos++] = scala.runtime.Statics.anyHash(a.arr[i]); return pos; }
        |        if (node instanceof Concat c) { if (rev) { pos = fill(c.right, true, hs, pos); return fill(c.left, true, hs, pos); } else { pos = fill(c.left, false, hs, pos); return fill(c.right, false, hs, pos); } }
