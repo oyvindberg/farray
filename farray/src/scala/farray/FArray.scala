@@ -230,6 +230,62 @@ object FArray:
         new RefArr(outer, cols).asInstanceOf[FArray[FArray[B]]]
     inline def mapConserve(inline f: A => A): FArray[A] = FArrayOps.mapConserveImpl[A](xs)(f)
 
+    // ---- composed from specialised primitives: no boxed storage, inline lambdas thread through ----
+    inline def reduceLeftOption[B >: A](inline op: (B, A) => B): Option[B] =
+      if xs.length == 0 then None else Some(xs.reduceLeft[B](op))
+    inline def reduceRightOption[B >: A](inline op: (A, B) => B): Option[B] =
+      if xs.length == 0 then None else Some(xs.reduceRight[B](op))
+    inline def segmentLength(inline p: A => Boolean): Int = FArrayOps.prefixLengthImpl[A](xs)(p)
+    inline def segmentLength(inline p: A => Boolean, from: Int): Int =
+      FArrayOps.prefixLengthImpl[A](xs.drop(if from < 0 then 0 else from))(p)
+    inline def lastIndexWhere(inline p: A => Boolean): Int =
+      val i = FArrayOps.indexWhereImpl[A](xs.reverse)(p)
+      if i < 0 then -1 else xs.length - 1 - i
+    inline def lastIndexOf[B >: A](elem: B): Int =
+      val i = FArrayOps.indexOfImpl[A, B](xs.reverse, elem)
+      if i < 0 then -1 else xs.length - 1 - i
+    inline def sameElements[B >: A](that: FArray[B]): Boolean =
+      xs.length == that.length && FArrayOps.matchAll2Impl[A, B](xs, 0, that, xs.length)((a, b) => a == b)
+    inline def indexOfSlice[B >: A](that: FArray[B]): Int =
+      val m = that.length; val n = xs.length
+      if m == 0 then 0
+      else
+        var i = 0; var res = -1
+        while i + m <= n && res < 0 do
+          if FArrayOps.matchAll2Impl[A, B](xs, i, that, m)((a, b) => a == b) then res = i else i += 1
+        res
+    inline def lastIndexOfSlice[B >: A](that: FArray[B]): Int =
+      val m = that.length; val n = xs.length
+      if m == 0 then n
+      else
+        var i = n - m; var res = -1
+        while i >= 0 && res < 0 do
+          if FArrayOps.matchAll2Impl[A, B](xs, i, that, m)((a, b) => a == b) then res = i else i -= 1
+        res
+    inline def containsSlice[B >: A](that: FArray[B]): Boolean = indexOfSlice(that) >= 0
+    def grouped(size: Int): Iterator[FArray[A]] =
+      val n = xs.length; val step = if size < 1 then 1 else size
+      Iterator.range(0, n, step).map(i => xs.slice(i, math.min(i + step, n)))
+    def sliding(size: Int, step: Int): Iterator[FArray[A]] =
+      val n = xs.length; val st = if step < 1 then 1 else step
+      if n == 0 then Iterator.empty else Iterator.range(0, n, st).map(i => xs.slice(i, math.min(i + size, n)))
+    def sliding(size: Int): Iterator[FArray[A]] = sliding(size, 1)
+    def inits: Iterator[FArray[A]] = Iterator.range(xs.length, -1, -1).map(i => xs.take(i))
+    def tails: Iterator[FArray[A]] = Iterator.range(0, xs.length + 1).map(i => xs.drop(i))
+    def patch[B >: A](from: Int, that: FArray[B], replaced: Int): FArray[B] =
+      val f = if from < 0 then 0 else from
+      xs.take(f) ++ that ++ xs.drop(f + (if replaced < 0 then 0 else replaced))
+    inline def toIndexedSeq: IndexedSeq[A] = xs.toVector
+    inline def copyToArray[B >: A](dest: Array[B], start: Int, len: Int): Int =
+      val n = math.min(len, math.min(xs.length, dest.length - start))
+      if n <= 0 then 0
+      else
+        var i = 0
+        xs.foreachWhile(a => if i < n then { dest(start + i) = a; i += 1; true } else false)
+        n
+    inline def combinations(k: Int): Iterator[FArray[A]] = xs.toVector.combinations(k).map(v => FArray.fromIterable(v))
+    inline def permutations: Iterator[FArray[A]] = xs.toVector.permutations.map(v => FArray.fromIterable(v))
+
   extension [A](elem: A)
     inline def +:(xs: FArray[A]): FArray[A] = FArrayOps.prependImpl[A](elem, xs)
     inline def ::(xs: FArray[A]): FArray[A] = FArrayOps.prependImpl[A](elem, xs)
