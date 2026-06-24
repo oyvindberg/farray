@@ -716,8 +716,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def sortWithImpl[A](xs: FBase)(inline lt: (A, A) => Boolean): FBase = $sortWith
        |  inline def sortedImpl[A, B >: A](xs: FBase)(using ord: Ordering[B]): FBase = $sortedV
        |  inline def sortByImpl[A, B](xs: FBase)(inline f: A => B)(using ord: Ordering[B]): FBase = $sortByV
-       |  inline def sumImpl[A, B](xs: FBase)(using num: Numeric[B]): B = if (xs.length == 0) num.zero else $sumV
-       |  inline def productImpl[A, B](xs: FBase)(using num: Numeric[B]): B = if (xs.length == 0) num.one else $productV
+       |  inline def sumImpl[A, B](xs: FBase)(using num: Numeric[B]): B = { val n = xs.length; if (n == 0) num.zero else if (n == 1) applyAtImpl[A](xs, 0).asInstanceOf[B] else $sumV }
+       |  inline def productImpl[A, B](xs: FBase)(using num: Numeric[B]): B = { val n = xs.length; if (n == 0) num.one else if (n == 1) applyAtImpl[A](xs, 0).asInstanceOf[B] else $productV }
        |  inline def scanLeftImpl[A, B](xs: FBase, z: B)(inline op: (B, A) => B): FBase = { val n = xs.length; $scanLeftV }
        |  inline def groupByImpl[A, K](xs: FBase)(inline f: A => K): Map[K, FBase] = $groupBy
        |  inline def groupMapAcc[K, B]: GroupMapAcc[K, B] = $groupMapAcc

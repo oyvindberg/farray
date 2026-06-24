@@ -115,12 +115,16 @@ object FArray:
 
     inline def foldRight[Z](z: Z)(inline op: (A, Z) => Z): Z = FArrayOps.foldRightImpl[A, Z](xs, z)(op)
     inline def fold[B >: A](z: B)(inline op: (B, B) => B): B = xs.foldLeft[B](z)((acc, a) => op(acc, a))
-    inline def reduceLeft[B >: A](inline op: (B, A) => B): B = xs.drop(1).foldLeft[B](FArrayOps.applyAtImpl[A](xs, 0))(op)
-    inline def reduce[B >: A](inline op: (B, B) => B): B = xs.drop(1).foldLeft[B](FArrayOps.applyAtImpl[A](xs, 0))((acc, a) => op(acc, a))
+    inline def reduceLeft[B >: A](inline op: (B, A) => B): B =
+      if xs.length == 1 then FArrayOps.applyAtImpl[A](xs, 0) else xs.drop(1).foldLeft[B](FArrayOps.applyAtImpl[A](xs, 0))(op)
+    inline def reduce[B >: A](inline op: (B, B) => B): B =
+      if xs.length == 1 then FArrayOps.applyAtImpl[A](xs, 0) else xs.drop(1).foldLeft[B](FArrayOps.applyAtImpl[A](xs, 0))((acc, a) => op(acc, a))
     inline def reduceRight[B >: A](inline op: (A, B) => B): B =
-      // whole-array foldRight (flat leaf reads backward, no alloc) + skip-first flag; dropRight(1).foldRight would materialize its SliceNode
-      var acc: B = FArrayOps.applyAtImpl[A](xs, xs.length - 1); var first = true
-      xs.foldRight(())((a, _) => { if first then first = false else acc = op(a, acc) }); acc
+      if xs.length == 1 then FArrayOps.applyAtImpl[A](xs, 0)
+      else
+        // whole-array foldRight (flat leaf reads backward, no alloc) + skip-first flag; dropRight(1).foldRight would materialize its SliceNode
+        var acc: B = FArrayOps.applyAtImpl[A](xs, xs.length - 1); var first = true
+        xs.foldRight(())((a, _) => { if first then first = false else acc = op(a, acc) }); acc
     inline def reduceOption[B >: A](inline op: (B, B) => B): Option[B] =
       if xs.length == 0 then None else Some(xs.reduce[B](op))
 
@@ -131,15 +135,21 @@ object FArray:
     inline def indexWhere(inline p: A => Boolean): Int = FArrayOps.indexWhereImpl[A](xs)(p)
     inline def indexOf[B >: A](elem: B): Int = FArrayOps.indexOfImpl[A, B](xs, elem)
     inline def maxBy[B](inline f: A => B)(using ord: Ordering[B]): A =
-      var best: A = FArrayOps.applyAtImpl[A](xs, 0); var bk: B = f(best)
-      xs.foreach((a: A) => { val k = f(a); if ord.gt(k, bk) then { best = a; bk = k } }); best
+      if xs.length == 1 then FArrayOps.applyAtImpl[A](xs, 0)
+      else
+        var best: A = FArrayOps.applyAtImpl[A](xs, 0); var bk: B = f(best)
+        xs.foreach((a: A) => { val k = f(a); if ord.gt(k, bk) then { best = a; bk = k } }); best
     inline def minBy[B](inline f: A => B)(using ord: Ordering[B]): A =
-      var best: A = FArrayOps.applyAtImpl[A](xs, 0); var bk: B = f(best)
-      xs.foreach((a: A) => { val k = f(a); if ord.lt(k, bk) then { best = a; bk = k } }); best
+      if xs.length == 1 then FArrayOps.applyAtImpl[A](xs, 0)
+      else
+        var best: A = FArrayOps.applyAtImpl[A](xs, 0); var bk: B = f(best)
+        xs.foreach((a: A) => { val k = f(a); if ord.lt(k, bk) then { best = a; bk = k } }); best
     inline def max[B >: A](using ord: Ordering[B]): A =
-      var best: B = FArrayOps.applyAtImpl[A](xs, 0); xs.foreach((a: A) => if ord.gt(a, best) then best = a); best.asInstanceOf[A]
+      if xs.length == 1 then FArrayOps.applyAtImpl[A](xs, 0)
+      else { var best: B = FArrayOps.applyAtImpl[A](xs, 0); xs.foreach((a: A) => if ord.gt(a, best) then best = a); best.asInstanceOf[A] }
     inline def min[B >: A](using ord: Ordering[B]): A =
-      var best: B = FArrayOps.applyAtImpl[A](xs, 0); xs.foreach((a: A) => if ord.lt(a, best) then best = a); best.asInstanceOf[A]
+      if xs.length == 1 then FArrayOps.applyAtImpl[A](xs, 0)
+      else { var best: B = FArrayOps.applyAtImpl[A](xs, 0); xs.foreach((a: A) => if ord.lt(a, best) then best = a); best.asInstanceOf[A] }
     inline def corresponds[B](that: FArray[B])(inline p: (A, B) => Boolean): Boolean =
       xs.length == that.length && FArrayOps.matchAll2Impl[A, B](xs, 0, that, xs.length)(p)
     inline def collectFirst[B](pf: PartialFunction[A, B]): Option[B] = FArrayOps.collectFirstImpl[A, B](xs)(pf)
