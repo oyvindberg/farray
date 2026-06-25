@@ -192,6 +192,54 @@ def main(json_path, out_path):
         cid += 1
 
     W_, T_, L_ = (sum(c) for c in zip(*sec_wtl.values()))
+
+    # ---- score leaderboard: per-structure GEOMETRIC mean of (best throughput / structure throughput) ----
+    # In every (benchmark, size) cell the FASTEST structure present = 1.00; each structure's ratio =
+    # best throughput / its own (>= 1). The score is the GEOMETRIC mean of those ratios per structure
+    # (section + total) — geometric so the structural-op blowouts (1000-30000x) don't swamp it the way
+    # an arithmetic mean would. 1.00 = fastest everywhere; N = typically N times slower than the best.
+    SUBV = {"farrayTree", "farrayMat", "ziochunkTree", "ziochunkMat"}   # diagnostic decompositions
+    SECNAMES = ("Primitive", "String", "ListLike", "Diagnostics")
+    sc_sum = {}                                        # (variant, col) -> [sum_ln_ratio, count]
+    for (sec, cls, op), series in charts.items():
+        for x in set(x for d in series.values() for x in d):
+            present = [(v, series[v][x]) for v in series
+                       if v not in SUBV and x in series[v] and series[v][x] > 0]
+            if len(present) < 2: continue
+            best = max(s for _, s in present)           # fastest structure in this cell = 1.00
+            for v, s in present:
+                lr = math.log(best / s)                 # log-ratio (>= 0), summed for the geometric mean
+                for col in (sec, "TOTAL"):
+                    a = sc_sum.setdefault((v, col), [0.0, 0]); a[0] += lr; a[1] += 1
+    def sc_get(v, col):
+        a = sc_sum.get((v, col)); return math.exp(a[0] / a[1]) if a and a[1] else None
+    def sc_cls(x):
+        if x is None: return "sc-na"
+        return "sc-hi" if x <= 1.3 else ("sc-lo" if x > 3.0 else "sc-mid")   # near-best green · >=3x slow red
+    sc_cols = list(SECNAMES) + ["TOTAL"]
+    sc_vars = [v for v in ORDER if v not in SUBV and (v, "TOTAL") in sc_sum]
+    sc_vars += [v for v in {k[0] for k in sc_sum} - set(sc_vars) if v not in SUBV]
+    sc_vars.sort(key=lambda v: (sc_get(v, "TOTAL") or 1e9))     # leaderboard, fastest first (lowest FArray/x)
+    sc_rows = ""
+    for v in sc_vars:
+        tds = ""
+        for col in sc_cols:
+            x = sc_get(v, col); tot = " sc-total" if col == "TOTAL" else ""
+            tds += (f'<td class="{sc_cls(x)}{tot}">{x:.2f}</td>' if x is not None
+                    else f'<td class="sc-na{tot}">·</td>')
+        sc_rows += (f'<tr class="srow{" me" if ours(v) else ""}"><td class="snm">'
+                    f'<i style="background:{lc(v)[1]}"></i>{lc(v)[0]}</td>{tds}</tr>')
+    score_table = (
+        '<div class="scorewrap"><table class="score"><thead><tr><th class="snm">structure</th>'
+        + "".join(f'<th{" class=sc-total" if c=="TOTAL" else ""}>{c}</th>' for c in sc_cols)
+        + f'</tr></thead><tbody>{sc_rows}</tbody></table>'
+        + '<div class="scorenote"><b>How to read this.</b> For every benchmark at every size, the '
+          'fastest structure there scores <b>1.00</b>; every other scores how many times slower it ran '
+          'in that cell. Each number below is the <b>geometric mean</b> of those per-cell ratios across '
+          'the group (geometric so a handful of extreme ops do not dominate). <b>Lower is better</b> — '
+          '1.00 = fastest everywhere, 3.0 = typically 3× off the best. Columns are the benchmark groups; '
+          'TOTAL is overall.</div></div>')
+
     def sechtml(sec):
         if not cards[sec]: return ""
         sw, st, sl = sec_wtl[sec]
@@ -251,10 +299,23 @@ svg .hot{{fill:#fff;fill-opacity:0}} svg rect.bar{{transition:opacity .1s}}
 .tip .nm{{flex:1;white-space:nowrap}} .tip .vv{{font-variant-numeric:tabular-nums}}
 .tip .rt{{font-size:9.5px;padding:1px 5px;border-radius:10px;font-weight:700}}
 .tip .rt.up{{background:#14532d;color:#86efac}} .tip .rt.dn{{background:#5c1620;color:#fca5a5}}
+.scorewrap{{margin:4px 0 28px;overflow-x:auto}}
+table.score{{border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums;background:var(--card);box-shadow:0 1px 3px rgba(20,30,50,.08);border-radius:11px;overflow:hidden}}
+table.score th{{background:#f1f5f9;color:#475569;font-weight:650;padding:8px 14px;text-align:right;font-size:11px;letter-spacing:.02em;white-space:nowrap}}
+table.score th.snm{{text-align:left}}
+table.score td{{padding:6px 14px;text-align:right;border-top:1px solid var(--line)}}
+table.score td.snm{{text-align:left;font-weight:600;white-space:nowrap}}
+table.score td.snm i{{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:7px;vertical-align:middle}}
+table.score tr.me{{background:#f3fdf7}}
+table.score tr.me td.snm{{color:var(--fa);font-weight:750}}
+table.score td.sc-hi{{color:#15803d;font-weight:650}} table.score td.sc-lo{{color:#b91c1c}} table.score td.sc-mid{{color:#64748b}} table.score td.sc-na{{color:#cbd5e1}}
+table.score .sc-total{{border-left:2px solid #e2e8f0;font-weight:750}}
+.scorenote{{color:var(--mut);font-size:11px;margin-top:8px;max-width:900px}}
 </style></head><body><div class="wrap">
 <div class="hero"><h1><b>FArray</b> — benchmark suite</h1>
 <div class="scorebar"><div class="sc-w">{W_} win</div><div class="sc-t">{T_} tie</div><div class="sc-l">{L_} loss</div></div></div>
 <div class="sub">grouped bars per benchmark · x = size or swept parameter · bar heights normalised <b>within each size</b> (relative comparison, not absolute throughput) · FArray = bold emerald, competitors muted · band behind each size + card frame tinted by verdict (green win · gray tie · red loss) vs the best competitor · hover a size to compare numbers{(' · '+str(skipped)+' non-ops/s skipped') if skipped else ''}</div>
+{score_table}
 {sechtml("Primitive")}{sechtml("String")}{sechtml("ListLike")}{sechtml("Diagnostics")}
 </div><script>
 const C={json.dumps(cdata,separators=(',',':'))};
