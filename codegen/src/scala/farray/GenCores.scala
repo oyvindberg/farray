@@ -43,7 +43,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
       Files.writeString(dir.resolve("Empty.java"), emptyNode)
       padKinds.foreach { case (name, jt, boxed) => Files.writeString(dir.resolve(s"${name}Pad.java"), padNode(name, jt, boxed)) }
       padKinds.foreach { case (name, jt, boxed) => Files.writeString(dir.resolve(s"${name}Updated.java"), updatedNode(name, jt, boxed)) }
-      padKinds.foreach { case (name, jt, boxed) => Files.writeString(dir.resolve(s"${name}One.java"), oneNode(name, jt, boxed)) }
+      // ${K}One (array-free singleton) for EVERY prim kind + Ref — so any length-1 leaf/node canonicalizes to
+      // its own-kind One (no boxing), never a generic fallback.
+      oneKinds.foreach { case (name, jt, boxed) => Files.writeString(dir.resolve(s"${name}One.java"), oneNode(name, jt, boxed)) }
       prims.foreach { p =>
         Files.writeString(dir.resolve(s"${p.name}Arr.java"), primCore(p))
         Files.writeString(dir.resolve(s"${p.name}Append.java"), primAppend(p))
@@ -253,7 +255,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  var arr: Array[$arrT] = new Array[$arrT](4)
        |  var size: Int = 0
        |  def add(v: $arrT): Unit = { if (size == arr.length) arr = java.util.Arrays.copyOf(arr, size * 2); arr(size) = v; size += 1 }
-       |  def toLeaf: FBase = if (size == 0) Empty.INSTANCE else new ${k.name}Arr(if (size == arr.length) arr else java.util.Arrays.copyOf(arr, size), size)
+       |  def toLeaf: FBase = if (size == 0) Empty.INSTANCE else if (size == 1) new ${k.name}One(arr(0)) else new ${k.name}Arr(if (size == arr.length) arr else java.util.Arrays.copyOf(arr, size), size)
        |}""".stripMargin
   }
 
@@ -363,6 +365,10 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // wrap a raw kind-array element back to A (for an inline user comparator); plain kind-array alloc
     def readVal(k: Kind, e: String): String = if k.name == "Ref" then s"r.wrap($e.asInstanceOf[A])" else s"r.wrap($e)"
     def allocPlain(k: Kind): String = s"new Array[${k.arr}](n)"
+    // Canonicalizing leaf builder: a result array `arr` of length `len` becomes Empty (0) / ${K}One (1) / a
+    // ${K}Arr leaf (>=2), upholding the size-0/1 invariant at every Scala build site. `len` is evaluated once.
+    def leaf(k: Kind, arr: String, len: String): String =
+      s"{ val _l = $len; if (_l == 0) Empty.INSTANCE else if (_l == 1) new ${k.name}One($arr(0)) else new ${k.name}Arr($arr, _l) }"
     // ---- run-method builders: emit the onRunF/onRunB pair for a consumer from ONE per-element body. `body`
     // reads the wrapped element via `read(k)` (which references `a(i)`); `i` runs start..start+count (fwd) or
     // start..start-count (bwd, descending). Two constant-stride loops keep the JIT-friendly shape.
@@ -447,6 +453,15 @@ object GenCores extends BleepCodegenScript("GenCores") {
       }.mkString("\n") + "\n        }"
       s"      case r: ${ka.name}Repr[A] => $inner"
     }.mkString("\n") + "\n    }"
+    // scanLeft size-0/1 short-circuit (no dfs): n==0 -> [z] (a ${B}One); n==1 -> [z, op(z, a0)] (a 2-leaf).
+    // List-identical. Dispatched on B's repr so the storage stays unboxed.
+    val scanLeftSmallV = "summonFrom {\n" + opKinds.map { kb =>
+      val zEl = wr(kb, "rb.unwrap(z)")
+      val one = s"new ${kb.name}One($zEl)"
+      val alloc2 = if kb.name == "Ref" then "new Array[Object](2)" else s"new Array[${kb.arr}](2)"
+      val two = s"{ val a1 = op(z, applyAtImpl[A](xs, 0)); val out = $alloc2; out(0) = $zEl; out(1) = ${wr(kb, "rb.unwrap(a1)")}; new ${kb.name}Arr(out, 2) }"
+      s"      case rb: ${kb.name}Repr[B] => if (n == 0) $one else $two"
+    }.mkString("\n") + "\n    }"
     val iteratorV = dispatchA(k =>
       s"xs match { case leaf: ${k.name}Arr => new ${k.name}Cursor(leaf.arr, leaf.length); case _ => new ${k.name}Cursor(materialize${k.name}(xs), xs.length) }"
     )
@@ -469,7 +484,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       }
       .mkString("\n") + "\n    }"
     val filter = dispatchA(k =>
-      s"{ val out = ${alloc(k, "r")}; var o = 0; val c = new ${k.name}Dfs { ${runMethods(k, e0 => s"val e = $e0; if (p(e)) { out(o) = ${wr(k, "r.unwrap(e)")}; o += 1 }")}; def onOne(v: ${k.arr}): Unit = { val e = ${readOne(k)}; if (p(e)) { out(o) = ${wr(k, "r.unwrap(e)")}; o += 1 } } }; dfsC${k.name}(xs, c); if (o == n) xs else if (o == 0) Empty.INSTANCE else new ${k.name}Arr(java.util.Arrays.copyOf(out, o), o) }"
+      s"{ val out = ${alloc(k, "r")}; var o = 0; val c = new ${k.name}Dfs { ${runMethods(k, e0 => s"val e = $e0; if (p(e)) { out(o) = ${wr(k, "r.unwrap(e)")}; o += 1 }")}; def onOne(v: ${k.arr}): Unit = { val e = ${readOne(k)}; if (p(e)) { out(o) = ${wr(k, "r.unwrap(e)")}; o += 1 } } }; dfsC${k.name}(xs, c); if (o == n) xs else if (o == 0) Empty.INSTANCE else if (o == 1) new ${k.name}One(out(0)) else new ${k.name}Arr(java.util.Arrays.copyOf(out, o), o) }"
     )
     // fused short-circuiting contains (prim compares unboxed against the unwrapped elem). Empty-body scan.
     val contains = dispatchA(k =>
@@ -509,7 +524,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
               val outType = if kb.name == "Ref" then "Array[Object]" else s"Array[${kb.arr}]"
               val leafBranch = s"{ val sa = leaf.arr; ${branch(ka, kb, readVal(ka, "sa(0)"), readVal(ka, "sa(i)"))} }"
               val nodeBranch = branch(ka, kb, readVal(ka, s"${ka.lc}At(xs, 0)"), readVal(ka, s"${ka.lc}At(xs, i)"))
-              s"          case rb: ${kb.name}Repr[B] => { if (cnt == 0) Empty.INSTANCE else { var out: $outType = null; var off = 0; xs match { case leaf: ${ka.name}Arr => $leafBranch; case _ => $nodeBranch }; if (off == out.length) new ${kb.name}Arr(out, off) else new ${kb.name}Arr(java.util.Arrays.copyOf(out, off), off) } }"
+              s"          case rb: ${kb.name}Repr[B] => { if (cnt == 0) Empty.INSTANCE else { var out: $outType = null; var off = 0; xs match { case leaf: ${ka.name}Arr => $leafBranch; case _ => $nodeBranch }; if (off == 0) Empty.INSTANCE else if (off == 1) new ${kb.name}One(out(0)) else if (off == out.length) new ${kb.name}Arr(out, off) else new ${kb.name}Arr(java.util.Arrays.copyOf(out, off), off) } }"
             }
             .mkString("\n") + "\n        }"
           s"      case r: ${ka.name}Repr[A] => $inner"
@@ -528,7 +543,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
         val inner = "summonFrom {\n" + opKinds
           .map { k2 =>
             val fill = s"o1(i) = ${wr(k1, "r1.unwrap(t._1)")}; o2(i) = ${wr(k2, "r2.unwrap(t._2)")}"
-            s"          case r2: ${k2.name}Repr[A2] => { val o1 = ${allocFor(k1, "r1")}; val o2 = ${allocFor(k2, "r2")}; val sa = ${flatOf(refK, "xs")}; var i = 0; while (i < n) { val t = ev(sa(i).asInstanceOf[A]); $fill; i += 1 }; (new ${k1.name}Arr(o1, n), new ${k2.name}Arr(o2, n)) }"
+            s"          case r2: ${k2.name}Repr[A2] => { val o1 = ${allocFor(k1, "r1")}; val o2 = ${allocFor(k2, "r2")}; val sa = ${flatOf(refK, "xs")}; var i = 0; while (i < n) { val t = ev(sa(i).asInstanceOf[A]); $fill; i += 1 }; (${leaf(k1, "o1", "n")}, ${leaf(k2, "o2", "n")}) }"
           }
           .mkString("\n") + "\n        }"
         s"      case r1: ${k1.name}Repr[A1] => $inner"
@@ -541,7 +556,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
             val m3 = "summonFrom {\n" + opKinds
               .map { k3 =>
                 val fill = s"o1(i) = ${wr(k1, "r1.unwrap(t._1)")}; o2(i) = ${wr(k2, "r2.unwrap(t._2)")}; o3(i) = ${wr(k3, "r3.unwrap(t._3)")}"
-                s"              case r3: ${k3.name}Repr[A3] => { val o1 = ${allocFor(k1, "r1")}; val o2 = ${allocFor(k2, "r2")}; val o3 = ${allocFor(k3, "r3")}; val sa = ${flatOf(refK, "xs")}; var i = 0; while (i < n) { val t = ev(sa(i).asInstanceOf[A]); $fill; i += 1 }; (new ${k1.name}Arr(o1, n), new ${k2.name}Arr(o2, n), new ${k3.name}Arr(o3, n)) }"
+                s"              case r3: ${k3.name}Repr[A3] => { val o1 = ${allocFor(k1, "r1")}; val o2 = ${allocFor(k2, "r2")}; val o3 = ${allocFor(k3, "r3")}; val sa = ${flatOf(refK, "xs")}; var i = 0; while (i < n) { val t = ev(sa(i).asInstanceOf[A]); $fill; i += 1 }; (${leaf(k1, "o1", "n")}, ${leaf(k2, "o2", "n")}, ${leaf(k3, "o3", "n")}) }"
               }
               .mkString("\n") + "\n            }"
             s"          case r2: ${k2.name}Repr[A2] => $m3"
@@ -592,7 +607,11 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val updated = dispatchB(k => s"new ${k.name}Updated(xs, index, ${wr(k, "r.unwrap(elem)")})")
     val append = dispatchB(k => s"new ${k.name}Append(xs, r.unwrap(elem))")
     val prepend = dispatchA(k => s"new ${k.name}Prepend(r.unwrap(elem), xs)")
-    val padTo = dispatchB(k => s"if (len <= xs.length) xs else new ${k.name}Pad(xs, len, ${wr(k, "r.unwrap(elem)")})")
+    // padTo: len <= length -> xs (canonical). Else a Pad of length len (>= 2, since len > length >= 0 and the
+    // only way len == 1 is len > length == 0, i.e. padding empty to 1 -> a single filler One).
+    val padTo = dispatchB(k =>
+      s"if (len <= xs.length) xs else if (len == 1) new ${k.name}One(r.unwrap(elem)) else new ${k.name}Pad(xs, len, ${wr(k, "r.unwrap(elem)")})"
+    )
     // Sort on FArray's own representation: materialize the kind array ONCE, stable-sort an int[] index
     // array (no Vector, no boxed indices), then permute into a fresh leaf. sortWith's comparator is inline
     // (fully unboxed); sorted/sortBy box only per ord comparison.
@@ -643,13 +662,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
     )
     val emptyB = dispatchA(k => s"Empty.INSTANCE")
     val tabulate = dispatchA(k =>
-      s"if (n <= 0) Empty.INSTANCE else { val out = ${alloc(k, "r")}; var i = 0; while (i < n) { out(i) = ${wr(k, "r.unwrap(f(i))")}; i += 1 }; new ${k.name}Arr(out, n) }"
+      s"if (n <= 0) Empty.INSTANCE else if (n == 1) new ${k.name}One(${wr(k, "r.unwrap(f(0))")}) else { val out = ${alloc(k, "r")}; var i = 0; while (i < n) { out(i) = ${wr(k, "r.unwrap(f(i))")}; i += 1 }; new ${k.name}Arr(out, n) }"
     )
     val applyVar = dispatchA(k =>
       // iterate, never as(i): indexed access on a LinearSeq (List) is O(i) -> O(n^2). Iterator is O(1)/elem.
-      s"if (as.isEmpty) Empty.INSTANCE else { val n = as.length; val out = ${alloc(k, "r")}; val it = as.iterator; var i = 0; while (it.hasNext) { out(i) = ${wr(k, "r.unwrap(it.next())")}; i += 1 }; new ${k.name}Arr(out, n) }"
+      s"{ val n = as.length; if (n == 0) Empty.INSTANCE else if (n == 1) new ${k.name}One(${wr(k, "r.unwrap(as.head)")}) else { val out = ${alloc(k, "r")}; val it = as.iterator; var i = 0; while (it.hasNext) { out(i) = ${wr(k, "r.unwrap(it.next())")}; i += 1 }; new ${k.name}Arr(out, n) } }"
     )
-    val fromArr = dispatchA(k => s"new ${k.name}Arr(as.asInstanceOf[Array[${k.arr}]], as.length)")
+    val fromArr = dispatchA(k => s"${leaf(k, "as.asInstanceOf[Array[" + k.arr + "]]", "as.length")}")
     // small-arity construction without varargs/Seq/boxing (FArray(a, b) etc.) — the hot path inside flatMap
     def allocN(k: Kind, n: Int): String = if k.name == "Ref" then s"new Array[Object]($n)" else s"new Array[${k.arr}]($n)"
     val fromValues1 = dispatchA(k => s"new ${k.name}One(${wr(k, "r.unwrap(a)")})")
@@ -830,7 +849,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def sortByImpl[A, B](xs: FBase)(inline f: A => B)(using ord: Ordering[B]): FBase = $sortByV
        |  inline def sumImpl[A, B](xs: FBase)(using num: Numeric[B]): B = { val n = xs.length; if (n == 0) num.zero else if (n == 1) applyAtImpl[A](xs, 0).asInstanceOf[B] else $sumV }
        |  inline def productImpl[A, B](xs: FBase)(using num: Numeric[B]): B = { val n = xs.length; if (n == 0) num.one else if (n == 1) applyAtImpl[A](xs, 0).asInstanceOf[B] else $productV }
-       |  inline def scanLeftImpl[A, B](xs: FBase, z: B)(inline op: (B, A) => B): FBase = { val n = xs.length; $scanLeftV }
+       |  inline def scanLeftImpl[A, B](xs: FBase, z: B)(inline op: (B, A) => B): FBase = { val n = xs.length; if (n <= 1) { $scanLeftSmallV } else { $scanLeftV } }
        |  inline def groupByImpl[A, K](xs: FBase)(inline f: A => K): Map[K, FBase] = $groupBy
        |  inline def groupMapAcc[K, B]: GroupMapAcc[K, B] = $groupMapAcc
        |}
@@ -842,7 +861,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val permits =
       (List("Empty") ++ leaves ++ List("RefArr", "RefAppend", "RefPrepend", "Concat", "RangeNode", "ReverseNode", "SliceNode") ++ padKinds.map(_._1 + "Pad") ++ padKinds.map(
         _._1 + "Updated"
-      ) ++ padKinds.map(_._1 + "One")).mkString(", ")
+      ) ++ oneKinds.map(_._1 + "One")).mkString(", ")
     s"""package farray;
        |
        |// GENERATED by GenCores — do not edit.
@@ -869,6 +888,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
 
   private def primCore(p: Prim): String = {
     val cls = s"${p.name}Arr"
+    def one1(idx: String): String = s"new ${p.name}One(arr[$idx])"
     s"""package farray;
        |
        |import java.util.Arrays;
@@ -880,11 +900,11 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |
        |    @Override public Object applyBoxed(int i) { return ${p.boxed}.valueOf(arr[i]); }
        |
-       |    @Override public FBase take(int n) { int m = n < 0 ? 0 : (n > length ? length : n); return m == 0 ? Empty.INSTANCE : (m == length ? this : new SliceNode(this, 0, m)); }
-       |    @Override public FBase drop(int n) { int d = n < 0 ? 0 : (n > length ? length : n); return d == 0 ? this : (d == length ? Empty.INSTANCE : new SliceNode(this, d, length - d)); }
-       |    @Override public FBase slice(int from, int until) { int lo = from < 0 ? 0 : from, hi = until > length ? length : until; if (lo >= hi) return Empty.INSTANCE; return (lo == 0 && hi == length) ? this : new SliceNode(this, lo, hi - lo); }
+       |    @Override public FBase take(int n) { int m = n < 0 ? 0 : (n > length ? length : n); return m == 0 ? Empty.INSTANCE : (m == 1 ? ${one1("0")} : (m == length ? this : new SliceNode(this, 0, m))); }
+       |    @Override public FBase drop(int n) { int d = n < 0 ? 0 : (n > length ? length : n); int m = length - d; return m == 0 ? Empty.INSTANCE : (m == 1 ? ${one1("d")} : (d == 0 ? this : new SliceNode(this, d, m))); }
+       |    @Override public FBase slice(int from, int until) { int lo = from < 0 ? 0 : from, hi = until > length ? length : until; int m = hi - lo; if (m <= 0) return Empty.INSTANCE; if (m == 1) return ${one1("lo")}; return (lo == 0 && hi == length) ? this : new SliceNode(this, lo, m); }
        |    @Override public FBase reverse() { return length < 2 ? this : new ReverseNode(this); }
-       |    @Override public FBase init() { return new $cls(arr, length - 1); }
+       |    @Override public FBase init() { return length == 2 ? ${one1("0")} : new $cls(arr, length - 1); }
        |
        |    @Override public int hashCode() { return Hashing.hashOf(this); }
        |    @Override public boolean equals(Object obj) {
@@ -912,11 +932,11 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |
        |    @Override public Object applyBoxed(int i) { return arr[i]; }
        |
-       |    @Override public FBase take(int n) { int m = n < 0 ? 0 : (n > length ? length : n); return m == 0 ? Empty.INSTANCE : (m == length ? this : new SliceNode(this, 0, m)); }
-       |    @Override public FBase drop(int n) { int d = n < 0 ? 0 : (n > length ? length : n); return d == 0 ? this : (d == length ? Empty.INSTANCE : new SliceNode(this, d, length - d)); }
-       |    @Override public FBase slice(int from, int until) { int lo = from < 0 ? 0 : from, hi = until > length ? length : until; if (lo >= hi) return Empty.INSTANCE; return (lo == 0 && hi == length) ? this : new SliceNode(this, lo, hi - lo); }
+       |    @Override public FBase take(int n) { int m = n < 0 ? 0 : (n > length ? length : n); return m == 0 ? Empty.INSTANCE : (m == 1 ? new RefOne(arr[0]) : (m == length ? this : new SliceNode(this, 0, m))); }
+       |    @Override public FBase drop(int n) { int d = n < 0 ? 0 : (n > length ? length : n); int m = length - d; return m == 0 ? Empty.INSTANCE : (m == 1 ? new RefOne(arr[d]) : (d == 0 ? this : new SliceNode(this, d, m))); }
+       |    @Override public FBase slice(int from, int until) { int lo = from < 0 ? 0 : from, hi = until > length ? length : until; int m = hi - lo; if (m <= 0) return Empty.INSTANCE; if (m == 1) return new RefOne(arr[lo]); return (lo == 0 && hi == length) ? this : new SliceNode(this, lo, m); }
        |    @Override public FBase reverse() { return length < 2 ? this : new ReverseNode(this); }
-       |    @Override public FBase init() { return new RefArr(arr, length - 1); }
+       |    @Override public FBase init() { return length == 2 ? new RefOne(arr[0]) : new RefArr(arr, length - 1); }
        |
        |    @Override public int hashCode() { return Hashing.hashOf(this); }
        |    @Override public boolean equals(Object obj) {
@@ -934,7 +954,29 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |}
        |""".stripMargin
 
-  private def concat: String =
+  private def concat: String = {
+    // `one(node, i)` — the canonicalizing length-1 factory. Walks structural nodes down to the element source
+    // and builds the matching `${K}One` reading the payload UNBOXED (no Integer/Long/... allocation). Only the
+    // four ops-kinds (Int/Long/Double/Ref) leaves/payload nodes are ever constructed, so those are the cases;
+    // anything else (shouldn't happen) falls back to applyBoxed -> RefOne.
+    val oneLeaf = (prims.map(p => (p.name, s"${p.name}Arr")) :+ ("Ref", "RefArr"))
+      .map { case (k, leaf) => s"        if (n instanceof $leaf a) return new ${k}One(a.arr[i]);" }
+      .mkString("\n")
+    // Append/Prepend exist for every prim kind + Ref; Pad/Updated only for padKinds (Int/Long/Double/Ref).
+    val oneAppendPrepend = (prims.map(_.name) :+ "Ref")
+      .map { k =>
+        s"""        if (n instanceof ${k}One o) return o;
+           |        if (n instanceof ${k}Append ap) { n = ap.base; if (i < n.length) continue; return new ${k}One(ap.elem); }
+           |        if (n instanceof ${k}Prepend pp) { if (i == 0) return new ${k}One(pp.elem); n = pp.base; i = i - 1; continue; }""".stripMargin
+      }
+      .mkString("\n")
+    val onePadUpdated = padKinds
+      .map { case (k, _, _) =>
+        s"""        if (n instanceof ${k}Pad pd) { if (i < pd.base.length) { n = pd.base; continue; } return new ${k}One(pd.filler); }
+           |        if (n instanceof ${k}Updated u) { if (i == u.index) return new ${k}One(u.elem); n = u.base; continue; }""".stripMargin
+      }
+      .mkString("\n")
+    val onePayload = oneAppendPrepend + "\n" + onePadUpdated
     s"""package farray;
        |
        |// GENERATED by GenCores — do not edit. Tree node: O(1) concat, structural ops recurse (Java
@@ -995,8 +1037,25 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |        for (int i = 0; i < self.length; i++) { if (i != 0) sb.append(", "); sb.append(self.applyBoxed(i)); }
        |        return sb.append(')').toString();
        |    }
+       |
+       |    /** Canonicalizing length-1 factory: the single-element node holding node[i], built UNBOXED. Used at every
+       |     *  structural builder that could otherwise produce a length-1 node (the size-0/1 invariant reserves those
+       |     *  for Empty / a per-kind One). Walks down to the element source so it never materializes. */
+       |    static FBase one(FBase node, int i) {
+       |        FBase n = node;
+       |        while (true) {
+       |$oneLeaf
+       |$onePayload
+       |            if (n instanceof Concat c) { if (i < c.left.length) { n = c.left; continue; } i = i - c.left.length; n = c.right; continue; }
+       |            if (n instanceof SliceNode s) { i = s.offset + i; n = s.base; continue; }
+       |            if (n instanceof ReverseNode r) { i = n.length - 1 - i; n = r.base; continue; }
+       |            if (n instanceof RangeNode rg) return new IntOne(rg.start + i * rg.step);
+       |            return new RefOne(n.applyBoxed(i));
+       |        }
+       |    }
        |}
        |""".stripMargin
+  }
 
   /** Closed-form Int range — O(1) construct, O(1) index/take/drop/reverse, never materializes. Int kind only. */
   private def rangeNode: String =
@@ -1010,16 +1069,17 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    @Override public Object applyBoxed(int i) { return Integer.valueOf(start + i * step); }
        |    @Override public FBase take(int n) {
        |        int m = n < 0 ? 0 : (n > length ? length : n);
-       |        return m == length ? this : (m == 0 ? Empty.INSTANCE : new RangeNode(start, step, m));
+       |        return m == length ? this : (m == 0 ? Empty.INSTANCE : (m == 1 ? new IntOne(start) : new RangeNode(start, step, m)));
        |    }
        |    @Override public FBase drop(int n) {
-       |        int d = n < 0 ? 0 : (n > length ? length : n);
-       |        return d == 0 ? this : (d == length ? Empty.INSTANCE : new RangeNode(start + d * step, step, length - d));
+       |        int d = n < 0 ? 0 : (n > length ? length : n); int m = length - d;
+       |        return d == 0 ? this : (m == 0 ? Empty.INSTANCE : (m == 1 ? new IntOne(start + d * step) : new RangeNode(start + d * step, step, m)));
        |    }
        |    @Override public FBase slice(int from, int until) {
-       |        int lo = from < 0 ? 0 : from, hi = until > length ? length : until;
-       |        if (lo >= hi) return Empty.INSTANCE;
-       |        return new RangeNode(start + lo * step, step, hi - lo);
+       |        int lo = from < 0 ? 0 : from, hi = until > length ? length : until; int m = hi - lo;
+       |        if (m <= 0) return Empty.INSTANCE;
+       |        if (m == 1) return new IntOne(start + lo * step);
+       |        return new RangeNode(start + lo * step, step, m);
        |    }
        |    @Override public FBase reverse() { return length < 2 ? this : new RangeNode(start + (length - 1) * step, -step, length); }
        |    @Override public FBase init() { return take(length - 1); }
@@ -1040,17 +1100,19 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    @Override public Object applyBoxed(int i) { return base.applyBoxed(length - 1 - i); }
        |    @Override public FBase take(int n) {
        |        int m = n < 0 ? 0 : (n > length ? length : n);
-       |        if (m == 0) return base.take(0);
+       |        if (m == 0) return Empty.INSTANCE;
+       |        if (m == 1) return Concat.one(this, 0);
        |        return new ReverseNode(base.drop(length - m));
        |    }
        |    @Override public FBase drop(int n) {
-       |        int d = n < 0 ? 0 : (n > length ? length : n);
-       |        if (d == length) return base.take(0);
-       |        return new ReverseNode(base.take(length - d));
+       |        int d = n < 0 ? 0 : (n > length ? length : n); int m = length - d;
+       |        if (m == 0) return Empty.INSTANCE;
+       |        if (m == 1) return Concat.one(this, d);
+       |        return new ReverseNode(base.take(m));
        |    }
        |    @Override public FBase slice(int from, int until) {
        |        int lo = from < 0 ? 0 : from, hi = until > length ? length : until;
-       |        if (lo >= hi) return base.take(0);
+       |        if (lo >= hi) return Empty.INSTANCE;
        |        return drop(lo).take(hi - lo);
        |    }
        |    @Override public FBase reverse() { return base; }
@@ -1071,9 +1133,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    public final int offset;
        |    public SliceNode(FBase base, int offset, int length) { super(length); this.base = base; this.offset = offset; }
        |    @Override public Object applyBoxed(int i) { return base.applyBoxed(offset + i); }
-       |    @Override public FBase take(int n) { int m = n < 0 ? 0 : (n > length ? length : n); return m == length ? this : new SliceNode(base, offset, m); }
-       |    @Override public FBase drop(int n) { int d = n < 0 ? 0 : (n > length ? length : n); return d == 0 ? this : new SliceNode(base, offset + d, length - d); }
-       |    @Override public FBase slice(int from, int until) { int lo = from < 0 ? 0 : from, hi = until > length ? length : until; if (lo >= hi) return new SliceNode(base, offset, 0); return (lo == 0 && hi == length) ? this : new SliceNode(base, offset + lo, hi - lo); }
+       |    @Override public FBase take(int n) { int m = n < 0 ? 0 : (n > length ? length : n); return m == length ? this : (m == 0 ? Empty.INSTANCE : (m == 1 ? Concat.one(base, offset) : new SliceNode(base, offset, m))); }
+       |    @Override public FBase drop(int n) { int d = n < 0 ? 0 : (n > length ? length : n); int m = length - d; return d == 0 ? this : (m == 0 ? Empty.INSTANCE : (m == 1 ? Concat.one(base, offset + d) : new SliceNode(base, offset + d, m))); }
+       |    @Override public FBase slice(int from, int until) { int lo = from < 0 ? 0 : from, hi = until > length ? length : until; int m = hi - lo; if (m <= 0) return Empty.INSTANCE; if (m == 1) return Concat.one(base, offset + lo); return (lo == 0 && hi == length) ? this : new SliceNode(base, offset + lo, m); }
        |    @Override public FBase reverse() { return new ReverseNode(this); }
        |    @Override public FBase init() { return take(length - 1); }
        |    @Override public int hashCode() { return Hashing.hashOf(this); }
@@ -1084,6 +1146,10 @@ object GenCores extends BleepCodegenScript("GenCores") {
 
   /** Ops-kinds (Int/Long/Double/Ref) for the per-kind lazy nodes that carry a primitive payload. */
   private val padKinds = List(("Int", "int", "Integer"), ("Long", "long", "Long"), ("Double", "double", "Double"), ("Ref", "Object", ""))
+
+  /** Kinds with a `${K}One` singleton: EVERY prim leaf kind + Ref. Every length-1 FArray is one of these, so a
+    * length-1 leaf/append/prepend/slice of any prim kind canonicalizes to its own-kind One with no boxing. */
+  private val oneKinds: List[(String, String, String)] = prims.map(p => (p.name, p.jt, p.boxed)) :+ ("Ref", "Object", "")
 
   /** padTo as a lazy node: base + targetLen + a constant filler. O(1) construct, O(depth) index — so range(1M).padTo(2M, x).last is O(1). For prims base is
     * always the same kind (B>:A, prims are final); RefPad reads its base via applyBoxed so an Int-base widened to a Ref pad still works.
@@ -1098,15 +1164,16 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    public final $jt filler;
        |    public ${name}Pad(FBase base, int targetLen, $jt filler) { super(targetLen); this.base = base; this.filler = filler; }
        |    @Override public Object applyBoxed(int i) { return i < base.length ? base.applyBoxed(i) : $boxedFiller; }
-       |    @Override public FBase take(int n) { int m = n < 0 ? 0 : (n > length ? length : n); return m <= base.length ? base.take(m) : new ${name}Pad(base, m, filler); }
+       |    @Override public FBase take(int n) { int m = n < 0 ? 0 : (n > length ? length : n); if (m <= base.length) return base.take(m); if (m == 1) return new ${name}One(filler); return new ${name}Pad(base, m, filler); }
        |    @Override public FBase drop(int n) {
-       |        int d = n < 0 ? 0 : (n > length ? length : n);
+       |        int d = n < 0 ? 0 : (n > length ? length : n); int m = length - d;
        |        if (d == 0) return this;
-       |        if (d >= length) return base.take(0);
-       |        if (d >= base.length) return new ${name}Pad(base.take(0), length - d, filler);
-       |        return new ${name}Pad(base.drop(d), length - d, filler);
+       |        if (m == 0) return Empty.INSTANCE;
+       |        if (d >= base.length) return m == 1 ? new ${name}One(filler) : new ${name}Pad(Empty.INSTANCE, m, filler);
+       |        if (m == 1) return Concat.one(this, d);
+       |        return new ${name}Pad(base.drop(d), m, filler);
        |    }
-       |    @Override public FBase slice(int from, int until) { int lo = from < 0 ? 0 : from, hi = until > length ? length : until; return lo >= hi ? base.take(0) : drop(lo).take(hi - lo); }
+       |    @Override public FBase slice(int from, int until) { int lo = from < 0 ? 0 : from, hi = until > length ? length : until; return lo >= hi ? Empty.INSTANCE : drop(lo).take(hi - lo); }
        |    @Override public FBase reverse() { return new ReverseNode(this); }
        |    @Override public FBase init() { return take(length - 1); }
        |    @Override public int hashCode() { return Hashing.hashOf(this); }
@@ -1127,9 +1194,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    public final $jt elem;
        |    public ${name}Updated(FBase base, int index, $jt elem) { super(base.length); this.base = base; this.index = index; this.elem = elem; }
        |    @Override public Object applyBoxed(int i) { return i == index ? $boxedElem : base.applyBoxed(i); }
-       |    @Override public FBase take(int n) { int m = n < 0 ? 0 : (n > length ? length : n); return m <= index ? base.take(m) : new ${name}Updated(base.take(m), index, elem); }
-       |    @Override public FBase drop(int n) { int d = n < 0 ? 0 : (n > length ? length : n); return d > index ? base.drop(d) : new ${name}Updated(base.drop(d), index - d, elem); }
-       |    @Override public FBase slice(int from, int until) { int lo = from < 0 ? 0 : from, hi = until > length ? length : until; return lo >= hi ? base.take(0) : drop(lo).take(hi - lo); }
+       |    @Override public FBase take(int n) { int m = n < 0 ? 0 : (n > length ? length : n); if (m <= index) return base.take(m); if (m == 1) return new ${name}One(elem); return new ${name}Updated(base.take(m), index, elem); }
+       |    @Override public FBase drop(int n) { int d = n < 0 ? 0 : (n > length ? length : n); int m = length - d; if (m == 0) return Empty.INSTANCE; if (d > index) return base.drop(d); if (m == 1) return new ${name}One(elem); return new ${name}Updated(base.drop(d), index - d, elem); }
+       |    @Override public FBase slice(int from, int until) { int lo = from < 0 ? 0 : from, hi = until > length ? length : until; return lo >= hi ? Empty.INSTANCE : drop(lo).take(hi - lo); }
        |    @Override public FBase reverse() { return new ReverseNode(this); }
        |    @Override public FBase init() { return take(length - 1); }
        |    @Override public int hashCode() { return Hashing.hashOf(this); }
@@ -1233,13 +1300,15 @@ object GenCores extends BleepCodegenScript("GenCores") {
         s"""       |        if (node instanceof ${name}Updated u) { int start = pos; pos = fill(u.base, rev, hs, pos); hs[rev ? (start + u.length - 1 - u.index) : (start + u.index)] = $eh2; return pos; }"""
       }
       .mkString("\n")
-    val oneFill = padKinds
+    val oneFill = oneKinds
       .map { case (name, _, _) =>
         val eh2 = name match
-          case "Long"   => "scala.runtime.Statics.longHash(o.elem)"
-          case "Double" => "scala.runtime.Statics.doubleHash(o.elem)"
-          case "Ref"    => "scala.runtime.Statics.anyHash(o.elem)"
-          case _        => "o.elem"
+          case "Long"    => "scala.runtime.Statics.longHash(o.elem)"
+          case "Double"  => "scala.runtime.Statics.doubleHash(o.elem)"
+          case "Float"   => "scala.runtime.Statics.floatHash(o.elem)"
+          case "Boolean" => "(o.elem ? 1231 : 1237)"
+          case "Ref"     => "scala.runtime.Statics.anyHash(o.elem)"
+          case _         => "o.elem"
         s"""       |        if (node instanceof ${name}One o) { hs[pos] = $eh2; return pos + 1; }"""
       }
       .mkString("\n")
@@ -1303,6 +1372,7 @@ $oneFill
 
   private def primAppend(p: Prim): String = {
     val cls = s"${p.name}Append"
+    val oneElem = s"new ${p.name}One(elem)"
     s"""package farray;
        |
        |// GENERATED by GenCores — do not edit. Unary append node (base + one ${p.jt}, base shared).
@@ -1314,12 +1384,13 @@ $oneFill
        |    @Override public FBase take(int n) { return n >= length ? this : base.take(n); }
        |    @Override public FBase drop(int n) {
        |        if (n <= 0) return this;
-       |        if (n >= length) return base.take(0);
+       |        if (n >= length) return Empty.INSTANCE;
+       |        if (n == length - 1) return $oneElem;
        |        return new $cls(base.drop(n), elem);
        |    }
        |    @Override public FBase slice(int from, int until) {
        |        int lo = from < 0 ? 0 : from; int hi = until > length ? length : until;
-       |        if (lo >= hi) return base.take(0);
+       |        if (lo >= hi) return Empty.INSTANCE;
        |        return drop(lo).take(hi - lo);
        |    }
        |    @Override public FBase reverse() { return new ${p.name}Prepend(elem, base.reverse()); }
@@ -1333,6 +1404,7 @@ $oneFill
 
   private def primPrepend(p: Prim): String = {
     val cls = s"${p.name}Prepend"
+    val oneElem = s"new ${p.name}One(elem)"
     s"""package farray;
        |
        |// GENERATED by GenCores — do not edit. Unary prepend node (one ${p.jt} + base, base shared).
@@ -1342,18 +1414,19 @@ $oneFill
        |    public $cls(${p.jt} elem, FBase base) { super(base.length + 1); this.elem = elem; this.base = base; }
        |    @Override public Object applyBoxed(int i) { return i == 0 ? ${p.boxed}.valueOf(elem) : base.applyBoxed(i - 1); }
        |    @Override public FBase take(int n) {
-       |        if (n <= 0) return base.take(0);
+       |        if (n <= 0) return Empty.INSTANCE;
        |        if (n >= length) return this;
+       |        if (n == 1) return $oneElem;
        |        return new $cls(elem, base.take(n - 1));
        |    }
        |    @Override public FBase drop(int n) {
        |        if (n <= 0) return this;
-       |        if (n >= length) return base.take(0);
+       |        if (n >= length) return Empty.INSTANCE;
        |        return n == 1 ? base : base.drop(n - 1);
        |    }
        |    @Override public FBase slice(int from, int until) {
        |        int lo = from < 0 ? 0 : from; int hi = until > length ? length : until;
-       |        if (lo >= hi) return base.take(0);
+       |        if (lo >= hi) return Empty.INSTANCE;
        |        return drop(lo).take(hi - lo);
        |    }
        |    @Override public FBase reverse() { return new ${p.name}Append(base.reverse(), elem); }
@@ -1374,9 +1447,9 @@ $oneFill
     val ctorBody = if isAppend then "this.base = base; this.elem = elem;" else "this.elem = elem; this.base = base;"
     val applyB = if isAppend then "i < base.length ? base.applyBoxed(i) : elem" else "i == 0 ? elem : base.applyBoxed(i - 1)"
     val take = if isAppend then "return n >= length ? this : base.take(n);"
-    else "if (n <= 0) return base.take(0); if (n >= length) return this; return new RefPrepend(elem, base.take(n - 1));"
-    val drop = if isAppend then "if (n <= 0) return this; if (n >= length) return base.take(0); return new RefAppend(base.drop(n), elem);"
-    else "if (n <= 0) return this; if (n >= length) return base.take(0); return n == 1 ? base : base.drop(n - 1);"
+    else "if (n <= 0) return Empty.INSTANCE; if (n >= length) return this; if (n == 1) return new RefOne(elem); return new RefPrepend(elem, base.take(n - 1));"
+    val drop = if isAppend then "if (n <= 0) return this; if (n >= length) return Empty.INSTANCE; if (n == length - 1) return new RefOne(elem); return new RefAppend(base.drop(n), elem);"
+    else "if (n <= 0) return this; if (n >= length) return Empty.INSTANCE; return n == 1 ? base : base.drop(n - 1);"
     val reverse = if isAppend then "return new RefPrepend(elem, base.reverse());" else "return new RefAppend(base.reverse(), elem);"
     val init = if isAppend then "return base;" else "return take(length - 1);"
     s"""package farray;
@@ -1390,7 +1463,7 @@ $oneFill
        |    @Override public FBase drop(int n) { $drop }
        |    @Override public FBase slice(int from, int until) {
        |        int lo = from < 0 ? 0 : from; int hi = until > length ? length : until;
-       |        if (lo >= hi) return base.take(0);
+       |        if (lo >= hi) return Empty.INSTANCE;
        |        return drop(lo).take(hi - lo);
        |    }
        |    @Override public FBase reverse() { $reverse }

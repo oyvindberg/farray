@@ -448,6 +448,119 @@ class FListTest:
     )
   }
 
+  // ---- size-0/1 canonicalization invariant: every length-0 FArray is the Empty singleton, every length-1
+  // FArray is a per-kind `*One` node. No structural node (Concat/Append/Prepend/SliceNode/ReverseNode/Pad/
+  // Updated/RangeNode/*Arr) may have length 0 or 1. Tests are in package farray, so they cast to FBase.
+  private def asBase[A](fa: FArray[A]): FBase = fa.asInstanceOf[FBase]
+  private def kindName[A](fa: FArray[A]): String = asBase(fa).getClass.getSimpleName
+  private def isEmpty[A](fa: FArray[A]): Boolean = asBase(fa) eq Empty.INSTANCE
+  private def isOne[A](fa: FArray[A]): Boolean = kindName(fa).endsWith("One")
+  // a canonical FArray: 0 -> Empty, 1 -> *One, >=2 -> never Empty/One; AND no structural node is len 0/1.
+  private def assertCanonical[A](fa: FArray[A], ctx: String): Unit =
+    val n = asBase(fa).length
+    if n == 0 then assert(isEmpty(fa), s"$ctx: len 0 but ${kindName(fa)} != Empty")
+    else if n == 1 then assert(isOne(fa), s"$ctx: len 1 but ${kindName(fa)} not a *One")
+    else
+      assert(!isEmpty(fa) && !isOne(fa), s"$ctx: len $n but ${kindName(fa)} is Empty/One")
+
+  @Test def test_invariant_canonical_singletons(): Unit =
+    // every constructor's size-0/1 output is exactly Empty / *One
+    assert(isOne(FArray(1)), kindName(FArray(1)))
+    assert(isOne(FArray("x")))
+    assert(isOne(FArray(1L)) && isOne(FArray(1.0)))
+    assert(kindName(FArray(1)) == "IntOne" && kindName(FArray("x")) == "RefOne")
+    assert(kindName(FArray(1L)) == "LongOne" && kindName(FArray(1.0)) == "DoubleOne")
+    assert(isEmpty(FArray.empty[Int]) && isEmpty(FArray.empty[String]))
+    // ++ that collapses to length 1
+    assert(isOne(FArray(1) ++ FArray.empty[Int]), kindName(FArray(1) ++ FArray.empty[Int]))
+    assert(isOne(FArray.empty[Int] ++ FArray(1)))
+    assert(isEmpty(FArray.empty[Int] ++ FArray.empty[Int]))
+    // width-1 slice / take / drop of a multi-element leaf -> *One (not a SliceNode)
+    val xs = FArray(1, 2, 3, 4, 5)
+    assert(isOne(xs.take(1)) && kindName(xs.take(1)) == "IntOne")
+    assert(isOne(xs.drop(4)) && kindName(xs.drop(4)) == "IntOne")
+    assert(isOne(xs.slice(2, 3)) && kindName(xs.slice(2, 3)) == "IntOne")
+    assert(isEmpty(xs.take(0)) && isEmpty(xs.drop(5)) && isEmpty(xs.slice(2, 2)))
+    // range
+    assert(isOne(FArray.range(5, 6)) && kindName(FArray.range(5, 6)) == "IntOne")
+    assert(isEmpty(FArray.range(5, 5)))
+    assert(!isOne(FArray.range(5, 7)) && !isEmpty(FArray.range(5, 7)))
+    // tabulate / fill / fromArray / fromIterable at 0 and 1
+    assert(isOne(FArray.tabulate(1)(_ + 10)) && kindName(FArray.tabulate(1)(identity)) == "IntOne")
+    assert(isEmpty(FArray.tabulate(0)(identity)))
+    assert(isOne(FArray.fill(1)("a")) && isEmpty(FArray.fill(0)("a")))
+    assert(isOne(FArray.fromArray(Array(7))) && isEmpty(FArray.fromArray(Array.empty[Int])))
+    assert(isOne(FArray.fromIterable(List(7))) && isEmpty(FArray.fromIterable(Nil)))
+    // reverse of a One is a One; reverse of Empty is Empty
+    assert(isOne(FArray(9).reverse) && isEmpty(FArray.empty[Int].reverse))
+    // updated / padTo / :+ / +: that land at length 1
+    assert(isOne(FArray(9).updated(0, 5)) && kindName(FArray(9).updated(0, 5)) == "IntOne")
+    assert(isOne(FArray.empty[Int].padTo(1, 3)) && kindName(FArray.empty[Int].padTo(1, 3)) == "IntOne")
+    assert(isOne(FArray.empty[Int] :+ 4) && isOne(3 +: FArray.empty[Int]))
+    // init / last collapses
+    assert(isOne(FArray(1, 2).init) && kindName(FArray(1, 2).init) == "IntOne")
+
+  @Test def test_invariant_no_small_structural_nodes(): Unit =
+    // Exhaustively build via the structural ops at every small size and assert canonical shapes.
+    val rng = new java.util.Random(0xca7L)
+    def clamp(k: Int, n: Int): Int = if k < 0 then 0 else if k > n then n else k
+    def gen(depth: Int): FArray[Int] =
+      if depth <= 0 then FArray((0 until rng.nextInt(4)).map(_ => rng.nextInt(9))*)
+      else
+        val a = gen(depth - 1)
+        rng.nextInt(11) match
+          case 0 => a ++ gen(depth - 1)
+          case 1 => a :+ rng.nextInt(9)
+          case 2 => rng.nextInt(9) +: a
+          case 3 => a.reverse
+          case 4 => a.drop(clamp(rng.nextInt(a.length + 2), a.length))
+          case 5 => a.take(clamp(rng.nextInt(a.length + 2), a.length))
+          case 6 =>
+            val lo = clamp(rng.nextInt(a.length + 2), a.length); val hi = clamp(lo + rng.nextInt(a.length + 2), a.length)
+            a.slice(lo, hi)
+          case 7 => a.padTo(a.length + rng.nextInt(3) - 1, rng.nextInt(9))
+          case 8 => if a.isEmpty then a else a.updated(rng.nextInt(a.length), rng.nextInt(9))
+          case 9 => a.init
+          case _ => a.filter(_ % 2 == 0)
+    var t = 0
+    while t < 20000 do { val fa = gen(rng.nextInt(6)); assertCanonical(fa, s"gen#$t ${fa.toList}"); t += 1 }
+
+  // size-0/1 parity vs List for a representative op set (scan/reduce/fold/aggregate/slice/map/filter/iterator/mkString)
+  @Test def test_size01_parity_vs_list(): Unit =
+    val cases: Seq[(FArray[Int], List[Int])] = Seq(
+      (FArray.empty[Int], Nil),
+      (FArray(7), List(7)),
+      ((4 +: FArray.empty[Int]), List(4)),       // One via prepend
+      (FArray(1, 2, 3).take(1), List(1)),        // One via take
+      (FArray.range(9, 10), List(9))             // One via range
+    )
+    for (fa, la) <- cases do
+      val c = s"${fa.toList} vs $la"
+      assert(fa.toList == la, c)
+      assert(fa.iterator.toList == la, s"iterator $c")
+      assert(fa.reverseIterator.toList == la.reverse, s"reviter $c")
+      assert(fa.scanLeft(0)(_ + _).toList == la.scanLeft(0)(_ + _), s"scanLeft $c -> ${fa.scanLeft(0)(_ + _).toList}")
+      assert(fa.scan(0)(_ + _).toList == la.scan(0)(_ + _), s"scan $c")
+      assert(fa.scanRight(0)(_ + _).toList == la.scanRight(0)(_ + _), s"scanRight $c")
+      assert(fa.foldLeft(100)(_ + _) == la.foldLeft(100)(_ + _), s"foldLeft $c")
+      assert(fa.foldRight(100)(_ + _) == la.foldRight(100)(_ + _), s"foldRight $c")
+      assert(fa.reduceOption(_ + _) == la.reduceOption(_ + _), s"reduceOption $c")
+      assert(fa.sum == la.sum && fa.product == la.product, s"sum/product $c")
+      assert(fa.map(_ + 1).toList == la.map(_ + 1), s"map $c")
+      assert(fa.filter(_ > 0).toList == la.filter(_ > 0), s"filter $c")
+      assert(fa.slice(0, 1).toList == la.slice(0, 1), s"slice $c")
+      assert(fa.mkString("[", ",", "]") == la.mkString("[", ",", "]"), s"mkString $c")
+      assert(fa.count(_ > 0) == la.count(_ > 0), s"count $c")
+      assert(fa.exists(_ > 5) == la.exists(_ > 5) && fa.forall(_ > 0) == la.forall(_ > 0), s"exists/forall $c")
+      // scan results themselves must be canonical
+      assertCanonical(fa.scanLeft(0)(_ + _), s"scanLeft-result $c")
+      assertCanonical(fa.map(_ + 1), s"map-result $c")
+      assertCanonical(fa.filter(_ > 0), s"filter-result $c")
+    // empty fold/scan/sum semantics match List exactly (covered above): foldLeft/foldRight = z, scanLeft = [z],
+    // sum = 0, reduceOption = None. (reduce/max-of-empty throwing is a separate, pre-existing applyAt divergence
+    // not introduced here — applyAt on Empty returns the kind default rather than throwing; left untouched.)
+    assert(FArray.empty[Int].reduceOption(_ + _).isEmpty && Nil.reduceOption[Int](_ + _).isEmpty)
+
   inline def assertEquals[Res1, Res2, To](msg: String, res1: Res1, res2: Res2)(using
       Res1: CompareAs[Res1, To],
       Res2: CompareAs[Res2, To]

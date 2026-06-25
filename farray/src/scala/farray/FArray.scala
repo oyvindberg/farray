@@ -60,7 +60,9 @@ object FArray:
         require((diff > 0) == (step > 0), "range start/end direction does not match step sign")
         val c = diff / step
         (if diff % step != 0 then c + 1 else c).toInt
-    new RangeNode(start, step, count)
+    if count == 0 then Empty.INSTANCE
+    else if count == 1 then new IntOne(start)
+    else new RangeNode(start, step, count)
 
   // ---- factory methods mirroring the List companion (IterableFactory) ----
   /** build from any IterableOnce (Iterator / View / Iterable), like List.from. */
@@ -268,7 +270,8 @@ object FArray:
           val cc = c
           outer(c) = (FArray.tabulate[B](n)(r => FArrayOps.applyAtImpl[B](inners(r).asInstanceOf[FBase], cc)): FArray[B]).asInstanceOf[Object]
           c += 1
-        new RefArr(outer, cols).asInstanceOf[FArray[FArray[B]]]
+        val res: FBase = if cols == 0 then Empty.INSTANCE else if cols == 1 then new RefOne(outer(0)) else new RefArr(outer, cols)
+        res.asInstanceOf[FArray[FArray[B]]]
     inline def mapConserve(inline f: A => A): FArray[A] = FArrayOps.mapConserveImpl[A](xs)(f)
 
     // ---- composed from specialised primitives: no boxed storage, inline lambdas thread through ----
