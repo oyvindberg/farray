@@ -184,6 +184,116 @@ Identical mechanism to FArray — **reuse `Repr[A]` verbatim** (it already encod
 
 The hash function for primitive leaves is an unboxed avalanche mix (e.g. fibonacci/`murmur`-finalizer on the raw `int`/`long`/`double`-bits), computed inline — never `Integer.hashCode` boxing. The set's *structural* `hashCode` is order-independent (sum/xor of per-element unboxed element-hashes, matching `scala.collection.Set.hashCode`'s `MurmurHash3.unorderedHash` with seed `"Set".hashCode`) — analogous to FArray's `Hashing` but commutative, so two FSets with the same elements in different leaf shapes hash equal.
 
+### 1.6 The proven FArray RUNTIME + CODE-STYLE — adopt verbatim
+
+FArray's traversal + codegen rewrite (`docs/hybrid-traversal-design.md`, and the *measured* findings in the project memory) has now settled, end-to-end, **how** the fast unboxed code is structured. These are not aspirations — each is validated in the generated FArray code (`.bleep/generated-sources/farray/farray.GenCores/farray/{FArrayOps.scala,Traversers.java}`) against the benchmark scorecard. **FSet adopts this architecture wholesale.** This section is the contract `GenSets` must honour; where a set genuinely differs from a sequence, the difference is called out explicitly in §1.6.9.
+
+#### 1.6.1 Opaque type over a sealed JAVA core (zero wrapper allocation)
+
+Exactly like `FArray[+A] <: AnyRef = FBase`, every FSet type is an `opaque type … <: AnyRef = SBase` aliasing the **sealed Java** `SBase` core hierarchy — `FSetView[A]`/`FSet[A]`/`FSortedSet[A]` (§1.4) all alias the *same* `SBase`, so there is **no wrapper object** between the user type and the runtime node (an `FSet` *is* its core node at runtime). The core is **Java** (`sealed` + `permits`, leaves `final`) precisely as `FBase` is: the JVM-level `instanceof`-on-subtype dispatch is what the JIT collapses for free (see §1.6.6). The no-import binding (extensions/givens resolving through each opaque type's implicit scope) is the same mechanism FArray proved on Scala 3.
+
+#### 1.6.2 Per-element-kind specialization, no boxing, `inline`-lambda surface
+
+`Int`/`Long`/`Double` elements are stored **unboxed** in primitive arrays (`int[]`/`long[]`/`double[]`); `Ref` is a typed `Object[]` (a `String[]`/etc. via `RefRepr.ct`, so reads are a bare `aaload`, no per-element checkcast — FArray's "typed-ref" trick). Kind is resolved **at compile time** by `summonFrom` on `${K}Repr[A]` (reuse FArray's `Repr` verbatim), compiling to a single static path with **zero runtime type test**. Every lambda-taking op (`foreach`/`filter`/`map`/`exists`/`forall`/`find`/`count`/…) is an `inline def` with an **`inline` function parameter**, so the user's lambda beta-reduces into the primitive loop and the primitive **never boxes** — the same machinery as FArray's `map`/`foldLeft`. **Specialize-or-fail:** an abstract `A` with no `Repr` is a *compile error*, never a silent boxed fallback.
+
+#### 1.6.3 The HYBRID traversal: inline the hot shapes, share the cold tree walk
+
+This is the load-bearing structural decision, transferred directly from FArray. For every per-element op:
+
+- the **surface `inline def`** pattern-matches the trivial/leaf shapes — `Empty` / `${K}One` / a top-level **materialized leaf** (`${K}Sorted` / `${K}Hash` / `IntDense`) — and handles them **inline with the user's inline lambda** (the hot path); and
+- only a genuine **structural / lazy node** (`Union`/`Inter`/`Diff`/`Xor` — the set analogue of FArray's `Concat`/`Append`/…) **realizes** the lambda into a **SAM function type** and makes **ONE CALL** to a shared, **hand-generated-Java** traverser.
+
+FArray's lesson is that this hybrid call site is small (~65 bytecode ops) and wins, whereas inlining the *whole* walk at every call site is ~642 ops and craters.
+
+#### 1.6.4 The MEASURED CORRECTION — do NOT inline the leaf loop per call site
+
+The single hardest-won finding, and the easiest to get wrong: **do not inline the leaf fast-path loop at every call site.** It cliffs — 8 maps over large arrays in one method measured **0.29× vs the raw-array baseline** @100k (normal code, not contrived), because the per-site bytecode bloat overflows the JIT `HugeMethodLimit` (`DontCompileHugeMethods`, 8000 bytecodes) → interpreted → crater.
+
+The fix (validated in FArray's generated code) is a **SMALL SHARED NON-INLINE leaf method** — the leaf loop lives in **ONE** place in `object FSetOps`, taking the realized SAM. It peels `Empty`/`${K}One`/top-leaf with the unboxed loop and, for a genuine node, makes ONE CALL to the Java traverser. The JIT then **inlines it for a lone monomorphic site** (a single `map`/`filter` stays fast) **AND shares it across many sites** (no per-call bloat → no cliff) — exactly how `Array.map` behaves. FArray measured the shared form at **1.01–1.07× the raw-array baseline everywhere** (ties/beats), and megamorphic Int `map` at **2.67×@1k / 6.73×@100k over iarray with unboxed `B/op`**, while the inlined form was erratic (0.29×–1.06×). The set's per-element ops (`foreach`/`filter`/`map`/`forall`/…) follow this exactly: a small shared `${op}Leaf${K}…` method per `(kind[, output-kind], direction)`, the inline surface only dispatches the kind, realizes the SAM, and CALLS it.
+
+Concrete FArray shape to mirror (a `reduceLeaf`-style method; for a set, the `case` shapes become `Empty` / `${K}One` / the materialized leaf, and `case _` calls the membership-distributing or merge traverser):
+
+```scala
+// SHARED (non-inline) leaf method, ONE per (kind, …); compiled once, JIT-inlinable AND shareable.
+def fooLeafIntInt(xs: SBase, …, f: Traversers.IntToIntFn): … = xs match
+  case e: Empty   => …
+  case o: IntOne  => …                 // one f.apply
+  case leaf: IntSorted =>              // (FArray: IntArr) the materialized leaf
+    val a = leaf.arr
+    val n = a.length                   // a.length, NOT leaf.size — see §1.6.5
+    var i = 0
+    while i < n do
+      … f.apply(a(i)) …                // unboxed, vectorizes, == the raw-array baseline
+      i += 1
+    …
+  case _ => Traversers.fooFwdIntInt(xs, …, f)   // ONE call — the cold tree walk
+```
+
+#### 1.6.5 The `a.length` loop-bound discipline (a JIT fact, not a style nit)
+
+Leaf loops bound on `val a = leaf.arr; val n = a.length; while i < n …`, **never** on `leaf.size`/`leaf.length`. The JIT can prove `n == a.length` for the array it is indexing (a JVM fact), so it **drops the per-element bounds check on `a(i)` and vectorizes**. `leaf.size` is *our* invariant (the leaf's logical cardinality equals its array length) — opaque to HotSpot — so binding the loop on it leaks a bounds check that blocks vectorization. This is the difference between tying and losing to the raw-array baseline. Every FSet leaf loop (membership scan, merge, `map`/`filter` build, `foreach`) obeys it.
+
+#### 1.6.6 SAM function types specialized on the accumulator / output kind
+
+The realized per-element function is a **SAM** (single-abstract-method Java interface), and it is **specialized on the accumulator/output kind** so the megamorphic virtual call **stays unboxed**:
+
+- primitive accumulator/output → an **unboxed** `${I}To${I}Fold` / `${I}To${O}Fn` / `${I}Pred` — `acc`/`out` never leave a JVM register (FArray verified the SAM body is `iload; iload; iadd; ireturn`, zero `Box`);
+- `Ref` accumulator/output → a **generic** `${I}ToRefFold[Z]` / `${I}ToRefFn[B]` with the ref end a **type parameter** (not `Object`), so the realized lambda needs no casts.
+
+FArray's measured 0.38× fold crater was a *wrong-specialization* bug (the generic `…ToRefFold` realized for a primitive `Z`, re-boxing per element) — **not** an inherent SAM cost. The codegen must `summonFrom` on the accumulator/output kind to pick the unboxed SAM for a primitive end. For FSet the SAM families are the set-relevant subset: a **predicate** SAM (`${I}Pred`) for `filter`/`filterNot`/`forall`/`exists`/`find`/`subsetOf`'s oracle; a **transform** SAM (`${I}To${O}Fn`, the read-kind × write-kind matrix) for `map`/`flatMap`; a **consumer** SAM (`${I}Consumer`) for `foreach`; and a **fold** SAM only where a set reduces to a scalar (`size`-materialize, structural `hashCode` accumulation).
+
+#### 1.6.7 The Java traversers + the iterator are ONE walk definition
+
+The cold tree walk over the `SBase` nodes is **hand-generated Java**, emitted per `(shape, kind-perm, direction)`. The structural rules FArray settled transfer to the set's algebra nodes:
+
+- **everything except the direction flip uses an explicit, lazily-allocated stack, never the JVM stack** — a `Union`/`Inter`/`Diff`/`Xor` defers one operand onto a local `SBase[]` stack (allocated `null` until the first defer; a bare leaf never touches it — the hottest path stays branch-light) and descends the other. Deep algebra chains stay iterative (no JVM-stack overflow);
+- the **direction flip is the only JVM recursion** (FArray flips at `ReverseNode`; a set has no reverse, but the *same* one-recursion-point discipline applies to any node that needs the opposite-direction driver, if FSet introduces one);
+- the **iterator is the pull realization of the *same* walk** — generated from one abstract walk definition that emits *both* the push traversers *and* the pull `iterator`. The iterator **reifies the recursion as explicit frame state** (`(node, direction, position/window)`); it carries *more state*, it is not a weaker walk. The primitive iterator is generated **specialized** (`next${K}(): Int`, no boxing), wrapped to `Iterator[A]` only at the surface boundary. Push and pull share the node-arm logic verbatim so iteration order and `foreach` order can never drift.
+
+For a **set**, the per-element walk has one extra obligation a sequence lacks: over a lazy `Union(l, r)` a naive walk yields **duplicates**, so any whole-set/iteration op must walk the **materialized** leaf, not the lazy tree (§1.3 / §3.2). I.e. the push/pull traversers run over an `SMaterialized` node; the lazy-node arms (`Union`/…) exist in the traverser only for the membership-distributing reads (`contains`/`exists`/`forall`), which short-circuit and tolerate revisiting.
+
+#### 1.6.8 Codegen mechanics + the two gotchas
+
+- `GenSets` is a `BleepCodegenScript` (sibling of `GenCores`), wired into `bleep.yaml` as a `generate` step on the `fset`/`farray` project, emitting (a) the sealed Java `SBase` hierarchy + (b) `FSetOps` (the per-kind-specialized ops) + (c) the Java `Traversers`/SAM interfaces. **Edit the generator, never the generated sources.**
+- **Emit-quality is a hard requirement.** Use an `Emit` helper (an indent level + `line(s)` / `open`/`close`/`scope`, exactly like GenCores' `final class Emit`): **real indentation, one statement per line, never `; `-joined one-liners.** Generated Java and Scala must read like hand-written code. FArray's Phase-0 only needed a codegen-*quality* fix here, not a logic fix.
+- **The `NoClassDefFoundError` gotcha (will recur on every shape).** Calling a Java static (`Traversers.foo*`) **directly from an `inline def` body** makes Scala 3 emit a synthetic `Traversers$` module reference that throws `NoClassDefFoundError` when the inline body splices into another compilation unit (the tests). **Route every Java-static call through a NON-inline Scala forwarder** in `object FSetOps` — which the shared leaf method of §1.6.4 already is (it is non-inline and lives in `FSetOps`' own class, so it references the `Traversers.*` statics directly with no module ref). The realized SAM is still allocated at the call site.
+- **Adding a primitive = one row** in `GenSets.prims`; **adding an op = one row** in the op table (`op → (shape, fn-type, inline Empty/One/leaf body, tree traverser, result map)`), never a new traverser — the same table-driven structure as the FArray rewrite.
+- **Method-size discipline:** inline only the thin kind-dispatch + the user-lambda realization; keep every merge / sort / freeze / `materialize` / tree-walk as a **non-inline per-kind `FSetOps` helper**, compiled once and shared by all three companions (`FSetView`/`FSet`/`FSortedSet`). This is the direct answer to the §5 codegen-size risk.
+
+#### 1.6.9 What transfers VERBATIM vs what is SET-SPECIFIC
+
+**Transfers verbatim from FArray (do not redesign — copy the proven pattern):**
+
+| Pattern | Source |
+|---|---|
+| opaque type over a sealed Java core, zero wrapper | §1.6.1 |
+| `Int/Long/Double/Ref` kind specialization via `summonFrom` on `Repr[A]`, no boxing, typed-ref `Object[]` | §1.6.2 |
+| `inline def` + `inline` lambda param surface | §1.6.2 |
+| hybrid: inline `Empty`/`One`/leaf, realize a SAM + ONE call for nodes | §1.6.3 |
+| **small shared non-inline leaf method** (NOT inlined per site) | §1.6.4 |
+| `a.length` loop-bound discipline | §1.6.5 |
+| SAM specialized on acc/output kind (prim unboxed, Ref a tparam) | §1.6.6 |
+| ONE walk def → push traversers AND specialized pull iterator; explicit lazy stack | §1.6.7 |
+| `Emit` helper, op-table-driven codegen, non-inline-forwarder gotcha, method-size discipline | §1.6.8 |
+| the measure-don't-assume ethos + checked-in W/T/L scorecard | §1.6.10 |
+
+**Set-specific — must be designed/benchmarked fresh, NOT borrowed:**
+
+- **No positional index.** A set has no element order/position, so FArray's index-bearing ops (`applyAt`/`apply(i)`/`indexWhere`/`indexOf`/`lastIndexWhere`/`segmentLength`/`prefixLength`/`scanLeft`/`scanRight`/`zipWithIndex`) **do not exist** on FSet. Membership is **hash/order-based** (`contains`), not positional. The `ShortCircuit` shape survives but its *result* is a boolean/element/`Option`, never an index (`exists`/`forall`/`find` only — no `indexOf`).
+- **Dedup on insert / build.** FArray's leaves hold every element as given; FSet leaves are **deduplicated** (sort+unique-compact for `Sorted`, frozen probe for `Hash`, bit-set for `Dense`). `map`/`flatMap` must **dedup as they build** (the build SAM feeds a transient unboxed structure, §3.1) — a sequence `map` never does. This is the one place the shared-leaf build loop differs: it cannot blindly `out(i) = f.apply(a(i))`; it must insert-if-absent into the chosen transient.
+- **Union / intersect / diff / xor as the structural O(1)-or-lazy ops.** These are the FArray analogue of `++`/`take`/`drop`/`reverse` — but the mapping is `Concat → Union`, `Append → Union(_, One)`, and there is **no** `take`/`drop`/`slice`/`reverse`/`updated`/`pad` (a `SliceNode` window survives *only* for `FSortedSet` range ops over a `Sorted` leaf). The lazy nodes carry a **dedup obligation** forward (§1.3) that a sequence's `Concat` does not — so iteration/equality/`map` **force materialization** (the merge) once, then **memoize** the leaf on the node.
+- **The leaf/node hierarchy is set storage, not flat sequence leaves.** FArray's leaves are a single flat `${K}Arr`. FSet's materialized leaves are the **membership-structure** shapes — `${K}Sorted` (sorted prim array, binary-search `contains`), `${K}Hash` (frozen open-addressing prim table, O(1) `contains`), `IntDense` (Roaring-style bitmap) — chosen by a size/density threshold (§1.1). This is **not** a CHAMP/`Object[]`-node tree (that boxes and pointer-chases — the exact axes the FArray architecture optimizes away); it is unboxed flat membership storage, the set-specific design problem the rest of this doc (§1.1–§1.3, §3) solves. The kind specialization, opaque type, shared-leaf unboxed traversal, codegen mechanics, and the no-boxing + `a.length` discipline are inherited unchanged on *top* of this storage.
+
+#### 1.6.10 The measure-don't-assume ethos + the checked-in scorecard
+
+FArray's history is a string of "obvious" optimizations that were committed then **reverted once measurement disproved the premise** — the real bottleneck is rarely what it looks like. Three settled examples FSet should not re-derive:
+
+- **Loop shape, not dispatch, governs scan throughput.** The fast short-circuit form is the *empty-body, predicate-in-condition* loop (`while i < n && !p(a(i)) do i += 1`), inspected once after; a mid-loop `stop`/`res` write creates a loop-carried dependency that blocks vectorization (~1.45× slower). Virtual dispatch and the consumer object were *empirically ruled out* as the cause. FSet's `contains`-leaf scan and `forall`/`exists` use this shape.
+- **Int-tag `tableswitch` dispatch is NOT worth it** — 17–20% *slower* for monomorphic reads; HotSpot folds the sealed `instanceof` match depth-independently (the depth-11 case measured *fastest*). Keep `SBase` a plain sealed `instanceof`-dispatched hierarchy; do not add a node tag.
+- **The deterministic `gc.alloc.rate.norm` (`B/op`) is the trustworthy signal**, not throughput @100k (GC-dominated, noisy). The boxing tell is `B/op` 2–3× the unboxed baseline.
+
+The benchmark report **is the scorecard and is checked in** (`docs/bench-results.json` + a rendered `index.html`, W/T/L vs every competitor per op × size: ≥1.05× win, 0.95–1.05× tie, <0.95× loss). FSet gets its own 4-way suite (`immutable.HashSet` / fastutil / `j.u.HashSet` / FSet) and treats the report like code: **regenerate and commit it alongside the change that moved the numbers.** Confirm any surprising number with more forks/iters before acting on it.
+
 ---
 
 ## 2. Core API
@@ -302,7 +412,7 @@ Reasoning from FArray's measured results (FArray ties IArray = the unboxed-array
 8. **Map sibling (`FMap`)** — the same core generalizes to a key+value set (sorted parallel arrays / open-addressing key+value). Out of scope here, but the design should not foreclose it (keep `SBase` key-centric so `FMap` can reuse the key machinery).
 
 ### Risks
-- **Codegen size.** `FSetOps` adds another NxN-ish matrix (`map` write-kind × read-kind, plus per-kind merge ops). FArray already hit JIT method-size limits → moved non-inline helpers (sorts, dfs, merges) out of the inline path. Apply the same discipline: inline only the thin dispatch + the user-lambda loop; keep merges/sort/freeze as non-inline per-kind `FSetOps` methods compiled once.
+- **Codegen size + the inline-leaf cliff (see §1.6.4).** `FSetOps` adds another NxN-ish matrix (`map` write-kind × read-kind, plus per-kind merge ops). FArray already hit JIT method-size limits — and *measured* the failure mode: inlining the leaf loop per call site craters to **0.29× of the raw-array baseline** at 8 maps @100k (`HugeMethodLimit` overflow → interpreted). Apply the proven fix: inline only the thin kind-dispatch + the SAM realization; put **the leaf loop in ONE small shared NON-inline `FSetOps` method** (which doubles as the `Traversers.*` forwarder, dodging the §1.6.8 `NoClassDefFoundError` gotcha) and every merge/sort/freeze/`materialize` as non-inline helpers compiled once. This is the whole point of §1.6.
 - **Three leaf shapes × ops** is more surface than FArray's leaf/tree split. Mitigate by funnelling all bulk ops through "membership oracle + ordered stream" so most cross-shape combinations reuse one code path.
 - **Build cost regressions** if dedup picks the wrong structure at the boundary — guard with the threshold sweep and a `contains`-cost model.
 - **`Repr` reuse** assumes FArray's `Repr.scala` is importable from the set package; it is generated into `package farray`, so `GenSets` should emit into the same package (or `FSetOps` imports it). Confirm the opaque-scope/no-import resolution still holds for a second opaque type in the same package.
@@ -310,10 +420,10 @@ Reasoning from FArray's measured results (FArray ties IArray = the unboxed-array
 
 ### First-implementation milestone (concrete)
 **M1 — Sorted leaves + lazy algebra tree for Int + Ref, proving the thesis end to end:**
-1. `GenSets` (sibling of `GenCores`) emits `SBase.java` + `Empty` + `IntOne`/`RefOne` + `IntSorted`/`RefSorted` (sorted `int[]` / typed `Object[]`) + the **lazy `Union`/`Inter`/`Diff` nodes** (kind-agnostic, 2-field, O(1) construct), reusing FArray's `Repr`.
-2. `opaque type FSet[A] = SBase` + companion with no-import inline extensions: `empty`, `apply`, `fromArray`, `fromFArray`, `contains` (the OR/AND/AND-NOT tree-walk), `size`/`isEmpty`, `+`/`-`/`++`/`union`/`&`/`intersect`/`diff` (the O(1) lazy nodes), `subsetOf`, `foreach`, `filter`, `map`, `iterator`, `toFArray`, `min`/`max`.
-3. Build path = sort + unique-compact (no hash leaf yet). **`contains` distributes over the lazy tree, short-circuiting**; whole-set ops **materialize via sorted linear merge** and **memoize** the leaf on the node.
-4. JMH suite mirroring FArray's: 4-way `immutable.HashSet` / `fastutil` / `j.u.HashSet` / `FSet`, on `contains` (both over a leaf *and* over an `a ++ b` lazy node), `build-from-array`, `union`, `intersect`, `diff`, `contains-after-union`, `foreach`, `equals`, at sizes 1…100k, with `-prof gc`. Target: tie/beat `immutable.HashSet` on contains+iteration, *beat* it on build + **O(1) lazy algebra** + `contains`-over-algebra — confirming the lazy-tree + unboxed-sorted-array thesis before adding the Hash and Dense leaves (M2/M3).
+1. `GenSets` (sibling of `GenCores`, wired via `bleep.yaml`'s `generate` step) emits, **through an `Emit` helper** (real indentation, one statement per line — §1.6.8): `SBase.java` (sealed `instanceof`-dispatched, leaves `final` — no node tag, §1.6.10) + `Empty` + `IntOne`/`RefOne` + `IntSorted`/`RefSorted` (sorted `int[]` / typed `Object[]` via `RefRepr.ct`) + the **lazy `Union`/`Inter`/`Diff` nodes** (kind-agnostic, 2-field, O(1) construct) + the Java SAM interfaces + tree `Traversers`, reusing FArray's `Repr`.
+2. `opaque type FSet[A] <: AnyRef = SBase` + companion with no-import **`inline def`** extensions (`inline` lambda params): `empty`, `apply`, `fromArray`, `fromFArray`, `contains` (the OR/AND/AND-NOT membership-distributing tree-walk, short-circuiting, **empty-body predicate-in-condition leaf scan** §1.6.10), `size`/`isEmpty`, `+`/`-`/`++`/`union`/`&`/`intersect`/`diff` (the O(1) lazy nodes), `subsetOf`, `foreach`, `filter`, `map`, `iterator`, `toFArray`, `min`/`max`. Each per-element op dispatches the kind via `summonFrom` on `Repr[A]`, realizes the user lambda into a kind-specialized **SAM** (§1.6.6), and **CALLS a small shared NON-inline `${op}Leaf${K}` method** in `object FSetOps` — *never* inlines the leaf loop (§1.6.4); leaf loops bound on **`a.length`** (§1.6.5); the shared method is itself the `Traversers.*` forwarder (dodges the `NoClassDefFoundError` gotcha, §1.6.8).
+3. Build path = sort + unique-compact (no hash leaf yet), **deduping** as it builds (§1.6.9). **`contains` distributes over the lazy tree, short-circuiting**; whole-set ops **materialize via sorted linear merge** and **memoize** the leaf on the node, then iterate the clean materialized leaf (the push/pull traversers run over the `SMaterialized` node, §1.6.7).
+4. JMH suite mirroring FArray's, **checked in as the scorecard** (`docs/bench-results.json` + `index.html`, W/T/L, §1.6.10): 4-way `immutable.HashSet` / `fastutil` / `j.u.HashSet` / `FSet`, on `contains` (both over a leaf *and* over an `a ++ b` lazy node), `build-from-array`, `union`, `intersect`, `diff`, `contains-after-union`, `foreach`, `equals`, at sizes 1…100k, with `-prof gc` (trust the deterministic `gc.alloc.rate.norm` `B/op` over noisy @100k throughput). Target: tie/beat `immutable.HashSet` on contains+iteration, *beat* it on build + **O(1) lazy algebra** + `contains`-over-algebra — confirming the lazy-tree + unboxed-sorted-array thesis before adding the Hash and Dense leaves (M2/M3). Confirm no boxing (`B/op` == the unboxed baseline) on the prim path before declaring a win.
 
 [champ-paper]: https://michael.steindorfer.name/publications/oopsla15.pdf
 [lemire-intersect]: https://lemire.me/blog/2019/01/16/faster-intersections-between-sorted-arrays-with-shotgun/
