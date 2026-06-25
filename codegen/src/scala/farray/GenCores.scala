@@ -449,7 +449,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // Accumulators become plain `var` LOCALS (no consumer object, no heap field); the per-element body is
     // spliced straight into the leaf/run loops (no onRunF call, no megamorphism); the ReverseNode arm and the
     // deep-base Slice/Pad/Updated arms are handled self-contained (reverse-of-leaf inline, else materialize).
-    // Wave 1: Exit.Never + Out.Scalar / Out.NoOut only.
+    // Wave 1: Exit.Never + Out.Scalar / Out.NoOut. Wave 3 adds Out.PrimArray / Out.ResultFArray (map/filter):
+    // `out` is a LOCAL array, `o` a LOCAL cursor, the write spliced into the run loops — no ${K}Dfs, no heap field.
     def lower(spec: Trav): String = {
       val k = spec.k
       val backward = spec.dir == Dir.Bwd
@@ -482,14 +483,48 @@ object GenCores extends BleepCodegenScript("GenCores") {
           val walk = dfsBody(k, backward, onRF, onRB, onO, onRev)
           // (3) accumulators as plain `var` locals, declared OUTSIDE the walk; (4) the Out epilogue.
           val accDecls = spec.acc.map(a => s"var ${a.name}: ${a.tpe} = ${a.init}").mkString("; ")
+          // Out array allocation (Wave 3): `out` is a plain LOCAL declared BEFORE the walk, so the spliced
+          // `out(oc) = …; oc += 1` writes touch a register-resident array reference, not a heap consumer field.
+          // The write cursor `oc` is one of `spec.acc` (Acc("oc","Int","0")), so it's a local too. (It is named
+          // `oc`, not `o`, because `dfsBody`'s ${K}One arm binds the pattern var `o` — a bare `o` would collide.)
+          def sizeExpr(h: SizeHint): String = h match { case SizeHint.Exact(e) => e; case SizeHint.AtMost(e) => e }
+          def allocOut(ek: Kind, h: SizeHint): String =
+            if ek.name == "Ref" then s"val out = new Array[Object](${sizeExpr(h)})"
+            else s"val out = new Array[${ek.arr}](${sizeExpr(h)})"
+          val outDecl = spec.out match {
+            case Out.PrimArray(ek, _)          => s"${allocOut(ek, SizeHint.Exact("n"))}\n"
+            case Out.ResultFArray(ek, h, _, _) => s"${allocOut(ek, h)}\n"
+            case _                             => ""
+          }
+          // The epilogue: scalar -> return the acc expr; ResultFArray -> canonicalize the built `out` via the
+          // EXISTING leaf() builder (LeafExact: length == n) / the filter identity-then-leaf form (FilterIdentity).
           val epilogue = spec.out match {
             case Out.Scalar(res) => s"; $res"
             case Out.NoOut       => ""
-            case other           => sys.error(s"lower: Wave 1 does not support Out $other")
+            case Out.PrimArray(_, _) => "; out"
+            case Out.ResultFArray(ek, _, _, fin) =>
+              fin match {
+                // LeafExact (map): output length is exactly `oc` (== n); route through the canonicalizer so a
+                // length-0 walk yields Empty and length-1 yields ${K}One — upholding the size-0/1 invariant.
+                case Finalize.LeafExact => s"\n${leaf(ek, "out", "oc")}"
+                case Finalize.LeafTrim =>
+                  s"\nif (oc == out.length) ${leaf(ek, "out", "oc")} else ${leaf(ek, s"java.util.Arrays.copyOf(out, oc)", "oc")}"
+                // FilterIdentity: keep the `if (oc == n) xs` reference-identity shortcut, then leaf-canonicalize a
+                // trimmed copy (oc == 0 -> Empty, oc == 1 -> ${K}One, else a copyOf-trimmed leaf).
+                case Finalize.FilterIdentity =>
+                  s"\nif (oc == n) xs else if (oc == 0) Empty.INSTANCE else if (oc == 1) new ${ek.name}One(out(0)) else new ${ek.name}Arr(java.util.Arrays.copyOf(out, oc), oc)"
+              }
           }
           val accPart = if accDecls.isEmpty then "" else s"$accDecls\n"
-          // `dfsBody`'s template starts at `root`; the op method's array is `xs`, so bind the alias once.
-          s"{ val root: FBase = xs\n$accPart$walk$epilogue }"
+          // LEAF FAST-PATH: a top-level single leaf (the overwhelmingly common shape — every `tabulate(n)`/map
+          // input is one `${K}Arr`) runs a STANDALONE constant-stride loop, NOT nested inside the `cur match` +
+          // outer `while (cur != null)` walk. The nested leaf loop does not vectorize for trivial-`f` prim ops
+          // (IntMap stuck at 0.90x); lifted out, it is byte-identical to iarray's loop. Tree-internal leaves
+          // still flow through the walk's own leaf arm, so trees stay correct + consumer-free.
+          val leafFast =
+            if !backward then s"case leaf: ${k.name}Arr => { val a = leaf.arr; var i = 0; val e = leaf.length; while (i < e) { ${spec.body.perElem(rd)}; i += 1 } }"
+            else            s"case leaf: ${k.name}Arr => { val a = leaf.arr; var i = leaf.length - 1; while (i >= 0) { ${spec.body.perElem(rd)}; i -= 1 } }"
+          s"{ $outDecl$accPart" + s"xs match { $leafFast; case _ => { val root: FBase = xs\n$walk } }" + s"$epilogue }"
         case other => sys.error(s"lower: Wave 1 does not support Exit $other")
       }
     }
@@ -517,6 +552,31 @@ object GenCores extends BleepCodegenScript("GenCores") {
       else
         Trav(k, Dir.Fwd, Body(e => s"acc = num.times(acc, ($e).asInstanceOf[B])", rawArray = true), List(Acc("acc", "B", "num.one")), Exit.Never, Out.Scalar("acc"))
     }
+
+    // Wave 3 (design §B.2/§B.3): array-building ops. `ka` drives the walk (dispatchA); `kb` (the result element
+    // kind, from dispatchB) drives the `out` array type + the write's unwrap. The write `out(o) = …; o += 1` is the
+    // per-element body, spliced into the run loop — `out`/`o` are LOCALS, no consumer.
+    // map: write EVERY element f(e); output length is exactly n -> SizeHint.Exact, Finalize.LeafExact.
+    def mapSpec(ka: Kind, kb: Kind): Trav =
+      Trav(
+        ka,
+        Dir.Fwd,
+        Body(e => s"out(oc) = ${wr(kb, s"rb.unwrap(f($e))")}; oc += 1"),
+        List(Acc("oc", "Int", "0")),
+        Exit.Never,
+        Out.ResultFArray(kb, SizeHint.Exact("n"), (o, e) => s"out($o) = $e", Finalize.LeafExact)
+      )
+    // filter: predicate-GUARDED write, so the kept-count `oc` is NOT n -> SizeHint.AtMost(n), Finalize.FilterIdentity
+    // (keeps the `if (oc == n) xs` reference-identity shortcut, then leaf-canonicalizes a trimmed copy).
+    def filterSpec(k: Kind): Trav =
+      Trav(
+        k,
+        Dir.Fwd,
+        Body(e0 => s"val e = $e0; if (p(e)) { out(oc) = ${wr(k, "r.unwrap(e)")}; oc += 1 }"),
+        List(Acc("oc", "Int", "0")),
+        Exit.Never,
+        Out.ResultFArray(k, SizeHint.AtMost("n"), (o, e) => s"out($o) = $e", Finalize.FilterIdentity)
+      )
 
     // Wave 1 (design §E): foldLeft/foreach now lower the Trav spec inline — no ${K}Dfs object, acc is a local.
     val foldLeft = dispatchA(k => lower(foldLeftSpec(k)))
@@ -588,19 +648,22 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // foldRight: Wave 1 — the SAME lowered walk with dir = Bwd (a BACKWARD walk hands elements last-to-first,
     // exactly foldRight order, applying op(elem, acc)). ZERO allocation on every shape, acc a local.
     val foldRightV = dispatchA(k => lower(foldRightSpec(k)))
+    // Wave 3: map lowers the Trav spec inline — `out`/`o` are LOCALS (a register-resident array ref + cursor),
+    // the write spliced into the run loop. NO ${KA}Dfs object (the heap-lifted `o` that cost map at large N is
+    // gone), NO dfsC call, monomorphic per (ka, kb) site. The result is canonicalized via leaf() (Empty/One).
+    // The inner dispatch binds the result-kind repr as `rb` (NOT `r`), so it never shadows the outer `A`-repr `r`
+    // that the read side (read(ka)) needs. (dispatchB binds `r`, so map can't reuse it — the body needs both.)
+    def dispatchBmap(body: Kind => String): String =
+      "summonFrom {\n" + opKinds.map(k => s"          case rb: ${k.name}Repr[B] => ${body(k)}").mkString("\n") + "\n        }"
     val mapM = "summonFrom {\n" + opKinds
       .map { ka =>
-        val inner = "summonFrom {\n" + opKinds
-          .map { kb =>
-            s"          case rb: ${kb.name}Repr[B] => { val out = ${alloc(kb, "rb")}; var o = 0; val c = new ${ka.name}Dfs { ${runMethods(ka, e => s"out(o) = ${wr(kb, s"rb.unwrap(f($e))")}; o += 1")}; def onOne(v: ${ka.arr}): Unit = { out(o) = ${wr(kb, s"rb.unwrap(f(${readOne(ka)}))")}; o += 1 } }; dfsC${ka.name}(xs, c); new ${kb.name}Arr(out, n) }"
-          }
-          .mkString("\n") + "\n        }"
+        val inner = dispatchBmap(kb => lower(mapSpec(ka, kb)))
         s"      case r: ${ka.name}Repr[A] => $inner"
       }
       .mkString("\n") + "\n    }"
-    val filter = dispatchA(k =>
-      s"{ val out = ${alloc(k, "r")}; var o = 0; val c = new ${k.name}Dfs { ${runMethods(k, e0 => s"val e = $e0; if (p(e)) { out(o) = ${wr(k, "r.unwrap(e)")}; o += 1 }")}; def onOne(v: ${k.arr}): Unit = { val e = ${readOne(k)}; if (p(e)) { out(o) = ${wr(k, "r.unwrap(e)")}; o += 1 } } }; dfsC${k.name}(xs, c); if (o == n) xs else if (o == 0) Empty.INSTANCE else if (o == 1) new ${k.name}One(out(0)) else new ${k.name}Arr(java.util.Arrays.copyOf(out, o), o) }"
-    )
+    // Wave 3: filter lowers inline too — the predicate-guarded write keeps the variable kept-count `o` as a LOCAL;
+    // the `if (o == n) xs` identity shortcut survives in the FilterIdentity epilogue.
+    val filter = dispatchA(k => lower(filterSpec(k)))
     // fused short-circuiting contains (prim compares unboxed against the unwrapped elem). Empty-body scan.
     val contains = dispatchA(k =>
       if k.name == "Ref" then
@@ -938,14 +1001,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def lastIndexOfImpl[A, B](xs: FBase, elem: B): Int = $lastIndexOfV
        |  inline def collectFirstImpl[A, B](xs: FBase)(pf: PartialFunction[A, B]): Option[B] = { val n = xs.length; if (n == 0) None else if (n == 1) pf.lift(applyAtImpl[A](xs, 0)) else $collectFirstV }
        |  inline def prefixLengthImpl[A](xs: FBase)(inline p: A => Boolean): Int = { val n = xs.length; if (n == 0) 0 else if (n == 1) (if (p(applyAtImpl[A](xs, 0))) 1 else 0) else $prefixLenV }
-       |  inline def mapImpl[A, B](xs: FBase)(inline f: A => B): FBase = {
-       |    val n = xs.length
-       |    if (n == 0) emptyImpl[B] else if (n == 1) fromValues1[B](f(applyAtImpl[A](xs, 0))) else { $mapM }
-       |  }
-       |  inline def filterImpl[A](xs: FBase)(inline p: A => Boolean): FBase = {
-       |    val n = xs.length
-       |    if (n == 0) emptyImpl[A] else if (n == 1) { val e = applyAtImpl[A](xs, 0); if (p(e)) fromValues1[A](e) else emptyImpl[A] } else { $filter }
-       |  }
+       |  inline def mapImpl[A, B](xs: FBase)(inline f: A => B): FBase = { val n = xs.length; $mapM }
+       |  inline def filterImpl[A](xs: FBase)(inline p: A => Boolean): FBase = { val n = xs.length; $filter }
        |  inline def containsImpl[A](xs: FBase, elem: A): Boolean = { val n = xs.length; if (n == 0) false else if (n == 1) (applyAtImpl[A](xs, 0) == elem) else $contains }
        |  inline def mapConserveImpl[A](xs: FBase)(inline f: A => A): FBase = { val n = xs.length; if (n == 0) xs else if (n == 1) { val e = applyAtImpl[A](xs, 0); val r = f(e); if (r.asInstanceOf[AnyRef] eq e.asInstanceOf[AnyRef]) xs else fromValues1[A](r) } else $mapConserve }
        |  inline def unzipImpl[A, A1, A2](xs: FBase)(ev: A <:< (A1, A2)): (FBase, FBase) = { val n = xs.length; if (n == 0) (Empty.INSTANCE, Empty.INSTANCE) else $unzipV }
