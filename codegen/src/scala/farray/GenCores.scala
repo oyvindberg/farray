@@ -584,16 +584,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // Wave 3 (design §B.2/§B.3): array-building ops. `ka` drives the walk (dispatchA); `kb` (the result element
     // kind, from dispatchB) drives the `out` array type + the write's unwrap. The write `out(o) = …; o += 1` is the
     // per-element body, spliced into the run loop — `out`/`o` are LOCALS, no consumer.
-    // map: write EVERY element f(e); output length is exactly n -> SizeHint.Exact, Finalize.LeafExact.
-    def mapSpec(ka: Kind, kb: Kind): Trav =
-      Trav(
-        ka,
-        Dir.Fwd,
-        Body(e => s"out(oc) = ${wr(kb, s"rb.unwrap(f($e))")}; oc += 1"),
-        List(Acc("oc", "Int", "0")),
-        Exit.Never,
-        Out.ResultFArray(kb, SizeHint.Exact("n"), (o, e) => s"out($o) = $e", Finalize.LeafExact)
-      )
+    // (map's OLD inlined-walk spec lived here — the Build shape now routes map/mapConserve through the shared
+    //  mapLeaf${I}${O} leaf methods + the Java build${I}${O} traversers instead.)
     // filter: predicate-GUARDED write, so the kept-count `oc` is NOT n -> SizeHint.AtMost(n), Finalize.FilterIdentity
     // (keeps the `if (oc == n) xs` reference-identity shortcut, then leaf-canonicalizes a trimmed copy).
     def filterSpec(k: Kind): Trav =
@@ -606,8 +598,6 @@ object GenCores extends BleepCodegenScript("GenCores") {
         Out.ResultFArray(k, SizeHint.AtMost("n"), (o, e) => s"out($o) = $e", Finalize.FilterIdentity)
       )
 
-    // Wave 1 (design §E): foreach lowers the Trav spec inline — no ${K}Dfs object, acc is a local.
-    val foreach = dispatchA(k => lower(foreachSpec(k)))
 
     // ===== HYBRID TRAVERSAL — foldLeft over ALL input kinds (design §5) =====
     // The surface peels the hot shapes inline (the user's `inline op` splices unboxed — the optimal small
@@ -622,6 +612,11 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // wrap the SAM lambda's `v` parameter (the raw element handed back by the Java fold) to A: for a prim
     // input v is already the prim element; for Ref input v is Object and must be cast to A before wrap.
     def wrapV(k: Kind): String = if k.name == "Ref" then "r.wrap(v.asInstanceOf[A])" else "r.wrap(v)"
+
+    // HYBRID Foreach surface (design §2.1/§5): summon the input kind, realize the user's inline `f` into the
+    // ${I}Consumer SAM, and CALL the shared leaf method foreachLeaf${I} (Empty/One/leaf inline, tree ->
+    // Traversers.foreachFwd${I}). NO inlined leaf loop here. The SAM wraps the raw element `v` to A (wrapV).
+    val foreach = dispatchA(k => s"foreachLeaf${k.name}(xs, (v) => f(${wrapV(k)}))")
 
     // Emit a fold surface (foldLeft when fwd, foldRight when bwd) for input kind `k`. ONE STATEMENT PER LINE at
     // real indentation (design §6). The two directions differ only in (1) the combine argument order — fwd
@@ -647,6 +642,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line(
           s"reduceLeaf${dir}${K}Ref[Z & AnyRef](xs, z.asInstanceOf[Z & AnyRef], (acc, v) => ${comb("acc.asInstanceOf[Z]", wrapV(k))}.asInstanceOf[Z & AnyRef]).asInstanceOf[Z]"
         )
+      // --- the cold cross-kind arm (cross-prim Z, e.g. a Long accumulator over Int input, or a prim Z over
+      //     Ref input): route through the SAME generic Ref-acc shared leaf method with the accumulator BOXED
+      //     to AnyRef. NO inlined leaf loop here. These cases are cold/rare, so the boxing is fine. ---
+      def zBoxedArm(): Unit =
+        ee.line(
+          s"reduceLeaf${dir}${K}Ref[AnyRef](xs, z.asInstanceOf[AnyRef], (acc, v) => ${comb("acc.asInstanceOf[Z]", wrapV(k))}.asInstanceOf[AnyRef]).asInstanceOf[Z]"
+        )
       ee.open("summonFrom")
       if k.isPrim then {
         ee.open(s"case rz: ${K}Repr[Z] =>")
@@ -656,9 +658,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
       ee.open("case rz: RefRepr[Z] =>")
       zRefArm()
       ee.close()
-      // CROSS-prim Z (and prim Z over Ref input): the OLD lowered walk, which threads any-kind Z correctly.
+      // CROSS-prim Z (and prim Z over Ref input): the shared Ref-acc leaf method with a boxed accumulator.
       ee.open("case _ =>")
-      ee.lines(lower(if backward then foldRightSpec(k) else foldLeftSpec(k)))
+      zBoxedArm()
       ee.close()
       ee.close()
       ee.result
@@ -685,8 +687,11 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line("case e: Empty => z")
         ee.line(s"case o: ${k.name}One => f.apply(z, o.elem)")
         ee.open(s"case leaf: ${k.name}Arr =>")
+        // Loop on `a.length`, NOT leaf.length: the JIT can prove the bound matches the array it indexes
+        // (a JVM fact), so it drops the per-element bounds check on `a(i)` and vectorizes — `leaf.length`
+        // is OUR copyOf invariant, opaque to HotSpot, and leaks a bounds check that blocks vectorization.
         ee.line("val a = leaf.arr")
-        ee.line("val n = leaf.length")
+        ee.line("val n = a.length")
         ee.line(s"var acc: $accT = z")
         if !backward then {
           ee.line("var i = 0")
@@ -720,6 +725,214 @@ object GenCores extends BleepCodegenScript("GenCores") {
       }
       ee.result
     }
+    // SHARED LEAF METHODS for the BUILD shape (map/mapConserve), one per covered (I, O) pair — the EXACT
+    // analogue of the reduceLeaf* family. Each is a SMALL NON-inline method in FArrayOps: it peels
+    // Empty/${I}One/top-${I}Arr with the unboxed leaf loop calling the realized Build SAM `f.apply`, and for a
+    // genuine TREE makes ONE CALL to the Java build traverser (Traversers.buildFwd${I}${O}), then canonicalizes
+    // the filled `out` via the leaf() builder (length-0 -> Empty, length-1 -> ${O}One). NO inlined leaf loop in
+    // the inline surface — the surface only realizes the user lambda into the Build SAM and CALLS mapLeaf${I}${O}.
+    // The Ref ends are type params (the SAM closes over the user's `f`/`r`/`rb`, so the leaf method is op-agnostic
+    // per (I, O)). Output canonicalisation upholds the size-0/1 invariant.
+    val mapLeafMethods = {
+      val ee = new Emit("  ")
+      // emit ONE shared Build leaf method for (ki, ko). `riT`/`roT` are the Scala-side input/output element
+      // types bound to the Ref tparams; `fnScala` is the Scala reference to the (I,O) Build SAM type;
+      // `treeCall` is the Java build traverser forwarder; `outAlloc`/`oneCtor`/`leafCanon` build the result.
+      def emit(ki: Kind, ko: Kind): Unit = {
+        val KI = ki.name
+        val KO = ko.name
+        // type params: only a Ref OUTPUT carries a tparam (RO <: AnyRef). A Ref input element is plain Object.
+        val tps = if !ko.isPrim then List("RO <: AnyRef") else Nil
+        val tpClause = if tps.isEmpty then "" else s"[${tps.mkString(", ")}]"
+        // the Scala reference to the Java SAM (Ref OUTPUT tparam filled with RO).
+        val fnScala = "Traversers." + buildFnType(ki, ko, "RO").replace('<', '[').replace('>', ']')
+        // input element read in the leaf loop: prim arrays hold the prim; a Ref input leaf array is Object[] and
+        // the SAM's apply takes Object, so `a(i)` (an Object) is passed straight through — no cast.
+        val readElem = "a(i)"
+        val readOneElem = "o.elem"
+        // output array allocation + write: prim O writes the returned prim straight; a Ref O leaf array is
+        // Object[] and the SAM returns RO (<: AnyRef), stored as an Object.
+        val outAlloc = if ko.isPrim then s"new Array[${ko.arr}](n)" else "new Array[Object](n)"
+        val writeOut = if ko.isPrim then "out(i) = f.apply(_RD_)" else "out(i) = f.apply(_RD_).asInstanceOf[Object]"
+        // ${O}One ctor for the size-1 leaf: prim takes the prim, Ref takes Object.
+        val oneArg = if ko.isPrim then s"f.apply($readOneElem)" else s"f.apply($readOneElem).asInstanceOf[Object]"
+        ee.open(s"def mapLeaf${KI}${KO}$tpClause(xs: FBase, f: $fnScala): FBase = xs match")
+        ee.line("case e: Empty => Empty.INSTANCE")
+        ee.line(s"case o: ${KI}One => new ${KO}One($oneArg)")
+        ee.open(s"case leaf: ${KI}Arr =>")
+        ee.line("val a = leaf.arr")
+        ee.line("val n = a.length")
+        ee.line(s"val out = $outAlloc")
+        ee.line("var i = 0")
+        ee.open("while (i < n)")
+        ee.line(writeOut.replace("_RD_", readElem))
+        ee.line("i += 1")
+        ee.close()
+        ee.line(s"new ${KO}Arr(out, n)")
+        ee.closeOpen("case _ =>")
+        ee.line("val n = xs.length")
+        ee.line(s"val out = $outAlloc")
+        // the Java build traverser; a Ref output passes RO explicitly so Scala threads the tparam.
+        val refClause = if !ko.isPrim then "[RO]" else ""
+        ee.line(s"val k = Traversers.buildFwd${KI}${KO}$refClause(xs, out, 0, f)")
+        ee.line(leaf(ko, "out", "k"))
+        ee.close() // case _
+        ee.close() // xs match
+      }
+      buildPairs.foreach { case (ki, ko) => emit(ki, ko) }
+      ee.result
+    }
+    // SHARED LEAF METHODS for the FOREACH shape, one per input kind — the EXACT analogue of reduceLeaf*. Each is a
+    // SMALL NON-inline method in FArrayOps: it peels Empty (no-op), ${I}One (one f.apply), top-${I}Arr (the
+    // unboxed leaf loop bounded on a.length) and routes a genuine TREE through Traversers.foreachFwd${I}. NO
+    // inlined leaf loop in the surface — the surface only realizes the user lambda into the ${I}Consumer SAM and
+    // CALLS foreachLeaf${I}. The SAM wraps the raw element `v` to A itself (closes over the user `f`/`r`), so the
+    // leaf method is op-agnostic per input kind.
+    val foreachLeafMethods = {
+      val ee = new Emit("  ")
+      opKinds.foreach { k =>
+        val K = k.name
+        ee.open(s"def foreachLeaf${K}(xs: FBase, f: Traversers.${K}Consumer): Unit = xs match")
+        ee.line("case e: Empty => ()")
+        ee.line(s"case o: ${K}One => f.apply(o.elem)")
+        ee.open(s"case leaf: ${K}Arr =>")
+        ee.line("val a = leaf.arr")
+        ee.line("val n = a.length")
+        ee.line("var i = 0")
+        ee.open("while (i < n)")
+        ee.line("f.apply(a(i))")
+        ee.line("i += 1")
+        ee.close()
+        ee.closeOpen("case _ =>")
+        ee.line(s"Traversers.foreachFwd${K}(xs, f)")
+        ee.close()
+        ee.close()
+      }
+      ee.result
+    }
+    // SHARED LEAF METHODS for the SCAN shape, one per covered (I, Z) pair × {Left, Right} — the EXACT analogue of
+    // reduceLeaf*. The result is ALWAYS length n+1 (so Empty => ${Z}One(z), NEVER Empty). scanLeft writes the
+    // running accumulator ascending with out[0] = z and out[i+1] = acc = f(acc, a(i)); scanRight writes
+    // descending with out[n] = z. A genuine TREE makes ONE CALL to Traversers.scan{Fwd,Bwd}${I}${Z} (which reads
+    // the running acc from out[o±1] — no acc threading), then wraps `out` into a ${Z}Arr (length n+1 >= 1, so it
+    // is never Empty and the size-1 case is the One peeled above). NO inlined leaf loop in the surface.
+    val scanLeafMethods = {
+      val ee = new Emit("  ")
+      // emit ONE shared scan leaf method. `zT` = the accumulator Scala type; `tparam` = a leading type-param
+      // clause (Ref acc is generic); `foldT` = the SAM type; `outAlloc` builds the (n+1) output array; `store`
+      // wraps an acc value for the Object[] of a Ref acc (no-op for a prim); `treeCall` = the Java tree forwarder.
+      def emit(k: Kind, refAcc: Boolean, backward: Boolean): Unit = {
+        val K = k.name
+        val side = if backward then "Right" else "Left"
+        val name = s"scan${side}Leaf${K}${if refAcc then "Ref" else K}"
+        val zT = if refAcc then "Z" else k.arr
+        val tparam = if refAcc then "[Z <: AnyRef]" else ""
+        val foldT = if refAcc then s"Traversers.${K}ToRefFold[Z]" else s"Traversers.${K}To${K}Fold"
+        val outArr = if refAcc then "Object" else k.arr
+        val store = (e: String) => if refAcc then s"($e).asInstanceOf[Object]" else e
+        // read the previously-written acc slot, cast to Z for a Ref acc.
+        val readPrev = (slot: String) => if refAcc then s"out($slot).asInstanceOf[Z]" else s"out($slot)"
+        // result wrapper: out has length n+1 (>= 1). size-1 (n == 0) was peeled to the ${K}One(z); a leaf with
+        // n >= 1 yields n+1 >= 2, always a ${Z}Arr.
+        val oneCtor = s"new ${if refAcc then "Ref" else K}One(${store("z")})"
+        ee.open(s"def $name$tparam(xs: FBase, z: $zT, f: $foldT): FBase = xs match")
+        ee.line(s"case e: Empty => $oneCtor")
+        // ${K}One: n == 1 -> n+1 == 2 elements. scanLeft = [z, f(z, elem)]; scanRight = [f(elem, z), z].
+        ee.open(s"case o: ${K}One =>")
+        ee.line(s"val out = new Array[$outArr](2)")
+        if !backward then {
+          ee.line(s"out(0) = ${store("z")}")
+          ee.line(s"out(1) = ${store(s"f.apply(${readPrev("0")}, o.elem)")}")
+        } else {
+          ee.line(s"out(1) = ${store("z")}")
+          ee.line(s"out(0) = ${store(s"f.apply(${readPrev("1")}, o.elem)")}")
+        }
+        ee.line(s"new ${if refAcc then "Ref" else K}Arr(out, 2)")
+        ee.closeOpen(s"case leaf: ${K}Arr =>")
+        ee.line("val a = leaf.arr")
+        ee.line("val n = a.length")
+        ee.line(s"val out = new Array[$outArr](n + 1)")
+        if !backward then {
+          ee.line(s"out(0) = ${store("z")}")
+          ee.line("var i = 0")
+          ee.open("while (i < n)")
+          ee.line(s"out(i + 1) = ${store(s"f.apply(${readPrev("i")}, a(i))")}")
+          ee.line("i += 1")
+          ee.close()
+        } else {
+          ee.line(s"out(n) = ${store("z")}")
+          ee.line("var i = n - 1")
+          ee.open("while (i >= 0)")
+          ee.line(s"out(i) = ${store(s"f.apply(${readPrev("i + 1")}, a(i))")}")
+          ee.line("i -= 1")
+          ee.close()
+        }
+        ee.line(s"new ${if refAcc then "Ref" else K}Arr(out, n + 1)")
+        ee.closeOpen("case _ =>")
+        ee.line("val n = xs.length")
+        ee.line(s"val out = new Array[$outArr](n + 1)")
+        val refClause = if refAcc then "[Z]" else ""
+        if !backward then {
+          ee.line(s"out(0) = ${store("z")}")
+          ee.line(s"Traversers.scanFwd${K}${if refAcc then "Ref" else K}$refClause(xs, out, 1, f)")
+        } else {
+          ee.line(s"out(n) = ${store("z")}")
+          ee.line(s"Traversers.scanBwd${K}${if refAcc then "Ref" else K}$refClause(xs, out, n - 1, f)")
+        }
+        ee.line(s"new ${if refAcc then "Ref" else K}Arr(out, n + 1)")
+        ee.close()
+        ee.close()
+      }
+      opKinds.foreach { k =>
+        List(false, true).foreach { backward =>
+          if k.isPrim then emit(k, refAcc = false, backward)
+          emit(k, refAcc = true, backward)
+        }
+      }
+      ee.result
+    }
+    // SHARED LEAF METHODS for the SHORT-CIRCUIT shape, one PAIR (Fwd + Bwd) per INPUT kind. The EXACT analogue of
+    // foreachLeaf*: peel Empty / ${I}One / top-${I}Arr inline (the unboxed clamped predicate-in-condition leaf
+    // scan), and route a genuine TREE through Traversers.sc{Fwd,Bwd}${I}. Returns the FIRST-HIT GLOBAL index, or
+    // `xs.length` (Fwd no-hit) / -1 (Bwd no-hit) — the 12 surface ops derive every answer from that index. The
+    // ${I}Pred SAM takes the RAW element (prim/Object) and closes over the user predicate (it does the A wrap).
+    // Fwd clamps with `from` (skip indices < from); Bwd clamps with `end` (skip indices > end).
+    val scLeafMethods = {
+      val ee = new Emit("  ")
+      opKinds.foreach { k =>
+        val K = k.name
+        // ---- forward: scFwdLeaf${K}(xs, from, p): Int -- first index >= from where p holds, else length ----
+        ee.open(s"def scFwdLeaf${K}(xs: FBase, from: Int, p: Traversers.${K}Pred): Int = xs match")
+        ee.line("case e: Empty => 0")
+        ee.line(s"case o: ${K}One => if (from <= 0 && p.apply(o.elem)) 0 else 1")
+        ee.open(s"case leaf: ${K}Arr =>")
+        ee.line("val a = leaf.arr")
+        ee.line("val n = a.length")
+        ee.line("var i = if (from < 0) 0 else from")
+        ee.line("while (i < n && !p.apply(a(i))) i += 1")
+        ee.line("i")
+        ee.closeOpen("case _ =>")
+        ee.line(s"val r = Traversers.scFwd${K}(xs, from, 0, p)")
+        ee.line("if (r >= 0) r else ~r - 1")
+        ee.close()
+        ee.close()
+        // ---- backward: scBwdLeaf${K}(xs, end, p): Int -- last index <= end where p holds, else -1 ----
+        ee.open(s"def scBwdLeaf${K}(xs: FBase, end: Int, p: Traversers.${K}Pred): Int = xs match")
+        ee.line("case e: Empty => -1")
+        ee.line(s"case o: ${K}One => if (end >= 0 && p.apply(o.elem)) 0 else -1")
+        ee.open(s"case leaf: ${K}Arr =>")
+        ee.line("val a = leaf.arr")
+        ee.line("var i = if (end > a.length - 1) a.length - 1 else end")
+        ee.line("while (i >= 0 && !p.apply(a(i))) i -= 1")
+        ee.line("if (i < 0) -1 else i")
+        ee.closeOpen("case _ =>")
+        ee.line(s"val r = Traversers.scBwd${K}(xs, end, xs.length - 1, p)")
+        ee.line("if (r >= 0) r else -1")
+        ee.close()
+        ee.close()
+      }
+      ee.result
+    }
     val foldLeft = {
       val ee = new Emit("  ")
       ee.open("summonFrom")
@@ -731,44 +944,26 @@ object GenCores extends BleepCodegenScript("GenCores") {
       ee.close()
       ee.result
     }
-    // Short-circuiting scan over the unified dfsC: each leaf-run scans tight; setting `stop` (the consumer flag)
-    // ends both the run and the whole tree walk. O(n) + early-exit on EVERY shape, no kindAt.
-    // EMPTY-BODY, predicate-in-condition scan: the per-element loop is just `i += 1` with the predicate in the
-    // while condition, then we inspect WHY it stopped once, after the loop. No mid-loop res/stop write -> no
-    // loop-carried dependency -> the only shape HotSpot optimizes to ~iarray speed (a body write is ~1.45x slower,
-    // measured). `gi` is the run's global start; the leaf scans local i, so the found global index is gi + i.
-    def scanB(k: Kind, init: String, cont: String => String, hit: (String, String) => String, oneStep: String, result: String): String = {
-      val fwd = s"def onRunF(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val e = start + count; while (i < e && ${cont(read(k))}) i += 1; if (i < e) { val a0 = ${read(k)}; ${hit("a0", "gi + (i - start)")}; stop = true }; gi += count }"
-      val bwd = s"def onRunB(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val e = start - count; while (i > e && ${cont(read(k))}) i -= 1; if (i > e) { val a0 = ${read(k)}; ${hit("a0", "gi + (start - i)")}; stop = true }; gi += count }"
-      s"{ var gi = 0; $init; val c = new ${k.name}Dfs { $fwd; $bwd; def onOne(v: ${k.arr}): Unit = { val a0 = ${readOne(k)}; $oneStep; gi += 1 } }; dfsC${k.name}(xs, c); $result }"
-    }
-    val existsV = dispatchA(k => scanB(k, "var res = false", a0 => s"!p($a0)", (a0, _) => "res = true", "if (p(a0)) { res = true; stop = true }", "res"))
-    val forallV = dispatchA(k => scanB(k, "var res = true", a0 => s"p($a0)", (a0, _) => "res = false", "if (!p(a0)) { res = false; stop = true }", "res"))
-    val findV = dispatchA(k => scanB(k, "var res: Option[A] = None", a0 => s"!p($a0)", (a0, _) => s"res = Some($a0)", "if (p(a0)) { res = Some(a0); stop = true }", "res"))
-    val indexWhereV = dispatchA(k => scanB(k, "var res = -1", a0 => s"!p($a0)", (_, gidx) => s"res = $gidx", "if (p(a0)) { res = gi; stop = true }", "res"))
-    val indexOfV = dispatchA(k => scanB(k, "var res = -1", a0 => s"!($a0 == elem)", (_, gidx) => s"res = $gidx", "if (a0 == elem) { res = gi; stop = true }", "res"))
-    val collectFirstV = dispatchA(k => scanB(k, "var res: Option[B] = None", a0 => s"!pf.isDefinedAt($a0)", (a0, _) => s"res = Some(pf($a0))", "if (pf.isDefinedAt(a0)) { res = Some(pf(a0)); stop = true }", "res"))
-    // prefixLength accumulates (res += matched count) rather than setting an index, so it scans empty-body but
-    // doesn't fit hit(): res += i after each run, stop only when a run has a non-match (i < len).
-    val prefixLenV = dispatchA(k =>
-      s"{ var res = 0; val c = new ${k.name}Dfs { def onRunF(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val e = start + count; while (i < e && p(${read(k)})) i += 1; res += (i - start); if (i < e) stop = true }; def onRunB(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val e = start - count; while (i > e && p(${read(k)})) i -= 1; res += (start - i); if (i > e) stop = true }; def onOne(v: ${k.arr}): Unit = { if (p(${readOne(k)})) res += 1 else stop = true } }; dfsC${k.name}(xs, c); res }"
-    )
-    // lastIndexWhere/lastIndexOf scan BACKWARD via dfsCBack — visiting elements last-to-first, so the FIRST hit is
-    // the last occurrence. ZERO allocation on EVERY shape (no materialize): the direction-aware traversal turns a
-    // reverse-of-tree into a forward walk, a tree into a real backward walk, etc. `gi` counts the global index
-    // DOWN from length-1; a backward run starting at run-position `start` (high) maps run-local steps to gi - j.
-    def lastBackwardScan(k: Kind, cont: String => String): String = {
-      // onRunB drives backward array runs (start = highest index visited). onRunF can fire too (reverse-of-tree
-      // flips a backward walk into forward sub-walks): there a forward run of `count` elements still consumes the
-      // next `count` global indices counting DOWN, but visited LOW-to-HIGH, so the first forward hit is at the
-      // LOWEST global index of that run -> gi - (count-1) + (i - start). We compute the hit's global index and,
-      // because backward order means earlier-found == larger global index, just take it (stop on first hit).
-      val rb = s"def onRunB(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val e = start - count; while (i > e && ${cont(read(k))}) i -= 1; if (i > e) { res = gi - (start - i); stop = true }; gi -= count }"
-      val rf = s"def onRunF(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val e = start + count; while (i < e && ${cont(read(k))}) i += 1; if (i < e) { res = gi - (i - start); stop = true }; gi -= count }"
-      s"{ var res = -1; var gi = xs.length - 1; val c = new ${k.name}Dfs { $rb; $rf; def onOne(v: ${k.arr}): Unit = { val a0 = ${readOne(k)}; if (!(${cont("a0")})) { res = gi; stop = true }; gi -= 1 } }; dfsC${k.name}Back(xs, c); res }"
-    }
-    val lastIndexWhereV = dispatchA(k => lastBackwardScan(k, a0 => s"!p($a0)"))
-    val lastIndexOfV = dispatchA(k => lastBackwardScan(k, a0 => s"$a0 != elem"))
+    // SHORT-CIRCUIT shape (design §B.4): the 12 breakable ops are THIN inline-def wrappers over the shared leaf
+    // methods sc{Fwd,Bwd}Leaf${I} (Empty/One/leaf peeled inline; genuine TREES -> Traversers.sc{Fwd,Bwd}${I},
+    // which return the FIRST-HIT GLOBAL index and ABANDON the lazy stack via the method return). Each wrapper
+    // summons the input kind I, realizes the user predicate into the ${I}Pred SAM (which wraps the raw element to
+    // A), calls the leaf method, and derives its answer from the returned index. NO inlined walk here. `length` is
+    // xs.length: scFwdLeaf returns < length on a hit / == length on no-hit; scBwdLeaf returns the index / -1.
+    // `wrapV(k)` turns the raw SAM element `v` into A. forall/segmentLength/prefixLength/foreachWhile scan for the
+    // FIRST element that FAILS the user predicate (the SAM is the negation). find/collectFirst do exactly ONE
+    // applyAtImpl(hit) — one random access on the found index, never per-element.
+    def predSAM(k: Kind, cond: String): String = s"(v) => $cond"
+    val existsV = dispatchA(k => s"scFwdLeaf${k.name}(xs, 0, ${predSAM(k, s"p(${wrapV(k)})")}) < length")
+    val forallV = dispatchA(k => s"scFwdLeaf${k.name}(xs, 0, ${predSAM(k, s"!p(${wrapV(k)})")}) == length")
+    val findV = dispatchA(k => s"{ val i = scFwdLeaf${k.name}(xs, 0, ${predSAM(k, s"p(${wrapV(k)})")}); if (i < length) Some(applyAtImpl[A](xs, i)) else None }")
+    val indexWhereV = dispatchA(k => s"{ val i = scFwdLeaf${k.name}(xs, if (from < 0) 0 else from, ${predSAM(k, s"p(${wrapV(k)})")}); if (i < length) i else -1 }")
+    val indexOfV = dispatchA(k => s"{ val i = scFwdLeaf${k.name}(xs, if (from < 0) 0 else from, ${predSAM(k, s"${wrapV(k)} == elem")}); if (i < length) i else -1 }")
+    val collectFirstV = dispatchA(k => s"{ val i = scFwdLeaf${k.name}(xs, 0, ${predSAM(k, s"pf.isDefinedAt(${wrapV(k)})")}); if (i < length) Some(pf(applyAtImpl[A](xs, i))) else None }")
+    val segmentLenV = dispatchA(k => s"{ val f0 = if (from < 0) 0 else if (from > length) length else from; scFwdLeaf${k.name}(xs, f0, ${predSAM(k, s"!p(${wrapV(k)})")}) - f0 }")
+    val prefixLenV = dispatchA(k => s"scFwdLeaf${k.name}(xs, 0, ${predSAM(k, s"!p(${wrapV(k)})")})")
+    val lastIndexWhereV = dispatchA(k => s"scBwdLeaf${k.name}(xs, if (end > length - 1) length - 1 else end, ${predSAM(k, s"p(${wrapV(k)})")})")
+    val lastIndexOfV = dispatchA(k => s"scBwdLeaf${k.name}(xs, if (end > length - 1) length - 1 else end, ${predSAM(k, s"${wrapV(k)} == elem")})")
     // count/sum/product: hybrid Reduce surfaces over the shared leaf method (design §2.1/§5). Each ONLY
     // realizes the combine SAM and CALLS reduceLeafFwd${I}${I} (which peels Empty/One/leaf and routes genuine
     // TREES through Traversers) — NO inlined leaf loop. The SAME shared leaf machinery as foldLeft. Prim inputs
@@ -778,8 +973,15 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // sum/product: combine `acc + e` / `acc * e` (raw prim op == num.plus/num.times for Int/Long/Double); the
     // unboxed acc is boxed to B (== the input kind at runtime for a prim FArray) only at the boundary.
     def sumProductSurface(k: Kind, combine: (String, String) => String, seed: String, isProduct: Boolean): String = {
-      if !k.isPrim then return lower(if isProduct then productSpec(k) else sumSpec(k))
       val K = k.name
+      if !k.isPrim then {
+        // Ref input: cold cross-kind Reduce (acc is B, a Numeric object). Route through the SAME generic
+        // Ref-acc shared leaf method (reduceLeafFwdRefRef) with the accumulator BOXED to AnyRef — NO inlined
+        // leaf loop. `num` is the Numeric[B]; the element v is Object, wrapped to A then cast to B.
+        val numOp = if isProduct then "num.times" else "num.plus"
+        val refSeed = if isProduct then "num.one" else "num.zero"
+        return s"reduceLeafFwdRefRef[AnyRef](xs, ($refSeed).asInstanceOf[AnyRef], (acc, v) => $numOp(acc.asInstanceOf[B], r.wrap(v.asInstanceOf[A]).asInstanceOf[B]).asInstanceOf[AnyRef]).asInstanceOf[B]"
+      }
       // realize the unboxed `${K}To${K}Fold` SAM (acc stays a primitive) and CALL the shared leaf method —
       // NO inlined leaf loop. The leaf method peels Empty/One/leaf and routes trees through Traversers.
       s"reduceLeafFwd${K}${K}(xs, $seed, (acc, v) => ${combine("acc", "v")}).asInstanceOf[B]"
@@ -788,7 +990,12 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // self-kind shared leaf method (reduceLeafFwdIntInt); other prim inputs (Long/Double) and Ref would need
     // an I->Int fold the engine doesn't emit (cross-prim), so they stay on the old lowered walk.
     def countSurface(k: Kind): String = {
-      if k.name != "Int" then return lower(countSpec(k))
+      if k.name != "Int" then {
+        // cold cross-kind count (Long/Double/Ref input would need an I->Int fold the engine doesn't emit):
+        // route through the SAME generic Ref-acc shared leaf method with the Int acc BOXED to Integer —
+        // NO inlined leaf loop. These cases are cold/rare, so the boxing is fine.
+        return s"reduceLeafFwd${k.name}Ref[java.lang.Integer](xs, java.lang.Integer.valueOf(0), (acc, v) => java.lang.Integer.valueOf(if (p(${wrapV(k)})) acc.intValue + 1 else acc.intValue)).intValue"
+      }
       // realize the unboxed IntToIntFold SAM (combine folds the predicate into an Int acc) and CALL the
       // shared leaf method — NO inlined leaf loop.
       "reduceLeafFwdIntInt(xs, 0, (acc, v) => if (p(r.wrap(v))) acc + 1 else acc)"
@@ -799,28 +1006,56 @@ object GenCores extends BleepCodegenScript("GenCores") {
       def one(k: Kind) = k.name match { case "Long" => "1L"; case "Double" => "1.0"; case _ => "1" }
       dispatchA(k => sumProductSurface(k, (acc, e) => s"$acc * $e", one(k), isProduct = true))
     }
-    // scanLeft: out[0..n] with a running accumulator, unboxed B-array storage (mirrors mapM's dispatchA x dispatchB).
-    val scanLeftV = "summonFrom {\n" + opKinds.map { ka =>
-      val inner = "summonFrom {\n" + opKinds.map { kb =>
-        s"          case rb: ${kb.name}Repr[B] => { val out = new Array[${kb.arr}](n + 1); var acc: B = z; out(0) = ${wr(kb, "rb.unwrap(z)")}; var o = 1; val c = new ${ka.name}Dfs { ${runMethods(ka, e => s"acc = op(acc, $e); out(o) = ${wr(kb, "rb.unwrap(acc)")}; o += 1")}; def onOne(v: ${ka.arr}): Unit = { acc = op(acc, ${readOne(ka)}); out(o) = ${wr(kb, "rb.unwrap(acc)")}; o += 1 } }; dfsC${ka.name}(xs, c); new ${kb.name}Arr(out, n + 1) }"
-      }.mkString("\n") + "\n        }"
-      s"      case r: ${ka.name}Repr[A] => $inner"
-    }.mkString("\n") + "\n    }"
-    // scanLeft size-0/1 short-circuit (no dfs): n==0 -> [z] (a ${B}One); n==1 -> [z, op(z, a0)] (a 2-leaf).
-    // List-identical. Dispatched on B's repr so the storage stays unboxed.
-    val scanLeftSmallV = "summonFrom {\n" + opKinds.map { kb =>
-      val zEl = wr(kb, "rb.unwrap(z)")
-      val one = s"new ${kb.name}One($zEl)"
-      val alloc2 = if kb.name == "Ref" then "new Array[Object](2)" else s"new Array[${kb.arr}](2)"
-      val two = s"{ val a1 = op(z, applyAtImpl[A](xs, 0)); val out = $alloc2; out(0) = $zEl; out(1) = ${wr(kb, "rb.unwrap(a1)")}; new ${kb.name}Arr(out, 2) }"
-      s"      case rb: ${kb.name}Repr[B] => if (n == 0) $one else $two"
-    }.mkString("\n") + "\n    }"
+    // HYBRID Scan surface (design §2.1/§5): summon the input kind I (outer) AND the accumulator kind Z (= B,
+    // inner) — exactly like foldLeft's Z-dispatch. Realize the user op into the ${I}To${Z}Fold SAM and CALL the
+    // shared leaf method scan${Side}Leaf${I}${Z} (which peels Empty/One/leaf, result ALWAYS length n+1, tree ->
+    // Traversers.scan{Fwd,Bwd}). Prim Z stays UNBOXED via the self-kind unboxed fold; Z=Ref uses the generic
+    // ref-acc fold (acc already an object). A CROSS-prim (I, Z) (e.g. Long acc over Int input) is UNCOVERED —
+    // the engine emits no I->Z fold — so it routes through the GENERIC per-index path (boxed applyAtImpl;
+    // cold/rare, noted). scanLeft's op is (B,A)=>B == f.apply(acc, elem); scanRight's op is (A,B)=>B, so the
+    // SAM applies op(elem, acc) — argument order swapped, same out[o±1] acc machinery.
+    //
+    // wrap the SAM's acc/elem params back to (Z=B)/A and combine in the op's required order.
+    def scanComb(k: Kind, backward: Boolean, accE: String, vE: String): String =
+      if backward then s"op($vE, $accE)" else s"op($accE, $vE)"
+    // GENERIC fallback for an UNCOVERED (I, Z) cross-prim pair: allocate the Array[Z] of length n+1 and fill it
+    // per-element with a boxed applyAtImpl read. scanLeft fills ascending (out(0)=z); scanRight fills descending
+    // (out(n)=z). Length is ALWAYS n+1 -> always >= 1, leaf-canonicalised (Empty never; size-1 -> ${Z}One).
+    def scanGeneric(kb: Kind, backward: Boolean): String = {
+      val alloc = if kb.name == "Ref" then "new Array[Object](n + 1)" else s"new Array[${kb.arr}](n + 1)"
+      if !backward then
+        s"{ val out = $alloc; var acc: B = z; out(0) = ${wr(kb, "rb.unwrap(z)")}; var i = 0; while (i < n) { acc = op(acc, applyAtImpl[A](xs, i)); out(i + 1) = ${wr(kb, "rb.unwrap(acc)")}; i += 1 }; ${leaf(kb, "out", "n + 1")} }"
+      else
+        s"{ val out = $alloc; var acc: B = z; out(n) = ${wr(kb, "rb.unwrap(z)")}; var i = n - 1; while (i >= 0) { acc = op(applyAtImpl[A](xs, i), acc); out(i) = ${wr(kb, "rb.unwrap(acc)")}; i -= 1 }; ${leaf(kb, "out", "n + 1")} }"
+    }
+    // the set of (I, Z) pairs the scan shared-leaf path covers: prim self (I == Z) + every input kind paired with
+    // a Ref acc. (Same coverage as Reduce.)
+    val scanCovered: Set[(String, String)] = (opKinds.filter(_.isPrim).map(k => (k.name, k.name)) ++ opKinds.map(k => (k.name, "Ref"))).toSet
+    // realize the SAM for a COVERED (ka, kb) and call scan${Side}Leaf${I}${Z}.
+    def scanLeafCall(ka: Kind, kb: Kind, backward: Boolean): String = {
+      val side = if backward then "Right" else "Left"
+      val K = ka.name
+      if kb.isPrim then // prim self-kind acc (kb == ka): unboxed ${K}To${K}Fold, acc a primitive.
+        s"scan${side}Leaf${K}${K}(xs, rb.unwrap(z), (acc, v) => rb.unwrap(${scanComb(ka, backward, "rb.wrap(acc)", wrapV(ka))}))"
+      else // Z = Ref: generic ${K}ToRefFold[B & AnyRef], acc already an object.
+        s"scan${side}Leaf${K}Ref[B & AnyRef](xs, z.asInstanceOf[B & AnyRef], (acc, v) => ${scanComb(ka, backward, "acc.asInstanceOf[B]", wrapV(ka))}.asInstanceOf[B & AnyRef])"
+    }
+    def scanSurface(backward: Boolean): String =
+      "summonFrom {\n" + opKinds.map { ka =>
+        val inner = "summonFrom {\n" + opKinds.map { kb =>
+          val body = if scanCovered((ka.name, kb.name)) then scanLeafCall(ka, kb, backward) else scanGeneric(kb, backward)
+          s"          case rb: ${kb.name}Repr[B] => $body"
+        }.mkString("\n") + "\n        }"
+        s"      case r: ${ka.name}Repr[A] => $inner"
+      }.mkString("\n") + "\n    }"
+    val scanLeftV = scanSurface(backward = false)
+    val scanRightV = scanSurface(backward = true)
     val iteratorV = dispatchA(k =>
       s"xs match { case leaf: ${k.name}Arr => new ${k.name}Cursor(leaf.arr, leaf.length); case _ => new ${k.name}Cursor(materialize${k.name}(xs), xs.length) }"
     )
-    val foreachWhileV = dispatchA(k =>
-      s"{ val c = new ${k.name}Dfs { def onRunF(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val e = start + count; while (i < e && f(${read(k)})) i += 1; if (i < e) stop = true }; def onRunB(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val e = start - count; while (i > e && f(${read(k)})) i -= 1; if (i > e) stop = true }; def onOne(v: ${k.arr}): Unit = { if (!f(${readOne(k)})) stop = true } }; dfsC${k.name}(xs, c) }"
-    ) // f returns false to stop
+    // foreachWhile: a short-circuit scan for the FIRST element where f returns false (the SAM is the negation);
+    // the hit index is discarded — we only need the side effects f produced up to the stop. ONE leaf-method call.
+    val foreachWhileV = dispatchA(k => s"{ scFwdLeaf${k.name}(xs, 0, ${predSAM(k, s"!f(${wrapV(k)})")}); () }")
     // foldRight: the hybrid Bwd reduce surface — the EXACT mirror of foldLeft, dir = Bwd. A BACKWARD walk
     // hands elements last-to-first (foldRight order), applying op(elem, acc). Self-kind prim Z + Ref Z ride
     // the new Bwd engine traversers; cross-prim Z falls to the old lowered walk.
@@ -842,9 +1077,36 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // that the read side (read(ka)) needs. (dispatchB binds `r`, so map can't reuse it — the body needs both.)
     def dispatchBmap(body: Kind => String): String =
       "summonFrom {\n" + opKinds.map(k => s"          case rb: ${k.name}Repr[B] => ${body(k)}").mkString("\n") + "\n        }"
+    // The set of (I, O) pairs the Build shared-leaf path covers (prim-self + every kind<->Ref).
+    val buildCovered: Set[(String, String)] = buildPairs.map { case (ki, ko) => (ki.name, ko.name) }.toSet
+    // Realize the user's inline `f: A => B` into the (ka, kb) Build SAM lambda, then CALL mapLeaf${I}${O}. The
+    // SAM's element param `v` is the RAW input (prim, or — for Ref input — the RI element bound to A); the body
+    // wraps it to A via `r.wrap`, applies `f`, then unwraps the B result to the output prim via `rb.unwrap`
+    // (Ref output stays an object, no unwrap). NO inlined leaf loop here — the shared leaf method does the loop.
+    // `outTpe` is the Scala result element type (the `B` of map; for mapConserve, where A == B, it is `A`); a
+    // Ref output uses `outTpe & AnyRef` as RO. `rbName` is the output-kind Repr binder (rb for map; r for the
+    // conserve case where input == output kind, so the single repr `r` serves both).
+    def mapLeafCall(ka: Kind, kb: Kind, outTpe: String, rbName: String): String = {
+      // wrap the SAM param `v` to A: prim input -> r.wrap(v); Ref input -> v is Object, cast to A then wrap.
+      val toA = if ka.isPrim then "r.wrap(v)" else "r.wrap(v.asInstanceOf[A])"
+      // the body: f over the wrapped element, then unwrap to the output element (prim) or keep as object (Ref).
+      val body = if kb.isPrim then s"$rbName.unwrap(f($toA))" else s"f($toA).asInstanceOf[$outTpe & AnyRef]"
+      // Only a Ref OUTPUT supplies a tparam (outTpe & AnyRef = RO); a Ref input element is Object, no tparam.
+      val tpClause = if !kb.isPrim then s"[$outTpe & AnyRef]" else ""
+      s"mapLeaf${ka.name}${kb.name}$tpClause(xs, (v) => $body)"
+    }
+    // GENERIC fallback for an UNCOVERED (I, O) — the cross-prim pairs (Int->Long, Long->Double, …): allocate the
+    // O array and fill it per-element via applyAtImpl (boxed read), preserving the output kind O. NOTED: these
+    // cross-prim pairs do NOT use the shared-leaf/Java-traverser fast path; they are cold (a prim FArray mapped
+    // to a DIFFERENT prim kind is rare). Output canonicalised via leaf().
+    def mapGeneric(kb: Kind): String = {
+      val alloc = if kb.name == "Ref" then "new Array[Object](n)" else s"new Array[${kb.arr}](n)"
+      val write = if kb.name == "Ref" then "out(i) = f(applyAtImpl[A](xs, i)).asInstanceOf[Object]" else s"out(i) = ${wr(kb, "rb.unwrap(f(applyAtImpl[A](xs, i)))")}"
+      s"{ val out = $alloc; var i = 0; while (i < n) { $write; i += 1 }; ${leaf(kb, "out", "n")} }"
+    }
     val mapM = "summonFrom {\n" + opKinds
       .map { ka =>
-        val inner = dispatchBmap(kb => lower(mapSpec(ka, kb)))
+        val inner = dispatchBmap(kb => if buildCovered((ka.name, kb.name)) then mapLeafCall(ka, kb, "B", "rb") else mapGeneric(kb))
         s"      case r: ${ka.name}Repr[A] => $inner"
       }
       .mkString("\n") + "\n    }"
@@ -852,19 +1114,23 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // the `if (o == n) xs` identity shortcut survives in the FilterIdentity epilogue.
     val filter = dispatchA(k => lower(filterSpec(k)))
     // fused short-circuiting contains (prim compares unboxed against the unwrapped elem). Empty-body scan.
-    val contains = dispatchA(k =>
-      if k.name == "Ref" then
-        s"{ var res = false; val c = new RefDfs { def onRunF(a: Array[Object], start: Int, count: Int): Unit = { var i = start; val en = start + count; while (i < en && a(i) != elem) i += 1; if (i < en) { res = true; stop = true } }; def onRunB(a: Array[Object], start: Int, count: Int): Unit = { var i = start; val en = start - count; while (i > en && a(i) != elem) i -= 1; if (i > en) { res = true; stop = true } }; def onOne(v: Object): Unit = { if (v == elem) { res = true; stop = true } } }; dfsCRef(xs, c); res }"
-      else
-        s"{ val e = r.unwrap(elem); var res = false; val c = new ${k.name}Dfs { def onRunF(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val en = start + count; while (i < en && a(i) != e) i += 1; if (i < en) { res = true; stop = true } }; def onRunB(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val en = start - count; while (i > en && a(i) != e) i -= 1; if (i > en) { res = true; stop = true } }; def onOne(v: ${k.arr}): Unit = { if (v == e) { res = true; stop = true } } }; dfsC${k.name}(xs, c); res }"
-    )
+    // contains: a short-circuit forward scan for the first element == elem (the ${I}Pred wraps the raw element to
+    // A and compares to elem). One leaf-method call; hit -> index < length.
+    val contains = dispatchA(k => s"scFwdLeaf${k.name}(xs, 0, ${predSAM(k, s"${wrapV(k)} == elem")}) < length")
     val applyAt = dispatchA(k => if k.name == "Ref" then s"r.wrap(${k.lc}At(xs, i).asInstanceOf[A])" else s"r.wrap(${k.lc}At(xs, i))")
-    // mapConserve: scan for the first element f actually changes (reference !eq); if none, return xs with NO
-    // allocation. Only on a change do we copy + apply f from there. (Prims always "change" — boxed eq — so
-    // they materialize like map, which is correct: a primitive can't be conserved.)
+    // mapConserve: I == O == k (always a COVERED pair — prim-self + Ref->Ref). SAME slim surface as map, plus
+    // the identity-check: scan for the first element f actually changes (reference !eq); if NONE, return xs with
+    // NO allocation. On a change, build the result through the SHARED leaf method mapLeaf${K}${K} (re-applying f
+    // over the whole array — the conserve optimisation is the no-change fast path, not prefix-sharing). NO
+    // inlined leaf build loop here. (Prims always "change" — boxed eq — so they always rebuild like map, which
+    // is correct: a primitive can't be conserved.)
     val mapConserve = dispatchA { k =>
-      val applyFrom = s"var j = diff; while (j < n) { out(j) = ${wr(k, s"r.unwrap(f(${readVal(k, "out(j)")}))")}; j += 1 }; new ${k.name}Arr(out, n)"
-      s"xs match { case leaf: ${k.name}Arr => { val sa = leaf.arr; val n = leaf.length; var i = 0; var diff = -1; while (i < n && diff < 0) { val a = ${readVal(k, "sa(i)")}; if (!(f(a).asInstanceOf[AnyRef] eq a.asInstanceOf[AnyRef])) diff = i; i += 1 }; if (diff < 0) xs else { val out = java.util.Arrays.copyOf(sa, n); $applyFrom } }; case _ => { val n = xs.length; var i = 0; var diff = -1; while (i < n && diff < 0) { val a = ${readVal(k, s"${k.lc}At(xs, i)")}; if (!(f(a).asInstanceOf[AnyRef] eq a.asInstanceOf[AnyRef])) diff = i; i += 1 }; if (diff < 0) xs else { val out = materialize${k.name}(xs); $applyFrom } } }"
+      val readEl = if k.name == "Ref" then "sa(i).asInstanceOf[A]" else "sa(i)"
+      val readElNode = if k.name == "Ref" then s"${k.lc}At(xs, i).asInstanceOf[A]" else s"${k.lc}At(xs, i)"
+      val build = mapLeafCall(k, k, "A", "r")
+      val scanLeaf = s"{ val sa = leaf.arr; val n = leaf.length; var i = 0; var changed = false; while (i < n && !changed) { val a = ${readVal(k, readEl)}; if (!(f(a).asInstanceOf[AnyRef] eq a.asInstanceOf[AnyRef])) changed = true; i += 1 }; if (!changed) xs else $build }"
+      val scanNode = s"{ val n = xs.length; var i = 0; var changed = false; while (i < n && !changed) { val a = ${readVal(k, readElNode)}; if (!(f(a).asInstanceOf[AnyRef] eq a.asInstanceOf[AnyRef])) changed = true; i += 1 }; if (!changed) xs else $build }"
+      s"xs match { case leaf: ${k.name}Arr => $scanLeaf; case _ => $scanNode }"
     }
     // ONE pass, no inner buffer: dfs the source, and for each element append f(x)'s elements straight into a
     // growing output array (inline grow). The inner FArray is created, matched, and arraycopied within the
@@ -1142,6 +1408,10 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |$flatMapCopyOne
        |$sortArr
        |$reduceLeafMethods
+       |$mapLeafMethods
+       |$foreachLeafMethods
+       |$scanLeafMethods
+       |$scLeafMethods
        |
        |  inline def emptyImpl[A]: FBase = $emptyB
        |  inline def applyImpl[A](as: Seq[A]): FBase = $applyVar
@@ -1187,19 +1457,20 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def iteratorImpl[A](xs: FBase): Iterator[A] = ($iteratorV).asInstanceOf[Iterator[A]]
        |  inline def countImpl[A](xs: FBase)(inline p: A => Boolean): Int = $countV
        |  inline def foreachImpl[A](xs: FBase)(inline f: A => Unit): Unit = $foreach
-       |  inline def foreachWhileImpl[A](xs: FBase)(inline f: A => Boolean): Unit = { val n = xs.length; if (n == 1) { f(applyAtImpl[A](xs, 0)); () } else if (n > 1) { $foreachWhileV } }
-       |  inline def existsImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = { val n = xs.length; n != 0 && (if (n == 1) p(applyAtImpl[A](xs, 0)) else { $existsV }) }
-       |  inline def forallImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = { val n = xs.length; n == 0 || (if (n == 1) p(applyAtImpl[A](xs, 0)) else { $forallV }) }
-       |  inline def findImpl[A](xs: FBase)(inline p: A => Boolean): Option[A] = { val n = xs.length; if (n == 0) None else if (n == 1) { val e = applyAtImpl[A](xs, 0); if (p(e)) Some(e) else None } else { $findV } }
-       |  inline def indexWhereImpl[A](xs: FBase)(inline p: A => Boolean): Int = { val n = xs.length; if (n == 0) -1 else if (n == 1) (if (p(applyAtImpl[A](xs, 0))) 0 else -1) else { $indexWhereV } }
-       |  inline def indexOfImpl[A, B](xs: FBase, elem: B): Int = { val n = xs.length; if (n == 0) -1 else if (n == 1) (if (applyAtImpl[A](xs, 0) == elem) 0 else -1) else $indexOfV }
-       |  inline def lastIndexWhereImpl[A](xs: FBase)(inline p: A => Boolean): Int = $lastIndexWhereV
-       |  inline def lastIndexOfImpl[A, B](xs: FBase, elem: B): Int = $lastIndexOfV
-       |  inline def collectFirstImpl[A, B](xs: FBase)(pf: PartialFunction[A, B]): Option[B] = { val n = xs.length; if (n == 0) None else if (n == 1) pf.lift(applyAtImpl[A](xs, 0)) else $collectFirstV }
-       |  inline def prefixLengthImpl[A](xs: FBase)(inline p: A => Boolean): Int = { val n = xs.length; if (n == 0) 0 else if (n == 1) (if (p(applyAtImpl[A](xs, 0))) 1 else 0) else $prefixLenV }
+       |  inline def foreachWhileImpl[A](xs: FBase)(inline f: A => Boolean): Unit = $foreachWhileV
+       |  inline def existsImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = { val length = xs.length; $existsV }
+       |  inline def forallImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = { val length = xs.length; $forallV }
+       |  inline def findImpl[A](xs: FBase)(inline p: A => Boolean): Option[A] = { val length = xs.length; $findV }
+       |  inline def indexWhereImpl[A](xs: FBase, from: Int)(inline p: A => Boolean): Int = { val length = xs.length; $indexWhereV }
+       |  inline def indexOfImpl[A, B](xs: FBase, elem: B, from: Int): Int = { val length = xs.length; $indexOfV }
+       |  inline def segmentLengthImpl[A](xs: FBase, from: Int)(inline p: A => Boolean): Int = { val length = xs.length; $segmentLenV }
+       |  inline def lastIndexWhereImpl[A](xs: FBase, end: Int)(inline p: A => Boolean): Int = { val length = xs.length; $lastIndexWhereV }
+       |  inline def lastIndexOfImpl[A, B](xs: FBase, elem: B, end: Int): Int = { val length = xs.length; $lastIndexOfV }
+       |  inline def collectFirstImpl[A, B](xs: FBase)(pf: PartialFunction[A, B]): Option[B] = { val length = xs.length; $collectFirstV }
+       |  inline def prefixLengthImpl[A](xs: FBase)(inline p: A => Boolean): Int = $prefixLenV
        |  inline def mapImpl[A, B](xs: FBase)(inline f: A => B): FBase = { val n = xs.length; $mapM }
        |  inline def filterImpl[A](xs: FBase)(inline p: A => Boolean): FBase = { val n = xs.length; $filter }
-       |  inline def containsImpl[A](xs: FBase, elem: A): Boolean = { val n = xs.length; if (n == 0) false else if (n == 1) (applyAtImpl[A](xs, 0) == elem) else $contains }
+       |  inline def containsImpl[A](xs: FBase, elem: A): Boolean = { val length = xs.length; $contains }
        |  inline def mapConserveImpl[A](xs: FBase)(inline f: A => A): FBase = { val n = xs.length; if (n == 0) xs else if (n == 1) { val e = applyAtImpl[A](xs, 0); val r = f(e); if (r.asInstanceOf[AnyRef] eq e.asInstanceOf[AnyRef]) xs else fromValues1[A](r) } else $mapConserve }
        |  inline def unzipImpl[A, A1, A2](xs: FBase)(ev: A <:< (A1, A2)): (FBase, FBase) = { val n = xs.length; if (n == 0) (Empty.INSTANCE, Empty.INSTANCE) else $unzipV }
        |  inline def unzip3Impl[A, A1, A2, A3](xs: FBase)(ev: A <:< (A1, A2, A3)): (FBase, FBase, FBase) = { val n = xs.length; if (n == 0) (Empty.INSTANCE, Empty.INSTANCE, Empty.INSTANCE) else $unzip3V }
@@ -1217,7 +1488,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def sortByImpl[A, B](xs: FBase)(inline f: A => B)(using ord: Ordering[B]): FBase = $sortByV
        |  inline def sumImpl[A, B](xs: FBase)(using num: Numeric[B]): B = $sumV
        |  inline def productImpl[A, B](xs: FBase)(using num: Numeric[B]): B = $productV
-       |  inline def scanLeftImpl[A, B](xs: FBase, z: B)(inline op: (B, A) => B): FBase = { val n = xs.length; if (n <= 1) { $scanLeftSmallV } else { $scanLeftV } }
+       |  inline def scanLeftImpl[A, B](xs: FBase, z: B)(inline op: (B, A) => B): FBase = { val n = xs.length; $scanLeftV }
+       |  inline def scanRightImpl[A, B](xs: FBase, z: B)(inline op: (A, B) => B): FBase = { val n = xs.length; $scanRightV }
        |  inline def groupByImpl[A, K](xs: FBase)(inline f: A => K): Map[K, FBase] = $groupBy
        |  inline def groupMapAcc[K, B]: GroupMapAcc[K, B] = $groupMapAcc
        |}
@@ -1267,6 +1539,53 @@ object GenCores extends BleepCodegenScript("GenCores") {
       e.close()
     }
     e.blank()
+    // --- Build (map) function types (§3): one per COVERED (input I, output O) pair. Primitive O is unboxed
+    //     (a primitive return); a Ref OUTPUT is a type param RO. A Ref INPUT element is plain `Object` (NOT a
+    //     type param) — exactly like the RefToRefFold SAM — so the Java traverser, whose Ref leaf arrays are
+    //     Object[], passes elements with NO cast; the Scala lambda casts Object->A itself. ---
+    e.line("// --- build (map) function types (§3): I->O element transforms; prim O unboxed, Ref OUTPUT is a tparam ---")
+    buildPairs.foreach { case (ki, ko) =>
+      val ji = jelem(ki) // Object for Ref input
+      val jo = jelem(ko)
+      (ki.isPrim, ko.isPrim) match {
+        case (true, true) => // prim -> prim (self-kind only): fully unboxed
+          e.open(s"public interface ${ki.name}To${ko.name}Fn")
+          e.line(s"$jo apply($ji v);")
+          e.close()
+        case (true, false) => // prim -> Ref: output is a type param RO
+          e.open(s"public interface ${ki.name}ToRefFn<RO>")
+          e.line(s"RO apply($ji v);")
+          e.close()
+        case (false, true) => // Ref -> prim: input element is Object (no cast in Java)
+          e.open(s"public interface RefTo${ko.name}Fn")
+          e.line(s"$jo apply(Object v);")
+          e.close()
+        case (false, false) => // Ref -> Ref: input Object, output type param RO
+          e.open("public interface RefToRefFn<RO>")
+          e.line("RO apply(Object v);")
+          e.close()
+      }
+    }
+    e.blank()
+    // --- consumer (foreach) function types (§3): one per INPUT kind. Prim input takes the unboxed prim; a Ref
+    //     input element is plain Object (the Scala lambda casts Object->A itself), matching the Fold/Fn SAMs. ---
+    e.line("// --- consumer (foreach) function types (§3): void apply(I v); Ref input takes Object ---")
+    opKinds.foreach { k =>
+      e.open(s"public interface ${k.name}Consumer")
+      e.line(s"void apply(${jelem(k)} v);")
+      e.close()
+    }
+    e.blank()
+    // --- predicate (short-circuit) function types (§3): one per INPUT kind. `boolean apply(I v)`; the leaf scan
+    //     stops on the FIRST element for which this returns true. Prim input takes the unboxed prim; a Ref input
+    //     element is plain Object (the Scala lambda casts Object->A itself), matching the Consumer/Fold/Fn SAMs. ---
+    e.line("// --- predicate (short-circuit) function types (§3): boolean apply(I v); Ref input takes Object ---")
+    opKinds.foreach { k =>
+      e.open(s"public interface ${k.name}Pred")
+      e.line(s"boolean apply(${jelem(k)} v);")
+      e.close()
+    }
+    e.blank()
     opKinds.foreach { k =>
       // prim input: unboxed self-kind acc traverser (fwd + bwd), then the generic ref-acc traverser (fwd + bwd).
       if k.isPrim then {
@@ -1280,9 +1599,82 @@ object GenCores extends BleepCodegenScript("GenCores") {
       reduceTraverser(e, k, backward = true, refAcc = true)
       e.blank()
     }
+    // --- Build (map) traversers: ONE per covered (I, O) pair. Same lazy-stack walk skeleton as reduceFwd;
+    //     writes out[o++] = f.apply(elem) ascending. A ReverseNode recurses into the BACKWARD build (still
+    //     writing out[o++] ascending — only the READ order flips). Deep-base Slice/Pad/Updated keep the
+    //     per-index applyBoxed read (a later pass replaces those). ---
+    buildPairs.foreach { case (ki, ko) =>
+      buildTraverser(e, ki, ko, backward = false)
+      e.blank()
+      buildTraverser(e, ki, ko, backward = true)
+      e.blank()
+    }
+    // --- Foreach traversers: ONE pair (fwd + bwd) per INPUT kind. Same lazy-stack walk skeleton; per element
+    //     it just calls f.apply(elem). A ReverseNode recurses into the opposite-direction foreach so a reversed
+    //     subtree's local order flips. No accumulator, no output — Unit. ---
+    opKinds.foreach { k =>
+      foreachTraverser(e, k, backward = false)
+      e.blank()
+      foreachTraverser(e, k, backward = true)
+      e.blank()
+    }
+    // --- Scan traversers: FOUR per covered (I, Z) pair (same coverage as Reduce: prim self + Ref acc). The WRITE
+    //     convention is FIXED per op (scanLeft writes fwd out[o-1]; scanRight writes bwd out[o+1]); the VISIT
+    //     direction is INDEPENDENT and flips at each ReverseNode. So each op gets a MAIN entry (visit == write
+    //     dir, the shared-leaf forwarder) PLUS a reverse-arm variant (visit != write dir) it bounces to at a
+    //     ReverseNode. scanLeft: scanFwd…(visit fwd) <-> scanFwdRev…(visit bwd); scanRight: scanBwd…(visit bwd)
+    //     <-> scanBwdRev…(visit fwd). The running acc is ALWAYS the previously-written slot (out[o-1]/out[o+1]),
+    //     so no acc threading; each method returns the advanced cursor `o`. ---
+    opKinds.foreach { k =>
+      def four(refAcc: Boolean): Unit = {
+        // scanLeft (write fwd): MAIN visit-fwd + reverse-arm visit-bwd.
+        scanTraverser(e, k, writeBackward = false, visitBackward = false, refAcc = refAcc); e.blank()
+        scanTraverser(e, k, writeBackward = false, visitBackward = true, refAcc = refAcc); e.blank()
+        // scanRight (write bwd): MAIN visit-bwd + reverse-arm visit-fwd.
+        scanTraverser(e, k, writeBackward = true, visitBackward = true, refAcc = refAcc); e.blank()
+        scanTraverser(e, k, writeBackward = true, visitBackward = false, refAcc = refAcc); e.blank()
+      }
+      if k.isPrim then four(refAcc = false)
+      four(refAcc = true)
+    }
+    // --- Short-circuit traversers: ONE pair (fwd + bwd) per INPUT kind. Same lazy-stack walk skeleton, BUT each
+    //     method returns the FIRST-HIT global index (and ABANDONS the lazy stack via the method return on a hit)
+    //     instead of running to completion. It threads a cumulative element count `cum` to map a local leaf hit to
+    //     a global index, and `from`/`end` clamps each leaf's window (whole leaves below `from`/above `end` are
+    //     skipped without testing). A ReverseNode recurses into the opposite direction; the recursion encodes
+    //     "no hit, new cum = C" as ~C (a negative) and a hit as the global index (>= 0). ---
+    opKinds.foreach { k =>
+      scTraverser(e, k, backward = false)
+      e.blank()
+      scTraverser(e, k, backward = true)
+      e.blank()
+    }
     e.close()
     e.result
   }
+
+  /** The COVERED (input I, output O) pairs for the Build shape (map/mapConserve): primitive self-kind
+    * (Int->Int, Long->Long, Double->Double) plus every kind paired with Ref (prim->Ref, Ref->prim, Ref->Ref).
+    * Cross-prim pairs (e.g. Int->Long) are NOT here — the surface routes them through a generic per-element
+    * boxed `applyAtImpl` path that preserves the output kind O. */
+  private def buildPairs: List[(Kind, Kind)] = {
+    val refK = opKinds.find(_.name == "Ref").get
+    val primSelf = opKinds.filter(_.isPrim).map(k => (k, k))
+    val toRef = opKinds.filter(_.isPrim).map(k => (k, refK))
+    val fromRef = opKinds.filter(_.isPrim).map(k => (refK, k))
+    primSelf ++ toRef ++ fromRef ++ List((refK, refK))
+  }
+
+  /** The Java type name of the Build SAM for (I, O): prim-self `${I}To${O}Fn`, prim->Ref `${I}ToRefFn<RO>`,
+    * Ref->prim `RefTo${O}Fn`, Ref->Ref `RefToRefFn<RO>`. A Ref INPUT element is plain Object (no tparam); only
+    * a Ref OUTPUT carries the `roArg` type param (e.g. "B & AnyRef" Scala-side, erased Java-side). */
+  private def buildFnType(ki: Kind, ko: Kind, roArg: String): String =
+    (ki.isPrim, ko.isPrim) match {
+      case (true, true)   => s"${ki.name}To${ko.name}Fn"
+      case (true, false)  => s"${ki.name}ToRefFn<$roArg>"
+      case (false, true)  => s"RefTo${ko.name}Fn"
+      case (false, false) => s"RefToRefFn<$roArg>"
+    }
 
   /** Emit one Reduce push traverser over input kind `k`. `refAcc` picks the function type (Z=Ref generic vs
     * Z=${k} unboxed) and the acc type; `backward` mirrors visit order. Per §4.1: Concat/Append/Prepend
@@ -1310,6 +1702,26 @@ object GenCores extends BleepCodegenScript("GenCores") {
       case _        => expr
     }
 
+    // a WHOLE-leaf run: loop on `a.length`, NOT leaf.length. HotSpot can prove the bound matches the array it
+    // indexes (a JVM fact) and drops the per-element bounds check on `a[i]`, vectorizing the load — `leaf.length`
+    // is OUR copyOf invariant, opaque to the JIT, leaking a bounds check that blocks vectorization.
+    def runLeaf(arr: String): Unit = e.scope {
+      e.line(s"$je[] a = $arr;")
+      if !backward then {
+        e.line("int i = 0;")
+        e.line("int end = a.length;")
+        e.open("while (i < end)")
+        e.line("acc = f.apply(acc, a[i]);")
+        e.line("i += 1;")
+        e.close()
+      } else {
+        e.line("int i = a.length - 1;")
+        e.open("while (i >= 0)")
+        e.line("acc = f.apply(acc, a[i]);")
+        e.line("i -= 1;")
+        e.close()
+      }
+    }
     // a forward array run over a[start, start+count); a backward run over a[start, start-count) descending.
     def run(arr: String, start: String, count: String): Unit = e.scope {
       e.line(s"$je[] a = $arr;")
@@ -1393,8 +1805,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     e.line("FBase next = null;")
     // leaf
     e.open(s"if (cur instanceof ${K}Arr leaf)")
-    if !backward then run("leaf.arr", "0", "leaf.length")
-    else run("leaf.arr", "leaf.length - 1", "leaf.length")
+    runLeaf("leaf.arr")
     // one
     e.closeOpen(s"else if (cur instanceof ${K}One one)")
     e.line("acc = f.apply(acc, one.elem);")
@@ -1531,6 +1942,1122 @@ object GenCores extends BleepCodegenScript("GenCores") {
     e.close() // method
   }
 
+  /** Emit one Build (map) push traverser over (input kind `ki`, output kind `ko`). The SAME lazy-stack walk
+    * skeleton as `reduceTraverser`, but instead of threading an accumulator it WRITES `out[o] = f.apply(elem)`
+    * and bumps `o`; it returns the final cursor `o`. `backward` mirrors the READ order (Concat r-then-l,
+    * runs descending, …) yet the cursor `o` still advances ascending — so a ReverseNode visited from the Fwd
+    * build calls the Bwd build (reading last-to-first), which fills out[o..] in reversed-source order, exactly
+    * as `reverse.map` requires. Deep-base Slice/Pad/Updated read per-index via applyBoxed (later pass replaces
+    * those — do NOT change here). `out` is `O[]` (prim) / `Object[]` (Ref); `f` is the (I,O) Build SAM. */
+  private def buildTraverser(e: Emit, ki: Kind, ko: Kind, backward: Boolean): Unit = {
+    val KI = ki.name
+    val jiE = jelem(ki) // input Java element type: int/long/double/Object
+    val joE = jelem(ko) // output Java element type: int/long/double/Object
+    val dir = if backward then "Bwd" else "Fwd"
+    val other = if backward then "Fwd" else "Bwd"
+    // Only a Ref OUTPUT carries a type param (RO); a Ref input element is plain Object.
+    val roArg = "RO"
+    val fnT = buildFnType(ki, ko, roArg)
+    val tparams = if !ko.isPrim then List("RO") else Nil
+    val tpClause = if tparams.isEmpty then "" else s"<${tparams.mkString(", ")}> "
+    val outT = if ko.isPrim then s"$joE[]" else "Object[]"
+    val name = s"build${dir}${KI}${ko.name}"
+    // recursion into the opposite-direction build (the only recursion). RO is inferred from `out`/`f`.
+    val recur = s"build${other}${KI}${ko.name}"
+    val sig = s"static ${tpClause}int $name(FBase root, $outT out, int o, $fnT f)"
+    // write one element: out[o] = f.apply(<elem>); o += 1.  For a Ref OUTPUT the SAM returns RO (a generic
+    // erased to Object) — store straight into the Object[]. For a Ref INPUT the leaf array IS Object[] and
+    // `f.apply` takes RI (erased to Object), so the read is a pass-through.
+    def writeElem(elem: String): Unit = {
+      e.line(s"out[o] = f.apply($elem);")
+      e.line("o += 1;")
+    }
+    def fromBoxed(expr: String): String = ki.name match {
+      case "Int"    => s"((Integer) $expr).intValue()"
+      case "Long"   => s"((Long) $expr).longValue()"
+      case "Double" => s"((Double) $expr).doubleValue()"
+      case _        => expr
+    }
+    // a WHOLE-leaf run on a.length (HotSpot drops the bounds check — see the reduce leaf note). The cursor `o`
+    // advances ascending in BOTH directions; only the READ index walks descending for the Bwd build.
+    def runLeaf(arr: String): Unit = e.scope {
+      e.line(s"$jiE[] a = $arr;")
+      if !backward then {
+        e.line("int i = 0;")
+        e.line("int end = a.length;")
+        e.open("while (i < end)")
+        writeElem("a[i]")
+        e.line("i += 1;")
+        e.close()
+      } else {
+        e.line("int i = a.length - 1;")
+        e.open("while (i >= 0)")
+        writeElem("a[i]")
+        e.line("i -= 1;")
+        e.close()
+      }
+    }
+    // a leaf window over a[start, start±count).
+    def run(arr: String, start: String, count: String): Unit = e.scope {
+      e.line(s"$jiE[] a = $arr;")
+      if !backward then {
+        e.line(s"int i = $start;")
+        e.line(s"int end = i + ($count);")
+        e.open("while (i < end)")
+        writeElem("a[i]")
+        e.line("i += 1;")
+        e.close()
+      } else {
+        e.line(s"int i = $start;")
+        e.line(s"int end = i - ($count);")
+        e.open("while (i > end)")
+        writeElem("a[i]")
+        e.line("i -= 1;")
+        e.close()
+      }
+    }
+    // deep (non-leaf) base read, per element, via applyBoxed.
+    def runBoxed(base: String, start: String, count: String): Unit = e.scope {
+      if !backward then {
+        e.line(s"int bi = $start;")
+        e.line(s"int bend = bi + ($count);")
+        e.open("while (bi < bend)")
+        writeElem(fromBoxed(s"$base.applyBoxed(bi)"))
+        e.line("bi += 1;")
+        e.close()
+      } else {
+        e.line(s"int bi = $start;")
+        e.line(s"int bend = bi - ($count);")
+        e.open("while (bi > bend)")
+        writeElem(fromBoxed(s"$base.applyBoxed(bi)"))
+        e.line("bi -= 1;")
+        e.close()
+      }
+    }
+
+    // the deferred-element stack mirrors reduceTraverser (Prepend fwd-defer / Append bwd-defer).
+    def ensureStack(): Unit = {
+      e.open("if (stack == null)")
+      e.line("stack = new FBase[16];")
+      e.closeOpen("else if (sp == stack.length)")
+      e.line("int nl = sp * 2;")
+      e.line("stack = java.util.Arrays.copyOf(stack, nl);")
+      e.open("if (isTail != null)")
+      e.line("tail = java.util.Arrays.copyOf(tail, nl);")
+      e.line("isTail = java.util.Arrays.copyOf(isTail, nl);")
+      e.close()
+      e.close()
+    }
+    def ensureTail(): Unit = {
+      e.open("if (isTail == null)")
+      e.line(s"tail = new $jiE[stack.length];")
+      e.line("isTail = new boolean[stack.length];")
+      e.close()
+    }
+    def pushTail(elem: String): Unit = {
+      ensureStack()
+      ensureTail()
+      e.line(s"tail[sp] = $elem;")
+      e.line("isTail[sp] = true;")
+      e.line("sp += 1;")
+    }
+    def pushChild(child: String): Unit = {
+      ensureStack()
+      e.open("if (isTail != null)")
+      e.line("isTail[sp] = false;")
+      e.close()
+      e.line(s"stack[sp] = $child;")
+      e.line("sp += 1;")
+    }
+
+    e.open(sig)
+    e.line("FBase cur = root;")
+    e.line("FBase[] stack = null;")
+    e.line(s"$jiE[] tail = null;")
+    e.line("boolean[] isTail = null;")
+    e.line("int sp = 0;")
+    e.open("while (cur != null)")
+    e.line("FBase next = null;")
+    // leaf
+    e.open(s"if (cur instanceof ${KI}Arr leaf)")
+    runLeaf("leaf.arr")
+    // one
+    e.closeOpen(s"else if (cur instanceof ${KI}One one)")
+    writeElem("one.elem")
+    // prepend: fwd elem-then-base; bwd defer elem, descend base first
+    e.closeOpen(s"else if (cur instanceof ${KI}Prepend p)")
+    if !backward then {
+      writeElem("p.elem")
+      e.line("next = p.base;")
+    } else {
+      pushTail("p.elem")
+      e.line("next = p.base;")
+    }
+    // append: fwd defer elem, descend base first; bwd elem-then-base
+    e.closeOpen(s"else if (cur instanceof ${KI}Append ap)")
+    if !backward then {
+      pushTail("ap.elem")
+      e.line("next = ap.base;")
+    } else {
+      writeElem("ap.elem")
+      e.line("next = ap.base;")
+    }
+    // concat: fwd left-then-right; bwd right-then-left
+    e.closeOpen("else if (cur instanceof Concat c)")
+    if !backward then {
+      pushChild("c.right")
+      e.line("next = c.left;")
+    } else {
+      pushChild("c.left")
+      e.line("next = c.right;")
+    }
+    // reverse: the ONLY recursion — flip the READ direction across the JVM call boundary, threading o.
+    e.closeOpen("else if (cur instanceof ReverseNode rev)")
+    e.line(s"o = $recur(rev.base, out, o, f);")
+    // slice: leaf-base window fast path; deep base via applyBoxed
+    e.closeOpen("else if (cur instanceof SliceNode s)")
+    e.line("int so = s.offset;")
+    e.line("int sn = s.length;")
+    e.open(s"if (s.base instanceof ${KI}Arr lf)")
+    if !backward then run("lf.arr", "so", "sn")
+    else run("lf.arr", "so + sn - 1", "sn")
+    e.closeOpen("else")
+    if !backward then runBoxed("s.base", "so", "sn")
+    else runBoxed("s.base", "so + sn - 1", "sn")
+    e.close()
+    // pad: fwd base-then-fillers; bwd fillers-then-base
+    e.closeOpen(s"else if (cur instanceof ${KI}Pad pad)")
+    e.line("int bl = pad.base.length;")
+    e.line(s"$jiE pf = pad.filler;")
+    e.line("int pn = pad.length;")
+    if !backward then {
+      e.open(s"if (pad.base instanceof ${KI}Arr lf)")
+      run("lf.arr", "0", "bl")
+      e.closeOpen("else")
+      runBoxed("pad.base", "0", "bl")
+      e.close()
+      e.line("int pj = bl;")
+      e.open("while (pj < pn)")
+      writeElem("pf")
+      e.line("pj += 1;")
+      e.close()
+    } else {
+      e.line("int pj = pn;")
+      e.open("while (pj > bl)")
+      writeElem("pf")
+      e.line("pj -= 1;")
+      e.close()
+      e.open(s"if (pad.base instanceof ${KI}Arr lf)")
+      run("lf.arr", "bl - 1", "bl")
+      e.closeOpen("else")
+      runBoxed("pad.base", "bl - 1", "bl")
+      e.close()
+    }
+    // updated: fwd [0,ui) elem (ui,len); bwd mirror. leaf-base fast path; deep base via applyBoxed segments.
+    e.closeOpen(s"else if (cur instanceof ${KI}Updated u)")
+    e.line("int ui = u.index;")
+    e.line("int ul = u.length;")
+    e.open(s"if (u.base instanceof ${KI}Arr lf)")
+    e.line(s"$jiE[] la = lf.arr;")
+    if !backward then {
+      run("la", "0", "ui")
+      writeElem("u.elem")
+      run("la", "ui + 1", "ul - ui - 1")
+    } else {
+      run("la", "ul - 1", "ul - ui - 1")
+      writeElem("u.elem")
+      run("la", "ui - 1", "ui")
+    }
+    e.closeOpen("else")
+    if !backward then {
+      runBoxed("u.base", "0", "ui")
+      writeElem("u.elem")
+      runBoxed("u.base", "ui + 1", "ul - ui - 1")
+    } else {
+      runBoxed("u.base", "ul - 1", "ul - ui - 1")
+      writeElem("u.elem")
+      runBoxed("u.base", "ui - 1", "ui")
+    }
+    e.close()
+    // range (Int-only structural node — emitted only for Int input)
+    if KI == "Int" then {
+      e.closeOpen("else if (cur instanceof RangeNode rng)")
+      e.line("int rn = rng.length;")
+      if !backward then {
+        e.line("int ri = 0;")
+        e.open("while (ri < rn)")
+        writeElem("rng.start + ri * rng.step")
+        e.line("ri += 1;")
+        e.close()
+      } else {
+        e.line("int ri = rn - 1;")
+        e.open("while (ri >= 0)")
+        writeElem("rng.start + ri * rng.step")
+        e.line("ri -= 1;")
+        e.close()
+      }
+    }
+    e.close()
+    // advance: descend into `next`, else pop the explicit stack (a tail slot applies the deferred element).
+    e.open("if (next != null)")
+    e.line("cur = next;")
+    e.closeOpen("else")
+    e.line("cur = null;")
+    e.open("while (sp > 0 && cur == null)")
+    e.line("sp -= 1;")
+    e.open("if (isTail != null && isTail[sp])")
+    writeElem("tail[sp]")
+    e.closeOpen("else")
+    e.line("cur = stack[sp];")
+    e.close()
+    e.close()
+    e.close()
+    e.close() // while (cur != null)
+    e.line("return o;")
+    e.close() // method
+  }
+
+  /** Emit one Foreach push traverser over input kind `k`. The SAME lazy-stack walk skeleton as `reduceTraverser`,
+    * but it threads NO accumulator and produces NO output — each element just calls `f.apply(elem)`. `backward`
+    * mirrors visit order (needed because a ReverseNode flips a subtree's local order — the Fwd traverser recurses
+    * into the Bwd one). Deep-base Slice/Pad/Updated keep the per-index applyBoxed read (a later pass replaces
+    * those — do NOT change here). The deferred-element stack mirrors reduceTraverser (Prepend fwd-defer / Append
+    * bwd-defer); a deferred tail slot APPLIES `f` to the deferred element on pop. Returns void. */
+  private def foreachTraverser(e: Emit, k: Kind, backward: Boolean): Unit = {
+    val K = k.name
+    val je = jelem(k) // int/long/double/Object
+    val dir = if backward then "Bwd" else "Fwd"
+    val other = if backward then "Fwd" else "Bwd"
+    val sig = s"static void foreach${dir}${K}(FBase root, ${K}Consumer f)"
+    val recur = s"foreach${other}${K}"
+    def fromBoxed(expr: String): String = k.name match {
+      case "Int"    => s"((Integer) $expr).intValue()"
+      case "Long"   => s"((Long) $expr).longValue()"
+      case "Double" => s"((Double) $expr).doubleValue()"
+      case _        => expr
+    }
+    // a WHOLE-leaf run on a.length (HotSpot drops the bounds check — see the reduce leaf note).
+    def runLeaf(arr: String): Unit = e.scope {
+      e.line(s"$je[] a = $arr;")
+      if !backward then {
+        e.line("int i = 0;")
+        e.line("int end = a.length;")
+        e.open("while (i < end)")
+        e.line("f.apply(a[i]);")
+        e.line("i += 1;")
+        e.close()
+      } else {
+        e.line("int i = a.length - 1;")
+        e.open("while (i >= 0)")
+        e.line("f.apply(a[i]);")
+        e.line("i -= 1;")
+        e.close()
+      }
+    }
+    // a leaf window over a[start, start±count).
+    def run(arr: String, start: String, count: String): Unit = e.scope {
+      e.line(s"$je[] a = $arr;")
+      if !backward then {
+        e.line(s"int i = $start;")
+        e.line(s"int end = i + ($count);")
+        e.open("while (i < end)")
+        e.line("f.apply(a[i]);")
+        e.line("i += 1;")
+        e.close()
+      } else {
+        e.line(s"int i = $start;")
+        e.line(s"int end = i - ($count);")
+        e.open("while (i > end)")
+        e.line("f.apply(a[i]);")
+        e.line("i -= 1;")
+        e.close()
+      }
+    }
+    // deep (non-leaf) base read, per element, via applyBoxed.
+    def runBoxed(base: String, start: String, count: String): Unit = e.scope {
+      if !backward then {
+        e.line(s"int bi = $start;")
+        e.line(s"int bend = bi + ($count);")
+        e.open("while (bi < bend)")
+        e.line(s"f.apply(${fromBoxed(s"$base.applyBoxed(bi)")});")
+        e.line("bi += 1;")
+        e.close()
+      } else {
+        e.line(s"int bi = $start;")
+        e.line(s"int bend = bi - ($count);")
+        e.open("while (bi > bend)")
+        e.line(s"f.apply(${fromBoxed(s"$base.applyBoxed(bi)")});")
+        e.line("bi -= 1;")
+        e.close()
+      }
+    }
+    def ensureStack(): Unit = {
+      e.open("if (stack == null)")
+      e.line("stack = new FBase[16];")
+      e.closeOpen("else if (sp == stack.length)")
+      e.line("int nl = sp * 2;")
+      e.line("stack = java.util.Arrays.copyOf(stack, nl);")
+      e.open("if (isTail != null)")
+      e.line("tail = java.util.Arrays.copyOf(tail, nl);")
+      e.line("isTail = java.util.Arrays.copyOf(isTail, nl);")
+      e.close()
+      e.close()
+    }
+    def ensureTail(): Unit = {
+      e.open("if (isTail == null)")
+      e.line(s"tail = new $je[stack.length];")
+      e.line("isTail = new boolean[stack.length];")
+      e.close()
+    }
+    def pushTail(elem: String): Unit = {
+      ensureStack()
+      ensureTail()
+      e.line(s"tail[sp] = $elem;")
+      e.line("isTail[sp] = true;")
+      e.line("sp += 1;")
+    }
+    def pushChild(child: String): Unit = {
+      ensureStack()
+      e.open("if (isTail != null)")
+      e.line("isTail[sp] = false;")
+      e.close()
+      e.line(s"stack[sp] = $child;")
+      e.line("sp += 1;")
+    }
+
+    e.open(sig)
+    e.line("FBase cur = root;")
+    e.line("FBase[] stack = null;")
+    e.line(s"$je[] tail = null;")
+    e.line("boolean[] isTail = null;")
+    e.line("int sp = 0;")
+    e.open("while (cur != null)")
+    e.line("FBase next = null;")
+    // leaf
+    e.open(s"if (cur instanceof ${K}Arr leaf)")
+    runLeaf("leaf.arr")
+    // one
+    e.closeOpen(s"else if (cur instanceof ${K}One one)")
+    e.line("f.apply(one.elem);")
+    // prepend: fwd elem-then-base; bwd defer elem, descend base first
+    e.closeOpen(s"else if (cur instanceof ${K}Prepend p)")
+    if !backward then {
+      e.line("f.apply(p.elem);")
+      e.line("next = p.base;")
+    } else {
+      pushTail("p.elem")
+      e.line("next = p.base;")
+    }
+    // append: fwd defer elem, descend base first; bwd elem-then-base
+    e.closeOpen(s"else if (cur instanceof ${K}Append ap)")
+    if !backward then {
+      pushTail("ap.elem")
+      e.line("next = ap.base;")
+    } else {
+      e.line("f.apply(ap.elem);")
+      e.line("next = ap.base;")
+    }
+    // concat: fwd left-then-right; bwd right-then-left
+    e.closeOpen("else if (cur instanceof Concat c)")
+    if !backward then {
+      pushChild("c.right")
+      e.line("next = c.left;")
+    } else {
+      pushChild("c.left")
+      e.line("next = c.right;")
+    }
+    // reverse: the ONLY recursion — flip direction across the JVM call boundary
+    e.closeOpen("else if (cur instanceof ReverseNode rev)")
+    e.line(s"$recur(rev.base, f);")
+    // slice: leaf-base window fast path; deep base via applyBoxed
+    e.closeOpen("else if (cur instanceof SliceNode s)")
+    e.line("int so = s.offset;")
+    e.line("int sn = s.length;")
+    e.open(s"if (s.base instanceof ${K}Arr lf)")
+    if !backward then run("lf.arr", "so", "sn")
+    else run("lf.arr", "so + sn - 1", "sn")
+    e.closeOpen("else")
+    if !backward then runBoxed("s.base", "so", "sn")
+    else runBoxed("s.base", "so + sn - 1", "sn")
+    e.close()
+    // pad: fwd base-then-fillers; bwd fillers-then-base
+    e.closeOpen(s"else if (cur instanceof ${K}Pad pad)")
+    e.line("int bl = pad.base.length;")
+    e.line(s"$je pf = pad.filler;")
+    e.line("int pn = pad.length;")
+    if !backward then {
+      e.open(s"if (pad.base instanceof ${K}Arr lf)")
+      run("lf.arr", "0", "bl")
+      e.closeOpen("else")
+      runBoxed("pad.base", "0", "bl")
+      e.close()
+      e.line("int pj = bl;")
+      e.open("while (pj < pn)")
+      e.line("f.apply(pf);")
+      e.line("pj += 1;")
+      e.close()
+    } else {
+      e.line("int pj = pn;")
+      e.open("while (pj > bl)")
+      e.line("f.apply(pf);")
+      e.line("pj -= 1;")
+      e.close()
+      e.open(s"if (pad.base instanceof ${K}Arr lf)")
+      run("lf.arr", "bl - 1", "bl")
+      e.closeOpen("else")
+      runBoxed("pad.base", "bl - 1", "bl")
+      e.close()
+    }
+    // updated: fwd [0,ui) elem (ui,len); bwd mirror. leaf-base fast path; deep base via applyBoxed segments.
+    e.closeOpen(s"else if (cur instanceof ${K}Updated u)")
+    e.line("int ui = u.index;")
+    e.line("int ul = u.length;")
+    e.open(s"if (u.base instanceof ${K}Arr lf)")
+    e.line(s"$je[] la = lf.arr;")
+    if !backward then {
+      run("la", "0", "ui")
+      e.line("f.apply(u.elem);")
+      run("la", "ui + 1", "ul - ui - 1")
+    } else {
+      run("la", "ul - 1", "ul - ui - 1")
+      e.line("f.apply(u.elem);")
+      run("la", "ui - 1", "ui")
+    }
+    e.closeOpen("else")
+    if !backward then {
+      runBoxed("u.base", "0", "ui")
+      e.line("f.apply(u.elem);")
+      runBoxed("u.base", "ui + 1", "ul - ui - 1")
+    } else {
+      runBoxed("u.base", "ul - 1", "ul - ui - 1")
+      e.line("f.apply(u.elem);")
+      runBoxed("u.base", "ui - 1", "ui")
+    }
+    e.close()
+    // range (Int-only structural node — emitted only for Int input)
+    if K == "Int" then {
+      e.closeOpen("else if (cur instanceof RangeNode rng)")
+      e.line("int rn = rng.length;")
+      if !backward then {
+        e.line("int ri = 0;")
+        e.open("while (ri < rn)")
+        e.line("f.apply(rng.start + ri * rng.step);")
+        e.line("ri += 1;")
+        e.close()
+      } else {
+        e.line("int ri = rn - 1;")
+        e.open("while (ri >= 0)")
+        e.line("f.apply(rng.start + ri * rng.step);")
+        e.line("ri -= 1;")
+        e.close()
+      }
+    }
+    e.close()
+    // advance: descend into `next`, else pop the explicit stack (a tail slot applies the deferred element).
+    e.open("if (next != null)")
+    e.line("cur = next;")
+    e.closeOpen("else")
+    e.line("cur = null;")
+    e.open("while (sp > 0 && cur == null)")
+    e.line("sp -= 1;")
+    e.open("if (isTail != null && isTail[sp])")
+    e.line("f.apply(tail[sp]);")
+    e.closeOpen("else")
+    e.line("cur = stack[sp];")
+    e.close()
+    e.close()
+    e.close()
+    e.close() // while (cur != null)
+    e.close() // method
+  }
+
+  /** Emit one Scan push traverser over input kind `k`. KEY TRICK: the running accumulator is ALWAYS the LAST
+    * value already written to `out` — `out[o-1]` for the Fwd scan (writing ascending), `out[o+1]` for the Bwd
+    * scan (writing descending) — so there is NO accumulator threading and NO dual return; each method returns
+    * only the advanced cursor `o`. Per element: write `out[o] = f.apply(out[o-1], elem)` then `o += 1` (Fwd) /
+    * mirror (Bwd). `refAcc` picks the SAM (Z=Ref generic `${K}ToRefFold<Z>` vs Z=${k} unboxed `${K}To${K}Fold`)
+    * and the `out` array's element type; a Ref acc reads `out[o-1]` as Object and casts to Z. Same lazy-stack
+    * walk skeleton; ReverseNode recurses into the opposite direction; deep-base Slice/Pad/Updated keep the
+    * per-index applyBoxed read (a later pass replaces those — do NOT change here). */
+  // Emit ONE scan push traverser. The WRITE convention is FIXED by the op (`writeBackward`: false = scanLeft,
+  // writes out[o]=f(out[o-1],e) then o++; true = scanRight, writes out[o]=f(e,out[o+1]) then o--). The VISIT
+  // direction (`visitBackward`: leaf-loop direction + Concat/Append/Prepend descent order) is INDEPENDENT and
+  // FLIPS at each ReverseNode — the ReverseNode arm recurses into the SAME write convention with the OPPOSITE
+  // visit direction (a mutual mirror, like reduceFwd/reduceBwd). Four methods per (K, refAcc): the two MAIN
+  // entries (visit == write dir, named scan{Fwd,Bwd}…, called by the shared leaf methods) plus the two reverse
+  // arms (visit != write dir, named scan{Fwd,Bwd}Rev…). Decoupling visit from write is THE FIX: previously the
+  // ReverseNode arm recursed into the opposite-direction scan, switching write conventions mid-output (AIOOBE).
+  private def scanTraverser(e: Emit, k: Kind, writeBackward: Boolean, visitBackward: Boolean, refAcc: Boolean): Unit = {
+    val K = k.name
+    val je = jelem(k)         // input Java element type: int/long/double/Object
+    val backward = visitBackward            // VISIT direction drives the walk skeleton (leaf loop + descent order)
+    val dir = if writeBackward then "Bwd" else "Fwd"   // write dir tags the name (MAIN entries keep scan{Fwd,Bwd}…)
+    val rev = if visitBackward == writeBackward then "" else "Rev"   // reverse arm = visit dir != write dir
+    val zT = if refAcc then "Z" else je      // accumulator Java type
+    val foldT = if refAcc then s"${K}ToRefFold<Z>" else s"${K}To${K}Fold"
+    val outT = if refAcc then "Object[]" else s"$je[]"   // out array element type = accumulator kind
+    val tparam = if refAcc then "<Z> " else ""
+    val name = s"scan${dir}${rev}${K}${if refAcc then "Ref" else K}"
+    val sig = s"static ${tparam}int $name(FBase root, $outT out, int o, $foldT f)"
+    // ReverseNode arm: SAME write dir, OPPOSITE visit dir -> flip the Rev tag.
+    val recur = s"scan${dir}${if rev == "Rev" then "" else "Rev"}${K}${if refAcc then "Ref" else K}"
+    // read the running acc (the previously-written output slot) — governed by the WRITE convention, NOT visit dir.
+    val prevAcc = if !writeBackward then (if refAcc then "(Z) out[o - 1]" else "out[o - 1]") else (if refAcc then "(Z) out[o + 1]" else "out[o + 1]")
+    def fromBoxed(expr: String): String = k.name match {
+      case "Int"    => s"((Integer) $expr).intValue()"
+      case "Long"   => s"((Long) $expr).longValue()"
+      case "Double" => s"((Double) $expr).doubleValue()"
+      case _        => expr
+    }
+    // write one scanned element from a raw input element expr. Governed by the WRITE convention (writeBackward),
+    // NOT the visit direction: scanLeft advances o up; scanRight advances o down — regardless of visit order.
+    def writeElem(elem: String): Unit =
+      if !writeBackward then {
+        e.line(s"out[o] = f.apply($prevAcc, $elem);")
+        e.line("o += 1;")
+      } else {
+        e.line(s"out[o] = f.apply($prevAcc, $elem);")
+        e.line("o -= 1;")
+      }
+    // a WHOLE-leaf run on a.length (the acc is out[o±1], so the loop carries `o`, not an acc local).
+    def runLeaf(arr: String): Unit = e.scope {
+      e.line(s"$je[] a = $arr;")
+      if !backward then {
+        e.line("int i = 0;")
+        e.line("int end = a.length;")
+        e.open("while (i < end)")
+        writeElem("a[i]")
+        e.line("i += 1;")
+        e.close()
+      } else {
+        e.line("int i = a.length - 1;")
+        e.open("while (i >= 0)")
+        writeElem("a[i]")
+        e.line("i -= 1;")
+        e.close()
+      }
+    }
+    def run(arr: String, start: String, count: String): Unit = e.scope {
+      e.line(s"$je[] a = $arr;")
+      if !backward then {
+        e.line(s"int i = $start;")
+        e.line(s"int end = i + ($count);")
+        e.open("while (i < end)")
+        writeElem("a[i]")
+        e.line("i += 1;")
+        e.close()
+      } else {
+        e.line(s"int i = $start;")
+        e.line(s"int end = i - ($count);")
+        e.open("while (i > end)")
+        writeElem("a[i]")
+        e.line("i -= 1;")
+        e.close()
+      }
+    }
+    def runBoxed(base: String, start: String, count: String): Unit = e.scope {
+      if !backward then {
+        e.line(s"int bi = $start;")
+        e.line(s"int bend = bi + ($count);")
+        e.open("while (bi < bend)")
+        writeElem(fromBoxed(s"$base.applyBoxed(bi)"))
+        e.line("bi += 1;")
+        e.close()
+      } else {
+        e.line(s"int bi = $start;")
+        e.line(s"int bend = bi - ($count);")
+        e.open("while (bi > bend)")
+        writeElem(fromBoxed(s"$base.applyBoxed(bi)"))
+        e.line("bi -= 1;")
+        e.close()
+      }
+    }
+    def ensureStack(): Unit = {
+      e.open("if (stack == null)")
+      e.line("stack = new FBase[16];")
+      e.closeOpen("else if (sp == stack.length)")
+      e.line("int nl = sp * 2;")
+      e.line("stack = java.util.Arrays.copyOf(stack, nl);")
+      e.open("if (isTail != null)")
+      e.line("tail = java.util.Arrays.copyOf(tail, nl);")
+      e.line("isTail = java.util.Arrays.copyOf(isTail, nl);")
+      e.close()
+      e.close()
+    }
+    def ensureTail(): Unit = {
+      e.open("if (isTail == null)")
+      e.line(s"tail = new $je[stack.length];")
+      e.line("isTail = new boolean[stack.length];")
+      e.close()
+    }
+    def pushTail(elem: String): Unit = {
+      ensureStack()
+      ensureTail()
+      e.line(s"tail[sp] = $elem;")
+      e.line("isTail[sp] = true;")
+      e.line("sp += 1;")
+    }
+    def pushChild(child: String): Unit = {
+      ensureStack()
+      e.open("if (isTail != null)")
+      e.line("isTail[sp] = false;")
+      e.close()
+      e.line(s"stack[sp] = $child;")
+      e.line("sp += 1;")
+    }
+
+    e.open(sig)
+    e.line("FBase cur = root;")
+    e.line("FBase[] stack = null;")
+    e.line(s"$je[] tail = null;")
+    e.line("boolean[] isTail = null;")
+    e.line("int sp = 0;")
+    e.open("while (cur != null)")
+    e.line("FBase next = null;")
+    e.open(s"if (cur instanceof ${K}Arr leaf)")
+    runLeaf("leaf.arr")
+    e.closeOpen(s"else if (cur instanceof ${K}One one)")
+    writeElem("one.elem")
+    e.closeOpen(s"else if (cur instanceof ${K}Prepend p)")
+    if !backward then {
+      writeElem("p.elem")
+      e.line("next = p.base;")
+    } else {
+      pushTail("p.elem")
+      e.line("next = p.base;")
+    }
+    e.closeOpen(s"else if (cur instanceof ${K}Append ap)")
+    if !backward then {
+      pushTail("ap.elem")
+      e.line("next = ap.base;")
+    } else {
+      writeElem("ap.elem")
+      e.line("next = ap.base;")
+    }
+    e.closeOpen("else if (cur instanceof Concat c)")
+    if !backward then {
+      pushChild("c.right")
+      e.line("next = c.left;")
+    } else {
+      pushChild("c.left")
+      e.line("next = c.right;")
+    }
+    e.closeOpen("else if (cur instanceof ReverseNode rev)")
+    e.line(s"o = $recur(rev.base, out, o, f);")
+    e.closeOpen("else if (cur instanceof SliceNode s)")
+    e.line("int so = s.offset;")
+    e.line("int sn = s.length;")
+    e.open(s"if (s.base instanceof ${K}Arr lf)")
+    if !backward then run("lf.arr", "so", "sn")
+    else run("lf.arr", "so + sn - 1", "sn")
+    e.closeOpen("else")
+    if !backward then runBoxed("s.base", "so", "sn")
+    else runBoxed("s.base", "so + sn - 1", "sn")
+    e.close()
+    e.closeOpen(s"else if (cur instanceof ${K}Pad pad)")
+    e.line("int bl = pad.base.length;")
+    e.line(s"$je pf = pad.filler;")
+    e.line("int pn = pad.length;")
+    if !backward then {
+      e.open(s"if (pad.base instanceof ${K}Arr lf)")
+      run("lf.arr", "0", "bl")
+      e.closeOpen("else")
+      runBoxed("pad.base", "0", "bl")
+      e.close()
+      e.line("int pj = bl;")
+      e.open("while (pj < pn)")
+      writeElem("pf")
+      e.line("pj += 1;")
+      e.close()
+    } else {
+      e.line("int pj = pn;")
+      e.open("while (pj > bl)")
+      writeElem("pf")
+      e.line("pj -= 1;")
+      e.close()
+      e.open(s"if (pad.base instanceof ${K}Arr lf)")
+      run("lf.arr", "bl - 1", "bl")
+      e.closeOpen("else")
+      runBoxed("pad.base", "bl - 1", "bl")
+      e.close()
+    }
+    e.closeOpen(s"else if (cur instanceof ${K}Updated u)")
+    e.line("int ui = u.index;")
+    e.line("int ul = u.length;")
+    e.open(s"if (u.base instanceof ${K}Arr lf)")
+    e.line(s"$je[] la = lf.arr;")
+    if !backward then {
+      run("la", "0", "ui")
+      writeElem("u.elem")
+      run("la", "ui + 1", "ul - ui - 1")
+    } else {
+      run("la", "ul - 1", "ul - ui - 1")
+      writeElem("u.elem")
+      run("la", "ui - 1", "ui")
+    }
+    e.closeOpen("else")
+    if !backward then {
+      runBoxed("u.base", "0", "ui")
+      writeElem("u.elem")
+      runBoxed("u.base", "ui + 1", "ul - ui - 1")
+    } else {
+      runBoxed("u.base", "ul - 1", "ul - ui - 1")
+      writeElem("u.elem")
+      runBoxed("u.base", "ui - 1", "ui")
+    }
+    e.close()
+    if K == "Int" then {
+      e.closeOpen("else if (cur instanceof RangeNode rng)")
+      e.line("int rn = rng.length;")
+      if !backward then {
+        e.line("int ri = 0;")
+        e.open("while (ri < rn)")
+        writeElem("rng.start + ri * rng.step")
+        e.line("ri += 1;")
+        e.close()
+      } else {
+        e.line("int ri = rn - 1;")
+        e.open("while (ri >= 0)")
+        writeElem("rng.start + ri * rng.step")
+        e.line("ri -= 1;")
+        e.close()
+      }
+    }
+    e.close()
+    e.open("if (next != null)")
+    e.line("cur = next;")
+    e.closeOpen("else")
+    e.line("cur = null;")
+    e.open("while (sp > 0 && cur == null)")
+    e.line("sp -= 1;")
+    e.open("if (isTail != null && isTail[sp])")
+    writeElem("tail[sp]")
+    e.closeOpen("else")
+    e.line("cur = stack[sp];")
+    e.close()
+    e.close()
+    e.close()
+    e.close() // while (cur != null)
+    e.line("return o;")
+    e.close() // method
+  }
+
+  /** Emit one Short-circuit push traverser over input kind `k`. SAME lazy-stack walk skeleton as the foreach
+    * traverser, but it returns the FIRST-HIT global index and ABANDONS the walk via the method `return` on a hit
+    * (no run-to-completion). It threads a cumulative element count `cum` (Fwd: the global index of the run's first
+    * element, ascending; Bwd: the global index of the run's HIGHEST element, descending) so a local leaf hit maps
+    * to a global index, and `from` (Fwd) / `end` (Bwd) clamps each leaf window — whole leaves wholly below `from`
+    * / above `end` are skipped without testing the predicate. A ReverseNode recurses into the opposite direction;
+    * the recursion ENCODES "no hit, updated cum = C" as `~C` (always negative, since the running cum stays in
+    * range) and a hit as the global index (`>= 0`). The caller decodes: r >= 0 -> propagate the hit; else cum = ~r.
+    * Deep-base Slice/Pad/Updated keep the per-index applyBoxed read (consistent with the other shapes). */
+  private def scTraverser(e: Emit, k: Kind, backward: Boolean): Unit = {
+    val K = k.name
+    val je = jelem(k) // int/long/double/Object
+    val dir = if backward then "Bwd" else "Fwd"
+    val other = if backward then "Fwd" else "Bwd"
+    // Fwd clamps with `from` (global index lower bound); Bwd clamps with `end` (global index upper bound).
+    val clampParam = if backward then "end" else "from"
+    val sig = s"static int sc${dir}${K}(FBase root, int $clampParam, int cum, ${K}Pred p)"
+    val recur = s"sc${other}${K}"
+    def fromBoxed(expr: String): String = k.name match {
+      case "Int"    => s"((Integer) $expr).intValue()"
+      case "Long"   => s"((Long) $expr).longValue()"
+      case "Double" => s"((Double) $expr).doubleValue()"
+      case _        => expr
+    }
+    // Scan a run of `count` elements whose backing array is `arr` with the run's FIRST element at array index
+    // `base`. The run's global indices are [cum, cum+count) (Fwd) / (cum-count, cum] descending (Bwd). On a hit
+    // `return` the global index (abandon the stack); else advance `cum` past the run. The predicate-in-condition
+    // empty-body scan is the measured-fastest shape. `base` is the lowest array index of the run for BOTH dirs.
+    def runScan(arr: String, base: String, count: String): Unit = e.scope {
+      e.line(s"$je[] a = $arr;")
+      e.line(s"int b = $base;")
+      e.line(s"int c = $count;")
+      if !backward then {
+        // skip whole prefix below `from`: local start sk = max(0, from - cum). element a[b+j] has global cum+j.
+        e.line("int sk = from - cum;")
+        e.line("if (sk < 0) sk = 0;")
+        e.open("if (sk < c)")
+        e.line("int i = b + sk;")
+        e.line("int e = b + c;")
+        e.line("while (i < e && !p.apply(a[i])) i += 1;")
+        e.line("if (i < e) return cum + (i - b);")
+        e.close()
+        e.line("cum += c;")
+      } else {
+        // backward: the run's HIGHEST element a[b+c-1] has global index `cum`; element a[b+j] has global cum-(c-1-j).
+        // skip the top elements with global index > end: skip = max(0, cum - end).
+        e.line("int skip = cum - end;")
+        e.line("if (skip < 0) skip = 0;")
+        e.open("if (skip < c)")
+        e.line("int i = b + c - 1 - skip;")
+        e.line("int lo = b - 1;")
+        e.line("while (i > lo && !p.apply(a[i])) i -= 1;")
+        e.line("if (i > lo) return cum - ((b + c - 1) - i);")
+        e.close()
+        e.line("cum -= c;")
+      }
+    }
+    // deep (non-leaf) base read, per element, via applyBoxed. `base` is the lowest applyBoxed index of the run.
+    def runScanBoxed(node: String, base: String, count: String): Unit = e.scope {
+      e.line(s"int b = $base;")
+      e.line(s"int c = $count;")
+      if !backward then {
+        e.line("int sk = from - cum;")
+        e.line("if (sk < 0) sk = 0;")
+        e.open("if (sk < c)")
+        e.line("int i = b + sk;")
+        e.line("int e = b + c;")
+        e.line(s"while (i < e && !p.apply(${fromBoxed(s"$node.applyBoxed(i)")})) i += 1;")
+        e.line("if (i < e) return cum + (i - b);")
+        e.close()
+        e.line("cum += c;")
+      } else {
+        e.line("int skip = cum - end;")
+        e.line("if (skip < 0) skip = 0;")
+        e.open("if (skip < c)")
+        e.line("int i = b + c - 1 - skip;")
+        e.line("int lo = b - 1;")
+        e.line(s"while (i > lo && !p.apply(${fromBoxed(s"$node.applyBoxed(i)")})) i -= 1;")
+        e.line("if (i > lo) return cum - ((b + c - 1) - i);")
+        e.close()
+        e.line("cum -= c;")
+      }
+    }
+    // a SINGLE deferred/structural element with global index `cum` (Fwd) / `cum` (Bwd). Test it under the clamp;
+    // on a hit return cum; else advance cum by one.
+    def oneScan(elem: String): Unit =
+      if !backward then {
+        e.open(s"if (cum >= from && p.apply($elem))")
+        e.line("return cum;")
+        e.close()
+        e.line("cum += 1;")
+      } else {
+        e.open(s"if (cum <= end && p.apply($elem))")
+        e.line("return cum;")
+        e.close()
+        e.line("cum -= 1;")
+      }
+    // a run of identical filler elements (Pad). `base` is the lowest global index of the run.
+    def fillerScan(filler: String, count: String, base: String): Unit = e.scope {
+      e.line(s"$je pf = $filler;")
+      e.line(s"int fc = $count;")
+      e.line(s"int fb = $base;")
+      if !backward then {
+        e.line("int s = from - fb;")
+        e.line("if (s < 0) s = 0;")
+        e.open("if (s < fc && p.apply(pf))")
+        e.line("return fb + s;")
+        e.close()
+        e.line("cum = fb + fc;")
+      } else {
+        // highest global index = fb + fc - 1. first testable = min(end, fb+fc-1).
+        e.line("int hi = fb + fc - 1;")
+        e.line("int top = end < hi ? end : hi;")
+        e.open("if (top >= fb && p.apply(pf))")
+        e.line("return top;")
+        e.close()
+        e.line("cum = fb - 1;")
+      }
+    }
+    def ensureStack(): Unit = {
+      e.open("if (stack == null)")
+      e.line("stack = new FBase[16];")
+      e.closeOpen("else if (sp == stack.length)")
+      e.line("int nl = sp * 2;")
+      e.line("stack = java.util.Arrays.copyOf(stack, nl);")
+      e.open("if (isTail != null)")
+      e.line("tail = java.util.Arrays.copyOf(tail, nl);")
+      e.line("isTail = java.util.Arrays.copyOf(isTail, nl);")
+      e.close()
+      e.close()
+    }
+    def ensureTail(): Unit = {
+      e.open("if (isTail == null)")
+      e.line(s"tail = new $je[stack.length];")
+      e.line("isTail = new boolean[stack.length];")
+      e.close()
+    }
+    def pushTail(elem: String): Unit = {
+      ensureStack()
+      ensureTail()
+      e.line(s"tail[sp] = $elem;")
+      e.line("isTail[sp] = true;")
+      e.line("sp += 1;")
+    }
+    def pushChild(child: String): Unit = {
+      ensureStack()
+      e.open("if (isTail != null)")
+      e.line("isTail[sp] = false;")
+      e.close()
+      e.line(s"stack[sp] = $child;")
+      e.line("sp += 1;")
+    }
+
+    e.open(sig)
+    e.line("FBase cur = root;")
+    e.line("FBase[] stack = null;")
+    e.line(s"$je[] tail = null;")
+    e.line("boolean[] isTail = null;")
+    e.line("int sp = 0;")
+    e.open("while (cur != null)")
+    e.line("FBase next = null;")
+    // leaf: a whole-leaf run starting at array index 0.
+    e.open(s"if (cur instanceof ${K}Arr leaf)")
+    runScan("leaf.arr", "0", "leaf.length")
+    // one
+    e.closeOpen(s"else if (cur instanceof ${K}One one)")
+    oneScan("one.elem")
+    // prepend: fwd elem-then-base; bwd defer elem, descend base first
+    e.closeOpen(s"else if (cur instanceof ${K}Prepend p2)")
+    if !backward then {
+      oneScan("p2.elem")
+      e.line("next = p2.base;")
+    } else {
+      pushTail("p2.elem")
+      e.line("next = p2.base;")
+    }
+    // append: fwd defer elem, descend base first; bwd elem-then-base
+    e.closeOpen(s"else if (cur instanceof ${K}Append ap)")
+    if !backward then {
+      pushTail("ap.elem")
+      e.line("next = ap.base;")
+    } else {
+      oneScan("ap.elem")
+      e.line("next = ap.base;")
+    }
+    // concat: fwd left-then-right; bwd right-then-left
+    e.closeOpen("else if (cur instanceof Concat c)")
+    if !backward then {
+      pushChild("c.right")
+      e.line("next = c.left;")
+    } else {
+      pushChild("c.left")
+      e.line("next = c.right;")
+    }
+    // reverse: the ONLY recursion — flip the PHYSICAL walk direction (fwd<->bwd) over rev.base, but keep THIS
+    // call's global-index direction. The child runs on rev.base in its OWN base-local index space (cum seeded at
+    // the base boundary), returns a base-LOCAL hit index (>= 0) or -1 (no hit); we translate base-local -> global.
+    // FArray element j of the reverse range maps to base[L-1-j], so a base hit `bp` -> global cum + (L-1-bp) (Fwd)
+    // / cum - bp (Bwd). The clamp translates too: Fwd `from` -> base `end` = cum + L - 1 - from; Bwd `end` -> base
+    // `from` = cum - end (the child's runScan re-clamps out-of-range values, so no explicit bound needed here).
+    e.closeOpen("else if (cur instanceof ReverseNode rev)")
+    e.line("int rl = rev.base.length;")
+    if !backward then {
+      e.line(s"int bp = $recur(rev.base, cum + rl - 1 - from, rl - 1, p);")
+      e.line("if (bp >= 0) return cum + (rl - 1 - bp);")
+      e.line("cum += rl;")
+    } else {
+      e.line(s"int bp = $recur(rev.base, cum - end, 0, p);")
+      e.line("if (bp >= 0) return cum - bp;")
+      e.line("cum -= rl;")
+    }
+    // slice: leaf-base window fast path; deep base via applyBoxed. global-of-run-first = cum.
+    e.closeOpen("else if (cur instanceof SliceNode s)")
+    e.line("int so = s.offset;")
+    e.line("int sn = s.length;")
+    e.open(s"if (s.base instanceof ${K}Arr lf)")
+    runScan("lf.arr", "so", "sn")
+    e.closeOpen("else")
+    runScanBoxed("s.base", "so", "sn")
+    e.close()
+    // pad: fwd base-then-fillers; bwd fillers-then-base. The base run's lowest global index = cum at entry.
+    e.closeOpen(s"else if (cur instanceof ${K}Pad pad)")
+    e.line("int bl = pad.base.length;")
+    e.line("int pn = pad.length;")
+    if !backward then {
+      e.line("int padBaseLo = cum;")
+      e.open(s"if (pad.base instanceof ${K}Arr lf)")
+      runScan("lf.arr", "0", "bl")
+      e.closeOpen("else")
+      runScanBoxed("pad.base", "0", "bl")
+      e.close()
+      // fillers occupy global [padBaseLo + bl, padBaseLo + pn).
+      fillerScan("pad.filler", "pn - bl", "padBaseLo + bl")
+    } else {
+      // bwd: highest global index = cum. fillers occupy [base.length, pn) i.e. global (padBaseLo+bl .. padBaseLo+pn).
+      e.line("int padBaseLo = cum - (pn - 1);")
+      fillerScan("pad.filler", "pn - bl", "padBaseLo + bl")
+      e.open(s"if (pad.base instanceof ${K}Arr lf)")
+      runScan("lf.arr", "0", "bl")
+      e.closeOpen("else")
+      runScanBoxed("pad.base", "0", "bl")
+      e.close()
+    }
+    // updated: fwd [0,ui) elem (ui,len); bwd mirror. leaf-base fast path; deep base via applyBoxed segments.
+    e.closeOpen(s"else if (cur instanceof ${K}Updated u)")
+    e.line("int ui = u.index;")
+    e.line("int ul = u.length;")
+    e.open(s"if (u.base instanceof ${K}Arr lf)")
+    e.line(s"$je[] la = lf.arr;")
+    if !backward then {
+      runScan("la", "0", "ui")
+      oneScan("u.elem")
+      runScan("la", "ui + 1", "ul - ui - 1")
+    } else {
+      runScan("la", "ui + 1", "ul - ui - 1")
+      oneScan("u.elem")
+      runScan("la", "0", "ui")
+    }
+    e.closeOpen("else")
+    if !backward then {
+      runScanBoxed("u.base", "0", "ui")
+      oneScan("u.elem")
+      runScanBoxed("u.base", "ui + 1", "ul - ui - 1")
+    } else {
+      runScanBoxed("u.base", "ui + 1", "ul - ui - 1")
+      oneScan("u.elem")
+      runScanBoxed("u.base", "0", "ui")
+    }
+    e.close()
+    // range (Int-only structural node — emitted only for Int input). global of element ri is cum+ri (Fwd).
+    if K == "Int" then {
+      e.closeOpen("else if (cur instanceof RangeNode rng)")
+      e.line("int rn = rng.length;")
+      if !backward then {
+        e.line("int s = from - cum;")
+        e.line("if (s < 0) s = 0;")
+        e.open("if (s < rn)")
+        e.line("int ri = s;")
+        e.line("while (ri < rn && !p.apply(rng.start + ri * rng.step)) ri += 1;")
+        e.line("if (ri < rn) return cum + ri;")
+        e.close()
+        e.line("cum += rn;")
+      } else {
+        e.line("int skip = cum - end;")
+        e.line("if (skip < 0) skip = 0;")
+        e.open("if (skip < rn)")
+        e.line("int ri = rn - 1 - skip;")
+        e.line("while (ri >= 0 && !p.apply(rng.start + ri * rng.step)) ri -= 1;")
+        e.line("if (ri >= 0) return cum - ((rn - 1) - ri);")
+        e.close()
+        e.line("cum -= rn;")
+      }
+    }
+    e.close()
+    // advance: descend into `next`, else pop the explicit stack (a tail slot tests the deferred element).
+    e.open("if (next != null)")
+    e.line("cur = next;")
+    e.closeOpen("else")
+    e.line("cur = null;")
+    e.open("while (sp > 0 && cur == null)")
+    e.line("sp -= 1;")
+    e.open("if (isTail != null && isTail[sp])")
+    oneScan("tail[sp]")
+    e.closeOpen("else")
+    e.line("cur = stack[sp];")
+    e.close()
+    e.close()
+    e.close()
+    e.close() // while (cur != null)
+    // no hit anywhere: encode the final cum (Fwd: == total length; Bwd: == -1) as ~(cum + 1) — ALWAYS negative
+    // (cum >= -1, so cum+1 >= 0, so ~(cum+1) <= -1) and never collides with a hit (>= 0). The caller (recursion)
+    // resumes via cum = ~rr - 1; the top-level leaf method decodes ~r - 1 (Fwd -> length) or just returns -1 (Bwd).
+    e.line("return ~(cum + 1);")
+    e.close() // method
+  }
+
   private def fbase: String = {
     val leaves = prims.flatMap(p => List(s"${p.name}Arr", s"${p.name}Append", s"${p.name}Prepend"))
     val permits =
@@ -1579,7 +3106,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    @Override public FBase drop(int n) { int d = n < 0 ? 0 : (n > length ? length : n); int m = length - d; return m == 0 ? Empty.INSTANCE : (m == 1 ? ${one1("d")} : (d == 0 ? this : new SliceNode(this, d, m))); }
        |    @Override public FBase slice(int from, int until) { int lo = from < 0 ? 0 : from, hi = until > length ? length : until; int m = hi - lo; if (m <= 0) return Empty.INSTANCE; if (m == 1) return ${one1("lo")}; return (lo == 0 && hi == length) ? this : new SliceNode(this, lo, m); }
        |    @Override public FBase reverse() { return length < 2 ? this : new ReverseNode(this); }
-       |    @Override public FBase init() { return length == 2 ? ${one1("0")} : new $cls(arr, length - 1); }
+       |    @Override public FBase init() { return take(length - 1); }
        |
        |    @Override public int hashCode() { return Hashing.hashOf(this); }
        |    @Override public boolean equals(Object obj) {
@@ -1611,7 +3138,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    @Override public FBase drop(int n) { int d = n < 0 ? 0 : (n > length ? length : n); int m = length - d; return m == 0 ? Empty.INSTANCE : (m == 1 ? new RefOne(arr[d]) : (d == 0 ? this : new SliceNode(this, d, m))); }
        |    @Override public FBase slice(int from, int until) { int lo = from < 0 ? 0 : from, hi = until > length ? length : until; int m = hi - lo; if (m <= 0) return Empty.INSTANCE; if (m == 1) return new RefOne(arr[lo]); return (lo == 0 && hi == length) ? this : new SliceNode(this, lo, m); }
        |    @Override public FBase reverse() { return length < 2 ? this : new ReverseNode(this); }
-       |    @Override public FBase init() { return length == 2 ? new RefOne(arr[0]) : new RefArr(arr, length - 1); }
+       |    @Override public FBase init() { return take(length - 1); }
        |
        |    @Override public int hashCode() { return Hashing.hashOf(this); }
        |    @Override public boolean equals(Object obj) {

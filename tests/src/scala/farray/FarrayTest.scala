@@ -375,6 +375,56 @@ class FListTest:
       assertEquals(s"$name startsWith", la.startsWith(la.take(3)), fa.startsWith(fa.take(3)))
       assertEquals(s"$name unzip", la.map(x => (x, -x)).unzip._2, fa.map(x => (x, -x)).unzip._2.toList)
 
+  // TRAPS for the ShortCircuit shape: empty input, hit at boundary 0 / length-1 / no-hit, from/end past both ends,
+  // forall-all-true, and index arithmetic across a ReverseNode + a Concat boundary. Every answer is checked vs List.
+  @Test def test_shortCircuit_traps(): Unit =
+    // empty input
+    val e: FArray[Int] = FArray.empty[Int]
+    val el: List[Int] = Nil
+    assertEquals("empty exists", el.exists(_ == 0), e.exists(_ == 0))
+    assertEquals("empty forall", el.forall(_ == 0), e.forall(_ == 0))
+    assertEquals("empty find", el.find(_ == 0), e.find(_ == 0))
+    assertEquals("empty indexWhere", el.indexWhere(_ == 0).toLong, e.indexWhere(_ == 0).toLong)
+    assertEquals("empty indexOf", el.indexOf(0).toLong, e.indexOf(0).toLong)
+    assertEquals("empty contains", el.contains(0), e.contains(0))
+    assertEquals("empty lastIndexWhere", el.lastIndexWhere(_ == 0).toLong, e.lastIndexWhere(_ == 0).toLong)
+    assertEquals("empty lastIndexOf", el.lastIndexOf(0).toLong, e.lastIndexOf(0).toLong)
+    assertEquals("empty segmentLength", el.segmentLength(_ == 0).toLong, e.segmentLength(_ == 0).toLong)
+    assertEquals("empty prefixLength(takeWhile)", el.takeWhile(_ == 0), e.takeWhile(_ == 0).toList)
+    assertEquals("empty collectFirst", el.collectFirst { case x if x > 0 => x }, e.collectFirst { case x if x > 0 => x })
+
+    // a flat leaf and a ReverseNode-of-Concat (forces index arithmetic across BOTH a reverse and a concat seam).
+    val flatF = FArray.tabulate(12)(identity) // 0..11
+    val flatL = (0 until 12).toList
+    val revConcatF = (FArray.tabulate(5)(identity) ++ FArray.tabulate(7)(_ + 5)).reverse // 11,10,...,0
+    val revConcatL = flatL.reverse
+    val cases: List[(String, FArray[Int], List[Int])] =
+      List(("flat", flatF, flatL), ("revConcat", revConcatF, revConcatL))
+    for (n, fa, la) <- cases do
+      // hit at index 0
+      assertEquals(s"$n iw@0", la.indexWhere(_ == la.head).toLong, fa.indexWhere(_ == la.head).toLong)
+      assertEquals(s"$n exists@0", la.exists(_ == la.head), fa.exists(_ == la.head))
+      // hit at index length-1
+      assertEquals(s"$n iw@last", la.indexWhere(_ == la.last).toLong, fa.indexWhere(_ == la.last).toLong)
+      assertEquals(s"$n liw@last", la.lastIndexWhere(_ == la.last).toLong, fa.lastIndexWhere(_ == la.last).toLong)
+      // no hit
+      assertEquals(s"$n iw-miss", la.indexWhere(_ == 999).toLong, fa.indexWhere(_ == 999).toLong)
+      assertEquals(s"$n liw-miss", la.lastIndexWhere(_ == 999).toLong, fa.lastIndexWhere(_ == 999).toLong)
+      assertEquals(s"$n forall-true", la.forall(_ < 100), fa.forall(_ < 100))
+      // from/end past both ends (negative and > length) across the reverse+concat boundary
+      for from <- List(-5, 0, 3, 6, 11, 12, 50) do
+        assertEquals(s"$n iw from=$from", la.indexWhere(_ % 2 == 0, from).toLong, fa.indexWhere(_ % 2 == 0, from).toLong)
+        assertEquals(s"$n indexOf from=$from", la.indexOf(6, from).toLong, fa.indexOf(6, from).toLong)
+        assertEquals(s"$n segLen from=$from", la.segmentLength(_ < 8, from).toLong, fa.segmentLength(_ < 8, from).toLong)
+      for end <- List(-5, 0, 3, 6, 11, 12, 50) do
+        assertEquals(s"$n liw end=$end", la.lastIndexWhere(_ % 2 == 0, end).toLong, fa.lastIndexWhere(_ % 2 == 0, end).toLong)
+        assertEquals(s"$n lastIndexOf end=$end", la.lastIndexOf(6, end).toLong, fa.lastIndexOf(6, end).toLong)
+      // every element index probed forward and backward (full boundary sweep)
+      for v <- la do
+        assertEquals(s"$n iw=$v", la.indexWhere(_ == v).toLong, fa.indexWhere(_ == v).toLong)
+        assertEquals(s"$n liw=$v", la.lastIndexWhere(_ == v).toLong, fa.lastIndexWhere(_ == v).toLong)
+        assertEquals(s"$n find=$v", la.find(_ == v), fa.find(_ == v))
+
   @Test def test_hashCode_matchesList(): Unit =
     def chk(name: String, fa: FArray[Any], l: List[Any]): Unit =
       assertEquals(name, l.hashCode.toLong, fa.hashCode.toLong)
@@ -569,6 +619,42 @@ class FListTest:
     // sum = 0, reduceOption = None. (reduce/max-of-empty throwing is a separate, pre-existing applyAt divergence
     // not introduced here — applyAt on Empty returns the kind default rather than throwing; left untouched.)
     assert(FArray.empty[Int].reduceOption(_ + _).isEmpty && Nil.reduceOption[Int](_ + _).isEmpty)
+
+  // scanLeft/scanRight parity vs List over STRUCTURAL shapes (NOT just flat fromIterable leaves). The whole point
+  // is to exercise the scan push-traversers' ReverseNode arm and the deep-base Slice/Pad/Updated read order — the
+  // gap that hid an AIOOBE on scan over any ReverseNode of len >= 2. Each FArray is paired with the equivalent
+  // List; we check scanLeft AND scanRight with an Int accumulator AND a Ref (String) accumulator, and assert the
+  // FArray results stay canonical.
+  @Test def test_scan_structural_shapes(): Unit =
+    def leaf(xs: Int*): FArray[Int] = FArray.tabulate(xs.length)(i => xs(i)) // genuine flat IntArr leaf
+    val cases: Seq[FArray[Int]] = Seq(
+      FArray(1, 2, 3).reverse,                                   // ReverseNode of a leaf (len 3) — the core repro
+      FArray(1, 2).reverse,                                      // ReverseNode of a leaf (len 2, smallest crashing)
+      (leaf(0, 1, 2, 3, 4) ++ leaf(5, 6, 7, 8, 9, 10, 11)).reverse, // ReverseNode of a Concat (the review's probe)
+      FArray(1, 2, 3, 4, 5).reverse.reverse,                     // DOUBLE reverse — visit dir must flip back, write fixed
+      ((leaf(1, 2, 3) ++ leaf(4, 5)).reverse ++ leaf(6, 7)).reverse, // nested ReverseNodes inside a Concat
+      FArray(1, 2, 3, 4, 5, 6).slice(1, 5).reverse,              // ReverseNode of a SliceNode (deep base)
+      FArray(1, 2, 3).padTo(6, 9).reverse,                       // ReverseNode of a Pad (deep base)
+      FArray(1, 2, 3, 4).updated(1, 99).reverse,                 // ReverseNode of an Updated (deep base)
+      (FArray(1, 2, 3).reverse).slice(0, 2),                     // SliceNode whose base is a ReverseNode
+      leaf(1, 2, 3) ++ leaf(4, 5, 6),                            // plain Concat (no reverse)
+      0 +: 1 +: 2 +: leaf(3, 4, 5),                              // Prepend spine
+      leaf(1, 2, 3) :+ 4 :+ 5 :+ 6,                              // Append spine
+      (0 +: leaf(1, 2, 3) :+ 4).reverse,                         // reverse over a prepend+append spine
+      leaf(),                                                    // empty leaf
+      FArray.empty[Int].reverse                                  // reverse of empty
+    )
+    for fa <- cases do
+      val la = fa.toList
+      val c = s"shape=$la"
+      // Int accumulator
+      assert(fa.scanLeft(0)(_ + _).toList == la.scanLeft(0)(_ + _), s"scanLeft/Int $c -> ${fa.scanLeft(0)(_ + _).toList}")
+      assert(fa.scanRight(0)(_ + _).toList == la.scanRight(0)(_ + _), s"scanRight/Int $c -> ${fa.scanRight(0)(_ + _).toList}")
+      assertCanonical(fa.scanLeft(0)(_ + _), s"scanLeft/Int-result $c")
+      assertCanonical(fa.scanRight(0)(_ + _), s"scanRight/Int-result $c")
+      // Ref (String) accumulator — exercises the generic ${K}ToRefFold scan traversers
+      assert(fa.scanLeft("z")(_ + _.toString).toList == la.scanLeft("z")(_ + _.toString), s"scanLeft/Ref $c")
+      assert(fa.scanRight("z")(_.toString + _).toList == la.scanRight("z")(_.toString + _), s"scanRight/Ref $c")
 
   inline def assertEquals[Res1, Res2, To](msg: String, res1: Res1, res2: Res2)(using
       Res1: CompareAs[Res1, To],

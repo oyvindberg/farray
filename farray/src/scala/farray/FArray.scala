@@ -166,8 +166,10 @@ object FArray:
     inline def exists(inline p: A => Boolean): Boolean = FArrayOps.existsImpl[A](xs)(p)
     inline def forall(inline p: A => Boolean): Boolean = FArrayOps.forallImpl[A](xs)(p)
     inline def find(inline p: A => Boolean): Option[A] = FArrayOps.findImpl[A](xs)(p)
-    inline def indexWhere(inline p: A => Boolean): Int = FArrayOps.indexWhereImpl[A](xs)(p)
-    inline def indexOf[B >: A](elem: B): Int = FArrayOps.indexOfImpl[A, B](xs, elem)
+    inline def indexWhere(inline p: A => Boolean): Int = FArrayOps.indexWhereImpl[A](xs, 0)(p)
+    inline def indexWhere(inline p: A => Boolean, from: Int): Int = FArrayOps.indexWhereImpl[A](xs, from)(p)
+    inline def indexOf[B >: A](elem: B): Int = FArrayOps.indexOfImpl[A, B](xs, elem, 0)
+    inline def indexOf[B >: A](elem: B, from: Int): Int = FArrayOps.indexOfImpl[A, B](xs, elem, from)
     inline def maxBy[B](inline f: A => B)(using ord: Ordering[B]): A =
       if xs.length == 1 then FArrayOps.applyAtImpl[A](xs, 0)
       else
@@ -283,13 +285,14 @@ object FArray:
       if xs.length == 0 then None else Some(xs.reduceLeft[B](op))
     inline def reduceRightOption[B >: A](inline op: (A, B) => B): Option[B] =
       if xs.length == 0 then None else Some(xs.reduceRight[B](op))
-    inline def segmentLength(inline p: A => Boolean): Int = FArrayOps.prefixLengthImpl[A](xs)(p)
-    inline def segmentLength(inline p: A => Boolean, from: Int): Int =
-      FArrayOps.prefixLengthImpl[A](xs.drop(if from < 0 then 0 else from))(p)
+    inline def segmentLength(inline p: A => Boolean): Int = FArrayOps.segmentLengthImpl[A](xs, 0)(p)
+    inline def segmentLength(inline p: A => Boolean, from: Int): Int = FArrayOps.segmentLengthImpl[A](xs, from)(p)
     // backward leaf scan (empty-body, predicate-in-condition — matches a native Array's lastIndexWhere speed);
-    // a non-leaf materializes once then scans the flat array backward. No ReverseNode + remap round-trip.
-    inline def lastIndexWhere(inline p: A => Boolean): Int = FArrayOps.lastIndexWhereImpl[A](xs)(p)
-    inline def lastIndexOf[B >: A](elem: B): Int = FArrayOps.lastIndexOfImpl[A, B](xs, elem)
+    // the short-circuit Bwd traverser walks last-to-first with no ReverseNode + remap round-trip.
+    inline def lastIndexWhere(inline p: A => Boolean): Int = FArrayOps.lastIndexWhereImpl[A](xs, xs.length - 1)(p)
+    inline def lastIndexWhere(inline p: A => Boolean, end: Int): Int = FArrayOps.lastIndexWhereImpl[A](xs, end)(p)
+    inline def lastIndexOf[B >: A](elem: B): Int = FArrayOps.lastIndexOfImpl[A, B](xs, elem, xs.length - 1)
+    inline def lastIndexOf[B >: A](elem: B, end: Int): Int = FArrayOps.lastIndexOfImpl[A, B](xs, elem, end)
     inline def sameElements[B >: A](that: FArray[B]): Boolean =
       xs.length == that.length && FArrayOps.matchAll2Impl[A, B](xs, 0, that, xs.length)((a, b) => a == b)
     inline def indexOfSlice[B >: A](that: FArray[B]): Int =
@@ -332,8 +335,7 @@ object FArray:
     inline def product[B >: A](using num: Numeric[B]): B = FArrayOps.productImpl[A, B](xs)
     inline def scanLeft[B](z: B)(inline op: (B, A) => B): FArray[B] = FArrayOps.scanLeftImpl[A, B](xs, z)(op)
     inline def scan[B >: A](z: B)(inline op: (B, B) => B): FArray[B] = xs.scanLeft[B](z)((acc, a) => op(acc, a))
-    inline def scanRight[B](z: B)(inline op: (A, B) => B): FArray[B] =
-      xs.reverse.scanLeft[B](z)((acc, a) => op(a, acc)).reverse
+    inline def scanRight[B](z: B)(inline op: (A, B) => B): FArray[B] = FArrayOps.scanRightImpl[A, B](xs, z)(op)
 
   extension [A](elem: A)
     inline def +:(xs: FArray[A]): FArray[A] = FArrayOps.prependImpl[A](elem, xs)
