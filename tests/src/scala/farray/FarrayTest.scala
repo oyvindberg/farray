@@ -283,6 +283,24 @@ class FListTest:
     val full = new Array[Int](5); assert(src.copyToArray(full, 0, 99) == 5 && full.toList == List(1, 2, 3, 4, 5))
     val strDst = new Array[String](3); FArray("x", "y").copyToArray(strDst, 0, 2)
     assert(strDst.toList == List("x", "y", null))
+    // n == 0 and n == 1 fast paths (no dfs): cover empty source, single-element leaf and One nodes,
+    // partial copies that clamp to 1, and the no-room (len 0 / start past end) cases that return 0.
+    locally {
+      val d0 = Array.fill(3)(-1)
+      assert(FArray.empty[Int].copyToArray(d0, 0, 3) == 0 && d0.toList == List(-1, -1, -1)) // empty src
+      assert(FArray(7).copyToArray(d0, 0, 0) == 0 && d0.toList == List(-1, -1, -1))          // len 0
+      assert(FArray(7).copyToArray(d0, 3, 5) == 0 && d0.toList == List(-1, -1, -1))          // no room
+      val d1 = Array.fill(3)(-1)
+      assert(FArray(9).copyToArray(d1, 1, 1) == 1 && d1.toList == List(-1, 9, -1))           // leaf size 1
+      val d2 = Array.fill(3)(-1)
+      assert((0 +: FArray.empty[Int]).copyToArray(d2, 0, 1) == 1 && d2.toList == List(0, -1, -1)) // One node
+      val d3 = Array.fill(3)(-1)
+      assert(FArray(1, 2, 3).copyToArray(d3, 0, 1) == 1 && d3.toList == List(1, -1, -1))     // clamp len to 1
+      val d4 = Array.fill(2)(-1)
+      assert(FArray(1, 2, 3).copyToArray(d4, 1, 9) == 1 && d4.toList == List(-1, 1))         // clamp avail to 1
+      // matches List semantics for n == 0 / 1
+      assert(FArray(5).copyToArray(Array.fill(3)(0), 0, 1) == List(5).copyToArray(Array.fill(3)(0), 0, 1))
+    }
 
   @Test def test_smallArity_apply(): Unit =
     assert(FArray(1, 2, 3, 4).toList == List(1, 2, 3, 4))

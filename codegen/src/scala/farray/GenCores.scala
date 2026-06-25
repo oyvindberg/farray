@@ -725,7 +725,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       val store = if k.name == "Ref" then "dest(start + w) = a(j).asInstanceOf[B]" else "dest(start + w) = a(j).asInstanceOf[B]"
       val storeOne = "dest(start + w) = v.asInstanceOf[B]"
       s"""{ val avail = dest.length - start; val n = if (len < xs.length) (if (len < avail) len else avail) else (if (xs.length < avail) xs.length else avail)
-         |    if (n <= 0) 0 else { xs match { $leafFast; case _ => { var w = 0; val c = new ${k.name}Dfs { def onRunF(a: Array[${k.arr}], st: Int, count: Int): Unit = { var j = st; val e = st + count; while (j < e && w < n) { $store; w += 1; j += 1 }; if (w >= n) stop = true }; def onRunB(a: Array[${k.arr}], st: Int, count: Int): Unit = { var j = st; val e = st - count; while (j > e && w < n) { $store; w += 1; j -= 1 }; if (w >= n) stop = true }; def onOne(v: ${k.arr}): Unit = { if (w < n) { $storeOne; w += 1 }; if (w >= n) stop = true } }; dfsC${k.name}(xs, c) } }; n } }""".stripMargin
+         |    if (n <= 0) 0 else if (n == 1) { dest(start) = applyAtImpl[A](xs, 0).asInstanceOf[B]; 1 } else { xs match { $leafFast; case _ => { var w = 0; val c = new ${k.name}Dfs { def onRunF(a: Array[${k.arr}], st: Int, count: Int): Unit = { var j = st; val e = st + count; while (j < e && w < n) { $store; w += 1; j += 1 }; if (w >= n) stop = true }; def onRunB(a: Array[${k.arr}], st: Int, count: Int): Unit = { var j = st; val e = st - count; while (j > e && w < n) { $store; w += 1; j -= 1 }; if (w >= n) stop = true }; def onOne(v: ${k.arr}): Unit = { if (w < n) { $storeOne; w += 1 }; if (w >= n) stop = true } }; dfsC${k.name}(xs, c) } }; n } }""".stripMargin
     }
 
     s"""package farray
