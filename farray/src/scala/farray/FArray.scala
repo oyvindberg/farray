@@ -155,9 +155,10 @@ object FArray:
     inline def reduceRight[B >: A](inline op: (A, B) => B): B =
       if xs.length == 1 then FArrayOps.applyAtImpl[A](xs, 0)
       else
-        // whole-array foldRight (flat leaf reads backward, no alloc) + skip-first flag; dropRight(1).foldRight would materialize its SliceNode
-        var acc: B = FArrayOps.applyAtImpl[A](xs, xs.length - 1); var first = true
-        xs.foldRight(())((a, _) => { if first then first = false else acc = op(a, acc) }); acc
+        // seed from the last element, foldRight the prefix [0, n-1) — both ride the new Bwd reduce engine
+        // (take(n-1) is an O(1) SliceNode the engine traverses unboxed; no skip-flag, no Unit-Z side closure).
+        val n = xs.length
+        xs.take(n - 1).foldRight[B](FArrayOps.applyAtImpl[A](xs, n - 1))(op)
     inline def reduceOption[B >: A](inline op: (B, B) => B): Option[B] =
       if xs.length == 0 then None else Some(xs.reduce[B](op))
 
@@ -177,12 +178,15 @@ object FArray:
       else
         var best: A = FArrayOps.applyAtImpl[A](xs, 0); var bk: B = f(best)
         xs.foreach((a: A) => { val k = f(a); if ord.lt(k, bk) then { best = a; bk = k } }); best
+    // min/max: a Fwd Reduce seeded from element 0 — the running best folds via the new reduce engine (unboxed
+    // self-kind acc for a primitive FArray). Re-folding element 0 against itself is idempotent (gt/lt false),
+    // so seeding-and-folding-all matches List.max/min exactly.
     inline def max[B >: A](using ord: Ordering[B]): A =
       if xs.length == 1 then FArrayOps.applyAtImpl[A](xs, 0)
-      else { var best: B = FArrayOps.applyAtImpl[A](xs, 0); xs.foreach((a: A) => if ord.gt(a, best) then best = a); best.asInstanceOf[A] }
+      else xs.foldLeft[B](FArrayOps.applyAtImpl[A](xs, 0))((best, a) => if ord.gt(a, best) then a else best).asInstanceOf[A]
     inline def min[B >: A](using ord: Ordering[B]): A =
       if xs.length == 1 then FArrayOps.applyAtImpl[A](xs, 0)
-      else { var best: B = FArrayOps.applyAtImpl[A](xs, 0); xs.foreach((a: A) => if ord.lt(a, best) then best = a); best.asInstanceOf[A] }
+      else xs.foldLeft[B](FArrayOps.applyAtImpl[A](xs, 0))((best, a) => if ord.lt(a, best) then a else best).asInstanceOf[A]
     inline def corresponds[B](that: FArray[B])(inline p: (A, B) => Boolean): Boolean =
       xs.length == that.length && FArrayOps.matchAll2Impl[A, B](xs, 0, that, xs.length)(p)
     inline def collectFirst[B](pf: PartialFunction[A, B]): Option[B] = FArrayOps.collectFirstImpl[A, B](xs)(pf)

@@ -354,6 +354,15 @@ class FListTest:
       assertEquals(s"$name sum", la.sum.toLong, fa.sum.toLong)
       assertEquals(s"$name foldLeft", la.foldLeft("")(_ + _.toString), fa.foldLeft("")(_ + _.toString))
       assertEquals(s"$name foldRight", la.foldRight("")(_.toString + _), fa.foldRight("")(_.toString + _))
+      // unboxed self-kind accumulator (Int Z over Int input) across EVERY node shape — the new reduce traversers
+      assertEquals(s"$name foldLeftInt", la.foldLeft(100)(_ - _).toLong, fa.foldLeft(100)(_ - _).toLong)
+      assertEquals(s"$name foldRightInt", la.foldRight(100)(_ - _).toLong, fa.foldRight(100)(_ - _).toLong)
+      // the rest of the Reduce family wired onto the same engine, across EVERY node shape
+      assertEquals(s"$name product", la.map(_ % 3 + 1).product.toLong, fa.map(_ % 3 + 1).product.toLong)
+      assertEquals(s"$name mkString", la.mkString("[", ",", "]"), fa.mkString("[", ",", "]"))
+      if la.nonEmpty then assertEquals(s"$name min", la.min.toLong, fa.min.toLong)
+      if la.nonEmpty then assertEquals(s"$name max", la.max.toLong, fa.max.toLong)
+      if la.nonEmpty then assertEquals(s"$name reduceLeft", la.reduceLeft(_ - _).toLong, fa.reduceLeft(_ - _).toLong)
       assertEquals(s"$name map", la.map(_.toString), fa.map(_.toString).toList)
       assertEquals(s"$name lastIndexWhere", la.lastIndexWhere(_ == 6).toLong, fa.lastIndexWhere(_ == 6).toLong)
       assertEquals(s"$name lastIndexWhere-miss", la.lastIndexWhere(_ == 99).toLong, fa.lastIndexWhere(_ == 99).toLong)

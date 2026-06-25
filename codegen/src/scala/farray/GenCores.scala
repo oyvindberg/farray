@@ -51,6 +51,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
         Files.writeString(dir.resolve(s"${p.name}Append.java"), primAppend(p))
         Files.writeString(dir.resolve(s"${p.name}Prepend.java"), primPrepend(p))
       }
+      Files.writeString(dir.resolve("Traversers.java"), traversersJava)
       Files.writeString(dir.resolve("Repr.scala"), reprSrc)
       Files.writeString(dir.resolve("FArrayOps.scala"), farrayOps)
     }
@@ -121,6 +122,33 @@ object GenCores extends BleepCodegenScript("GenCores") {
 
   private val grow =
     "if (sp + 2 > stack.length) { val ns = stack.length * 2; stack = java.util.Arrays.copyOf(stack, ns); tail = java.util.Arrays.copyOf(tail, ns); isTail = java.util.Arrays.copyOf(isTail, ns) }"
+
+  // ===== Emit: indent-aware line emitter for generated code (design §6) =====
+  // Tracks an indent level; `line` appends one statement on its own line; `open`/`close` bracket a
+  // block (emitting the trailing `{` / a `}` and bumping the indent). HARD REQUIREMENT: every call
+  // produces ONE statement per line at real indentation — never `a; b; c` crammed together.
+  final class Emit(indentStr: String = "    ") {
+    private val sb = new StringBuilder
+    private var level = 0
+    private def pad: String = indentStr * level
+    def line(s: String): Emit = { sb.append(pad).append(s).append('\n'); this }
+    /** Append a pre-rendered (possibly multi-line) block, re-indenting EVERY line to the current level so an
+      * already-Emit-formatted sub-expression keeps one-statement-per-line at the right depth. */
+    def lines(s: String): Emit = {
+      s.stripLineEnd.split("\n", -1).foreach(l => if l.isEmpty then sb.append('\n') else sb.append(pad).append(l).append('\n'))
+      this
+    }
+    def blank(): Emit = { sb.append('\n'); this }
+    /** emit `head {`, indent the body, then emit `}` at the original level. */
+    def open(head: String): Emit = { line(head + " {"); level += 1; this }
+    def close(): Emit = { level -= 1; line("}"); this }
+    def closeWith(suffix: String): Emit = { level -= 1; line("}" + suffix); this }
+    /** close the current block and open a chained one on the same line: `} <head> {` (net indent 0). */
+    def closeOpen(head: String): Emit = { level -= 1; line("} " + head + " {"); level += 1; this }
+    /** emit `body` inside a fresh anonymous `{ ... }` block (its own variable scope). */
+    def scope(body: => Unit): Emit = { line("{"); level += 1; body; level -= 1; line("}"); this }
+    def result: String = sb.toString
+  }
 
   // ===== the codegen-only traversal AST (design §A) =====
   // These case classes / enums live ONLY in the generator. They are the reification of the
@@ -578,9 +606,131 @@ object GenCores extends BleepCodegenScript("GenCores") {
         Out.ResultFArray(k, SizeHint.AtMost("n"), (o, e) => s"out($o) = $e", Finalize.FilterIdentity)
       )
 
-    // Wave 1 (design §E): foldLeft/foreach now lower the Trav spec inline — no ${K}Dfs object, acc is a local.
-    val foldLeft = dispatchA(k => lower(foldLeftSpec(k)))
+    // Wave 1 (design §E): foreach lowers the Trav spec inline — no ${K}Dfs object, acc is a local.
     val foreach = dispatchA(k => lower(foreachSpec(k)))
+
+    // ===== HYBRID TRAVERSAL — foldLeft over ALL input kinds (design §5) =====
+    // The surface peels the hot shapes inline (the user's `inline op` splices unboxed — the optimal small
+    // loop) and realizes a SAM into the Java fold function type ONLY for genuine trees. Dispatch on Z's kind
+    // (summonFrom rz) picks, for a PRIMITIVE input kind ${I}, the unboxed ${I}To${I}Fold (Z=${I}, `acc` a
+    // primitive local) vs the generic ${I}ToRefFold<Z> (Z=Ref, `acc` already an object) — either way NO
+    // boxing of the accumulator. A CROSS-prim Z (e.g. Long acc over Int input) keeps the OLD lowered walk
+    // (which threads any-kind Z correctly); only the self-kind unboxed Z and Z=Ref get the new traverser.
+    // foldRight stays on the OLD walk for now (it is the Bwd direction; the Java Bwd traverser exists only
+    // because the Fwd traverser recurses into it at ReverseNode).
+
+    // wrap the SAM lambda's `v` parameter (the raw element handed back by the Java fold) to A: for a prim
+    // input v is already the prim element; for Ref input v is Object and must be cast to A before wrap.
+    def wrapV(k: Kind): String = if k.name == "Ref" then "r.wrap(v.asInstanceOf[A])" else "r.wrap(v)"
+
+    // Emit a fold surface (foldLeft when fwd, foldRight when bwd) for input kind `k`. ONE STATEMENT PER LINE at
+    // real indentation (design §6). The two directions differ only in (1) the combine argument order — fwd
+    // `op(acc, e)`, bwd `op(e, acc)` — and (2) which shared leaf method they route through (Fwd vs Bwd). The
+    // surface ONLY realizes the user's inline `op` into the specialized fold SAM and CALLS the shared leaf
+    // method (reduceLeaf${dir}…) — there is NO inlined leaf loop here; the leaf method peels Empty/One/leaf
+    // and routes genuine trees through Traversers. Self-kind prim Z -> unboxed reduceLeaf${dir}${I}${I}; Ref Z
+    // -> reduceLeaf${dir}${I}Ref; cross-prim/other Z -> the old lowered walk (which threads any-kind Z).
+    def foldSurface(k: Kind, backward: Boolean): String = {
+      val K = k.name
+      val dir = if backward then "Bwd" else "Fwd"
+      // combine an accumulator expr `acc` with an element expr `el`, in the op's required argument order.
+      def comb(acc: String, el: String): String = if backward then s"op($el, $acc)" else s"op($acc, $el)"
+      val ee = new Emit("  ")
+      // --- the unboxed self-kind arm (prim input, Z == input kind): realize the `${K}To${K}Fold` SAM (acc a
+      //     primitive — the body unwraps z/acc, applies `op` over wrapped values, unwraps back) and CALL the
+      //     shared leaf method. NO inlined leaf loop here. ---
+      def zPrimArm(): Unit =
+        ee.line(s"rz.wrap(reduceLeaf${dir}${K}${K}(xs, rz.unwrap(z), (acc, v) => rz.unwrap(${comb("rz.wrap(acc)", wrapV(k))})))")
+      // --- the generic ref-acc arm (Z = Ref): `acc` is already an object, no boxing. Realize the
+      //     `${K}ToRefFold[Z & AnyRef]` SAM and CALL the shared leaf method. NO inlined leaf loop here. ---
+      def zRefArm(): Unit =
+        ee.line(
+          s"reduceLeaf${dir}${K}Ref[Z & AnyRef](xs, z.asInstanceOf[Z & AnyRef], (acc, v) => ${comb("acc.asInstanceOf[Z]", wrapV(k))}.asInstanceOf[Z & AnyRef]).asInstanceOf[Z]"
+        )
+      ee.open("summonFrom")
+      if k.isPrim then {
+        ee.open(s"case rz: ${K}Repr[Z] =>")
+        zPrimArm()
+        ee.close()
+      }
+      ee.open("case rz: RefRepr[Z] =>")
+      zRefArm()
+      ee.close()
+      // CROSS-prim Z (and prim Z over Ref input): the OLD lowered walk, which threads any-kind Z correctly.
+      ee.open("case _ =>")
+      ee.lines(lower(if backward then foldRightSpec(k) else foldLeftSpec(k)))
+      ee.close()
+      ee.close()
+      ee.result
+    }
+    // SHARED LEAF METHODS (design §5) — the whole Reduce family (foldLeft/foldRight/sum/product/count/
+    // mkString) routes through these. Each is a SMALL NON-inline method in FArrayOps' own class: it peels
+    // Empty/One/top-leaf with the unboxed leaf loop calling the realized SAM `f.apply`, and for a genuine
+    // TREE makes ONE CALL to the Java traverser (Traversers.reduce{Fwd,Bwd}…). Because it is non-inline and
+    // lives in FArrayOps, it references the `Traversers.*` statics directly with no `Traversers$` module
+    // (the NoClassDefFoundError gotcha only afflicts inline def bodies) — so it REPLACES the old
+    // foldTree* forwarders. Staying SMALL (the tree case is a CALL, not an inlined walk) lets the JIT
+    // inline it for a lone monomorphic call site (single fold stays fast) AND share it across many sites
+    // (no per-call bloat -> no @100k multi-fold cliff) — exactly how Array.map works. (Measured: the old
+    // inline-the-leaf-loop surface craters to 0.29× of iarray at 8 folds @100k; this shared form ties
+    // iarray everywhere, 1.01–1.07×.) The SAM wraps the raw element `v` to A itself (it closes over the
+    // user `op`/`r`), so the leaf method is fully op-agnostic per (kind, direction, acc-shape).
+    val reduceLeafMethods = {
+      val ee = new Emit("  ")
+      // emit ONE shared leaf method. `je` = the Scala element type of the leaf array (`k.arr`); `accT` = the
+      // accumulator type; `tparam` = a leading type param clause (Ref-acc is generic); `foldT` = the SAM type;
+      // `treeCall` = the Traversers.* tree forwarder.
+      def emit(name: String, k: Kind, tparam: String, accT: String, foldT: String, treeCall: String, backward: Boolean): Unit = {
+        ee.open(s"def $name$tparam(xs: FBase, z: $accT, f: $foldT): $accT = xs match")
+        ee.line("case e: Empty => z")
+        ee.line(s"case o: ${k.name}One => f.apply(z, o.elem)")
+        ee.open(s"case leaf: ${k.name}Arr =>")
+        ee.line("val a = leaf.arr")
+        ee.line("val n = leaf.length")
+        ee.line(s"var acc: $accT = z")
+        if !backward then {
+          ee.line("var i = 0")
+          ee.open("while (i < n)")
+          ee.line("acc = f.apply(acc, a(i))")
+          ee.line("i += 1")
+          ee.close()
+        } else {
+          ee.line("var i = n - 1")
+          ee.open("while (i >= 0)")
+          ee.line("acc = f.apply(acc, a(i))")
+          ee.line("i -= 1")
+          ee.close()
+        }
+        ee.line("acc")
+        ee.closeOpen("case _ =>")
+        ee.line(treeCall)
+        ee.close() // case _
+        ee.close() // xs match
+      }
+      opKinds.foreach { k =>
+        val K = k.name
+        List(false, true).foreach { backward =>
+          val dir = if backward then "Bwd" else "Fwd"
+          // prim self-kind unboxed acc (only for primitive input kinds).
+          if k.isPrim then
+            emit(s"reduceLeaf${dir}${K}${K}", k, "", k.arr, s"Traversers.${K}To${K}Fold", s"Traversers.reduce${dir}${K}${K}(xs, z, f)", backward)
+          // generic ref acc (every input kind).
+          emit(s"reduceLeaf${dir}${K}Ref", k, "[Z <: AnyRef]", "Z", s"Traversers.${K}ToRefFold[Z]", s"Traversers.reduce${dir}${K}Ref[Z](xs, z, f)", backward)
+        }
+      }
+      ee.result
+    }
+    val foldLeft = {
+      val ee = new Emit("  ")
+      ee.open("summonFrom")
+      opKinds.foreach { k =>
+        ee.open(s"case r: ${k.name}Repr[A] =>")
+        ee.lines(foldSurface(k, backward = false))
+        ee.close()
+      }
+      ee.close()
+      ee.result
+    }
     // Short-circuiting scan over the unified dfsC: each leaf-run scans tight; setting `stop` (the consumer flag)
     // ends both the run and the whole tree walk. O(n) + early-exit on EVERY shape, no kindAt.
     // EMPTY-BODY, predicate-in-condition scan: the per-element loop is just `i += 1` with the predicate in the
@@ -619,10 +769,36 @@ object GenCores extends BleepCodegenScript("GenCores") {
     }
     val lastIndexWhereV = dispatchA(k => lastBackwardScan(k, a0 => s"!p($a0)"))
     val lastIndexOfV = dispatchA(k => lastBackwardScan(k, a0 => s"$a0 != elem"))
-    // count/sum/product: Wave 1 — full forward accumulate, lowered inline. O(n) on EVERY shape, acc a local.
-    val countV = dispatchA(k => lower(countSpec(k)))
-    val sumV = dispatchA(k => lower(sumSpec(k)))
-    val productV = dispatchA(k => lower(productSpec(k)))
+    // count/sum/product: hybrid Reduce surfaces over the shared leaf method (design §2.1/§5). Each ONLY
+    // realizes the combine SAM and CALLS reduceLeafFwd${I}${I} (which peels Empty/One/leaf and routes genuine
+    // TREES through Traversers) — NO inlined leaf loop. The SAME shared leaf machinery as foldLeft. Prim inputs
+    // stay unboxed (acc a primitive local); the Ref input (and, for count, any non-Int prim input — Z=Int would
+    // be a cross-prim fold) keeps the old walk.
+    //
+    // sum/product: combine `acc + e` / `acc * e` (raw prim op == num.plus/num.times for Int/Long/Double); the
+    // unboxed acc is boxed to B (== the input kind at runtime for a prim FArray) only at the boundary.
+    def sumProductSurface(k: Kind, combine: (String, String) => String, seed: String, isProduct: Boolean): String = {
+      if !k.isPrim then return lower(if isProduct then productSpec(k) else sumSpec(k))
+      val K = k.name
+      // realize the unboxed `${K}To${K}Fold` SAM (acc stays a primitive) and CALL the shared leaf method —
+      // NO inlined leaf loop. The leaf method peels Empty/One/leaf and routes trees through Traversers.
+      s"reduceLeafFwd${K}${K}(xs, $seed, (acc, v) => ${combine("acc", "v")}).asInstanceOf[B]"
+    }
+    // count: Reduce whose combine folds a predicate into an Int. Only the Int input kind has a usable unboxed
+    // self-kind shared leaf method (reduceLeafFwdIntInt); other prim inputs (Long/Double) and Ref would need
+    // an I->Int fold the engine doesn't emit (cross-prim), so they stay on the old lowered walk.
+    def countSurface(k: Kind): String = {
+      if k.name != "Int" then return lower(countSpec(k))
+      // realize the unboxed IntToIntFold SAM (combine folds the predicate into an Int acc) and CALL the
+      // shared leaf method — NO inlined leaf loop.
+      "reduceLeafFwdIntInt(xs, 0, (acc, v) => if (p(r.wrap(v))) acc + 1 else acc)"
+    }
+    val countV = dispatchA(k => countSurface(k))
+    val sumV = dispatchA(k => sumProductSurface(k, (acc, e) => s"$acc + $e", k.dflt, isProduct = false))
+    val productV = {
+      def one(k: Kind) = k.name match { case "Long" => "1L"; case "Double" => "1.0"; case _ => "1" }
+      dispatchA(k => sumProductSurface(k, (acc, e) => s"$acc * $e", one(k), isProduct = true))
+    }
     // scanLeft: out[0..n] with a running accumulator, unboxed B-array storage (mirrors mapM's dispatchA x dispatchB).
     val scanLeftV = "summonFrom {\n" + opKinds.map { ka =>
       val inner = "summonFrom {\n" + opKinds.map { kb =>
@@ -645,9 +821,20 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val foreachWhileV = dispatchA(k =>
       s"{ val c = new ${k.name}Dfs { def onRunF(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val e = start + count; while (i < e && f(${read(k)})) i += 1; if (i < e) stop = true }; def onRunB(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val e = start - count; while (i > e && f(${read(k)})) i -= 1; if (i > e) stop = true }; def onOne(v: ${k.arr}): Unit = { if (!f(${readOne(k)})) stop = true } }; dfsC${k.name}(xs, c) }"
     ) // f returns false to stop
-    // foldRight: Wave 1 — the SAME lowered walk with dir = Bwd (a BACKWARD walk hands elements last-to-first,
-    // exactly foldRight order, applying op(elem, acc)). ZERO allocation on every shape, acc a local.
-    val foldRightV = dispatchA(k => lower(foldRightSpec(k)))
+    // foldRight: the hybrid Bwd reduce surface — the EXACT mirror of foldLeft, dir = Bwd. A BACKWARD walk
+    // hands elements last-to-first (foldRight order), applying op(elem, acc). Self-kind prim Z + Ref Z ride
+    // the new Bwd engine traversers; cross-prim Z falls to the old lowered walk.
+    val foldRightV = {
+      val ee = new Emit("  ")
+      ee.open("summonFrom")
+      opKinds.foreach { k =>
+        ee.open(s"case r: ${k.name}Repr[A] =>")
+        ee.lines(foldSurface(k, backward = true))
+        ee.close()
+      }
+      ee.close()
+      ee.result
+    }
     // Wave 3: map lowers the Trav spec inline — `out`/`o` are LOCALS (a register-resident array ref + cursor),
     // the write spliced into the run loop. NO ${KA}Dfs object (the heap-lifted `o` that cost map at large N is
     // gone), NO dfsC call, monomorphic per (ka, kb) site. The result is canonicalized via leaf() (Empty/One).
@@ -889,18 +1076,26 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val fromValues30 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19", "p20", "p21", "p22", "p23", "p24", "p25", "p26", "p27", "p28", "p29", "p30"))
     val fromValues31 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19", "p20", "p21", "p22", "p23", "p24", "p25", "p26", "p27", "p28", "p29", "p30", "p31"))
     val fromValues32 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19", "p20", "p21", "p22", "p23", "p24", "p25", "p26", "p27", "p28", "p29", "p30", "p31", "p32"))
-    // mkString: one StringBuilder pass via dfs. Primitive runs use StringBuilder.append(prim) overloads (NO
-    // boxing); Ref appends the Object via String.valueOf. The leading separator is handled by `first`.
+    // mkString: a hybrid Reduce into a StringBuilder (Z = StringBuilder, a Ref acc) over the shared leaf
+    // method (reduceLeafFwd${K}Ref) — the SAME machinery as foldLeft; the leaf method peels Empty/One/leaf and
+    // routes genuine TREES through Traversers. The surface realizes ONE RefToRefFold<StringBuilder> SAM (no
+    // inlined leaf loop). Primitive runs use the StringBuilder.append(prim) overload (NO boxing); Ref appends
+    // via String.valueOf. The leading separator is suppressed by length comparison against the `start`-primed
+    // baseline (no per-element flag object).
     val mkStringV = dispatchA { k =>
-      val appRun = if k.name == "Ref" then "sb.append(String.valueOf(a(j)))" else "sb.append(a(j))"
-      val appOne = if k.name == "Ref" then "sb.append(String.valueOf(v))" else "sb.append(v)"
-      s"""{ val sb = new java.lang.StringBuilder(start); var first = true
-         |      val c = new ${k.name}Dfs {
-         |        def onRunF(a: Array[${k.arr}], start: Int, count: Int): Unit = { var j = start; val e = start + count; while (j < e) { if (first) first = false else sb.append(sep); $appRun; j += 1 } }
-         |        def onRunB(a: Array[${k.arr}], start: Int, count: Int): Unit = { var j = start; val e = start - count; while (j > e) { if (first) first = false else sb.append(sep); $appRun; j -= 1 } }
-         |        def onOne(v: ${k.arr}): Unit = { if (first) first = false else sb.append(sep); $appOne }
-         |      }
-         |      dfsC${k.name}(xs, c); sb.append(end).toString }""".stripMargin
+      val K = k.name
+      def app(el: String): String = if K == "Ref" then s"String.valueOf($el)" else el
+      // A hybrid Reduce into a StringBuilder (Z = StringBuilder, a Ref acc). Prime the seed with `start`; the
+      // realized RefToRefFold[StringBuilder] SAM appends `sep` before every element except the first (guarded
+      // by `acc.length != base`), then appends the element (StringBuilder.append(prim) — NO boxing — or
+      // String.valueOf for Ref). CALL the shared leaf method (Empty/One/leaf inline, tree -> Traversers);
+      // NO inlined leaf loop here. Empty returns the primed seed (just `start`), then `end` is appended.
+      val ee = new Emit("  ")
+      ee.line("val sb0 = new java.lang.StringBuilder(start)")
+      ee.line("val base = sb0.length")
+      ee.line(s"val sb = reduceLeafFwd${K}Ref[java.lang.StringBuilder](xs, sb0, (acc, v) => { if (acc.length != base) acc.append(sep); acc.append(${app("v")}) })")
+      ee.line("sb.append(end).toString")
+      ee.result
     }
     // toArray: when the requested element class matches the kind's storage, one materialize pass
     // (System.arraycopy per run, no per-element boxing). Otherwise a typed element loop.
@@ -946,6 +1141,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |$mat
        |$flatMapCopyOne
        |$sortArr
+       |$reduceLeafMethods
        |
        |  inline def emptyImpl[A]: FBase = $emptyB
        |  inline def applyImpl[A](as: Seq[A]): FBase = $applyVar
@@ -1026,6 +1222,313 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def groupMapAcc[K, B]: GroupMapAcc[K, B] = $groupMapAcc
        |}
        |""".stripMargin
+  }
+
+  // ===== Hybrid-traversal codegen (design §3/§4): Java fold function types + Reduce push traversers =====
+  // ENGINE PHASE: foldLeft/foldRight for ALL input kinds (Int/Long/Double/Ref). Proves the machinery (SAM
+  // fn types, lazy explicit stack, ReverseNode-only JVM recursion, accumulator-kind specialization).
+  //
+  // Two fold function types per PRIM input kind ${I} (Ref input only gets the generic ref fold):
+  //   ${I}To${I}Fold  { ${jt} apply(${jt} acc, ${jt} v); }  — Z = ${I}, fully unboxed (acc is a primitive)
+  //   ${I}ToRefFold<Z> { Z apply(Z acc, ${jt} v); }          — Z = Ref, acc is already an object (no boxing)
+  // For Ref input the element is Object: RefToRefFold<Z> { Z apply(Z acc, Object v); }.
+
+  /** The Java element type for an input Kind (Int/Long/Double -> primitives; Ref -> Object). */
+  private def jelem(k: Kind): String = k.name match {
+    case "Int"    => "int"
+    case "Long"   => "long"
+    case "Double" => "double"
+    case _        => "Object"
+  }
+
+  /** All reduce traversers (input-kind × Z-acc × direction) plus the fold function types. The prim self-kind
+    * unboxed fold (`${I}To${I}Fold`) is emitted only for primitive input kinds; every input kind gets the
+    * generic ref-acc fold (`${I}ToRefFold<Z>`). */
+  private def traversersJava: String = {
+    val e = new Emit()
+    e.line("package farray;")
+    e.blank()
+    e.line("// GENERATED by GenCores — do not edit. Hybrid-traversal Java: fold function types + the shared")
+    e.line("// Reduce push traversers (design §3/§4). foldLeft/foldRight over ALL input kinds. The surface")
+    e.line("// (FArrayOps.foldLeftImpl) peels Empty/One/top-leaf inline; only genuine TREES reach here.")
+    e.open("public final class Traversers")
+    e.line("private Traversers() {}")
+    e.blank()
+    e.line("// --- fold function types (§3): specialized on the accumulator kind Z so a prim Z stays unboxed ---")
+    opKinds.foreach { k =>
+      val je = jelem(k)
+      if k.isPrim then {
+        e.open(s"public interface ${k.name}To${k.name}Fold")
+        e.line(s"$je apply($je acc, $je v);")
+        e.close()
+      }
+      e.open(s"public interface ${k.name}ToRefFold<Z>")
+      e.line(s"Z apply(Z acc, $je v);")
+      e.close()
+    }
+    e.blank()
+    opKinds.foreach { k =>
+      // prim input: unboxed self-kind acc traverser (fwd + bwd), then the generic ref-acc traverser (fwd + bwd).
+      if k.isPrim then {
+        reduceTraverser(e, k, backward = false, refAcc = false)
+        e.blank()
+        reduceTraverser(e, k, backward = true, refAcc = false)
+        e.blank()
+      }
+      reduceTraverser(e, k, backward = false, refAcc = true)
+      e.blank()
+      reduceTraverser(e, k, backward = true, refAcc = true)
+      e.blank()
+    }
+    e.close()
+    e.result
+  }
+
+  /** Emit one Reduce push traverser over input kind `k`. `refAcc` picks the function type (Z=Ref generic vs
+    * Z=${k} unboxed) and the acc type; `backward` mirrors visit order. Per §4.1: Concat/Append/Prepend
+    * deferrals + deep Slice/Pad/Updated bases ride a LOCAL explicit stack (lazily allocated — null until the
+    * first defer); a bare-leaf walk never touches it. ONLY ReverseNode recurses — fwd calls bwd on rev.base
+    * (and vice versa), so the direction flip rides the JVM call boundary. (Deep bases over a NON-leaf use
+    * applyBoxed — minimal but correct; the leaf-base fast path is unboxed.) */
+  private def reduceTraverser(e: Emit, k: Kind, backward: Boolean, refAcc: Boolean): Unit = {
+    val K = k.name
+    val je = jelem(k) // Java element type: int/long/double/Object
+    val isRefInput = K == "Ref"
+    val dir = if backward then "Bwd" else "Fwd"
+    val other = if backward then "Fwd" else "Bwd"
+    val foldT = if refAcc then s"${K}ToRefFold<Z>" else s"${K}To${K}Fold"
+    val sig =
+      if refAcc then s"static <Z> Z reduce${dir}${K}Ref(FBase root, Z acc, $foldT f)"
+      else s"static $je reduce${dir}${K}${K}(FBase root, $je acc, $foldT f)"
+    val recur = if refAcc then s"reduce${other}${K}Ref" else s"reduce${other}${K}${K}"
+    // Read a single boxed Object from a deep (non-leaf) base, cast to the element type. For prims the cast
+    // unboxes via the boxed wrapper's value method; for Ref the element IS Object (pass-through).
+    def fromBoxed(expr: String): String = k.name match {
+      case "Int"    => s"((Integer) $expr).intValue()"
+      case "Long"   => s"((Long) $expr).longValue()"
+      case "Double" => s"((Double) $expr).doubleValue()"
+      case _        => expr
+    }
+
+    // a forward array run over a[start, start+count); a backward run over a[start, start-count) descending.
+    def run(arr: String, start: String, count: String): Unit = e.scope {
+      e.line(s"$je[] a = $arr;")
+      if !backward then {
+        e.line(s"int i = $start;")
+        e.line(s"int end = i + ($count);")
+        e.open("while (i < end)")
+        e.line("acc = f.apply(acc, a[i]);")
+        e.line("i += 1;")
+        e.close()
+      } else {
+        e.line(s"int i = $start;")
+        e.line(s"int end = i - ($count);")
+        e.open("while (i > end)")
+        e.line("acc = f.apply(acc, a[i]);")
+        e.line("i -= 1;")
+        e.close()
+      }
+    }
+    // deep (non-leaf) base read, per element, via applyBoxed (cast/unbox to the element type).
+    def runBoxed(base: String, start: String, count: String): Unit = e.scope {
+      if !backward then {
+        e.line(s"int bi = $start;")
+        e.line(s"int bend = bi + ($count);")
+        e.open("while (bi < bend)")
+        e.line(s"acc = f.apply(acc, ${fromBoxed(s"$base.applyBoxed(bi)")});")
+        e.line("bi += 1;")
+        e.close()
+      } else {
+        e.line(s"int bi = $start;")
+        e.line(s"int bend = bi - ($count);")
+        e.open("while (bi > bend)")
+        e.line(s"acc = f.apply(acc, ${fromBoxed(s"$base.applyBoxed(bi)")});")
+        e.line("bi -= 1;")
+        e.close()
+      }
+    }
+
+    // grow the FBase[] child stack; tail/isTail (deferred single elements) are grown in lockstep, lazily.
+    def ensureStack(): Unit = {
+      e.open("if (stack == null)")
+      e.line("stack = new FBase[16];")
+      e.closeOpen("else if (sp == stack.length)")
+      e.line("int nl = sp * 2;")
+      e.line("stack = java.util.Arrays.copyOf(stack, nl);")
+      e.open("if (isTail != null)")
+      e.line("tail = java.util.Arrays.copyOf(tail, nl);")
+      e.line("isTail = java.util.Arrays.copyOf(isTail, nl);")
+      e.close()
+      e.close()
+    }
+    def ensureTail(): Unit = {
+      e.open("if (isTail == null)")
+      e.line(s"tail = new $je[stack.length];")
+      e.line("isTail = new boolean[stack.length];")
+      e.close()
+    }
+    def pushTail(elem: String): Unit = {
+      ensureStack()
+      ensureTail()
+      e.line(s"tail[sp] = $elem;")
+      e.line("isTail[sp] = true;")
+      e.line("sp += 1;")
+    }
+    def pushChild(child: String): Unit = {
+      ensureStack()
+      e.open("if (isTail != null)")
+      e.line("isTail[sp] = false;")
+      e.close()
+      e.line(s"stack[sp] = $child;")
+      e.line("sp += 1;")
+    }
+
+    e.open(sig)
+    e.line("FBase cur = root;")
+    e.line("FBase[] stack = null;")
+    e.line(s"$je[] tail = null;")
+    e.line("boolean[] isTail = null;")
+    e.line("int sp = 0;")
+    e.open("while (cur != null)")
+    e.line("FBase next = null;")
+    // leaf
+    e.open(s"if (cur instanceof ${K}Arr leaf)")
+    if !backward then run("leaf.arr", "0", "leaf.length")
+    else run("leaf.arr", "leaf.length - 1", "leaf.length")
+    // one
+    e.closeOpen(s"else if (cur instanceof ${K}One one)")
+    e.line("acc = f.apply(acc, one.elem);")
+    // prepend: fwd elem-then-base; bwd defer elem, descend base first
+    e.closeOpen(s"else if (cur instanceof ${K}Prepend p)")
+    if !backward then {
+      e.line("acc = f.apply(acc, p.elem);")
+      e.line("next = p.base;")
+    } else {
+      pushTail("p.elem")
+      e.line("next = p.base;")
+    }
+    // append: fwd defer elem, descend base first; bwd elem-then-base
+    e.closeOpen(s"else if (cur instanceof ${K}Append ap)")
+    if !backward then {
+      pushTail("ap.elem")
+      e.line("next = ap.base;")
+    } else {
+      e.line("acc = f.apply(acc, ap.elem);")
+      e.line("next = ap.base;")
+    }
+    // concat: fwd left-then-right; bwd right-then-left
+    e.closeOpen("else if (cur instanceof Concat c)")
+    if !backward then {
+      pushChild("c.right")
+      e.line("next = c.left;")
+    } else {
+      pushChild("c.left")
+      e.line("next = c.right;")
+    }
+    // reverse: the ONLY recursion — flip direction across the JVM call boundary
+    e.closeOpen("else if (cur instanceof ReverseNode rev)")
+    e.line(s"acc = $recur(rev.base, acc, f);")
+    // slice: leaf-base window fast path; deep base via applyBoxed
+    e.closeOpen("else if (cur instanceof SliceNode s)")
+    e.line("int so = s.offset;")
+    e.line("int sn = s.length;")
+    e.open(s"if (s.base instanceof ${K}Arr lf)")
+    if !backward then run("lf.arr", "so", "sn")
+    else run("lf.arr", "so + sn - 1", "sn")
+    e.closeOpen("else")
+    if !backward then runBoxed("s.base", "so", "sn")
+    else runBoxed("s.base", "so + sn - 1", "sn")
+    e.close()
+    // pad: fwd base-then-fillers; bwd fillers-then-base
+    e.closeOpen(s"else if (cur instanceof ${K}Pad pad)")
+    e.line("int bl = pad.base.length;")
+    e.line(s"$je pf = pad.filler;")
+    e.line("int pn = pad.length;")
+    if !backward then {
+      e.open(s"if (pad.base instanceof ${K}Arr lf)")
+      run("lf.arr", "0", "bl")
+      e.closeOpen("else")
+      runBoxed("pad.base", "0", "bl")
+      e.close()
+      e.line("int pj = bl;")
+      e.open("while (pj < pn)")
+      e.line("acc = f.apply(acc, pf);")
+      e.line("pj += 1;")
+      e.close()
+    } else {
+      e.line("int pj = pn;")
+      e.open("while (pj > bl)")
+      e.line("acc = f.apply(acc, pf);")
+      e.line("pj -= 1;")
+      e.close()
+      e.open(s"if (pad.base instanceof ${K}Arr lf)")
+      run("lf.arr", "bl - 1", "bl")
+      e.closeOpen("else")
+      runBoxed("pad.base", "bl - 1", "bl")
+      e.close()
+    }
+    // updated: fwd [0,ui) elem (ui,len); bwd mirror. leaf-base fast path; deep base via applyBoxed segments.
+    e.closeOpen(s"else if (cur instanceof ${K}Updated u)")
+    e.line("int ui = u.index;")
+    e.line("int ul = u.length;")
+    e.open(s"if (u.base instanceof ${K}Arr lf)")
+    e.line(s"$je[] la = lf.arr;")
+    if !backward then {
+      run("la", "0", "ui")
+      e.line("acc = f.apply(acc, u.elem);")
+      run("la", "ui + 1", "ul - ui - 1")
+    } else {
+      run("la", "ul - 1", "ul - ui - 1")
+      e.line("acc = f.apply(acc, u.elem);")
+      run("la", "ui - 1", "ui")
+    }
+    e.closeOpen("else")
+    if !backward then {
+      runBoxed("u.base", "0", "ui")
+      e.line("acc = f.apply(acc, u.elem);")
+      runBoxed("u.base", "ui + 1", "ul - ui - 1")
+    } else {
+      runBoxed("u.base", "ul - 1", "ul - ui - 1")
+      e.line("acc = f.apply(acc, u.elem);")
+      runBoxed("u.base", "ui - 1", "ui")
+    }
+    e.close()
+    // range (Int-only structural node — emitted only for Int input)
+    if K == "Int" then {
+      e.closeOpen("else if (cur instanceof RangeNode rng)")
+      e.line("int rn = rng.length;")
+      if !backward then {
+        e.line("int ri = 0;")
+        e.open("while (ri < rn)")
+        e.line("acc = f.apply(acc, rng.start + ri * rng.step);")
+        e.line("ri += 1;")
+        e.close()
+      } else {
+        e.line("int ri = rn - 1;")
+        e.open("while (ri >= 0)")
+        e.line("acc = f.apply(acc, rng.start + ri * rng.step);")
+        e.line("ri -= 1;")
+        e.close()
+      }
+    }
+    e.close()
+    // advance: descend into `next`, else pop the explicit stack (a tail slot applies the deferred element).
+    e.open("if (next != null)")
+    e.line("cur = next;")
+    e.closeOpen("else")
+    e.line("cur = null;")
+    e.open("while (sp > 0 && cur == null)")
+    e.line("sp -= 1;")
+    e.open("if (isTail != null && isTail[sp])")
+    e.line("acc = f.apply(acc, tail[sp]);")
+    e.closeOpen("else")
+    e.line("cur = stack[sp];")
+    e.close()
+    e.close()
+    e.close()
+    e.close() // while (cur != null)
+    e.line("return acc;")
+    e.close() // method
   }
 
   private def fbase: String = {
