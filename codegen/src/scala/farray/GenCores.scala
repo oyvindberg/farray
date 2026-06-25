@@ -1829,6 +1829,260 @@ object GenCores extends BleepCodegenScript("GenCores") {
       case (false, false) => s"RefToRefFn<$roArg>"
     }
 
+  /** The per-traverser pieces a WINDOWED sub-traverse needs. The windowed method `<name>(node, skip, take, …)`
+    * walks `node` but APPLIES the per-element action ONLY to the elements in the window [skip, skip+take) (in
+    * THIS direction's frame — a Bwd window counts skip from the END), early-returning the instant `take` hits 0.
+    * It is RECURSIVE (one call per structural child, with a child-local sub-window computed from the child's
+    * KNOWN length) rather than stack-iterative, so skip/take never need threading back across a call boundary —
+    * each parent recomputes its own skip/take from `child.length`. A ReverseNode recurses into the OPPOSITE
+    * direction windowed method with the SAME skip/take (the window then lands in the reversed frame). This is the
+    * (skip,take)-windowed replacement for the deep-base applyBoxed loops in every traverser shape. */
+  private final case class WinSpec(
+      name: String,            // this method's name (e.g. reduceWindowFwdIntInt)
+      other: String,           // opposite-direction windowed method (for the ReverseNode arm)
+      tparam: String,          // "<Z> " / "<RO> " / ""
+      retT: String,            // return type (Z / int / long / void / je)
+      retState: String,        // the value to `return` (e.g. "acc" / "o" / "(((long)ob)<<32)|…" / "" for void)
+      stateDecl: String,       // state+fn params AFTER "FBase node, int skip, int take" (e.g. ", Z acc, …Fold f")
+      stateArgs: String,       // the state arg(s) passed on a recursive call BETWEEN skip/take and the fn (", acc")
+      fnArgs: String,          // the fn arg(s) to pass on a recursive call (e.g. ", f")  (state captured separately)
+      backward: Boolean,
+      capture: (String) => String, // wrap a recursive sub-call returning the new state, e.g. v => s"acc = $v;"
+      act: String => Unit,     // per-element action on an element expr (mutates the state locals)
+      actRun: (String, String, String) => Unit, // leaf sub-run over arr[start, start±count) in THIS direction
+      isInt: Boolean,          // emit the RangeNode arm (Int input only)
+      prelude: () => Unit = () => () // method-body lines BEFORE the take<=0 guard (e.g. unpack packed cursors)
+  ) {
+    /** the recursive-call expression into THIS direction's windowed method (state captured by `capture`). */
+    def recurExpr(child: String, cskip: String, ctake: String, stateArgs: String): String =
+      s"$name($child, $cskip, $ctake$stateArgs$fnArgs)"
+    def recurOtherExpr(child: String, cskip: String, ctake: String, stateArgs: String): String =
+      s"$other($child, $cskip, $ctake$stateArgs$fnArgs)"
+  }
+
+  /** Emit ONE windowed sub-traverser from a WinSpec — the (skip,take)-windowed replacement for the deep-base
+    * applyBoxed loops. `<ret> name(FBase node, int skip, int take <state>)` walks `node` but APPLIES the
+    * per-element action ONLY to the elements in [skip, skip+take) in THIS direction's frame (a Bwd window counts
+    * `skip` from the END), early-RETURNING the instant `take` hits 0. It is RECURSIVE: each composite node is
+    * decomposed into ordered SEGMENTS (visit order: fwd left→right / base→fillers / prefix→elem→suffix; bwd
+    * mirrors), each segment being a recursion (known child length), a single element, or a filler run; a shared
+    * per-segment routine consumes `skip`/`take` so children get child-local sub-windows and `skip` collapses to 0
+    * after the first partially-covered segment. ReverseNode recurses into the OPPOSITE-direction window with the
+    * SAME skip/take (the window then lands in the reversed frame). Slice/Updated express their base as a SLICE of
+    * the base (base position `off+p` fwd / `baseLen-off-sn+p` bwd) so the one composition rule covers them. */
+  private def emitWindow(e: Emit, k: Kind, s: WinSpec): Unit = {
+    val K = k.name
+    val je = jelem(k)
+    val backward = s.backward
+    val voidRet = s.retT == "void"
+    def doReturn(): Unit = e.line(if voidRet then "return;" else s"return ${s.retState};")
+
+    // --- per-segment window consumers (mutate skip/take; `act`/recurse only on the in-window slice). ---
+    // a recursion segment: the child node `child`, of length `clen`, occupies the next `clen` visit positions.
+    // We recurse into it with a child-LOCAL sub-window. `childWin(segSkip, segTake)` yields the (cskip, ctake)
+    // pair IN THE CHILD'S OWN this-direction frame (identity for a plain child; offset for a slice-of-base).
+    def recurSeg(child: String, clen: String, childCSkip: (String) => String): Unit = e.scope {
+      e.line(s"int _L = $clen;")
+      e.line("int _ss = skip < _L ? skip : _L;")
+      e.line("int _st = _L - _ss; if (_st > take) _st = take;")
+      e.open("if (_st > 0)")
+      e.line(s"${s.capture(s.recurExpr(child, childCSkip("_ss"), "_st", s.stateArgs))}")
+      e.close()
+      e.line("skip -= _ss; take -= _st;")
+    }
+    // a single-element segment.
+    def elemSeg(elem: String): Unit = {
+      e.open("if (skip > 0)")
+      e.line("skip -= 1;")
+      e.closeOpen("else")
+      s.act(elem)
+      e.line("take -= 1;")
+      e.close()
+    }
+    // a filler run of length `flen` (all the same value `filler`).
+    def fillerSeg(filler: String, flen: String): Unit = e.scope {
+      e.line(s"int _fL = $flen;")
+      e.line("int _fs = skip < _fL ? skip : _fL;")
+      e.line("int _ft = _fL - _fs; if (_ft > take) _ft = take;")
+      e.open("if (_ft > 0)")
+      e.line("int _fj = 0;")
+      e.open("while (_fj < _ft)")
+      s.act(filler)
+      e.line("_fj += 1;")
+      e.close()
+      e.close()
+      e.line("skip -= _fs; take -= _ft;")
+    }
+    // guard each segment after the first with an early-out once take hits 0.
+    def stop(): Unit = { e.open("if (take <= 0)"); doReturn(); e.close() }
+
+    e.open(s"static ${s.tparam}${s.retT} ${s.name}(FBase node, int skip, int take${s.stateDecl})")
+    s.prelude()
+    e.line("if (take <= 0)" + (if voidRet then " return;" else s" return ${s.retState};"))
+    e.line("FBase cur = node;")
+    // leaf
+    e.open(s"if (cur instanceof ${K}Arr leaf)")
+    e.line(s"$je[] wa = leaf.arr;")
+    e.line("int c = leaf.length;")
+    e.open("if (skip < c)")
+    e.line("int avail = c - skip;")
+    e.line("int n = take < avail ? take : avail;")
+    if !backward then s.actRun("wa", "skip", "n")
+    else s.actRun("wa", "c - 1 - skip", "n")
+    e.close()
+    // one
+    e.closeOpen(s"else if (cur instanceof ${K}One one)")
+    e.open("if (skip == 0)")
+    s.act("one.elem")
+    e.close()
+    // prepend: fwd = elem then base; bwd = base then elem
+    e.closeOpen(s"else if (cur instanceof ${K}Prepend pp)")
+    if !backward then {
+      elemSeg("pp.elem"); stop()
+      recurSeg("pp.base", "pp.base.length", identity)
+    } else {
+      recurSeg("pp.base", "pp.base.length", identity); stop()
+      elemSeg("pp.elem")
+    }
+    // append: fwd = base then elem; bwd = elem then base
+    e.closeOpen(s"else if (cur instanceof ${K}Append ap)")
+    if !backward then {
+      recurSeg("ap.base", "ap.base.length", identity); stop()
+      elemSeg("ap.elem")
+    } else {
+      elemSeg("ap.elem"); stop()
+      recurSeg("ap.base", "ap.base.length", identity)
+    }
+    // concat: fwd = left then right; bwd = right then left
+    e.closeOpen("else if (cur instanceof Concat cc)")
+    if !backward then {
+      recurSeg("cc.left", "cc.left.length", identity); stop()
+      recurSeg("cc.right", "cc.right.length", identity)
+    } else {
+      recurSeg("cc.right", "cc.right.length", identity); stop()
+      recurSeg("cc.left", "cc.left.length", identity)
+    }
+    // reverse: recurse into the OPPOSITE-direction window with the SAME skip/take (window lands in reversed frame)
+    e.closeOpen("else if (cur instanceof ReverseNode rev)")
+    e.line(s"${s.capture(s.recurOtherExpr("rev.base", "skip", "take", s.stateArgs))}")
+    // slice: leaf base = a direct clipped run; deep base = a windowed sub-traverse of the base restricted to
+    // base[so, so+sn). The slice's THIS-direction position p maps to base index so+p (fwd) / so+sn-1-p (bwd);
+    // expressed as a base this-direction window: fwd base-pos so+skip; bwd base reversed-pos (baseLen-so-sn)+skip.
+    e.closeOpen("else if (cur instanceof SliceNode sl)")
+    e.line("int so = sl.offset;")
+    e.line("int sn = sl.length;")
+    e.open(s"if (sl.base instanceof ${K}Arr lf)")
+    e.line(s"$je[] wa = lf.arr;")
+    e.open("if (skip < sn)")
+    e.line("int avail = sn - skip;")
+    e.line("int n = take < avail ? take : avail;")
+    if !backward then s.actRun("wa", "so + skip", "n")
+    else s.actRun("wa", "so + sn - 1 - skip", "n")
+    e.close()
+    e.closeOpen("else")
+    sliceDeep(e, s, "sl.base", "so", "sn")
+    e.close()
+    // pad: fwd = base then fillers; bwd = fillers then base
+    e.closeOpen(s"else if (cur instanceof ${K}Pad pad)")
+    e.line("int bl = pad.base.length;")
+    e.line(s"$je pf = pad.filler;")
+    e.line("int fillCount = pad.length - bl;")
+    if !backward then {
+      recurSeg("pad.base", "bl", identity); stop()
+      fillerSeg("pf", "fillCount")
+    } else {
+      fillerSeg("pf", "fillCount"); stop()
+      recurSeg("pad.base", "bl", identity)
+    }
+    // updated: fwd = prefix base[0,ui) , elem , suffix base[ui+1,ul) ; bwd = suffix(rev) , elem , prefix(rev).
+    // Prefix/suffix are SLICES of base, windowed via sliceDeep (or a leaf run if base is a leaf).
+    e.closeOpen(s"else if (cur instanceof ${K}Updated u)")
+    e.line("int ui = u.index;")
+    e.line("int ul = u.length;")
+    e.open(s"if (u.base instanceof ${K}Arr lf2)")
+    e.line(s"$je[] la = lf2.arr;")
+    if !backward then {
+      updLeafRun(e, s, "la", "0", "ui"); stop()
+      elemSeg("u.elem"); stop()
+      updLeafRun(e, s, "la", "ui + 1", "ul - ui - 1")
+    } else {
+      updLeafRun(e, s, "la", "ui + 1", "ul - ui - 1"); stop()
+      elemSeg("u.elem"); stop()
+      updLeafRun(e, s, "la", "0", "ui")
+    }
+    e.closeOpen("else")
+    if !backward then {
+      sliceDeep(e, s, "u.base", "0", "ui"); stop()
+      elemSeg("u.elem"); stop()
+      sliceDeep(e, s, "u.base", "ui + 1", "ul - ui - 1")
+    } else {
+      sliceDeep(e, s, "u.base", "ui + 1", "ul - ui - 1"); stop()
+      elemSeg("u.elem"); stop()
+      sliceDeep(e, s, "u.base", "0", "ui")
+    }
+    e.close()
+    if s.isInt then {
+      e.closeOpen("else if (cur instanceof RangeNode rng)")
+      e.line("int rn = rng.length;")
+      e.open("if (skip < rn)")
+      e.line("int avail = rn - skip;")
+      e.line("int n = take < avail ? take : avail;")
+      if !backward then {
+        e.line("int ri = skip;")
+        e.line("int re = skip + n;")
+        e.open("while (ri < re)")
+        s.act("rng.start + ri * rng.step")
+        e.line("ri += 1;")
+        e.close()
+      } else {
+        e.line("int ri = rn - 1 - skip;")
+        e.line("int re = ri - n;")
+        e.open("while (ri > re)")
+        s.act("rng.start + ri * rng.step")
+        e.line("ri -= 1;")
+        e.close()
+      }
+      e.close()
+    }
+    e.close() // node-kind dispatch
+    if !voidRet then e.line(s"return ${s.retState};")
+    e.close() // method
+  }
+
+  /** Emit a windowed sub-traverse of `base` RESTRICTED to base[off, off+len) — i.e. a deep SliceNode base or an
+    * Updated prefix/suffix. Composes a base this-direction window: fwd base-position `off+skip`; bwd base
+    * reversed-position `(baseLen-off-len)+skip`. `skip`/`take` are this-segment-local on entry; on exit they are
+    * decremented by the consumed amounts (so a following segment continues correctly). */
+  private def sliceDeep(e: Emit, s: WinSpec, base: String, off: String, len: String): Unit = e.scope {
+    e.line(s"int _so = $off;")
+    e.line(s"int _sn = $len;")
+    e.line("int _ss = skip < _sn ? skip : _sn;")
+    e.line("int _st = _sn - _ss; if (_st > take) _st = take;")
+    e.open("if (_st > 0)")
+    if !s.backward then
+      e.line(s"${s.capture(s.recurExpr(base, "_so + _ss", "_st", s.stateArgs))}")
+    else {
+      e.line(s"int _bl = $base.length;")
+      e.line(s"${s.capture(s.recurExpr(base, "_bl - _so - _sn + _ss", "_st", s.stateArgs))}")
+    }
+    e.close()
+    e.line("skip -= _ss; take -= _st;")
+  }
+
+  /** Emit a leaf-array run for an Updated prefix/suffix (base IS a leaf): act on arr[start, start+len) clipped to
+    * the window, consuming skip/take. Direction-aware (fwd ascending / bwd descending mirror). */
+  private def updLeafRun(e: Emit, s: WinSpec, arr: String, start: String, len: String): Unit = e.scope {
+    e.line(s"int _rs = $start;")
+    e.line(s"int _rn = $len;")
+    e.line("int _ss = skip < _rn ? skip : _rn;")
+    e.line("int _st = _rn - _ss; if (_st > take) _st = take;")
+    e.open("if (_st > 0)")
+    if !s.backward then s.actRun(arr, "_rs + _ss", "_st")
+    else s.actRun(arr, "_rs + _rn - 1 - _ss", "_st")
+    e.close()
+    e.line("skip -= _ss; take -= _st;")
+  }
+
   /** Emit one Reduce push traverser over input kind `k`. `refAcc` picks the function type (Z=Ref generic vs
     * Z=${k} unboxed) and the acc type; `backward` mirrors visit order. Per §4.1: Concat/Append/Prepend
     * deferrals + deep Slice/Pad/Updated bases ride a LOCAL explicit stack (lazily allocated — null until the
@@ -1912,6 +2166,24 @@ object GenCores extends BleepCodegenScript("GenCores") {
         e.close()
       }
     }
+
+    // --- the (skip,take)-windowed sub-traverser for deep (non-leaf) Slice/Pad/Updated bases (replaces runBoxed). ---
+    val accT = if refAcc then "Z" else je
+    val winName = s"reduceWindow${dir}${K}${if refAcc then "Ref" else K}"
+    val winOther = s"reduceWindow${other}${K}${if refAcc then "Ref" else K}"
+    val win = WinSpec(
+      name = winName, other = winOther, tparam = if refAcc then "<Z> " else "",
+      retT = accT, retState = "acc", stateDecl = s", $accT acc, $foldT f", stateArgs = ", acc", fnArgs = ", f",
+      backward = backward, capture = v => s"acc = $v;",
+      act = el => e.line(s"acc = f.apply(acc, $el);"),
+      actRun = (arr, start, count) => run(arr, start, count),
+      isInt = K == "Int"
+    )
+    // a deep-base window call from the MAIN traverser: act on `node`[lo, lo+len) (node's index space), in THIS
+    // direction. fwd window skip = lo; bwd window skip = node.length - lo - len (the reversed-frame offset).
+    def winCall(node: String, lo: String, len: String): Unit =
+      if !backward then e.line(win.capture(win.recurExpr(node, lo, len, ", acc")))
+      else e.line(win.capture(win.recurExpr(node, s"$node.length - ($lo) - ($len)", len, ", acc")))
 
     // grow the FBase[] child stack; tail/isTail (deferred single elements) are grown in lockstep, lazily.
     def ensureStack(): Unit = {
@@ -2000,8 +2272,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     if !backward then run("lf.arr", "so", "sn")
     else run("lf.arr", "so + sn - 1", "sn")
     e.closeOpen("else")
-    if !backward then runBoxed("s.base", "so", "sn")
-    else runBoxed("s.base", "so + sn - 1", "sn")
+    winCall("s.base", "so", "sn")
     e.close()
     // pad: fwd base-then-fillers; bwd fillers-then-base
     e.closeOpen(s"else if (cur instanceof ${K}Pad pad)")
@@ -2012,7 +2283,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       e.open(s"if (pad.base instanceof ${K}Arr lf)")
       run("lf.arr", "0", "bl")
       e.closeOpen("else")
-      runBoxed("pad.base", "0", "bl")
+      winCall("pad.base", "0", "bl")
       e.close()
       e.line("int pj = bl;")
       e.open("while (pj < pn)")
@@ -2028,10 +2299,10 @@ object GenCores extends BleepCodegenScript("GenCores") {
       e.open(s"if (pad.base instanceof ${K}Arr lf)")
       run("lf.arr", "bl - 1", "bl")
       e.closeOpen("else")
-      runBoxed("pad.base", "bl - 1", "bl")
+      winCall("pad.base", "0", "bl")
       e.close()
     }
-    // updated: fwd [0,ui) elem (ui,len); bwd mirror. leaf-base fast path; deep base via applyBoxed segments.
+    // updated: fwd [0,ui) elem (ui,len); bwd mirror. leaf-base fast path; deep base via the windowed sub-traverse.
     e.closeOpen(s"else if (cur instanceof ${K}Updated u)")
     e.line("int ui = u.index;")
     e.line("int ul = u.length;")
@@ -2048,13 +2319,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
     }
     e.closeOpen("else")
     if !backward then {
-      runBoxed("u.base", "0", "ui")
+      winCall("u.base", "0", "ui")
       e.line("acc = f.apply(acc, u.elem);")
-      runBoxed("u.base", "ui + 1", "ul - ui - 1")
+      winCall("u.base", "ui + 1", "ul - ui - 1")
     } else {
-      runBoxed("u.base", "ul - 1", "ul - ui - 1")
+      winCall("u.base", "ui + 1", "ul - ui - 1")
       e.line("acc = f.apply(acc, u.elem);")
-      runBoxed("u.base", "ui - 1", "ui")
+      winCall("u.base", "0", "ui")
     }
     e.close()
     // range (Int-only structural node — emitted only for Int input)
@@ -2093,6 +2364,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
     e.close() // while (cur != null)
     e.line("return acc;")
     e.close() // method
+    e.blank()
+    emitWindow(e, k, win)
   }
 
   /** Emit one Build (map) push traverser over (input kind `ki`, output kind `ko`). The SAME lazy-stack walk
@@ -2188,6 +2461,21 @@ object GenCores extends BleepCodegenScript("GenCores") {
       }
     }
 
+    // --- the (skip,take)-windowed sub-traverser for deep Slice/Pad/Updated bases (replaces runBoxed). ---
+    val winName = s"buildWindow${dir}${KI}${ko.name}"
+    val winOther = s"buildWindow${other}${KI}${ko.name}"
+    val win = WinSpec(
+      name = winName, other = winOther, tparam = tpClause,
+      retT = "int", retState = "o", stateDecl = s", $outT out, int o, $fnT f", stateArgs = ", out, o", fnArgs = ", f",
+      backward = backward, capture = v => s"o = $v;",
+      act = el => writeElem(el),
+      actRun = (arr, start, count) => run(arr, start, count),
+      isInt = KI == "Int"
+    )
+    def winCall(node: String, lo: String, len: String): Unit =
+      if !backward then e.line(win.capture(win.recurExpr(node, lo, len, ", out, o")))
+      else e.line(win.capture(win.recurExpr(node, s"$node.length - ($lo) - ($len)", len, ", out, o")))
+
     // the deferred-element stack mirrors reduceTraverser (Prepend fwd-defer / Append bwd-defer).
     def ensureStack(): Unit = {
       e.open("if (stack == null)")
@@ -2275,8 +2563,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     if !backward then run("lf.arr", "so", "sn")
     else run("lf.arr", "so + sn - 1", "sn")
     e.closeOpen("else")
-    if !backward then runBoxed("s.base", "so", "sn")
-    else runBoxed("s.base", "so + sn - 1", "sn")
+    winCall("s.base", "so", "sn")
     e.close()
     // pad: fwd base-then-fillers; bwd fillers-then-base
     e.closeOpen(s"else if (cur instanceof ${KI}Pad pad)")
@@ -2287,7 +2574,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       e.open(s"if (pad.base instanceof ${KI}Arr lf)")
       run("lf.arr", "0", "bl")
       e.closeOpen("else")
-      runBoxed("pad.base", "0", "bl")
+      winCall("pad.base", "0", "bl")
       e.close()
       e.line("int pj = bl;")
       e.open("while (pj < pn)")
@@ -2303,10 +2590,10 @@ object GenCores extends BleepCodegenScript("GenCores") {
       e.open(s"if (pad.base instanceof ${KI}Arr lf)")
       run("lf.arr", "bl - 1", "bl")
       e.closeOpen("else")
-      runBoxed("pad.base", "bl - 1", "bl")
+      winCall("pad.base", "0", "bl")
       e.close()
     }
-    // updated: fwd [0,ui) elem (ui,len); bwd mirror. leaf-base fast path; deep base via applyBoxed segments.
+    // updated: fwd [0,ui) elem (ui,len); bwd mirror. leaf-base fast path; deep base via the windowed sub-traverse.
     e.closeOpen(s"else if (cur instanceof ${KI}Updated u)")
     e.line("int ui = u.index;")
     e.line("int ul = u.length;")
@@ -2323,13 +2610,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
     }
     e.closeOpen("else")
     if !backward then {
-      runBoxed("u.base", "0", "ui")
+      winCall("u.base", "0", "ui")
       writeElem("u.elem")
-      runBoxed("u.base", "ui + 1", "ul - ui - 1")
+      winCall("u.base", "ui + 1", "ul - ui - 1")
     } else {
-      runBoxed("u.base", "ul - 1", "ul - ui - 1")
+      winCall("u.base", "ui + 1", "ul - ui - 1")
       writeElem("u.elem")
-      runBoxed("u.base", "ui - 1", "ui")
+      winCall("u.base", "0", "ui")
     }
     e.close()
     // range (Int-only structural node — emitted only for Int input)
@@ -2368,6 +2655,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
     e.close() // while (cur != null)
     e.line("return o;")
     e.close() // method
+    e.blank()
+    emitWindow(e, ki, win)
   }
 
   /** Emit one Build-filtered (filter) push traverser over input kind `k`. The SAME lazy-stack walk skeleton as
@@ -2455,6 +2744,21 @@ object GenCores extends BleepCodegenScript("GenCores") {
         e.close()
       }
     }
+
+    // --- the (skip,take)-windowed sub-traverser for deep Slice/Pad/Updated bases (replaces runBoxed). ---
+    val winName = if backward then s"buildFilteredWindowBwd${K}" else s"buildFilteredWindow${K}"
+    val winOther = if backward then s"buildFilteredWindow${K}" else s"buildFilteredWindowBwd${K}"
+    val win = WinSpec(
+      name = winName, other = winOther, tparam = "",
+      retT = "int", retState = "o", stateDecl = s", $je[] out, int o, ${K}Pred p", stateArgs = ", out, o", fnArgs = ", p",
+      backward = backward, capture = v => s"o = $v;",
+      act = el => writeElem(el),
+      actRun = (arr, start, count) => run(arr, start, count),
+      isInt = K == "Int"
+    )
+    def winCall(node: String, lo: String, len: String): Unit =
+      if !backward then e.line(win.capture(win.recurExpr(node, lo, len, ", out, o")))
+      else e.line(win.capture(win.recurExpr(node, s"$node.length - ($lo) - ($len)", len, ", out, o")))
 
     // the deferred-element stack mirrors buildTraverser (Prepend fwd-defer / Append bwd-defer).
     def ensureStack(): Unit = {
@@ -2544,8 +2848,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     if !backward then run("lf.arr", "so", "sn")
     else run("lf.arr", "so + sn - 1", "sn")
     e.closeOpen("else")
-    if !backward then runBoxed("s.base", "so", "sn")
-    else runBoxed("s.base", "so + sn - 1", "sn")
+    winCall("s.base", "so", "sn")
     e.close()
     // pad: fwd base-then-fillers; bwd fillers-then-base
     e.closeOpen(s"else if (cur instanceof ${K}Pad pad)")
@@ -2556,7 +2859,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       e.open(s"if (pad.base instanceof ${K}Arr lf)")
       run("lf.arr", "0", "bl")
       e.closeOpen("else")
-      runBoxed("pad.base", "0", "bl")
+      winCall("pad.base", "0", "bl")
       e.close()
       e.line("int pj = bl;")
       e.open("while (pj < pn)")
@@ -2572,7 +2875,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       e.open(s"if (pad.base instanceof ${K}Arr lf)")
       run("lf.arr", "bl - 1", "bl")
       e.closeOpen("else")
-      runBoxed("pad.base", "bl - 1", "bl")
+      winCall("pad.base", "0", "bl")
       e.close()
     }
     // updated: fwd [0,ui) elem (ui,len); bwd mirror. leaf-base fast path; deep base via applyBoxed segments.
@@ -2592,13 +2895,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
     }
     e.closeOpen("else")
     if !backward then {
-      runBoxed("u.base", "0", "ui")
+      winCall("u.base", "0", "ui")
       writeElem("u.elem")
-      runBoxed("u.base", "ui + 1", "ul - ui - 1")
+      winCall("u.base", "ui + 1", "ul - ui - 1")
     } else {
-      runBoxed("u.base", "ul - 1", "ul - ui - 1")
+      winCall("u.base", "ui + 1", "ul - ui - 1")
       writeElem("u.elem")
-      runBoxed("u.base", "ui - 1", "ui")
+      winCall("u.base", "0", "ui")
     }
     e.close()
     // range (Int-only structural node — emitted only for Int input)
@@ -2637,6 +2940,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
     e.close() // while (cur != null)
     e.line("return o;")
     e.close() // method
+    e.blank()
+    emitWindow(e, k, win)
   }
 
   /** Emit one Partition push traverser over input kind `k` — the DUAL-output sibling of `buildFilteredTraverser`.
@@ -2722,6 +3027,27 @@ object GenCores extends BleepCodegenScript("GenCores") {
         e.close()
       }
     }
+
+    // --- the (skip,take)-windowed sub-traverser for deep Slice/Pad/Updated bases (replaces runBoxed). ---
+    val packedRet = "(((long) ob) << 32) | (((long) oa) & 0xffffffffL)"
+    val winName = if backward then s"partitionWindowBwd${K}" else s"partitionWindowFwd${K}"
+    val winOther = if backward then s"partitionWindowFwd${K}" else s"partitionWindowBwd${K}"
+    val win = WinSpec(
+      name = winName, other = winOther, tparam = "",
+      retT = "long", retState = packedRet,
+      stateDecl = s", $je[] outA, $je[] outB, long oa0, long ob0, ${K}Pred p",
+      stateArgs = ", outA, outB, (long) oa, (long) ob", fnArgs = ", p",
+      backward = backward,
+      capture = v => s"{ long _pk = $v; oa = (int) (_pk & 0xffffffffL); ob = (int) (_pk >>> 32); }",
+      act = el => writeElem(el),
+      actRun = (arr, start, count) => run(arr, start, count),
+      isInt = K == "Int",
+      prelude = () => { e.line("int oa = (int) oa0;"); e.line("int ob = (int) ob0;") }
+    )
+    def winCall(node: String, lo: String, len: String): Unit =
+      if !backward then e.line(win.capture(win.recurExpr(node, lo, len, ", outA, outB, (long) oa, (long) ob")))
+      else e.line(win.capture(win.recurExpr(node, s"$node.length - ($lo) - ($len)", len, ", outA, outB, (long) oa, (long) ob")))
+
     def ensureStack(): Unit = {
       e.open("if (stack == null)")
       e.line("stack = new FBase[16];")
@@ -2807,8 +3133,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     if !backward then run("lf.arr", "so", "sn")
     else run("lf.arr", "so + sn - 1", "sn")
     e.closeOpen("else")
-    if !backward then runBoxed("s.base", "so", "sn")
-    else runBoxed("s.base", "so + sn - 1", "sn")
+    winCall("s.base", "so", "sn")
     e.close()
     e.closeOpen(s"else if (cur instanceof ${K}Pad pad)")
     e.line("int bl = pad.base.length;")
@@ -2818,7 +3143,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       e.open(s"if (pad.base instanceof ${K}Arr lf)")
       run("lf.arr", "0", "bl")
       e.closeOpen("else")
-      runBoxed("pad.base", "0", "bl")
+      winCall("pad.base", "0", "bl")
       e.close()
       e.line("int pj = bl;")
       e.open("while (pj < pn)")
@@ -2834,7 +3159,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       e.open(s"if (pad.base instanceof ${K}Arr lf)")
       run("lf.arr", "bl - 1", "bl")
       e.closeOpen("else")
-      runBoxed("pad.base", "bl - 1", "bl")
+      winCall("pad.base", "0", "bl")
       e.close()
     }
     e.closeOpen(s"else if (cur instanceof ${K}Updated u)")
@@ -2853,13 +3178,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
     }
     e.closeOpen("else")
     if !backward then {
-      runBoxed("u.base", "0", "ui")
+      winCall("u.base", "0", "ui")
       writeElem("u.elem")
-      runBoxed("u.base", "ui + 1", "ul - ui - 1")
+      winCall("u.base", "ui + 1", "ul - ui - 1")
     } else {
-      runBoxed("u.base", "ul - 1", "ul - ui - 1")
+      winCall("u.base", "ui + 1", "ul - ui - 1")
       writeElem("u.elem")
-      runBoxed("u.base", "ui - 1", "ui")
+      winCall("u.base", "0", "ui")
     }
     e.close()
     if K == "Int" then {
@@ -2896,6 +3221,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
     e.close() // while (cur != null)
     e.line("return (((long) ob) << 32) | (((long) oa) & 0xffffffffL);")
     e.close() // method
+    e.blank()
+    emitWindow(e, k, win)
   }
 
   /** Emit one Foreach push traverser over input kind `k`. The SAME lazy-stack walk skeleton as `reduceTraverser`,
@@ -2972,6 +3299,22 @@ object GenCores extends BleepCodegenScript("GenCores") {
         e.close()
       }
     }
+
+    // --- the (skip,take)-windowed sub-traverser for deep Slice/Pad/Updated bases (replaces runBoxed). ---
+    val winName = s"foreachWindow${dir}${K}"
+    val winOther = s"foreachWindow${other}${K}"
+    val win = WinSpec(
+      name = winName, other = winOther, tparam = "",
+      retT = "void", retState = "", stateDecl = s", ${K}Consumer f", stateArgs = "", fnArgs = ", f",
+      backward = backward, capture = v => s"$v;",
+      act = el => e.line(s"f.apply($el);"),
+      actRun = (arr, start, count) => run(arr, start, count),
+      isInt = K == "Int"
+    )
+    def winCall(node: String, lo: String, len: String): Unit =
+      if !backward then e.line(win.capture(win.recurExpr(node, lo, len, "")))
+      else e.line(win.capture(win.recurExpr(node, s"$node.length - ($lo) - ($len)", len, "")))
+
     def ensureStack(): Unit = {
       e.open("if (stack == null)")
       e.line("stack = new FBase[16];")
@@ -3058,8 +3401,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     if !backward then run("lf.arr", "so", "sn")
     else run("lf.arr", "so + sn - 1", "sn")
     e.closeOpen("else")
-    if !backward then runBoxed("s.base", "so", "sn")
-    else runBoxed("s.base", "so + sn - 1", "sn")
+    winCall("s.base", "so", "sn")
     e.close()
     // pad: fwd base-then-fillers; bwd fillers-then-base
     e.closeOpen(s"else if (cur instanceof ${K}Pad pad)")
@@ -3070,7 +3412,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       e.open(s"if (pad.base instanceof ${K}Arr lf)")
       run("lf.arr", "0", "bl")
       e.closeOpen("else")
-      runBoxed("pad.base", "0", "bl")
+      winCall("pad.base", "0", "bl")
       e.close()
       e.line("int pj = bl;")
       e.open("while (pj < pn)")
@@ -3086,7 +3428,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       e.open(s"if (pad.base instanceof ${K}Arr lf)")
       run("lf.arr", "bl - 1", "bl")
       e.closeOpen("else")
-      runBoxed("pad.base", "bl - 1", "bl")
+      winCall("pad.base", "0", "bl")
       e.close()
     }
     // updated: fwd [0,ui) elem (ui,len); bwd mirror. leaf-base fast path; deep base via applyBoxed segments.
@@ -3106,13 +3448,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
     }
     e.closeOpen("else")
     if !backward then {
-      runBoxed("u.base", "0", "ui")
+      winCall("u.base", "0", "ui")
       e.line("f.apply(u.elem);")
-      runBoxed("u.base", "ui + 1", "ul - ui - 1")
+      winCall("u.base", "ui + 1", "ul - ui - 1")
     } else {
-      runBoxed("u.base", "ul - 1", "ul - ui - 1")
+      winCall("u.base", "ui + 1", "ul - ui - 1")
       e.line("f.apply(u.elem);")
-      runBoxed("u.base", "ui - 1", "ui")
+      winCall("u.base", "0", "ui")
     }
     e.close()
     // range (Int-only structural node — emitted only for Int input)
@@ -3150,6 +3492,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
     e.close()
     e.close() // while (cur != null)
     e.close() // method
+    e.blank()
+    emitWindow(e, k, win)
   }
 
   /** Emit one Scan push traverser over input kind `k`. KEY TRICK: the running accumulator is ALWAYS the LAST
@@ -3253,6 +3597,26 @@ object GenCores extends BleepCodegenScript("GenCores") {
         e.close()
       }
     }
+
+    // --- the (skip,take)-windowed sub-traverser for deep Slice/Pad/Updated bases (replaces runBoxed). The window
+    // VISIT direction = visitBackward (s.backward); the WRITE convention (o advance) stays writeBackward, exactly
+    // as the main scan — emitWindow's leaf/run loops visit per s.backward while writeElem advances o per write dir.
+    // The ReverseNode arm flips ONLY the visit (rev) tag, keeping the SAME write dir, mirroring the main recur. ---
+    val accSuffix = if refAcc then "Ref" else K
+    val winName = s"scanWindow${dir}${rev}${K}${accSuffix}"
+    val winOther = s"scanWindow${dir}${if rev == "Rev" then "" else "Rev"}${K}${accSuffix}"
+    val win = WinSpec(
+      name = winName, other = winOther, tparam = tparam,
+      retT = "int", retState = "o", stateDecl = s", $outT out, int o, $foldT f", stateArgs = ", out, o", fnArgs = ", f",
+      backward = backward, capture = v => s"o = $v;",
+      act = el => writeElem(el),
+      actRun = (arr, start, count) => run(arr, start, count),
+      isInt = K == "Int"
+    )
+    def winCall(node: String, lo: String, len: String): Unit =
+      if !backward then e.line(win.capture(win.recurExpr(node, lo, len, ", out, o")))
+      else e.line(win.capture(win.recurExpr(node, s"$node.length - ($lo) - ($len)", len, ", out, o")))
+
     def ensureStack(): Unit = {
       e.open("if (stack == null)")
       e.line("stack = new FBase[16];")
@@ -3332,8 +3696,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     if !backward then run("lf.arr", "so", "sn")
     else run("lf.arr", "so + sn - 1", "sn")
     e.closeOpen("else")
-    if !backward then runBoxed("s.base", "so", "sn")
-    else runBoxed("s.base", "so + sn - 1", "sn")
+    winCall("s.base", "so", "sn")
     e.close()
     e.closeOpen(s"else if (cur instanceof ${K}Pad pad)")
     e.line("int bl = pad.base.length;")
@@ -3343,7 +3706,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       e.open(s"if (pad.base instanceof ${K}Arr lf)")
       run("lf.arr", "0", "bl")
       e.closeOpen("else")
-      runBoxed("pad.base", "0", "bl")
+      winCall("pad.base", "0", "bl")
       e.close()
       e.line("int pj = bl;")
       e.open("while (pj < pn)")
@@ -3359,7 +3722,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       e.open(s"if (pad.base instanceof ${K}Arr lf)")
       run("lf.arr", "bl - 1", "bl")
       e.closeOpen("else")
-      runBoxed("pad.base", "bl - 1", "bl")
+      winCall("pad.base", "0", "bl")
       e.close()
     }
     e.closeOpen(s"else if (cur instanceof ${K}Updated u)")
@@ -3378,13 +3741,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
     }
     e.closeOpen("else")
     if !backward then {
-      runBoxed("u.base", "0", "ui")
+      winCall("u.base", "0", "ui")
       writeElem("u.elem")
-      runBoxed("u.base", "ui + 1", "ul - ui - 1")
+      winCall("u.base", "ui + 1", "ul - ui - 1")
     } else {
-      runBoxed("u.base", "ul - 1", "ul - ui - 1")
+      winCall("u.base", "ui + 1", "ul - ui - 1")
       writeElem("u.elem")
-      runBoxed("u.base", "ui - 1", "ui")
+      winCall("u.base", "0", "ui")
     }
     e.close()
     if K == "Int" then {
@@ -3421,6 +3784,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
     e.close() // while (cur != null)
     e.line("return o;")
     e.close() // method
+    e.blank()
+    emitWindow(e, k, win)
   }
 
   /** Emit one Short-circuit push traverser over input kind `k`. SAME lazy-stack walk skeleton as the foreach

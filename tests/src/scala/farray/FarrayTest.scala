@@ -827,6 +827,97 @@ class FListTest:
       assert(fa.scanLeft("z")(_ + _.toString).toList == la.scanLeft("z")(_ + _.toString), s"scanLeft/Ref $c")
       assert(fa.scanRight("z")(_.toString + _).toList == la.scanRight("z")(_.toString + _), s"scanRight/Ref $c")
 
+  // (skip,take)-WINDOWED deep-base parity vs List, for the per-element shapes the scan/filter structural tests do NOT
+  // exercise: foldLeft/foldRight/sum/min/max/mkString, map, foreach, exists/indexWhere — each over a SliceNode /
+  // PadNode / UpdatedNode whose BASE is a TREE (concat / reverse / append+prepend spine / reverse-of-each). This is
+  // the windowed sub-traverse (reduceWindowFwd/Bwd etc.) replacing the old per-index applyBoxed deep-base loops:
+  // Slice -> windowed-recurse(base, off, len); Updated -> recurse(base,0,i)+elem+recurse(base,i+1,rest); Pad -> full
+  // base + filler. Inputs are built STRUCTURALLY (++/reverse/take/drop/padTo/updated), never fromIterable, so the
+  // base is a genuine tree node and the window clips real leaf runs inside it. Edge cases: slice-over-reverse (window
+  // from the END), deep update at index 0 / middle / last, window length 0 and length n, slice-of-slice, slice-of-updated.
+  @Test def test_window_deepbase_shapes(): Unit =
+    def leaf(xs: Int*): FArray[Int] = FArray.tabulate(xs.length)(i => xs(i)) // genuine flat IntArr leaf
+    // TREE bases (each a non-leaf node) paired with the equivalent List.
+    val concatBase   = leaf(0, 1, 2, 3, 4) ++ leaf(5, 6, 7, 8, 9, 10, 11)                 // Concat, len 12
+    val concatL      = (0 to 11).toList
+    val revBase      = leaf(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11).reverse                 // ReverseNode of leaf, len 12
+    val revL         = (0 to 11).toList.reverse
+    val revConcat    = (leaf(0, 1, 2, 3, 4) ++ leaf(5, 6, 7, 8, 9, 10, 11)).reverse       // ReverseNode of Concat
+    val revConcatL   = (0 to 11).toList.reverse
+    val spineBase    = (90 +: 91 +: leaf(0, 1, 2, 3, 4, 5, 6, 7) :+ 92 :+ 93)             // Prepend+Append spine, len 12
+    val spineL       = List(90, 91, 0, 1, 2, 3, 4, 5, 6, 7, 92, 93)
+    val revSpine     = (90 +: leaf(0, 1, 2, 3, 4, 5, 6, 7, 8, 9) :+ 91).reverse           // reverse over a spine, len 12
+    val revSpineL    = List(90, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 91).reverse
+    val nestedRev    = ((leaf(0, 1, 2) ++ leaf(3, 4)).reverse ++ leaf(5, 6, 7, 8, 9, 10, 11)) // nested ReverseNode in Concat
+    val nestedRevL   = (List(0, 1, 2, 3, 4).reverse ::: List(5, 6, 7, 8, 9, 10, 11))
+
+    val trees: List[(String, FArray[Int], List[Int])] = List(
+      ("concat", concatBase, concatL),
+      ("reverse", revBase, revL),
+      ("reverseConcat", revConcat, revConcatL),
+      ("spine", spineBase, spineL),
+      ("reverseSpine", revSpine, revSpineL),
+      ("nestedRev", nestedRev, nestedRevL)
+    )
+
+    // Per tree base, wrap it in a SliceNode / PadNode / UpdatedNode and check every per-element op vs List.
+    for (bn, base, bl) <- trees do
+      val n = bl.length
+      // SliceNode windows: full (0,n), prefix, suffix (from the END — exercises the Bwd reversed-frame clip),
+      // interior, length 0 (empty window), length 1, and slice-of-slice.
+      val sliceCases: List[(String, (Int, Int))] = List(
+        ("full", (0, n)), ("prefix", (0, 4)), ("suffix", (n - 5, n)),
+        ("interior", (3, 9)), ("len0", (5, 5)), ("len1", (6, 7)), ("fromEnd", (n - 1, n))
+      )
+      for (sn, (from, until)) <- sliceCases do
+        val fa = base.slice(from, until)
+        val la = bl.slice(from, until)
+        checkWindowOps(s"$bn.slice($from,$until)/$sn", fa, la)
+        // slice-of-slice: re-window the already-windowed result
+        if la.nonEmpty then
+          val faa = fa.slice(1, fa.length); val laa = la.slice(1, la.length)
+          checkWindowOps(s"$bn.slice($from,$until).slice(1,_)/$sn", faa, laa)
+
+      // PadNode over the tree base: pad to n+5 with a filler.
+      locally {
+        val fa = base.padTo(n + 5, 999); val la = bl.padTo(n + 5, 999)
+        checkWindowOps(s"$bn.padTo(${n + 5},999)", fa, la)
+        // slice INTO the padded region (window straddles base + filler) and ITS reverse
+        checkWindowOps(s"$bn.padTo.slice(base..fill)", fa.slice(n - 2, n + 3), la.slice(n - 2, n + 3))
+        checkWindowOps(s"$bn.padTo.reverse", fa.reverse, la.reverse)
+      }
+
+      // UpdatedNode over the tree base at index 0 / middle / last, and slice-of-updated.
+      for ui <- List(0, n / 2, n - 1) do
+        val fa = base.updated(ui, 777); val la = bl.updated(ui, 777)
+        checkWindowOps(s"$bn.updated($ui,777)", fa, la)
+        // slice-of-updated: window across the replaced slot (prefix base | elem | suffix base)
+        val lo = math.max(0, ui - 2); val hi = math.min(n, ui + 3)
+        checkWindowOps(s"$bn.updated($ui).slice($lo,$hi)", fa.slice(lo, hi), la.slice(lo, hi))
+        checkWindowOps(s"$bn.updated($ui).reverse", fa.reverse, la.reverse)
+
+  /** Check every per-element op covered by the windowed deep-base traversers against the equivalent List op. */
+  private def checkWindowOps(c: String, fa: FArray[Int], la: List[Int]): Unit =
+    assert(fa.toList == la, s"toList $c -> ${fa.toList} vs $la")
+    assert(fa.foldLeft(100)(_ - _) == la.foldLeft(100)(_ - _), s"foldLeft $c")
+    assert(fa.foldRight(100)(_ - _) == la.foldRight(100)(_ - _), s"foldRight $c")
+    assert(fa.sum == la.sum, s"sum $c")
+    assert(fa.map(_ * 2 + 1).toList == la.map(_ * 2 + 1), s"map $c")
+    locally {
+      val sb = collection.mutable.ArrayBuffer.empty[Int]
+      fa.foreach(sb += _)
+      assert(sb.toList == la, s"foreach $c -> ${sb.toList} vs $la")
+    }
+    assert(fa.exists(_ == 6) == la.exists(_ == 6), s"exists6 $c")
+    assert(fa.exists(_ > 1000) == la.exists(_ > 1000), s"existsNone $c")
+    assert(fa.indexWhere(_ == 6) == la.indexWhere(_ == 6), s"indexWhere6 $c")
+    assert(fa.indexWhere(_ > 1000) == la.indexWhere(_ > 1000), s"indexWhereNone $c")
+    assert(fa.mkString("[", ",", "]") == la.mkString("[", ",", "]"), s"mkString $c")
+    if la.nonEmpty then
+      assert(fa.min == la.min, s"min $c")
+      assert(fa.max == la.max, s"max $c")
+      assert(fa.reduce(_ + _) == la.reduce(_ + _), s"reduce $c")
+
   inline def assertEquals[Res1, Res2, To](msg: String, res1: Res1, res2: Res2)(using
       Res1: CompareAs[Res1, To],
       Res2: CompareAs[Res2, To]
