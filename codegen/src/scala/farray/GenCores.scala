@@ -122,6 +122,44 @@ object GenCores extends BleepCodegenScript("GenCores") {
   private val grow =
     "if (sp + 2 > stack.length) { val ns = stack.length * 2; stack = java.util.Arrays.copyOf(stack, ns); tail = java.util.Arrays.copyOf(tail, ns); isTail = java.util.Arrays.copyOf(isTail, ns) }"
 
+  // ===== the codegen-only traversal AST (design §A) =====
+  // These case classes / enums live ONLY in the generator. They are the reification of the
+  // (direction, holes, accumulator, output, early-exit) tuple that `dfsBody`'s holes carry implicitly.
+  // `lower(spec)` consumes a `Trav` and emits the op-method body; nothing here ever appears in generated code.
+
+  enum Dir { case Fwd, Bwd }
+
+  /** The per-element work, expressed ONCE as a code template. `perElem(e)` reads the current element via the
+    * code fragment `e` (already wrapped through `read(k)` unless `rawArray`), and reads/writes the accumulator
+    * locals directly. `rawArray = true` reads `a(i)` unwrapped (sum/product). */
+  final case class Body(perElem: String => String, rawArray: Boolean = false)
+
+  /** An accumulator threaded as a plain `var` LOCAL (a JVM register), not a heap field. */
+  final case class Acc(name: String, tpe: String, init: String)
+
+  /** The early-exit shape, which also selects the leaf run-loop shape (design §A.2):
+    *   Never        -> the runMethods full-run loop (process every element)
+    *   OnPredInCond -> the scanB empty-body predicate-in-condition loop (Wave 2; structured here, unused now) */
+  enum Exit {
+    case Never
+    case OnPredInCond(cont: String => String, onStop: String, onOne: String)
+  }
+
+  /** Output construction (design §A). Wave 1 needs NoOut (foreach) and Scalar (fold/sum/product/count).
+    * PrimArray / ResultFArray are reserved for Wave 3 (map/filter/scanLeft) and are not consumed by `lower` yet. */
+  enum Out {
+    case NoOut
+    case Scalar(read: String)
+    case PrimArray(elemKind: Kind, write: (String, String) => String)
+    case ResultFArray(elemKind: Kind, sizeHint: SizeHint, write: (String, String) => String, fin: Finalize)
+  }
+
+  enum SizeHint { case Exact(expr: String); case AtMost(expr: String) }
+  enum Finalize { case LeafExact; case LeafTrim; case FilterIdentity }
+
+  /** One traversal, fully described. `k` is the element Kind (the row dispatchA/dispatchB resolved to). */
+  final case class Trav(k: Kind, dir: Dir, body: Body, acc: List[Acc], exit: Exit, out: Out)
+
   // The traversal body for ONE direction (forward when backward=false, reverse when backward=true), parameterized
   // by how an array-backed RUN (onRF forward / onRB backward) and a single element (onO) are consumed. The two
   // directions are exact mirrors and MUTUALLY RECURSIVE: a ReverseNode is visited by CALLING the opposite-direction
@@ -131,7 +169,18 @@ object GenCores extends BleepCodegenScript("GenCores") {
   // caller's stack). This kills the materialize/kindAt fallbacks for backward ops over trees.
   //   forward : Concat l-then-r · Append defer-elem · Prepend elem-then-base · runs ascending · Pad base-then-fill
   //   backward: Concat r-then-l · Append elem-then-base · Prepend defer-elem · runs descending · Pad fill-then-base
-  private def dfsBody(k: Kind, backward: Boolean, onRF: (String, String, String) => String, onRB: (String, String, String) => String, onO: String => String): String = {
+  // `onRev` fills the ReverseNode arm. Default = today's driver-recursive form (the non-inline dfsC pair carries
+  // the opposite direction on the JVM stack). The inline `lower` emitter passes a self-contained form instead
+  // (reverse-of-leaf = an opposite-direction window; reverse-of-non-leaf = materialize then opposite-direction
+  // run), because once inlined there is no `c` and no driver to call (design §B.6).
+  private def dfsBody(
+      k: Kind,
+      backward: Boolean,
+      onRF: (String, String, String) => String,
+      onRB: (String, String, String) => String,
+      onO: String => String,
+      onRev: ((String, String, String) => String, (String, String, String) => String, String => String) => String = null
+  ): String = {
     // a forward run over a leaf window emits onRF(arr, start, count); a backward run emits onRB(arr, start, count)
     // where start is the FIRST index visited (high end for backward).
     def runFwd(a: String, start: String, count: String): String = onRF(a, start, count)
@@ -156,9 +205,11 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val pushTail = (e: String) => s"$ensureStack; $ensureTail; tail(sp) = $e; isTail(sp) = true; sp += 1"
     // --- per-node arms (mirrored by `backward`) ---
     val oneCase = s"case o: ${k.name}One => ${onO("o.elem")}"
+    // pattern var is `pp` (not `p`): once `lower` splices an op body inline, a bare `p` would collide with the
+    // user predicate `p` (count/filter). `pp` can't collide with any op-body lambda name. Local & order-preserving.
     val prependCase =
-      if !backward then s"case p: ${k.name}Prepend => { ${onO("p.elem")}; cont = p.base }"
-      else s"case p: ${k.name}Prepend => { ${pushTail("p.elem")}; cont = p.base }"
+      if !backward then s"case pp: ${k.name}Prepend => { ${onO("pp.elem")}; cont = pp.base }"
+      else s"case pp: ${k.name}Prepend => { ${pushTail("pp.elem")}; cont = pp.base }"
     val appendCase =
       if !backward then s"case a: ${k.name}Append => { ${pushTail("a.elem")}; cont = a.base }"
       else s"case a: ${k.name}Append => { ${onO("a.elem")}; cont = a.base }"
@@ -169,8 +220,11 @@ object GenCores extends BleepCodegenScript("GenCores") {
       if !backward then s"case c: Concat => { $ensureStack; $clearTail; stack(sp) = c.right; sp += 1; cont = c.left }"
       else s"case c: Concat => { $ensureStack; $clearTail; stack(sp) = c.left; sp += 1; cont = c.right }"
     // ReverseNode: descend into base in the OPPOSITE direction via a plain call (JVM stack carries it). If the
-    // sub-walk set `stop` (short-circuit), bail the whole walk too.
-    val reverseCase = s"case rev: ReverseNode => { dfsC${k.name}$other(rev.base, c); if (c.stop) return }"
+    // sub-walk set `stop` (short-circuit), bail the whole walk too. (Default, used by the non-inline dfsC pair.)
+    // When `onRev` is supplied (the inline `lower` emitter), the arm becomes self-contained — no `c`, no driver.
+    val reverseCase =
+      if onRev == null then s"case rev: ReverseNode => { dfsC${k.name}$other(rev.base, c); if (c.stop) return }"
+      else s"case rev: ReverseNode => { ${onRev(onRF, onRB, onO)} }"
     // leaf / slice / pad-base / updated-segments: array-backed runs (forward asc, backward desc).
     val leafCase =
       if !backward then s"case leaf: ${k.name}Arr => ${runFwd("leaf.arr", "0", "leaf.length")}"
@@ -384,12 +438,89 @@ object GenCores extends BleepCodegenScript("GenCores") {
     def dispatchB(body: Kind => String): String =
       "summonFrom {\n" + opKinds.map(k => s"      case r: ${k.name}Repr[B] => ${body(k)}").mkString("\n") + "\n    }"
 
-    val foldLeft = dispatchA(k =>
-      s"{ var acc = z; val c = new ${k.name}Dfs { ${runMethods(k, e => s"acc = op(acc, $e)")}; def onOne(v: ${k.arr}): Unit = { acc = op(acc, ${readOne(k)}) } }; dfsC${k.name}(xs, c); acc }"
-    )
-    val foreach = dispatchA(k =>
-      s"{ val c = new ${k.name}Dfs { ${runMethods(k, e => s"f($e)")}; def onOne(v: ${k.arr}): Unit = { f(${readOne(k)}) } }; dfsC${k.name}(xs, c) }"
-    )
+    // wrap an arbitrary RAW kind-array-typed expression `e` back to A (mirrors readOne, which hardcodes `v`).
+    // `rawArray` ops (sum/product) read the prim directly; Ref always casts the Object element to A then wraps.
+    def wrapRaw(k: Kind, e: String, rawArray: Boolean): String =
+      if rawArray then e
+      else if k.name == "Ref" then s"r.wrap(($e).asInstanceOf[A])"
+      else s"r.wrap($e)"
+
+    // ===== the PUSH emitter (design §B): splice dfsBody INLINE with the op body in its holes =====
+    // Accumulators become plain `var` LOCALS (no consumer object, no heap field); the per-element body is
+    // spliced straight into the leaf/run loops (no onRunF call, no megamorphism); the ReverseNode arm and the
+    // deep-base Slice/Pad/Updated arms are handled self-contained (reverse-of-leaf inline, else materialize).
+    // Wave 1: Exit.Never + Out.Scalar / Out.NoOut only.
+    def lower(spec: Trav): String = {
+      val k = spec.k
+      val backward = spec.dir == Dir.Bwd
+      val rawA = spec.body.rawArray
+      val rd = if rawA then "a(i)" else read(k) // the element read inside a constant-stride run loop (reads `a(i)`)
+      spec.exit match {
+        case Exit.Never =>
+          // onRF/onRB = the runMethods full-run loops with `spec.body.perElem` spliced; onO = the single form.
+          // The run array hole arrives as an arbitrary expression (`leaf.arr`, `lf.arr`, `la`, `mout`, …); bind
+          // it to a local `a` so the `read(k)`/`a(i)` element fragment resolves to the right array.
+          // `start`/`count` arrive as arbitrary expressions (e.g. `u.length - ui - 1`); parenthesize so the
+          // `start + count` / `start - count` end-bound keeps the intended precedence (the old runMethods passed
+          // them as plain method params `start`/`count`, so it never needed this).
+          val onRF = (arr: String, start: String, count: String) =>
+            s"{ val a = $arr; var i = $start; val e = ($start) + ($count); while (i < e) { ${spec.body.perElem(rd)}; i += 1 } }"
+          val onRB = (arr: String, start: String, count: String) =>
+            s"{ val a = $arr; var i = $start; val e = ($start) - ($count); while (i > e) { ${spec.body.perElem(rd)}; i -= 1 } }"
+          // ALWAYS brace the single-element body: it splices into the pop loop's `if (isTail(sp)) <onO> else
+          // cur = stack(sp)`, so a brace-less body (e.g. count's bare `if (p(..)) n += 1`) would steal that
+          // trailing `else` (dangling-else) and drop the popped Concat child. Braces make the `else` bind right.
+          val onO = (e: String) => s"{ ${spec.body.perElem(wrapRaw(k, e, rawA))} }"
+          // ReverseNode arm, self-contained (design §B.6): the base is visited in the OPPOSITE direction.
+          //   walk dir Fwd  -> base Bwd: reverse-of-leaf = a descending window; else materialize then run Bwd.
+          //   walk dir Bwd  -> base Fwd: reverse-of-leaf = an ascending window;  else materialize then run Fwd.
+          val onRev = (rf: (String, String, String) => String, rb: (String, String, String) => String, _o: String => String) =>
+            if !backward then
+              s"rev.base match { case lf: ${k.name}Arr => ${rb("lf.arr", "lf.length - 1", "lf.length")}; case _ => { val mout = materialize${k.name}(rev.base); ${rb("mout", "mout.length - 1", "mout.length")} } }"
+            else
+              s"rev.base match { case lf: ${k.name}Arr => ${rf("lf.arr", "0", "lf.length")}; case _ => { val mout = materialize${k.name}(rev.base); ${rf("mout", "0", "mout.length")} } }"
+          val walk = dfsBody(k, backward, onRF, onRB, onO, onRev)
+          // (3) accumulators as plain `var` locals, declared OUTSIDE the walk; (4) the Out epilogue.
+          val accDecls = spec.acc.map(a => s"var ${a.name}: ${a.tpe} = ${a.init}").mkString("; ")
+          val epilogue = spec.out match {
+            case Out.Scalar(res) => s"; $res"
+            case Out.NoOut       => ""
+            case other           => sys.error(s"lower: Wave 1 does not support Out $other")
+          }
+          val accPart = if accDecls.isEmpty then "" else s"$accDecls\n"
+          // `dfsBody`'s template starts at `root`; the op method's array is `xs`, so bind the alias once.
+          s"{ val root: FBase = xs\n$accPart$walk$epilogue }"
+        case other => sys.error(s"lower: Wave 1 does not support Exit $other")
+      }
+    }
+
+    // ===== Wave 1 traversal specs (design §B.1). Each op delegates: dispatchA(k => lower(spec(k))). =====
+    def foldLeftSpec(k: Kind): Trav =
+      Trav(k, Dir.Fwd, Body(e => s"acc = op(acc, $e)"), List(Acc("acc", "Z", "z")), Exit.Never, Out.Scalar("acc"))
+    // foldRight is the SAME spec with direction flipped and the op argument order swapped — a declaration, not a
+    // hand-written mirror (the direction-mirroring dfsBody already encodes is now one field).
+    def foldRightSpec(k: Kind): Trav =
+      foldLeftSpec(k).copy(dir = Dir.Bwd, body = Body(e => s"acc = op($e, acc)"))
+    def foreachSpec(k: Kind): Trav =
+      Trav(k, Dir.Fwd, Body(e => s"f($e)"), Nil, Exit.Never, Out.NoOut)
+    def countSpec(k: Kind): Trav =
+      Trav(k, Dir.Fwd, Body(e => s"if (p($e)) n += 1"), List(Acc("n", "Int", "0")), Exit.Never, Out.Scalar("n"))
+    def sumSpec(k: Kind): Trav =
+      if k.prim.isDefined then
+        Trav(k, Dir.Fwd, Body(e => s"acc += $e", rawArray = true), List(Acc("acc", k.arr, k.dflt)), Exit.Never, Out.Scalar("acc.asInstanceOf[B]"))
+      else
+        Trav(k, Dir.Fwd, Body(e => s"acc = num.plus(acc, ($e).asInstanceOf[B])", rawArray = true), List(Acc("acc", "B", "num.zero")), Exit.Never, Out.Scalar("acc"))
+    def productSpec(k: Kind): Trav = {
+      val one = k.name match { case "Long" => "1L"; case "Double" => "1.0"; case _ => "1" }
+      if k.prim.isDefined then
+        Trav(k, Dir.Fwd, Body(e => s"acc *= $e", rawArray = true), List(Acc("acc", k.arr, one)), Exit.Never, Out.Scalar("acc.asInstanceOf[B]"))
+      else
+        Trav(k, Dir.Fwd, Body(e => s"acc = num.times(acc, ($e).asInstanceOf[B])", rawArray = true), List(Acc("acc", "B", "num.one")), Exit.Never, Out.Scalar("acc"))
+    }
+
+    // Wave 1 (design §E): foldLeft/foreach now lower the Trav spec inline — no ${K}Dfs object, acc is a local.
+    val foldLeft = dispatchA(k => lower(foldLeftSpec(k)))
+    val foreach = dispatchA(k => lower(foreachSpec(k)))
     // Short-circuiting scan over the unified dfsC: each leaf-run scans tight; setting `stop` (the consumer flag)
     // ends both the run and the whole tree walk. O(n) + early-exit on EVERY shape, no kindAt.
     // EMPTY-BODY, predicate-in-condition scan: the per-element loop is just `i += 1` with the predicate in the
@@ -428,24 +559,10 @@ object GenCores extends BleepCodegenScript("GenCores") {
     }
     val lastIndexWhereV = dispatchA(k => lastBackwardScan(k, a0 => s"!p($a0)"))
     val lastIndexOfV = dispatchA(k => lastBackwardScan(k, a0 => s"$a0 != elem"))
-    // count/sum/product: full forward accumulate over dfsC -> O(n) on EVERY shape (leaf / wrapper / tree),
-    // no per-element kindAt. (No early exit needed; only the short-circuit family wants the breakable walk.)
-    val countV = dispatchA(k =>
-      s"{ var n = 0; val c = new ${k.name}Dfs { ${runMethods(k, e => s"if (p($e)) n += 1")}; def onOne(v: ${k.arr}): Unit = { if (p(${readOne(k)})) n += 1 } }; dfsC${k.name}(xs, c); n }"
-    )
-    val sumV = dispatchA { k =>
-      if k.prim.isDefined then
-        s"{ var acc: ${k.arr} = ${k.dflt}; val c = new ${k.name}Dfs { ${runMethods(k, e => s"acc += $e", rawA = true)}; def onOne(v: ${k.arr}): Unit = { acc += v } }; dfsC${k.name}(xs, c); acc.asInstanceOf[B] }"
-      else
-        s"{ var acc: B = num.zero; val c = new ${k.name}Dfs { ${runMethods(k, e => s"acc = num.plus(acc, $e.asInstanceOf[B])", rawA = true)}; def onOne(v: ${k.arr}): Unit = { acc = num.plus(acc, v.asInstanceOf[B]) } }; dfsC${k.name}(xs, c); acc }"
-    }
-    val productV = dispatchA { k =>
-      val one = k.name match { case "Long" => "1L"; case "Double" => "1.0"; case _ => "1" }
-      if k.prim.isDefined then
-        s"{ var acc: ${k.arr} = $one; val c = new ${k.name}Dfs { ${runMethods(k, e => s"acc *= $e", rawA = true)}; def onOne(v: ${k.arr}): Unit = { acc *= v } }; dfsC${k.name}(xs, c); acc.asInstanceOf[B] }"
-      else
-        s"{ var acc: B = num.one; val c = new ${k.name}Dfs { ${runMethods(k, e => s"acc = num.times(acc, $e.asInstanceOf[B])", rawA = true)}; def onOne(v: ${k.arr}): Unit = { acc = num.times(acc, v.asInstanceOf[B]) } }; dfsC${k.name}(xs, c); acc }"
-    }
+    // count/sum/product: Wave 1 — full forward accumulate, lowered inline. O(n) on EVERY shape, acc a local.
+    val countV = dispatchA(k => lower(countSpec(k)))
+    val sumV = dispatchA(k => lower(sumSpec(k)))
+    val productV = dispatchA(k => lower(productSpec(k)))
     // scanLeft: out[0..n] with a running accumulator, unboxed B-array storage (mirrors mapM's dispatchA x dispatchB).
     val scanLeftV = "summonFrom {\n" + opKinds.map { ka =>
       val inner = "summonFrom {\n" + opKinds.map { kb =>
@@ -468,11 +585,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val foreachWhileV = dispatchA(k =>
       s"{ val c = new ${k.name}Dfs { def onRunF(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val e = start + count; while (i < e && f(${read(k)})) i += 1; if (i < e) stop = true }; def onRunB(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val e = start - count; while (i > e && f(${read(k)})) i -= 1; if (i > e) stop = true }; def onOne(v: ${k.arr}): Unit = { if (!f(${readOne(k)})) stop = true } }; dfsC${k.name}(xs, c) }"
     ) // f returns false to stop
-    // foldRight: a BACKWARD walk (dfsCBack) hands elements last-to-first — exactly foldRight order — applying
-    // op(elem, acc). ZERO allocation on every shape (the direction-aware traversal needs no materialize).
-    val foldRightV = dispatchA(k =>
-      s"{ var acc = z; val c = new ${k.name}Dfs { ${runMethods(k, e => s"acc = op($e, acc)")}; def onOne(v: ${k.arr}): Unit = { acc = op(${readOne(k)}, acc) } }; dfsC${k.name}Back(xs, c); acc }"
-    )
+    // foldRight: Wave 1 — the SAME lowered walk with dir = Bwd (a BACKWARD walk hands elements last-to-first,
+    // exactly foldRight order, applying op(elem, acc)). ZERO allocation on every shape, acc a local.
+    val foldRightV = dispatchA(k => lower(foldRightSpec(k)))
     val mapM = "summonFrom {\n" + opKinds
       .map { ka =>
         val inner = "summonFrom {\n" + opKinds
@@ -808,11 +923,11 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def mkStringImpl[A](xs: FBase, start: String, sep: String, end: String): String = if (xs.length == 0) start + end else $mkStringV
        |  inline def toArrayImpl[A, B](xs: FBase)(ct: scala.reflect.ClassTag[B]): Array[B] = $toArrayV
        |  inline def copyToArrayImpl[A, B](xs: FBase, dest: Array[B], start: Int, len: Int): Int = $copyToArrayV
-       |  inline def foldLeftImpl[A, Z](xs: FBase, z: Z)(inline op: (Z, A) => Z): Z = { val n = xs.length; if (n == 0) z else if (n == 1) op(z, applyAtImpl[A](xs, 0)) else $foldLeft }
-       |  inline def foldRightImpl[A, Z](xs: FBase, z: Z)(inline op: (A, Z) => Z): Z = { val n = xs.length; if (n == 0) z else if (n == 1) op(applyAtImpl[A](xs, 0), z) else $foldRightV }
+       |  inline def foldLeftImpl[A, Z](xs: FBase, z: Z)(inline op: (Z, A) => Z): Z = $foldLeft
+       |  inline def foldRightImpl[A, Z](xs: FBase, z: Z)(inline op: (A, Z) => Z): Z = $foldRightV
        |  inline def iteratorImpl[A](xs: FBase): Iterator[A] = ($iteratorV).asInstanceOf[Iterator[A]]
-       |  inline def countImpl[A](xs: FBase)(inline p: A => Boolean): Int = { val n = xs.length; if (n == 0) 0 else if (n == 1) (if (p(applyAtImpl[A](xs, 0))) 1 else 0) else $countV }
-       |  inline def foreachImpl[A](xs: FBase)(inline f: A => Unit): Unit = { val n = xs.length; if (n == 1) f(applyAtImpl[A](xs, 0)) else if (n > 1) { $foreach } }
+       |  inline def countImpl[A](xs: FBase)(inline p: A => Boolean): Int = $countV
+       |  inline def foreachImpl[A](xs: FBase)(inline f: A => Unit): Unit = $foreach
        |  inline def foreachWhileImpl[A](xs: FBase)(inline f: A => Boolean): Unit = { val n = xs.length; if (n == 1) { f(applyAtImpl[A](xs, 0)); () } else if (n > 1) { $foreachWhileV } }
        |  inline def existsImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = { val n = xs.length; n != 0 && (if (n == 1) p(applyAtImpl[A](xs, 0)) else { $existsV }) }
        |  inline def forallImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = { val n = xs.length; n == 0 || (if (n == 1) p(applyAtImpl[A](xs, 0)) else { $forallV }) }
@@ -847,8 +962,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def sortWithImpl[A](xs: FBase)(inline lt: (A, A) => Boolean): FBase = $sortWith
        |  inline def sortedImpl[A, B >: A](xs: FBase)(using ord: Ordering[B]): FBase = $sortedV
        |  inline def sortByImpl[A, B](xs: FBase)(inline f: A => B)(using ord: Ordering[B]): FBase = $sortByV
-       |  inline def sumImpl[A, B](xs: FBase)(using num: Numeric[B]): B = { val n = xs.length; if (n == 0) num.zero else if (n == 1) applyAtImpl[A](xs, 0).asInstanceOf[B] else $sumV }
-       |  inline def productImpl[A, B](xs: FBase)(using num: Numeric[B]): B = { val n = xs.length; if (n == 0) num.one else if (n == 1) applyAtImpl[A](xs, 0).asInstanceOf[B] else $productV }
+       |  inline def sumImpl[A, B](xs: FBase)(using num: Numeric[B]): B = $sumV
+       |  inline def productImpl[A, B](xs: FBase)(using num: Numeric[B]): B = $productV
        |  inline def scanLeftImpl[A, B](xs: FBase, z: B)(inline op: (B, A) => B): FBase = { val n = xs.length; if (n <= 1) { $scanLeftSmallV } else { $scanLeftV } }
        |  inline def groupByImpl[A, K](xs: FBase)(inline f: A => K): Map[K, FBase] = $groupBy
        |  inline def groupMapAcc[K, B]: GroupMapAcc[K, B] = $groupMapAcc
