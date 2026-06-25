@@ -585,18 +585,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // kind, from dispatchB) drives the `out` array type + the write's unwrap. The write `out(o) = …; o += 1` is the
     // per-element body, spliced into the run loop — `out`/`o` are LOCALS, no consumer.
     // (map's OLD inlined-walk spec lived here — the Build shape now routes map/mapConserve through the shared
-    //  mapLeaf${I}${O} leaf methods + the Java build${I}${O} traversers instead.)
-    // filter: predicate-GUARDED write, so the kept-count `oc` is NOT n -> SizeHint.AtMost(n), Finalize.FilterIdentity
-    // (keeps the `if (oc == n) xs` reference-identity shortcut, then leaf-canonicalizes a trimmed copy).
-    def filterSpec(k: Kind): Trav =
-      Trav(
-        k,
-        Dir.Fwd,
-        Body(e0 => s"val e = $e0; if (p(e)) { out(oc) = ${wr(k, "r.unwrap(e)")}; oc += 1 }"),
-        List(Acc("oc", "Int", "0")),
-        Exit.Never,
-        Out.ResultFArray(k, SizeHint.AtMost("n"), (o, e) => s"out($o) = $e", Finalize.FilterIdentity)
-      )
+    //  mapLeaf${I}${O} leaf methods + the Java build${I}${O} traversers instead. filter/filterNot's OLD inlined-walk
+    //  filterSpec lived here too — the Build-filtered shape now routes them through the shared filterLeaf${I} leaf
+    //  methods + the Java buildFiltered${I} traversers.)
 
 
     // ===== HYBRID TRAVERSAL — foldLeft over ALL input kinds (design §5) =====
@@ -780,6 +771,97 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.close() // xs match
       }
       buildPairs.foreach { case (ki, ko) => emit(ki, ko) }
+      ee.result
+    }
+    // SHARED LEAF METHODS for the BUILD-FILTERED shape (filter/filterNot), one per input kind — the EXACT analogue
+    // of mapLeaf*. Each is a SMALL NON-inline method in FArrayOps: it allocates ONE max-size `out` of length n,
+    // peels Empty (-> Empty), ${I}One (1-elt predicate test), top-${I}Arr (the unboxed leaf loop with a
+    // predicate-GUARDED append `if (p) { out(o) = e; o += 1 }`), and routes a genuine TREE through the Java
+    // buildFiltered${I} traverser (which returns the kept-count). Output is canonicalised on the kept-count k:
+    // k == 0 -> Empty; k == 1 -> ${I}One(out(0)); else (k < n, so always TRIMMED) a copyOf-${I}Arr leaf. The
+    // ${I}Pred SAM closes over the user predicate (does the A wrap), so the leaf method is op-agnostic per input
+    // kind. NO inlined leaf loop in the inline surface — the surface only realizes the predicate and CALLS this.
+    val filterLeafMethods = {
+      val ee = new Emit("  ")
+      opKinds.foreach { k =>
+        val K = k.name
+        // the size-1/0-trim canonicaliser: k == 0 -> Empty, k == 1 -> ${K}One, else a TRIMMED copyOf leaf (k < n).
+        ee.open(s"def filterLeaf${K}(xs: FBase, p: Traversers.${K}Pred): FBase =")
+        ee.open("xs match")
+        ee.line("case e: Empty => Empty.INSTANCE")
+        ee.line(s"case o: ${K}One => if (p.apply(o.elem)) xs else Empty.INSTANCE")
+        ee.open(s"case leaf: ${K}Arr =>")
+        ee.line("val a = leaf.arr")
+        ee.line("val n = a.length")
+        ee.line(s"val out = new Array[${k.arr}](n)")
+        ee.line("var i = 0")
+        ee.line("var o = 0")
+        ee.open("while (i < n)")
+        ee.line("val e = a(i)")
+        ee.line("if (p.apply(e)) { out(o) = e; o += 1 }")
+        ee.line("i += 1")
+        ee.close()
+        // o <= n. o == n -> nothing filtered, reuse xs (reference identity). Else canonicalise a trim.
+        ee.line(s"if (o == n) xs else if (o == 0) Empty.INSTANCE else if (o == 1) new ${K}One(out(0)) else new ${K}Arr(java.util.Arrays.copyOf(out, o), o)")
+        ee.closeOpen("case _ =>")
+        ee.line("val n = xs.length")
+        ee.line(s"val out = new Array[${k.arr}](n)")
+        ee.line(s"val o = Traversers.buildFiltered${K}(xs, out, 0, p)")
+        ee.line(s"if (o == 0) Empty.INSTANCE else if (o == 1) new ${K}One(out(0)) else if (o == n) new ${K}Arr(out, n) else new ${K}Arr(java.util.Arrays.copyOf(out, o), o)")
+        ee.close()
+        ee.close() // xs match
+        ee.close() // def
+      }
+      ee.result
+    }
+    // SHARED LEAF METHODS for the PARTITION shape, one per input kind — the dual-output analogue of filterLeaf*.
+    // ONE pass writes kept-true into outA[oa++] and kept-false into outB[ob++]; both outputs are trimmed leaves of
+    // the SAME input kind. Empty -> (Empty, Empty); ${I}One -> (xs, Empty) or (Empty, xs) by the predicate; a
+    // top-${I}Arr runs the unboxed leaf loop routing each element to outA/outB; a genuine TREE routes through the
+    // Java partitionFwd${I} traverser, which PACKS the two cursors into a long (oa in the low 32 bits, ob in the
+    // high 32 bits) — Java can't return two ints. Each output is canonicalised on its own count via leafTrim. The
+    // ${I}Pred SAM closes over the user predicate (does the A wrap), so the leaf method is op-agnostic per input
+    // kind. NO inlined leaf loop in the inline surface — the surface only realizes the predicate and CALLS this.
+    val partitionLeafMethods = {
+      val ee = new Emit("  ")
+      opKinds.foreach { k =>
+        val K = k.name
+        // canonicalise ONE output buffer `b` filled to length `c` (c <= n) into a trimmed leaf.
+        def trim(b: String, c: String): String =
+          s"if ($c == 0) Empty.INSTANCE else if ($c == 1) new ${K}One($b(0)) else if ($c == $b.length) new ${K}Arr($b, $c) else new ${K}Arr(java.util.Arrays.copyOf($b, $c), $c)"
+        ee.open(s"def partitionLeaf${K}(xs: FBase, p: Traversers.${K}Pred): scala.Tuple2[FBase, FBase] =")
+        ee.open("xs match")
+        ee.line("case e: Empty => new scala.Tuple2(Empty.INSTANCE, Empty.INSTANCE)")
+        ee.line(s"case o: ${K}One => if (p.apply(o.elem)) new scala.Tuple2(xs, Empty.INSTANCE) else new scala.Tuple2(Empty.INSTANCE, xs)")
+        ee.open(s"case leaf: ${K}Arr =>")
+        ee.line("val a = leaf.arr")
+        ee.line("val n = a.length")
+        ee.line(s"val outA = new Array[${k.arr}](n)")
+        ee.line(s"val outB = new Array[${k.arr}](n)")
+        ee.line("var i = 0")
+        ee.line("var oa = 0")
+        ee.line("var ob = 0")
+        ee.open("while (i < n)")
+        ee.line("val e = a(i)")
+        ee.line("if (p.apply(e)) { outA(oa) = e; oa += 1 } else { outB(ob) = e; ob += 1 }")
+        ee.line("i += 1")
+        ee.close()
+        // oa == n -> nothing went to B, reuse xs for the A side (reference identity); ob == n likewise for B.
+        ee.line(s"val ra = if (oa == n) xs else ${trim("outA", "oa")}")
+        ee.line(s"val rb = if (ob == n) xs else ${trim("outB", "ob")}")
+        ee.line("new scala.Tuple2(ra, rb)")
+        ee.closeOpen("case _ =>")
+        ee.line("val n = xs.length")
+        ee.line(s"val outA = new Array[${k.arr}](n)")
+        ee.line(s"val outB = new Array[${k.arr}](n)")
+        ee.line(s"val packed = Traversers.partitionFwd${K}(xs, outA, outB, 0L, 0L, p)")
+        ee.line("val oa = (packed & 0xffffffffL).toInt")
+        ee.line("val ob = (packed >>> 32).toInt")
+        ee.line(s"new scala.Tuple2(${trim("outA", "oa")}, ${trim("outB", "ob")})")
+        ee.close()
+        ee.close() // xs match
+        ee.close() // def
+      }
       ee.result
     }
     // SHARED LEAF METHODS for the FOREACH shape, one per input kind — the EXACT analogue of reduceLeaf*. Each is a
@@ -1110,9 +1192,50 @@ object GenCores extends BleepCodegenScript("GenCores") {
         s"      case r: ${ka.name}Repr[A] => $inner"
       }
       .mkString("\n") + "\n    }"
-    // Wave 3: filter lowers inline too — the predicate-guarded write keeps the variable kept-count `o` as a LOCAL;
-    // the `if (o == n) xs` identity shortcut survives in the FilterIdentity epilogue.
-    val filter = dispatchA(k => lower(filterSpec(k)))
+    // HYBRID Build-filtered surface (design §2.1/§5): filter/filterNot route through the shared leaf method
+    // filterLeaf${I} (Empty/One/leaf peeled inline with the predicate-guarded append; genuine TREES ->
+    // Traversers.buildFiltered${I}, which keeps the SAME elements in source order — visit flips at each
+    // ReverseNode while the WRITE stays forward out[o++]). The surface only summons the input kind, realizes the
+    // user predicate into the ${I}Pred SAM (which wraps the raw element to A), and CALLS filterLeaf${I}. NO
+    // inlined leaf loop here. filterNotImpl passes the NEGATED predicate. The `if (o == n) xs` reference-identity
+    // shortcut lives inside the leaf method.
+    val filter = dispatchA(k => s"filterLeaf${k.name}(xs, ${predSAM(k, s"p(${wrapV(k)})")})")
+    // partition: ONE dual-output pass through the shared partitionLeaf${I} (kept-true -> _1, kept-false -> _2).
+    // Same slim surface as filter — summon the input kind, realize the user predicate into the ${I}Pred SAM, CALL
+    // the shared leaf method. The result FBase pair is wrapped to (FArray[A], FArray[A]) in FArray.scala.
+    val partition = dispatchA(k => s"partitionLeaf${k.name}(xs, ${predSAM(k, s"p(${wrapV(k)})")})")
+    // collect: filter+map FUSED in ONE pass. Output kind O (= B's kind) may DIFFER from the input kind I, so this
+    // is a BOXED-but-SHARED path (NOTED): the PartialFunction is over A => B, so the element is boxed to A and the
+    // B result is boxed regardless of O — unboxing the *output* would need a per-(I, O) `${I}To${O}Collect` SAM
+    // matrix, deferred. We still avoid any surface inline leaf loop: the structural one pass is the EXISTING shared
+    // foreachLeaf${I} traverser. The PF is applied via isDefinedAt + apply (a clean sentinel-free applyOrElse is
+    // not viable here: a primitive B forces applyOrElse's B result to UNBOX the AnyRef sentinel -> CCE). Each kept B
+    // unwraps into a growable, unboxed ${O}Group buffer (dispatch on O), so the OUTPUT stays unboxed even though the
+    // per-element A/B handoff boxes. buf.toLeaf canonicalises (Empty/One/Arr).
+    val collect = "summonFrom {\n" + opKinds.map { ka =>
+      val inner = "summonFrom {\n" + opKinds.map { kb =>
+        val add = s"buf.add(${wr(kb, "rb.unwrap(pf(a))")})"
+        s"          case rb: ${kb.name}Repr[B] => { val buf = new ${kb.name}Group(); foreachLeaf${ka.name}(xs, (v) => { val a = ${wrapV(ka)}; if (pf.isDefinedAt(a)) $add }); buf.toLeaf }"
+      }.mkString("\n") + "\n        }"
+      s"      case r: ${ka.name}Repr[A] => $inner"
+    }.mkString("\n") + "\n    }"
+    // partitionMap: ONE pass, TWO outputs of (possibly) DIFFERENT kinds — Lefts of B's kind to _1, Rights of C's
+    // kind to _2. Like collect this is a BOXED-but-SHARED path (NOTED): f returns Either[A1, A2] (an allocated
+    // Either, the values boxed), so the per-element handoff boxes regardless of the output kinds; we keep the
+    // OUTPUTS unboxed via two growable ${B}Group / ${C}Group buffers and reuse the EXISTING shared foreachLeaf${I}
+    // traverser (no surface inline leaf loop). Each f(a) is matched Left/Right ONCE; the value unwraps into its
+    // buffer. Both buffers canonicalise via toLeaf.
+    val partitionMap = "summonFrom {\n" + opKinds.map { ka =>
+      val m2 = "summonFrom {\n" + opKinds.map { kb =>
+        val m3 = "summonFrom {\n" + opKinds.map { kc =>
+          val addL = s"bl.add(${wr(kb, "rb.unwrap(l)")})"
+          val addR = s"br.add(${wr(kc, "rc.unwrap(r)")})"
+          s"              case rc: ${kc.name}Repr[A2] => { val bl = new ${kb.name}Group(); val br = new ${kc.name}Group(); foreachLeaf${ka.name}(xs, (v) => { f(${wrapV(ka)}) match { case scala.util.Left(l) => $addL; case scala.util.Right(r) => $addR } }); new scala.Tuple2(bl.toLeaf, br.toLeaf) }"
+        }.mkString("\n") + "\n            }"
+        s"          case rb: ${kb.name}Repr[A1] => $m3"
+      }.mkString("\n") + "\n        }"
+      s"      case r: ${ka.name}Repr[A] => $m2"
+    }.mkString("\n") + "\n    }"
     // fused short-circuiting contains (prim compares unboxed against the unwrapped elem). Empty-body scan.
     // contains: a short-circuit forward scan for the first element == elem (the ${I}Pred wraps the raw element to
     // A and compares to elem). One leaf-method call; hit -> index < length.
@@ -1409,6 +1532,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |$sortArr
        |$reduceLeafMethods
        |$mapLeafMethods
+       |$filterLeafMethods
+       |$partitionLeafMethods
        |$foreachLeafMethods
        |$scanLeafMethods
        |$scLeafMethods
@@ -1469,7 +1594,11 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def collectFirstImpl[A, B](xs: FBase)(pf: PartialFunction[A, B]): Option[B] = { val length = xs.length; $collectFirstV }
        |  inline def prefixLengthImpl[A](xs: FBase)(inline p: A => Boolean): Int = $prefixLenV
        |  inline def mapImpl[A, B](xs: FBase)(inline f: A => B): FBase = { val n = xs.length; $mapM }
-       |  inline def filterImpl[A](xs: FBase)(inline p: A => Boolean): FBase = { val n = xs.length; $filter }
+       |  inline def filterImpl[A](xs: FBase)(inline p: A => Boolean): FBase = $filter
+       |  inline def filterNotImpl[A](xs: FBase)(inline p: A => Boolean): FBase = ${dispatchA(k => s"filterLeaf${k.name}(xs, ${predSAM(k, s"!p(${wrapV(k)})")})")}
+       |  inline def partitionImpl[A](xs: FBase)(inline p: A => Boolean): scala.Tuple2[FBase, FBase] = $partition
+       |  inline def collectImpl[A, B](xs: FBase)(pf: PartialFunction[A, B]): FBase = $collect
+       |  inline def partitionMapImpl[A, A1, A2](xs: FBase)(inline f: A => Either[A1, A2]): scala.Tuple2[FBase, FBase] = $partitionMap
        |  inline def containsImpl[A](xs: FBase, elem: A): Boolean = { val length = xs.length; $contains }
        |  inline def mapConserveImpl[A](xs: FBase)(inline f: A => A): FBase = { val n = xs.length; if (n == 0) xs else if (n == 1) { val e = applyAtImpl[A](xs, 0); val r = f(e); if (r.asInstanceOf[AnyRef] eq e.asInstanceOf[AnyRef]) xs else fromValues1[A](r) } else $mapConserve }
        |  inline def unzipImpl[A, A1, A2](xs: FBase)(ev: A <:< (A1, A2)): (FBase, FBase) = { val n = xs.length; if (n == 0) (Empty.INSTANCE, Empty.INSTANCE) else $unzipV }
@@ -1607,6 +1736,30 @@ object GenCores extends BleepCodegenScript("GenCores") {
       buildTraverser(e, ki, ko, backward = false)
       e.blank()
       buildTraverser(e, ki, ko, backward = true)
+      e.blank()
+    }
+    // --- Build-filtered (filter) traversers: ONE pair (fwd + bwd) per INPUT kind. Same lazy-stack walk skeleton
+    //     as buildFwd, but the write is predicate-GUARDED: `if (p.apply(elem)) out[o++] = elem`. The kept-count
+    //     cursor `o` advances ascending in BOTH directions; a ReverseNode recurses into the OPPOSITE-direction
+    //     filter so a reversed subtree's local source order flips (READ flips) while the WRITE stays forward
+    //     out[o++] — keeping the SAME kept elements in REVERSED order, exactly as reverse.filter requires. Deep-base
+    //     Slice/Pad/Updated keep the per-index applyBoxed read (a later pass replaces those). ---
+    opKinds.foreach { k =>
+      buildFilteredTraverser(e, k, backward = false)
+      e.blank()
+      buildFilteredTraverser(e, k, backward = true)
+      e.blank()
+    }
+    // --- Partition traversers: ONE pair (fwd + bwd) per INPUT kind. The dual-output sibling of buildFiltered:
+    //     each element is routed to outA[oa++] (predicate true) OR outB[ob++] (predicate false). Both cursors
+    //     advance ascending in BOTH directions; a ReverseNode recurses into the OPPOSITE-direction partition so a
+    //     reversed subtree's local source order flips (READ flips) while BOTH WRITES stay forward — keeping the
+    //     SAME split in REVERSED order, exactly as reverse.partition requires. The two cursors are PACKED into the
+    //     return long (oa low 32 bits, ob high 32 bits). Deep-base Slice/Pad/Updated read per-index via applyBoxed. ---
+    opKinds.foreach { k =>
+      partitionTraverser(e, k, backward = false)
+      e.blank()
+      partitionTraverser(e, k, backward = true)
       e.blank()
     }
     // --- Foreach traversers: ONE pair (fwd + bwd) per INPUT kind. Same lazy-stack walk skeleton; per element
@@ -2214,6 +2367,534 @@ object GenCores extends BleepCodegenScript("GenCores") {
     e.close()
     e.close() // while (cur != null)
     e.line("return o;")
+    e.close() // method
+  }
+
+  /** Emit one Build-filtered (filter) push traverser over input kind `k`. The SAME lazy-stack walk skeleton as
+    * `buildTraverser`, but the write is predicate-GUARDED: `if (p.apply(elem)) { out[o] = elem; o += 1; }`. The
+    * kept-count cursor `o` advances ascending in BOTH directions; `backward` mirrors the READ order only. The
+    * ReverseNode arm is the ONLY recursion: it bounces into the OPPOSITE-direction filter (Fwd <-> Bwd), so a
+    * reversed subtree is READ last-to-first while the WRITE stays forward out[o++] — keeping the SAME kept
+    * elements in REVERSED order, exactly as `reverse.filter` requires (the scan-style decoupling: visit dir flips
+    * at the ReverseNode, write dir is fixed forward; filter has no per-slot acc so it is simpler — only the read
+    * order changes). Deep-base Slice/Pad/Updated read per-index via applyBoxed (later pass replaces those — do NOT
+    * change here). `out` is the `${K}[]` max-size array; `p` is the `${K}Pred` SAM. Fwd is the public entry
+    * `buildFiltered${K}`; Bwd is the reverse-arm helper `buildFilteredBwd${K}`. Returns the kept-count cursor. */
+  private def buildFilteredTraverser(e: Emit, k: Kind, backward: Boolean): Unit = {
+    val K = k.name
+    val je = jelem(k) // input Java element type: int/long/double/Object
+    val name = if backward then s"buildFilteredBwd${K}" else s"buildFiltered${K}"
+    val recur = if backward then s"buildFiltered${K}" else s"buildFilteredBwd${K}"
+    val sig = s"static int $name(FBase root, $je[] out, int o, ${K}Pred p)"
+    // predicate-guarded write: keep + advance only on a hit. The cursor `o` advances ascending in BOTH directions.
+    def writeElem(elem: String): Unit = e.scope {
+      e.line(s"$je _e = $elem;")
+      e.open("if (p.apply(_e))")
+      e.line("out[o] = _e;")
+      e.line("o += 1;")
+      e.close()
+    }
+    def fromBoxed(expr: String): String = k.name match {
+      case "Int"    => s"((Integer) $expr).intValue()"
+      case "Long"   => s"((Long) $expr).longValue()"
+      case "Double" => s"((Double) $expr).doubleValue()"
+      case _        => expr
+    }
+    // a WHOLE-leaf run on a.length. The READ index walks descending for the Bwd filter; the cursor advances asc.
+    def runLeaf(arr: String): Unit = e.scope {
+      e.line(s"$je[] a = $arr;")
+      if !backward then {
+        e.line("int i = 0;")
+        e.line("int end = a.length;")
+        e.open("while (i < end)")
+        writeElem("a[i]")
+        e.line("i += 1;")
+        e.close()
+      } else {
+        e.line("int i = a.length - 1;")
+        e.open("while (i >= 0)")
+        writeElem("a[i]")
+        e.line("i -= 1;")
+        e.close()
+      }
+    }
+    // a leaf window over a[start, start±count).
+    def run(arr: String, start: String, count: String): Unit = e.scope {
+      e.line(s"$je[] a = $arr;")
+      if !backward then {
+        e.line(s"int i = $start;")
+        e.line(s"int end = i + ($count);")
+        e.open("while (i < end)")
+        writeElem("a[i]")
+        e.line("i += 1;")
+        e.close()
+      } else {
+        e.line(s"int i = $start;")
+        e.line(s"int end = i - ($count);")
+        e.open("while (i > end)")
+        writeElem("a[i]")
+        e.line("i -= 1;")
+        e.close()
+      }
+    }
+    // deep (non-leaf) base read, per element, via applyBoxed.
+    def runBoxed(base: String, start: String, count: String): Unit = e.scope {
+      if !backward then {
+        e.line(s"int bi = $start;")
+        e.line(s"int bend = bi + ($count);")
+        e.open("while (bi < bend)")
+        writeElem(fromBoxed(s"$base.applyBoxed(bi)"))
+        e.line("bi += 1;")
+        e.close()
+      } else {
+        e.line(s"int bi = $start;")
+        e.line(s"int bend = bi - ($count);")
+        e.open("while (bi > bend)")
+        writeElem(fromBoxed(s"$base.applyBoxed(bi)"))
+        e.line("bi -= 1;")
+        e.close()
+      }
+    }
+
+    // the deferred-element stack mirrors buildTraverser (Prepend fwd-defer / Append bwd-defer).
+    def ensureStack(): Unit = {
+      e.open("if (stack == null)")
+      e.line("stack = new FBase[16];")
+      e.closeOpen("else if (sp == stack.length)")
+      e.line("int nl = sp * 2;")
+      e.line("stack = java.util.Arrays.copyOf(stack, nl);")
+      e.open("if (isTail != null)")
+      e.line("tail = java.util.Arrays.copyOf(tail, nl);")
+      e.line("isTail = java.util.Arrays.copyOf(isTail, nl);")
+      e.close()
+      e.close()
+    }
+    def ensureTail(): Unit = {
+      e.open("if (isTail == null)")
+      e.line(s"tail = new $je[stack.length];")
+      e.line("isTail = new boolean[stack.length];")
+      e.close()
+    }
+    def pushTail(elem: String): Unit = {
+      ensureStack()
+      ensureTail()
+      e.line(s"tail[sp] = $elem;")
+      e.line("isTail[sp] = true;")
+      e.line("sp += 1;")
+    }
+    def pushChild(child: String): Unit = {
+      ensureStack()
+      e.open("if (isTail != null)")
+      e.line("isTail[sp] = false;")
+      e.close()
+      e.line(s"stack[sp] = $child;")
+      e.line("sp += 1;")
+    }
+
+    e.open(sig)
+    e.line("FBase cur = root;")
+    e.line("FBase[] stack = null;")
+    e.line(s"$je[] tail = null;")
+    e.line("boolean[] isTail = null;")
+    e.line("int sp = 0;")
+    e.open("while (cur != null)")
+    e.line("FBase next = null;")
+    // leaf
+    e.open(s"if (cur instanceof ${K}Arr leaf)")
+    runLeaf("leaf.arr")
+    // one
+    e.closeOpen(s"else if (cur instanceof ${K}One one)")
+    writeElem("one.elem")
+    // prepend: fwd elem-then-base; bwd defer elem, descend base first
+    e.closeOpen(s"else if (cur instanceof ${K}Prepend pr)")
+    if !backward then {
+      writeElem("pr.elem")
+      e.line("next = pr.base;")
+    } else {
+      pushTail("pr.elem")
+      e.line("next = pr.base;")
+    }
+    // append: fwd defer elem, descend base first; bwd elem-then-base
+    e.closeOpen(s"else if (cur instanceof ${K}Append ap)")
+    if !backward then {
+      pushTail("ap.elem")
+      e.line("next = ap.base;")
+    } else {
+      writeElem("ap.elem")
+      e.line("next = ap.base;")
+    }
+    // concat: fwd left-then-right; bwd right-then-left
+    e.closeOpen("else if (cur instanceof Concat c)")
+    if !backward then {
+      pushChild("c.right")
+      e.line("next = c.left;")
+    } else {
+      pushChild("c.left")
+      e.line("next = c.right;")
+    }
+    // reverse: the ONLY recursion — flip the READ direction across the JVM call boundary, threading the kept
+    // cursor o. The WRITE stays forward out[o++] in the recursed method too, so reversed kept order is preserved.
+    e.closeOpen("else if (cur instanceof ReverseNode rev)")
+    e.line(s"o = $recur(rev.base, out, o, p);")
+    // slice: leaf-base window fast path; deep base via applyBoxed
+    e.closeOpen("else if (cur instanceof SliceNode s)")
+    e.line("int so = s.offset;")
+    e.line("int sn = s.length;")
+    e.open(s"if (s.base instanceof ${K}Arr lf)")
+    if !backward then run("lf.arr", "so", "sn")
+    else run("lf.arr", "so + sn - 1", "sn")
+    e.closeOpen("else")
+    if !backward then runBoxed("s.base", "so", "sn")
+    else runBoxed("s.base", "so + sn - 1", "sn")
+    e.close()
+    // pad: fwd base-then-fillers; bwd fillers-then-base
+    e.closeOpen(s"else if (cur instanceof ${K}Pad pad)")
+    e.line("int bl = pad.base.length;")
+    e.line(s"$je pf = pad.filler;")
+    e.line("int pn = pad.length;")
+    if !backward then {
+      e.open(s"if (pad.base instanceof ${K}Arr lf)")
+      run("lf.arr", "0", "bl")
+      e.closeOpen("else")
+      runBoxed("pad.base", "0", "bl")
+      e.close()
+      e.line("int pj = bl;")
+      e.open("while (pj < pn)")
+      writeElem("pf")
+      e.line("pj += 1;")
+      e.close()
+    } else {
+      e.line("int pj = pn;")
+      e.open("while (pj > bl)")
+      writeElem("pf")
+      e.line("pj -= 1;")
+      e.close()
+      e.open(s"if (pad.base instanceof ${K}Arr lf)")
+      run("lf.arr", "bl - 1", "bl")
+      e.closeOpen("else")
+      runBoxed("pad.base", "bl - 1", "bl")
+      e.close()
+    }
+    // updated: fwd [0,ui) elem (ui,len); bwd mirror. leaf-base fast path; deep base via applyBoxed segments.
+    e.closeOpen(s"else if (cur instanceof ${K}Updated u)")
+    e.line("int ui = u.index;")
+    e.line("int ul = u.length;")
+    e.open(s"if (u.base instanceof ${K}Arr lf)")
+    e.line(s"$je[] la = lf.arr;")
+    if !backward then {
+      run("la", "0", "ui")
+      writeElem("u.elem")
+      run("la", "ui + 1", "ul - ui - 1")
+    } else {
+      run("la", "ul - 1", "ul - ui - 1")
+      writeElem("u.elem")
+      run("la", "ui - 1", "ui")
+    }
+    e.closeOpen("else")
+    if !backward then {
+      runBoxed("u.base", "0", "ui")
+      writeElem("u.elem")
+      runBoxed("u.base", "ui + 1", "ul - ui - 1")
+    } else {
+      runBoxed("u.base", "ul - 1", "ul - ui - 1")
+      writeElem("u.elem")
+      runBoxed("u.base", "ui - 1", "ui")
+    }
+    e.close()
+    // range (Int-only structural node — emitted only for Int input)
+    if K == "Int" then {
+      e.closeOpen("else if (cur instanceof RangeNode rng)")
+      e.line("int rn = rng.length;")
+      if !backward then {
+        e.line("int ri = 0;")
+        e.open("while (ri < rn)")
+        writeElem("rng.start + ri * rng.step")
+        e.line("ri += 1;")
+        e.close()
+      } else {
+        e.line("int ri = rn - 1;")
+        e.open("while (ri >= 0)")
+        writeElem("rng.start + ri * rng.step")
+        e.line("ri -= 1;")
+        e.close()
+      }
+    }
+    e.close()
+    // advance: descend into `next`, else pop the explicit stack (a tail slot applies the deferred element).
+    e.open("if (next != null)")
+    e.line("cur = next;")
+    e.closeOpen("else")
+    e.line("cur = null;")
+    e.open("while (sp > 0 && cur == null)")
+    e.line("sp -= 1;")
+    e.open("if (isTail != null && isTail[sp])")
+    writeElem("tail[sp]")
+    e.closeOpen("else")
+    e.line("cur = stack[sp];")
+    e.close()
+    e.close()
+    e.close()
+    e.close() // while (cur != null)
+    e.line("return o;")
+    e.close() // method
+  }
+
+  /** Emit one Partition push traverser over input kind `k` — the DUAL-output sibling of `buildFilteredTraverser`.
+    * SAME lazy-stack walk skeleton, but each element routes to outA[oa++] (predicate true) or outB[ob++] (false);
+    * BOTH cursors advance ascending in BOTH directions. `backward` mirrors the READ order only. The ReverseNode arm
+    * is the ONLY recursion: it bounces into the OPPOSITE-direction partition (Fwd <-> Bwd), threading BOTH cursors
+    * via a PACKED long (oa in the low 32 bits, ob in the high 32 bits), so a reversed subtree is READ last-to-first
+    * while BOTH WRITES stay forward — keeping the SAME split in REVERSED order, exactly as `reverse.partition`
+    * requires. Returns the packed (oa, ob) long. Fwd entry `partitionFwd${K}` (Scala passes oa = ob = 0); Bwd is the
+    * reverse-arm helper `partitionBwd${K}`. Deep-base Slice/Pad/Updated read per-index via applyBoxed (later pass). */
+  private def partitionTraverser(e: Emit, k: Kind, backward: Boolean): Unit = {
+    val K = k.name
+    val je = jelem(k)
+    val name = if backward then s"partitionBwd${K}" else s"partitionFwd${K}"
+    val recur = if backward then s"partitionFwd${K}" else s"partitionBwd${K}"
+    val sig = s"static long $name(FBase root, $je[] outA, $je[] outB, long oa0, long ob0, ${K}Pred p)"
+    // dual predicate-routed write: keep into A on a hit, into B on a miss; the matching cursor advances ascending.
+    def writeElem(elem: String): Unit = e.scope {
+      e.line(s"$je _e = $elem;")
+      e.open("if (p.apply(_e))")
+      e.line("outA[oa] = _e;")
+      e.line("oa += 1;")
+      e.closeOpen("else")
+      e.line("outB[ob] = _e;")
+      e.line("ob += 1;")
+      e.close()
+    }
+    def fromBoxed(expr: String): String = k.name match {
+      case "Int"    => s"((Integer) $expr).intValue()"
+      case "Long"   => s"((Long) $expr).longValue()"
+      case "Double" => s"((Double) $expr).doubleValue()"
+      case _        => expr
+    }
+    def runLeaf(arr: String): Unit = e.scope {
+      e.line(s"$je[] a = $arr;")
+      if !backward then {
+        e.line("int i = 0;")
+        e.line("int end = a.length;")
+        e.open("while (i < end)")
+        writeElem("a[i]")
+        e.line("i += 1;")
+        e.close()
+      } else {
+        e.line("int i = a.length - 1;")
+        e.open("while (i >= 0)")
+        writeElem("a[i]")
+        e.line("i -= 1;")
+        e.close()
+      }
+    }
+    def run(arr: String, start: String, count: String): Unit = e.scope {
+      e.line(s"$je[] a = $arr;")
+      if !backward then {
+        e.line(s"int i = $start;")
+        e.line(s"int end = i + ($count);")
+        e.open("while (i < end)")
+        writeElem("a[i]")
+        e.line("i += 1;")
+        e.close()
+      } else {
+        e.line(s"int i = $start;")
+        e.line(s"int end = i - ($count);")
+        e.open("while (i > end)")
+        writeElem("a[i]")
+        e.line("i -= 1;")
+        e.close()
+      }
+    }
+    def runBoxed(base: String, start: String, count: String): Unit = e.scope {
+      if !backward then {
+        e.line(s"int bi = $start;")
+        e.line(s"int bend = bi + ($count);")
+        e.open("while (bi < bend)")
+        writeElem(fromBoxed(s"$base.applyBoxed(bi)"))
+        e.line("bi += 1;")
+        e.close()
+      } else {
+        e.line(s"int bi = $start;")
+        e.line(s"int bend = bi - ($count);")
+        e.open("while (bi > bend)")
+        writeElem(fromBoxed(s"$base.applyBoxed(bi)"))
+        e.line("bi -= 1;")
+        e.close()
+      }
+    }
+    def ensureStack(): Unit = {
+      e.open("if (stack == null)")
+      e.line("stack = new FBase[16];")
+      e.closeOpen("else if (sp == stack.length)")
+      e.line("int nl = sp * 2;")
+      e.line("stack = java.util.Arrays.copyOf(stack, nl);")
+      e.open("if (isTail != null)")
+      e.line("tail = java.util.Arrays.copyOf(tail, nl);")
+      e.line("isTail = java.util.Arrays.copyOf(isTail, nl);")
+      e.close()
+      e.close()
+    }
+    def ensureTail(): Unit = {
+      e.open("if (isTail == null)")
+      e.line(s"tail = new $je[stack.length];")
+      e.line("isTail = new boolean[stack.length];")
+      e.close()
+    }
+    def pushTail(elem: String): Unit = {
+      ensureStack()
+      ensureTail()
+      e.line(s"tail[sp] = $elem;")
+      e.line("isTail[sp] = true;")
+      e.line("sp += 1;")
+    }
+    def pushChild(child: String): Unit = {
+      ensureStack()
+      e.open("if (isTail != null)")
+      e.line("isTail[sp] = false;")
+      e.close()
+      e.line(s"stack[sp] = $child;")
+      e.line("sp += 1;")
+    }
+
+    e.open(sig)
+    e.line("FBase cur = root;")
+    e.line("FBase[] stack = null;")
+    e.line(s"$je[] tail = null;")
+    e.line("boolean[] isTail = null;")
+    e.line("int sp = 0;")
+    e.line("int oa = (int) oa0;")
+    e.line("int ob = (int) ob0;")
+    e.open("while (cur != null)")
+    e.line("FBase next = null;")
+    e.open(s"if (cur instanceof ${K}Arr leaf)")
+    runLeaf("leaf.arr")
+    e.closeOpen(s"else if (cur instanceof ${K}One one)")
+    writeElem("one.elem")
+    e.closeOpen(s"else if (cur instanceof ${K}Prepend pr)")
+    if !backward then {
+      writeElem("pr.elem")
+      e.line("next = pr.base;")
+    } else {
+      pushTail("pr.elem")
+      e.line("next = pr.base;")
+    }
+    e.closeOpen(s"else if (cur instanceof ${K}Append ap)")
+    if !backward then {
+      pushTail("ap.elem")
+      e.line("next = ap.base;")
+    } else {
+      writeElem("ap.elem")
+      e.line("next = ap.base;")
+    }
+    e.closeOpen("else if (cur instanceof Concat c)")
+    if !backward then {
+      pushChild("c.right")
+      e.line("next = c.left;")
+    } else {
+      pushChild("c.left")
+      e.line("next = c.right;")
+    }
+    // reverse: the ONLY recursion — flip READ direction across the JVM call boundary, threading BOTH cursors via
+    // the packed long. BOTH writes stay forward in the recursed method too, so reversed split order is preserved.
+    e.closeOpen("else if (cur instanceof ReverseNode rev)")
+    e.line(s"long _pk = $recur(rev.base, outA, outB, (long) oa, (long) ob, p);")
+    e.line("oa = (int) (_pk & 0xffffffffL);")
+    e.line("ob = (int) (_pk >>> 32);")
+    e.closeOpen("else if (cur instanceof SliceNode s)")
+    e.line("int so = s.offset;")
+    e.line("int sn = s.length;")
+    e.open(s"if (s.base instanceof ${K}Arr lf)")
+    if !backward then run("lf.arr", "so", "sn")
+    else run("lf.arr", "so + sn - 1", "sn")
+    e.closeOpen("else")
+    if !backward then runBoxed("s.base", "so", "sn")
+    else runBoxed("s.base", "so + sn - 1", "sn")
+    e.close()
+    e.closeOpen(s"else if (cur instanceof ${K}Pad pad)")
+    e.line("int bl = pad.base.length;")
+    e.line(s"$je pf = pad.filler;")
+    e.line("int pn = pad.length;")
+    if !backward then {
+      e.open(s"if (pad.base instanceof ${K}Arr lf)")
+      run("lf.arr", "0", "bl")
+      e.closeOpen("else")
+      runBoxed("pad.base", "0", "bl")
+      e.close()
+      e.line("int pj = bl;")
+      e.open("while (pj < pn)")
+      writeElem("pf")
+      e.line("pj += 1;")
+      e.close()
+    } else {
+      e.line("int pj = pn;")
+      e.open("while (pj > bl)")
+      writeElem("pf")
+      e.line("pj -= 1;")
+      e.close()
+      e.open(s"if (pad.base instanceof ${K}Arr lf)")
+      run("lf.arr", "bl - 1", "bl")
+      e.closeOpen("else")
+      runBoxed("pad.base", "bl - 1", "bl")
+      e.close()
+    }
+    e.closeOpen(s"else if (cur instanceof ${K}Updated u)")
+    e.line("int ui = u.index;")
+    e.line("int ul = u.length;")
+    e.open(s"if (u.base instanceof ${K}Arr lf)")
+    e.line(s"$je[] la = lf.arr;")
+    if !backward then {
+      run("la", "0", "ui")
+      writeElem("u.elem")
+      run("la", "ui + 1", "ul - ui - 1")
+    } else {
+      run("la", "ul - 1", "ul - ui - 1")
+      writeElem("u.elem")
+      run("la", "ui - 1", "ui")
+    }
+    e.closeOpen("else")
+    if !backward then {
+      runBoxed("u.base", "0", "ui")
+      writeElem("u.elem")
+      runBoxed("u.base", "ui + 1", "ul - ui - 1")
+    } else {
+      runBoxed("u.base", "ul - 1", "ul - ui - 1")
+      writeElem("u.elem")
+      runBoxed("u.base", "ui - 1", "ui")
+    }
+    e.close()
+    if K == "Int" then {
+      e.closeOpen("else if (cur instanceof RangeNode rng)")
+      e.line("int rn = rng.length;")
+      if !backward then {
+        e.line("int ri = 0;")
+        e.open("while (ri < rn)")
+        writeElem("rng.start + ri * rng.step")
+        e.line("ri += 1;")
+        e.close()
+      } else {
+        e.line("int ri = rn - 1;")
+        e.open("while (ri >= 0)")
+        writeElem("rng.start + ri * rng.step")
+        e.line("ri -= 1;")
+        e.close()
+      }
+    }
+    e.close()
+    e.open("if (next != null)")
+    e.line("cur = next;")
+    e.closeOpen("else")
+    e.line("cur = null;")
+    e.open("while (sp > 0 && cur == null)")
+    e.line("sp -= 1;")
+    e.open("if (isTail != null && isTail[sp])")
+    writeElem("tail[sp]")
+    e.closeOpen("else")
+    e.line("cur = stack[sp];")
+    e.close()
+    e.close()
+    e.close()
+    e.close() // while (cur != null)
+    e.line("return (((long) ob) << 32) | (((long) oa) & 0xffffffffL);")
     e.close() // method
   }
 

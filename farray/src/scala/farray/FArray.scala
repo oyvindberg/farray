@@ -140,7 +140,7 @@ object FArray:
     inline def foreachWhile(inline f: A => Boolean): Unit = FArrayOps.foreachWhileImpl[A](xs)(f)
     inline def map[B](inline f: A => B): FArray[B] = FArrayOps.mapImpl[A, B](xs)(f)
     inline def filter(inline p: A => Boolean): FArray[A] = FArrayOps.filterImpl[A](xs)(p)
-    inline def filterNot(inline p: A => Boolean): FArray[A] = FArrayOps.filterImpl[A](xs)(a => !p(a))
+    inline def filterNot(inline p: A => Boolean): FArray[A] = FArrayOps.filterNotImpl[A](xs)(p)
     inline def contains(elem: A): Boolean = FArrayOps.containsImpl[A](xs, elem)
     inline def flatMap[B](inline f: A => FArray[B]): FArray[B] = FArrayOps.flatMapImpl[A, B](xs)(a => f(a).asInstanceOf[FBase])
     inline def updated[B >: A](index: Int, elem: B): FArray[B] = FArrayOps.updatedImpl[A, B](xs, index, elem)
@@ -198,8 +198,9 @@ object FArray:
     inline def dropWhile(inline p: A => Boolean): FArray[A] = xs.drop(FArrayOps.prefixLengthImpl[A](xs)(p))
     inline def span(inline p: A => Boolean): (FArray[A], FArray[A]) =
       val n = FArrayOps.prefixLengthImpl[A](xs)(p); (xs.take(n), xs.drop(n))
-    inline def partition(inline p: A => Boolean): (FArray[A], FArray[A]) = (xs.filter(p), xs.filterNot(p))
-    inline def collect[B](pf: PartialFunction[A, B]): FArray[B] = xs.filter(a => pf.isDefinedAt(a)).map(a => pf(a))
+    inline def partition(inline p: A => Boolean): (FArray[A], FArray[A]) =
+      val t = FArrayOps.partitionImpl[A](xs)(p); (t._1.asInstanceOf[FArray[A]], t._2.asInstanceOf[FArray[A]])
+    inline def collect[B](pf: PartialFunction[A, B]): FArray[B] = FArrayOps.collectImpl[A, B](xs)(pf).asInstanceOf[FArray[B]]
     inline def distinct: FArray[A] =
       val seen = scala.collection.mutable.HashSet.empty[Any]; xs.filter(a => seen.add(a))
     inline def distinctBy[B](inline f: A => B): FArray[A] =
@@ -219,9 +220,7 @@ object FArray:
       xs.foreach(a => acc.add(key(a), f(a)))
       acc.result.asInstanceOf[Map[K, FArray[B]]]
     inline def partitionMap[A1, A2](inline f: A => Either[A1, A2]): (FArray[A1], FArray[A2]) =
-      val ls = scala.collection.mutable.ArrayBuffer.empty[A1]; val rs = scala.collection.mutable.ArrayBuffer.empty[A2]
-      xs.foreach(a => f(a) match { case Left(l) => ls += l; case Right(r) => rs += r })
-      (FArray.fromIterable(ls), FArray.fromIterable(rs))
+      val t = FArrayOps.partitionMapImpl[A, A1, A2](xs)(f); (t._1.asInstanceOf[FArray[A1]], t._2.asInstanceOf[FArray[A2]])
 
     // flattening cursor: O(n) over trees (not O(n·depth)), unboxed leaf reads, reports knownSize.
     inline def iterator: Iterator[A] = FArrayOps.iteratorImpl[A](xs)

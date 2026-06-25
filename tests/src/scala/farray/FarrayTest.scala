@@ -425,6 +425,177 @@ class FListTest:
         assertEquals(s"$n liw=$v", la.lastIndexWhere(_ == v).toLong, fa.lastIndexWhere(_ == v).toLong)
         assertEquals(s"$n find=$v", la.find(_ == v), fa.find(_ == v))
 
+  // BUILD-FILTERED shape (filter/filterNot) + the prefix wrappers (takeWhile/dropWhile/span) over GENUINE
+  // STRUCTURAL node shapes — built via reverse/++/take/drop/padTo/updated, NOT fromIterable (whose flat-leaf
+  // output would HIDE the over-a-ReverseNode write-order bug the scan fix taught us about). The critical case:
+  // filter over a REVERSED structure must keep the SAME kept elements in REVERSED order — the buildFiltered
+  // traverser flips the VISIT at each ReverseNode while the WRITE stays forward out[o++]. Int kind here; the Ref
+  // kind is the next test. Every answer is checked vs the equivalent List op.
+  @Test def test_buildFiltered_trees_Int(): Unit =
+    val flat = (0 until 12).toList
+    // shapes built STRUCTURALLY (each constructs a non-leaf node), with the List the SAME structural ops produce.
+    val shapes: List[(String, FArray[Int], List[Int])] = List(
+      ("concat", FArray.tabulate(5)(identity) ++ FArray.tabulate(7)(_ + 5), flat),
+      ("appendChain", { var a = FArray(0); for i <- 1 until 12 do a = a :+ i; a }, flat),
+      ("prependChain", { var a = FArray(11); for i <- (0 until 11).reverse do a = i +: a; a }, flat),
+      ("reverse", FArray.tabulate(12)(identity).reverse, flat.reverse),
+      ("reverseConcat", (FArray.tabulate(5)(identity) ++ FArray.tabulate(7)(_ + 5)).reverse, flat.reverse),
+      ("reverseAppend", ({ var a = FArray(0); for i <- 1 until 12 do a = a :+ i; a }).reverse, flat.reverse),
+      ("doubleReverse", FArray.tabulate(12)(identity).reverse.reverse, flat),
+      ("revRevConcat", (FArray.tabulate(5)(identity) ++ FArray.tabulate(7)(_ + 5)).reverse.reverse, flat),
+      // deep-base Slice (slice over a 14-elem Concat base — non-leaf base => applyBoxed arm in the traverser)
+      ("sliceDeep", (FArray.tabulate(5)(identity) ++ FArray.tabulate(9)(_ + 5)).slice(2, 13), (0 until 14).toList.slice(2, 13)),
+      ("reverseSliceDeep", (FArray.tabulate(5)(identity) ++ FArray.tabulate(9)(_ + 5)).slice(2, 13).reverse, (0 until 14).toList.slice(2, 13).reverse),
+      // deep-base Pad (padTo over a Concat base) and its reverse
+      ("padDeep", (FArray.tabulate(4)(identity) ++ FArray.tabulate(4)(_ + 4)).padTo(12, 99), (0 until 8).toList ::: List.fill(4)(99)),
+      ("reversePadDeep", (FArray.tabulate(4)(identity) ++ FArray.tabulate(4)(_ + 4)).padTo(12, 99).reverse, ((0 until 8).toList ::: List.fill(4)(99)).reverse),
+      // deep-base Updated (updated over a Concat base) and its reverse
+      ("updatedDeep", (FArray.tabulate(6)(identity) ++ FArray.tabulate(6)(_ + 6)).updated(6, 600), flat.updated(6, 600)),
+      ("reverseUpdatedDeep", (FArray.tabulate(6)(identity) ++ FArray.tabulate(6)(_ + 6)).updated(6, 600).reverse, flat.updated(6, 600).reverse)
+    )
+    for (name, fa, la) <- shapes do
+      // predicates of varying selectivity, including all-keep / none-keep (identity-shortcut & Empty edges)
+      for (pn, p) <- List[(String, Int => Boolean)](
+             ("even", _ % 2 == 0), ("gt5", _ > 5), ("all", _ => true), ("none", _ => false),
+             ("eq0", _ == la.headOption.getOrElse(-1)), ("multi3", _ % 3 == 0)
+           ) do
+        assertEquals(s"$name filter $pn", la.filter(p), fa.filter(p).toList)
+        assertEquals(s"$name filterNot $pn", la.filterNot(p), fa.filterNot(p).toList)
+        assertCanonical(fa.filter(p), s"$name filter $pn canon")
+        assertCanonical(fa.filterNot(p), s"$name filterNot $pn canon")
+      // prefix wrappers (takeWhile/dropWhile/span) over the SAME structural shapes
+      for (wn, w) <- List[(String, Int => Boolean)](
+             ("ltLast", _ < la.lastOption.getOrElse(0)), ("ge0", _ >= 0), ("falseHead", _ => false), ("lt6", _ < 6)
+           ) do
+        assertEquals(s"$name takeWhile $wn", la.takeWhile(w), fa.takeWhile(w).toList)
+        assertEquals(s"$name dropWhile $wn", la.dropWhile(w), fa.dropWhile(w).toList)
+        assertEquals(s"$name span._1 $wn", la.span(w)._1, fa.span(w)._1.toList)
+        assertEquals(s"$name span._2 $wn", la.span(w)._2, fa.span(w)._2.toList)
+
+  // Same structural coverage for the Ref (String) element kind — exercises filterLeafRef + the buildFilteredRef
+  // traverser (Object[] leaves, applyBoxed deep bases) and the Ref prefix wrappers. Built STRUCTURALLY.
+  @Test def test_buildFiltered_trees_Ref(): Unit =
+    def s(i: Int): String = i.toString
+    val flat = (0 until 12).map(s).toList
+    val shapes: List[(String, FArray[String], List[String])] = List(
+      ("concat", FArray.tabulate(5)(s) ++ FArray.tabulate(7)(i => s(i + 5)), flat),
+      ("reverse", FArray.tabulate(12)(s).reverse, flat.reverse),
+      ("reverseConcat", (FArray.tabulate(5)(s) ++ FArray.tabulate(7)(i => s(i + 5))).reverse, flat.reverse),
+      ("doubleReverse", FArray.tabulate(12)(s).reverse.reverse, flat),
+      ("appendChain", { var a = FArray(s(0)); for i <- 1 until 12 do a = a :+ s(i); a }, flat),
+      ("sliceDeep", (FArray.tabulate(5)(s) ++ FArray.tabulate(9)(i => s(i + 5))).slice(2, 13), (0 until 14).map(s).toList.slice(2, 13)),
+      ("reverseSliceDeep", (FArray.tabulate(5)(s) ++ FArray.tabulate(9)(i => s(i + 5))).slice(2, 13).reverse, (0 until 14).map(s).toList.slice(2, 13).reverse),
+      ("padDeep", (FArray.tabulate(4)(s) ++ FArray.tabulate(4)(i => s(i + 4))).padTo(12, "Z"), (0 until 8).map(s).toList ::: List.fill(4)("Z")),
+      ("reversePadDeep", (FArray.tabulate(4)(s) ++ FArray.tabulate(4)(i => s(i + 4))).padTo(12, "Z").reverse, ((0 until 8).map(s).toList ::: List.fill(4)("Z")).reverse),
+      ("updatedDeep", (FArray.tabulate(6)(s) ++ FArray.tabulate(6)(i => s(i + 6))).updated(6, "X"), flat.updated(6, "X")),
+      ("reverseUpdatedDeep", (FArray.tabulate(6)(s) ++ FArray.tabulate(6)(i => s(i + 6))).updated(6, "X").reverse, flat.updated(6, "X").reverse)
+    )
+    for (name, fa, la) <- shapes do
+      for (pn, p) <- List[(String, String => Boolean)](
+             ("len1", _.length == 1), ("all", _ => true), ("none", _ => false),
+             ("eqHead", _ == la.headOption.getOrElse("")), ("hasZ", _.contains("Z"))
+           ) do
+        assertEquals(s"$name filter $pn", la.filter(p), fa.filter(p).toList)
+        assertEquals(s"$name filterNot $pn", la.filterNot(p), fa.filterNot(p).toList)
+        assertCanonical(fa.filter(p), s"$name filter $pn canon")
+      for (wn, w) <- List[(String, String => Boolean)](
+             ("len1", _.length == 1), ("always", _ => true), ("falseHead", _ => false)
+           ) do
+        assertEquals(s"$name takeWhile $wn", la.takeWhile(w), fa.takeWhile(w).toList)
+        assertEquals(s"$name dropWhile $wn", la.dropWhile(w), fa.dropWhile(w).toList)
+        assertEquals(s"$name span._1 $wn", la.span(w)._1, fa.span(w)._1.toList)
+        assertEquals(s"$name span._2 $wn", la.span(w)._2, fa.span(w)._2.toList)
+
+  // Structural-shape parity for the DUAL-output partition / collect / partitionMap shapes (the BuildFiltered family
+  // continued). The CRITICAL cases are over a ReverseNode: partition/collect/partitionMap over a reversed structure
+  // must keep the SAME split/kept elements in REVERSED order (the partitionFwd traverser flips the VISIT at each
+  // ReverseNode while BOTH writes stay forward). Int kind here; Ref kind in the next test. Every answer is checked
+  // vs the equivalent List op, AND both outputs are asserted canonical.
+  @Test def test_partition_collect_partitionMap_trees_Int(): Unit =
+    val flat = (0 until 12).toList
+    val shapes: List[(String, FArray[Int], List[Int])] = List(
+      ("concat", FArray.tabulate(5)(identity) ++ FArray.tabulate(7)(_ + 5), flat),
+      ("appendChain", { var a = FArray(0); for i <- 1 until 12 do a = a :+ i; a }, flat),
+      ("prependChain", { var a = FArray(11); for i <- (0 until 11).reverse do a = i +: a; a }, flat),
+      ("reverse", FArray.tabulate(12)(identity).reverse, flat.reverse),
+      ("reverseConcat", (FArray.tabulate(5)(identity) ++ FArray.tabulate(7)(_ + 5)).reverse, flat.reverse),
+      ("reverseAppend", ({ var a = FArray(0); for i <- 1 until 12 do a = a :+ i; a }).reverse, flat.reverse),
+      ("doubleReverse", FArray.tabulate(12)(identity).reverse.reverse, flat),
+      ("sliceDeep", (FArray.tabulate(5)(identity) ++ FArray.tabulate(9)(_ + 5)).slice(2, 13), (0 until 14).toList.slice(2, 13)),
+      ("reverseSliceDeep", (FArray.tabulate(5)(identity) ++ FArray.tabulate(9)(_ + 5)).slice(2, 13).reverse, (0 until 14).toList.slice(2, 13).reverse),
+      ("padDeep", (FArray.tabulate(4)(identity) ++ FArray.tabulate(4)(_ + 4)).padTo(12, 99), (0 until 8).toList ::: List.fill(4)(99)),
+      ("reversePadDeep", (FArray.tabulate(4)(identity) ++ FArray.tabulate(4)(_ + 4)).padTo(12, 99).reverse, ((0 until 8).toList ::: List.fill(4)(99)).reverse),
+      ("updatedDeep", (FArray.tabulate(6)(identity) ++ FArray.tabulate(6)(_ + 6)).updated(6, 600), flat.updated(6, 600)),
+      ("reverseUpdatedDeep", (FArray.tabulate(6)(identity) ++ FArray.tabulate(6)(_ + 6)).updated(6, 600).reverse, flat.updated(6, 600).reverse)
+    )
+    for (name, fa, la) <- shapes do
+      // partition: vary selectivity incl. all-keep / none-keep (the reuse-xs / Empty edges on BOTH outputs)
+      for (pn, p) <- List[(String, Int => Boolean)](
+             ("even", _ % 2 == 0), ("gt5", _ > 5), ("all", _ => true), ("none", _ => false), ("multi3", _ % 3 == 0)
+           ) do
+        assertEquals(s"$name partition._1 $pn", la.partition(p)._1, fa.partition(p)._1.toList)
+        assertEquals(s"$name partition._2 $pn", la.partition(p)._2, fa.partition(p)._2.toList)
+        assertCanonical(fa.partition(p)._1, s"$name partition._1 $pn canon")
+        assertCanonical(fa.partition(p)._2, s"$name partition._2 $pn canon")
+      // collect: PF whose isDefinedAt filters AND whose body maps (output kind differs: Int -> String, Int -> Long)
+      val pfStr: PartialFunction[Int, String] = { case x if x % 2 == 0 => "v" + x }
+      assertEquals(s"$name collect->String", la.collect(pfStr), fa.collect(pfStr).toList)
+      assertCanonical(fa.collect(pfStr), s"$name collect->String canon")
+      val pfLong: PartialFunction[Int, Long] = { case x if x > 5 => x.toLong * 10 }
+      assertEquals(s"$name collect->Long", la.collect(pfLong), fa.collect(pfLong).toList)
+      assertCanonical(fa.collect(pfLong), s"$name collect->Long canon")
+      val pfNone: PartialFunction[Int, Int] = { case x if x < 0 => x }
+      assertEquals(s"$name collect none", la.collect(pfNone), fa.collect(pfNone).toList)
+      val pfAll: PartialFunction[Int, Int] = { case x => x + 1 }
+      assertEquals(s"$name collect all", la.collect(pfAll), fa.collect(pfAll).toList)
+      // partitionMap: Left/Right of DIFFERENT kinds (Left:Int, Right:String); plus an all-Left and all-Right f
+      val em: Int => Either[Int, String] = x => if x % 2 == 0 then Left(x * 2) else Right("r" + x)
+      assertEquals(s"$name partitionMap._1", la.partitionMap(em)._1, fa.partitionMap(em)._1.toList)
+      assertEquals(s"$name partitionMap._2", la.partitionMap(em)._2, fa.partitionMap(em)._2.toList)
+      assertCanonical(fa.partitionMap(em)._1, s"$name partitionMap._1 canon")
+      assertCanonical(fa.partitionMap(em)._2, s"$name partitionMap._2 canon")
+      val emL: Int => Either[Int, String] = x => Left(x)
+      assertEquals(s"$name partitionMap allLeft._1", la.partitionMap(emL)._1, fa.partitionMap(emL)._1.toList)
+      assertEquals(s"$name partitionMap allLeft._2", la.partitionMap(emL)._2, fa.partitionMap(emL)._2.toList)
+
+  // Same dual-output structural coverage for the Ref (String) element kind.
+  @Test def test_partition_collect_partitionMap_trees_Ref(): Unit =
+    def s(i: Int): String = i.toString
+    val flat = (0 until 12).map(s).toList
+    val shapes: List[(String, FArray[String], List[String])] = List(
+      ("concat", FArray.tabulate(5)(s) ++ FArray.tabulate(7)(i => s(i + 5)), flat),
+      ("reverse", FArray.tabulate(12)(s).reverse, flat.reverse),
+      ("reverseConcat", (FArray.tabulate(5)(s) ++ FArray.tabulate(7)(i => s(i + 5))).reverse, flat.reverse),
+      ("doubleReverse", FArray.tabulate(12)(s).reverse.reverse, flat),
+      ("appendChain", { var a = FArray(s(0)); for i <- 1 until 12 do a = a :+ s(i); a }, flat),
+      ("sliceDeep", (FArray.tabulate(5)(s) ++ FArray.tabulate(9)(i => s(i + 5))).slice(2, 13), (0 until 14).map(s).toList.slice(2, 13)),
+      ("reverseSliceDeep", (FArray.tabulate(5)(s) ++ FArray.tabulate(9)(i => s(i + 5))).slice(2, 13).reverse, (0 until 14).map(s).toList.slice(2, 13).reverse),
+      ("padDeep", (FArray.tabulate(4)(s) ++ FArray.tabulate(4)(i => s(i + 4))).padTo(12, "Z"), (0 until 8).map(s).toList ::: List.fill(4)("Z")),
+      ("updatedDeep", (FArray.tabulate(6)(s) ++ FArray.tabulate(6)(i => s(i + 6))).updated(6, "X"), flat.updated(6, "X")),
+      ("reverseUpdatedDeep", (FArray.tabulate(6)(s) ++ FArray.tabulate(6)(i => s(i + 6))).updated(6, "X").reverse, flat.updated(6, "X").reverse)
+    )
+    for (name, fa, la) <- shapes do
+      for (pn, p) <- List[(String, String => Boolean)](
+             ("len1", _.length == 1), ("all", _ => true), ("none", _ => false), ("hasZ", _.contains("Z"))
+           ) do
+        assertEquals(s"$name partition._1 $pn", la.partition(p)._1, fa.partition(p)._1.toList)
+        assertEquals(s"$name partition._2 $pn", la.partition(p)._2, fa.partition(p)._2.toList)
+        assertCanonical(fa.partition(p)._1, s"$name partition._1 $pn canon")
+        assertCanonical(fa.partition(p)._2, s"$name partition._2 $pn canon")
+      // collect: Ref -> Int (output kind differs) and Ref -> Ref
+      val pfLen: PartialFunction[String, Int] = { case x if x.length == 1 => x.length }
+      assertEquals(s"$name collect->Int", la.collect(pfLen), fa.collect(pfLen).toList)
+      assertCanonical(fa.collect(pfLen), s"$name collect->Int canon")
+      val pfUp: PartialFunction[String, String] = { case x if x.length == 1 => x + "!" }
+      assertEquals(s"$name collect->Ref", la.collect(pfUp), fa.collect(pfUp).toList)
+      assertCanonical(fa.collect(pfUp), s"$name collect->Ref canon")
+      // partitionMap: Left:Int, Right:String (different kinds). Key on length (no numeric-parse assumption)
+      val em: String => Either[Int, String] = x => if x.length == 1 then Left(x.length) else Right(x + "*")
+      assertEquals(s"$name partitionMap._1", la.partitionMap(em)._1, fa.partitionMap(em)._1.toList)
+      assertEquals(s"$name partitionMap._2", la.partitionMap(em)._2, fa.partitionMap(em)._2.toList)
+      assertCanonical(fa.partitionMap(em)._1, s"$name partitionMap._1 canon")
+      assertCanonical(fa.partitionMap(em)._2, s"$name partitionMap._2 canon")
+
   @Test def test_hashCode_matchesList(): Unit =
     def chk(name: String, fa: FArray[Any], l: List[Any]): Unit =
       assertEquals(name, l.hashCode.toLong, fa.hashCode.toLong)
