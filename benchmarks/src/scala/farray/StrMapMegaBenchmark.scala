@@ -19,17 +19,6 @@ class StrMapMegaBenchmark extends Inputs {
     bh.consume(iarrayInput.map(_ + "z"))
     bh.consume(iarrayInput.map(s => s.reverse))
   }
-  @Benchmark def proto(bh: Blackhole): Unit = {
-    val xs = farrayInput.asInstanceOf[FBase]
-    bh.consume(Prototype.mapProtoRef(xs)((s: String) => s + "a"))
-    bh.consume(Prototype.mapProtoRef(xs)((s: String) => s + "b"))
-    bh.consume(Prototype.mapProtoRef(xs)((s: String) => s.toUpperCase))
-    bh.consume(Prototype.mapProtoRef(xs)((s: String) => s.toLowerCase))
-    bh.consume(Prototype.mapProtoRef(xs)((s: String) => s + s))
-    bh.consume(Prototype.mapProtoRef(xs)((s: String) => s.trim))
-    bh.consume(Prototype.mapProtoRef(xs)((s: String) => s + "z"))
-    bh.consume(Prototype.mapProtoRef(xs)((s: String) => s.reverse))
-  }
   @Benchmark def committed(bh: Blackhole): Unit = {
     bh.consume(farrayInput.map(_ + "a"))
     bh.consume(farrayInput.map(_ + "b"))

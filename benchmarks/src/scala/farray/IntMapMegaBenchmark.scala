@@ -19,17 +19,6 @@ class IntMapMegaBenchmark extends IntInputs {
     bh.consume(iarrayInput.map(_ + 9))
     bh.consume(iarrayInput.map(_ * 5))
   }
-  @Benchmark def proto(bh: Blackhole): Unit = {
-    val xs = farrayInput.asInstanceOf[FBase]
-    bh.consume(Prototype.mapProtoInt(xs)(_ + 1))
-    bh.consume(Prototype.mapProtoInt(xs)(_ * 2))
-    bh.consume(Prototype.mapProtoInt(xs)(_ - 3))
-    bh.consume(Prototype.mapProtoInt(xs)(_ ^ 7))
-    bh.consume(Prototype.mapProtoInt(xs)(_ | 4))
-    bh.consume(Prototype.mapProtoInt(xs)(_ & 13))
-    bh.consume(Prototype.mapProtoInt(xs)(_ + 9))
-    bh.consume(Prototype.mapProtoInt(xs)(_ * 5))
-  }
   @Benchmark def committed(bh: Blackhole): Unit = {
     bh.consume(farrayInput.map(_ + 1))
     bh.consume(farrayInput.map(_ * 2))
