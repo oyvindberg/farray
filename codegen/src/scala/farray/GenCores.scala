@@ -2083,6 +2083,226 @@ object GenCores extends BleepCodegenScript("GenCores") {
     e.line("skip -= _ss; take -= _st;")
   }
 
+  /** The per-traverser pieces the ITERATIVE MAIN WALK needs — the single-source spec for the un-windowed,
+    * explicit-stack lowering (the mirror of `WinSpec`, which single-sources the recursive windowed lowering).
+    * The main walk is the node-arm ORDER (leaf / One / Prepend / Append / Concat / Reverse / Slice / Pad /
+    * Updated / Range) over one lazy `FBase[] stack` with `tail[]`/`isTail[]` deferred single elements; ONLY
+    * ReverseNode recurses (into the opposite-direction method). Per-shape knobs are callbacks (`act`, `runLeaf`,
+    * `run`, `winCall`, the ReverseNode recursion, the tail-pop action). The HOOKS the OTHER shapes will need are
+    * designed in now (Reduce uses the no-op versions):
+    *   - `cursorDecl`/`cursorArgs` — an OPTIONAL output-cursor threaded BESIDE the state (Build/Partition write an
+    *     out[] and return the bumped cursor `o`; Reduce has none, both empty).
+    *   - `earlyStopAfterAct` — an OPTIONAL early-stop hook emitted after a per-element action (ShortCircuit breaks
+    *     out of the walk; Reduce no-ops).
+    *   - the WRITE direction is intentionally NOT baked into `backward`: a shape whose write-cursor advances
+    *     opposite the visit direction (Scan) supplies its own `runLeaf`/`run`/`act` that write in the write frame
+    *     while the walk visits in `backward`. Reduce's write dir == visit dir, so its callbacks just use `backward`.
+    * `tailElemT` is the deferred-element array element type ($je); `stackTailType` the `new $je[…]` for `tail`. */
+  private final case class WalkSpec(
+      sig: String,             // the method signature (e.g. "static <Z> Z reduceFwdRefRef(FBase root, Z acc, …f)")
+      K: String,               // input kind name (node-class prefix: ${K}Arr / ${K}One / …)
+      tailElemT: String,       // the deferred-element ($je) type for `tail[]`
+      isInt: Boolean,          // emit the RangeNode arm (Int input only)
+      retState: String,        // the value to `return` at the end (e.g. "acc" / "o"); "" for a void walk
+      recurReverse: String => Unit, // the ReverseNode arm: given "rev.base", emit the opposite-direction call
+      act: String => Unit,     // per-element action on an element expr (One/Prepend·elem/Append·elem/Pad·filler/Range)
+      runLeaf: String => Unit, // a WHOLE-leaf run over the named array (HotSpot drops the bounds check)
+      run: (String, String, String) => Unit, // a leaf window run over arr[start, start±count) (Slice/Pad/Updated)
+      winCall: (String, String, String) => Unit, // deep-base window hand-off: node[lo, lo+len) in THIS direction
+      popTail: String => Unit, // the stack pop-loop action for a deferred tail element expr (mirror of `act`)
+      cursorDecl: String = "",  // OPTIONAL output-cursor decl, threaded beside the state (Build/Partition); "" here
+      cursorArgs: String = "",  // OPTIONAL output-cursor arg(s) on a recursive call; "" here
+      earlyStopAfterAct: () => Unit = () => () // OPTIONAL early-stop hook after a per-element act (ShortCircuit); no-op here
+  )
+
+  /** Emit the ITERATIVE MAIN WALK from a `WalkSpec` — the single source for the un-windowed, explicit-stack
+    * lowering (generalizing `reduceTraverser`'s former body verbatim: same node arms, same lazy `FBase[]`/
+    * `tail[]`/`isTail[]` stack, same `winCall` hand-off, same pop loop). `backward` mirrors the VISIT order. This
+    * emits the method from its `sig` through its closing brace; the caller emits any trailing windowed traverser. */
+  private def emitMainWalk(e: Emit, spec: WalkSpec, backward: Boolean): Unit = {
+    val K = spec.K
+    val je = spec.tailElemT
+    // grow the FBase[] child stack; tail/isTail (deferred single elements) are grown in lockstep, lazily.
+    def ensureStack(): Unit = {
+      e.open("if (stack == null)")
+      e.line("stack = new FBase[16];")
+      e.closeOpen("else if (sp == stack.length)")
+      e.line("int nl = sp * 2;")
+      e.line("stack = java.util.Arrays.copyOf(stack, nl);")
+      e.open("if (isTail != null)")
+      e.line("tail = java.util.Arrays.copyOf(tail, nl);")
+      e.line("isTail = java.util.Arrays.copyOf(isTail, nl);")
+      e.close()
+      e.close()
+    }
+    def ensureTail(): Unit = {
+      e.open("if (isTail == null)")
+      e.line(s"tail = new $je[stack.length];")
+      e.line("isTail = new boolean[stack.length];")
+      e.close()
+    }
+    def pushTail(elem: String): Unit = {
+      ensureStack()
+      ensureTail()
+      e.line(s"tail[sp] = $elem;")
+      e.line("isTail[sp] = true;")
+      e.line("sp += 1;")
+    }
+    def pushChild(child: String): Unit = {
+      ensureStack()
+      e.open("if (isTail != null)")
+      e.line("isTail[sp] = false;")
+      e.close()
+      e.line(s"stack[sp] = $child;")
+      e.line("sp += 1;")
+    }
+
+    e.open(spec.sig)
+    e.line("FBase cur = root;")
+    e.line("FBase[] stack = null;")
+    e.line(s"$je[] tail = null;")
+    e.line("boolean[] isTail = null;")
+    e.line("int sp = 0;")
+    e.open("while (cur != null)")
+    e.line("FBase next = null;")
+    // leaf
+    e.open(s"if (cur instanceof ${K}Arr leaf)")
+    spec.runLeaf("leaf.arr")
+    // one
+    e.closeOpen(s"else if (cur instanceof ${K}One one)")
+    spec.act("one.elem")
+    // prepend: fwd elem-then-base; bwd defer elem, descend base first
+    e.closeOpen(s"else if (cur instanceof ${K}Prepend p)")
+    if !backward then {
+      spec.act("p.elem")
+      e.line("next = p.base;")
+    } else {
+      pushTail("p.elem")
+      e.line("next = p.base;")
+    }
+    // append: fwd defer elem, descend base first; bwd elem-then-base
+    e.closeOpen(s"else if (cur instanceof ${K}Append ap)")
+    if !backward then {
+      pushTail("ap.elem")
+      e.line("next = ap.base;")
+    } else {
+      spec.act("ap.elem")
+      e.line("next = ap.base;")
+    }
+    // concat: fwd left-then-right; bwd right-then-left
+    e.closeOpen("else if (cur instanceof Concat c)")
+    if !backward then {
+      pushChild("c.right")
+      e.line("next = c.left;")
+    } else {
+      pushChild("c.left")
+      e.line("next = c.right;")
+    }
+    // reverse: the ONLY recursion — flip direction across the JVM call boundary
+    e.closeOpen("else if (cur instanceof ReverseNode rev)")
+    spec.recurReverse("rev.base")
+    // slice: leaf-base window fast path; deep base via the windowed sub-traverse
+    e.closeOpen("else if (cur instanceof SliceNode s)")
+    e.line("int so = s.offset;")
+    e.line("int sn = s.length;")
+    e.open(s"if (s.base instanceof ${K}Arr lf)")
+    if !backward then spec.run("lf.arr", "so", "sn")
+    else spec.run("lf.arr", "so + sn - 1", "sn")
+    e.closeOpen("else")
+    spec.winCall("s.base", "so", "sn")
+    e.close()
+    // pad: fwd base-then-fillers; bwd fillers-then-base
+    e.closeOpen(s"else if (cur instanceof ${K}Pad pad)")
+    e.line("int bl = pad.base.length;")
+    e.line(s"$je pf = pad.filler;")
+    e.line("int pn = pad.length;")
+    if !backward then {
+      e.open(s"if (pad.base instanceof ${K}Arr lf)")
+      spec.run("lf.arr", "0", "bl")
+      e.closeOpen("else")
+      spec.winCall("pad.base", "0", "bl")
+      e.close()
+      e.line("int pj = bl;")
+      e.open("while (pj < pn)")
+      spec.act("pf")
+      e.line("pj += 1;")
+      e.close()
+    } else {
+      e.line("int pj = pn;")
+      e.open("while (pj > bl)")
+      spec.act("pf")
+      e.line("pj -= 1;")
+      e.close()
+      e.open(s"if (pad.base instanceof ${K}Arr lf)")
+      spec.run("lf.arr", "bl - 1", "bl")
+      e.closeOpen("else")
+      spec.winCall("pad.base", "0", "bl")
+      e.close()
+    }
+    // updated: fwd [0,ui) elem (ui,len); bwd mirror. leaf-base fast path; deep base via the windowed sub-traverse.
+    e.closeOpen(s"else if (cur instanceof ${K}Updated u)")
+    e.line("int ui = u.index;")
+    e.line("int ul = u.length;")
+    e.open(s"if (u.base instanceof ${K}Arr lf)")
+    e.line(s"$je[] la = lf.arr;")
+    if !backward then {
+      spec.run("la", "0", "ui")
+      spec.act("u.elem")
+      spec.run("la", "ui + 1", "ul - ui - 1")
+    } else {
+      spec.run("la", "ul - 1", "ul - ui - 1")
+      spec.act("u.elem")
+      spec.run("la", "ui - 1", "ui")
+    }
+    e.closeOpen("else")
+    if !backward then {
+      spec.winCall("u.base", "0", "ui")
+      spec.act("u.elem")
+      spec.winCall("u.base", "ui + 1", "ul - ui - 1")
+    } else {
+      spec.winCall("u.base", "ui + 1", "ul - ui - 1")
+      spec.act("u.elem")
+      spec.winCall("u.base", "0", "ui")
+    }
+    e.close()
+    // range (Int-only structural node — emitted only for Int input)
+    if spec.isInt then {
+      e.closeOpen("else if (cur instanceof RangeNode rng)")
+      e.line("int rn = rng.length;")
+      if !backward then {
+        e.line("int ri = 0;")
+        e.open("while (ri < rn)")
+        spec.act("rng.start + ri * rng.step")
+        e.line("ri += 1;")
+        e.close()
+      } else {
+        e.line("int ri = rn - 1;")
+        e.open("while (ri >= 0)")
+        spec.act("rng.start + ri * rng.step")
+        e.line("ri -= 1;")
+        e.close()
+      }
+    }
+    e.close()
+    // advance: descend into `next`, else pop the explicit stack (a tail slot applies the deferred element).
+    e.open("if (next != null)")
+    e.line("cur = next;")
+    e.closeOpen("else")
+    e.line("cur = null;")
+    e.open("while (sp > 0 && cur == null)")
+    e.line("sp -= 1;")
+    e.open("if (isTail != null && isTail[sp])")
+    spec.popTail("tail[sp]")
+    e.closeOpen("else")
+    e.line("cur = stack[sp];")
+    e.close()
+    e.close()
+    e.close()
+    e.close() // while (cur != null)
+    if spec.retState.nonEmpty then e.line(s"return ${spec.retState};")
+    e.close() // method
+  }
+
   /** Emit one Reduce push traverser over input kind `k`. `refAcc` picks the function type (Z=Ref generic vs
     * Z=${k} unboxed) and the acc type; `backward` mirrors visit order. Per §4.1: Concat/Append/Prepend
     * deferrals + deep Slice/Pad/Updated bases ride a LOCAL explicit stack (lazily allocated — null until the
@@ -2185,185 +2405,20 @@ object GenCores extends BleepCodegenScript("GenCores") {
       if !backward then e.line(win.capture(win.recurExpr(node, lo, len, ", acc")))
       else e.line(win.capture(win.recurExpr(node, s"$node.length - ($lo) - ($len)", len, ", acc")))
 
-    // grow the FBase[] child stack; tail/isTail (deferred single elements) are grown in lockstep, lazily.
-    def ensureStack(): Unit = {
-      e.open("if (stack == null)")
-      e.line("stack = new FBase[16];")
-      e.closeOpen("else if (sp == stack.length)")
-      e.line("int nl = sp * 2;")
-      e.line("stack = java.util.Arrays.copyOf(stack, nl);")
-      e.open("if (isTail != null)")
-      e.line("tail = java.util.Arrays.copyOf(tail, nl);")
-      e.line("isTail = java.util.Arrays.copyOf(isTail, nl);")
-      e.close()
-      e.close()
-    }
-    def ensureTail(): Unit = {
-      e.open("if (isTail == null)")
-      e.line(s"tail = new $je[stack.length];")
-      e.line("isTail = new boolean[stack.length];")
-      e.close()
-    }
-    def pushTail(elem: String): Unit = {
-      ensureStack()
-      ensureTail()
-      e.line(s"tail[sp] = $elem;")
-      e.line("isTail[sp] = true;")
-      e.line("sp += 1;")
-    }
-    def pushChild(child: String): Unit = {
-      ensureStack()
-      e.open("if (isTail != null)")
-      e.line("isTail[sp] = false;")
-      e.close()
-      e.line(s"stack[sp] = $child;")
-      e.line("sp += 1;")
-    }
-
-    e.open(sig)
-    e.line("FBase cur = root;")
-    e.line("FBase[] stack = null;")
-    e.line(s"$je[] tail = null;")
-    e.line("boolean[] isTail = null;")
-    e.line("int sp = 0;")
-    e.open("while (cur != null)")
-    e.line("FBase next = null;")
-    // leaf
-    e.open(s"if (cur instanceof ${K}Arr leaf)")
-    runLeaf("leaf.arr")
-    // one
-    e.closeOpen(s"else if (cur instanceof ${K}One one)")
-    e.line("acc = f.apply(acc, one.elem);")
-    // prepend: fwd elem-then-base; bwd defer elem, descend base first
-    e.closeOpen(s"else if (cur instanceof ${K}Prepend p)")
-    if !backward then {
-      e.line("acc = f.apply(acc, p.elem);")
-      e.line("next = p.base;")
-    } else {
-      pushTail("p.elem")
-      e.line("next = p.base;")
-    }
-    // append: fwd defer elem, descend base first; bwd elem-then-base
-    e.closeOpen(s"else if (cur instanceof ${K}Append ap)")
-    if !backward then {
-      pushTail("ap.elem")
-      e.line("next = ap.base;")
-    } else {
-      e.line("acc = f.apply(acc, ap.elem);")
-      e.line("next = ap.base;")
-    }
-    // concat: fwd left-then-right; bwd right-then-left
-    e.closeOpen("else if (cur instanceof Concat c)")
-    if !backward then {
-      pushChild("c.right")
-      e.line("next = c.left;")
-    } else {
-      pushChild("c.left")
-      e.line("next = c.right;")
-    }
-    // reverse: the ONLY recursion — flip direction across the JVM call boundary
-    e.closeOpen("else if (cur instanceof ReverseNode rev)")
-    e.line(s"acc = $recur(rev.base, acc, f);")
-    // slice: leaf-base window fast path; deep base via applyBoxed
-    e.closeOpen("else if (cur instanceof SliceNode s)")
-    e.line("int so = s.offset;")
-    e.line("int sn = s.length;")
-    e.open(s"if (s.base instanceof ${K}Arr lf)")
-    if !backward then run("lf.arr", "so", "sn")
-    else run("lf.arr", "so + sn - 1", "sn")
-    e.closeOpen("else")
-    winCall("s.base", "so", "sn")
-    e.close()
-    // pad: fwd base-then-fillers; bwd fillers-then-base
-    e.closeOpen(s"else if (cur instanceof ${K}Pad pad)")
-    e.line("int bl = pad.base.length;")
-    e.line(s"$je pf = pad.filler;")
-    e.line("int pn = pad.length;")
-    if !backward then {
-      e.open(s"if (pad.base instanceof ${K}Arr lf)")
-      run("lf.arr", "0", "bl")
-      e.closeOpen("else")
-      winCall("pad.base", "0", "bl")
-      e.close()
-      e.line("int pj = bl;")
-      e.open("while (pj < pn)")
-      e.line("acc = f.apply(acc, pf);")
-      e.line("pj += 1;")
-      e.close()
-    } else {
-      e.line("int pj = pn;")
-      e.open("while (pj > bl)")
-      e.line("acc = f.apply(acc, pf);")
-      e.line("pj -= 1;")
-      e.close()
-      e.open(s"if (pad.base instanceof ${K}Arr lf)")
-      run("lf.arr", "bl - 1", "bl")
-      e.closeOpen("else")
-      winCall("pad.base", "0", "bl")
-      e.close()
-    }
-    // updated: fwd [0,ui) elem (ui,len); bwd mirror. leaf-base fast path; deep base via the windowed sub-traverse.
-    e.closeOpen(s"else if (cur instanceof ${K}Updated u)")
-    e.line("int ui = u.index;")
-    e.line("int ul = u.length;")
-    e.open(s"if (u.base instanceof ${K}Arr lf)")
-    e.line(s"$je[] la = lf.arr;")
-    if !backward then {
-      run("la", "0", "ui")
-      e.line("acc = f.apply(acc, u.elem);")
-      run("la", "ui + 1", "ul - ui - 1")
-    } else {
-      run("la", "ul - 1", "ul - ui - 1")
-      e.line("acc = f.apply(acc, u.elem);")
-      run("la", "ui - 1", "ui")
-    }
-    e.closeOpen("else")
-    if !backward then {
-      winCall("u.base", "0", "ui")
-      e.line("acc = f.apply(acc, u.elem);")
-      winCall("u.base", "ui + 1", "ul - ui - 1")
-    } else {
-      winCall("u.base", "ui + 1", "ul - ui - 1")
-      e.line("acc = f.apply(acc, u.elem);")
-      winCall("u.base", "0", "ui")
-    }
-    e.close()
-    // range (Int-only structural node — emitted only for Int input)
-    if K == "Int" then {
-      e.closeOpen("else if (cur instanceof RangeNode rng)")
-      e.line("int rn = rng.length;")
-      if !backward then {
-        e.line("int ri = 0;")
-        e.open("while (ri < rn)")
-        e.line("acc = f.apply(acc, rng.start + ri * rng.step);")
-        e.line("ri += 1;")
-        e.close()
-      } else {
-        e.line("int ri = rn - 1;")
-        e.open("while (ri >= 0)")
-        e.line("acc = f.apply(acc, rng.start + ri * rng.step);")
-        e.line("ri -= 1;")
-        e.close()
-      }
-    }
-    e.close()
-    // advance: descend into `next`, else pop the explicit stack (a tail slot applies the deferred element).
-    e.open("if (next != null)")
-    e.line("cur = next;")
-    e.closeOpen("else")
-    e.line("cur = null;")
-    e.open("while (sp > 0 && cur == null)")
-    e.line("sp -= 1;")
-    e.open("if (isTail != null && isTail[sp])")
-    e.line("acc = f.apply(acc, tail[sp]);")
-    e.closeOpen("else")
-    e.line("cur = stack[sp];")
-    e.close()
-    e.close()
-    e.close()
-    e.close() // while (cur != null)
-    e.line("return acc;")
-    e.close() // method
+    // Build a Reduce WalkSpec and emit the iterative main walk from it (the single-sourced emitter). Reduce's
+    // per-element action is `acc = f.apply(acc, e)`; state is `acc`; the ReverseNode arm recurses into the
+    // opposite-direction reduce method; the deferred-tail pop applies the same fold step. No output-cursor, no
+    // early-stop, and write dir == visit dir (the run/runLeaf/act callbacks all use `backward` directly).
+    val spec = WalkSpec(
+      sig = sig, K = K, tailElemT = je, isInt = K == "Int", retState = "acc",
+      recurReverse = base => e.line(s"acc = $recur($base, acc, f);"),
+      act = el => e.line(s"acc = f.apply(acc, $el);"),
+      runLeaf = arr => runLeaf(arr),
+      run = (arr, start, count) => run(arr, start, count),
+      winCall = (node, lo, len) => winCall(node, lo, len),
+      popTail = el => e.line(s"acc = f.apply(acc, $el);")
+    )
+    emitMainWalk(e, spec, backward)
     e.blank()
     emitWindow(e, k, win)
   }
