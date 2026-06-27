@@ -41,6 +41,8 @@ final class Fuse[+A](private[farray] val base: FBase):
   def distinct: Fuse[A] = this
   /** keep only the first element for each distinct key `f(a)`. */
   def distinctBy[K](f: A => K): Fuse[A] = this
+  /** running fold: emit `z`, then each successive `op(acc, a)` — yields one more element than the input. */
+  def scanLeft[B](z: B)(op: (B, A) => B): Fuse[B] = this.asInstanceOf[Fuse[B]]
   /** pair each element with its position in the stream at this point (post-upstream-filtering). */
   def zipWithIndex: Fuse[(A, Int)] = this.asInstanceOf[Fuse[(A, Int)]]
   /** lock-step with another source: pair element k of this pipeline with `that(k)`; stops at the shorter. */

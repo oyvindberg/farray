@@ -940,6 +940,63 @@
 }
 
 ====================================================================================================
+// SCANLEFT: ints.fuse.scanLeft(0)(_ + _).toFArray  [emit z prologue before the loop, then acc per element]
+====================================================================================================
+{
+  val $proxy: FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  } = FArray$package.$asInstanceOf$[FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  }]
+  val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
+  val Fuse_this: Fuse[Int] = (new Fuse[Int](xs$proxy): Fuse[Int]).scanLeft[Int](0)(((_$: Int, _$: Int) => _$.+(_$)))
+
+  ({
+    val src0: FBase = ints.$asInstanceOf$[ints & FArray[Int]].asInstanceOf[FBase]
+    val n0: Int = src0.length
+    var acc0: Int = 0
+    var out: Array[Int] = new Array[Int](java.lang.Math.max(8, n0))
+    var o: Int = 0
+    if (o.>=(out.length)) out = FArrayOps.ensureCapInt(out, o.+(1)) else ()
+    out.update(o, acc0)
+    o = o.+(1)
+    val s: FBase = src0
+    val len: Int = s.length
+    if (s.isInstanceOf[IntArr]) {
+      val a: Array[Int] = s.asInstanceOf[IntArr].arr
+      var i: Int = 0
+      while (i.<(len)) {
+        val v: Int = a.apply(i)
+        acc0 = {
+          val `_$₂`: Int = acc0
+          `_$₂`.+(v)
+        }
+        val `v₂`: Int = acc0
+        if (o.>=(out.length)) out = FArrayOps.ensureCapInt(out, o.+(1)) else ()
+        out.update(o, `v₂`)
+        o = o.+(1)
+        i = i.+(1)
+      }
+    } else {
+      var `i₂`: Int = 0
+      while (`i₂`.<(len)) {
+        val `v₃`: Int = FArrayOps.intAt(s, `i₂`)
+        acc0 = {
+          val `_$₃`: Int = acc0
+          `_$₃`.+(`v₃`)
+        }
+        val `v₄`: Int = acc0
+        if (o.>=(out.length)) out = FArrayOps.ensureCapInt(out, o.+(1)) else ()
+        out.update(o, `v₄`)
+        o = o.+(1)
+        `i₂` = `i₂`.+(1)
+      }
+    }
+    if (o.==(0)) (IntArr.EMPTY: FBase) else if (o.==(out.length)) new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o)
+  }.asInstanceOf[FArray[Int]]: FArray[Int])
+}
+
+====================================================================================================
 // INDEXWHERE: ints.fuse.map(x => x*x).indexWhere(_ > 9)  [bare var idx + counter — NO pair allocated]
 ====================================================================================================
 {

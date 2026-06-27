@@ -80,6 +80,7 @@ object FuseMacro:
     final case class TakeWhileS(p: Term) extends Stage                 // emit until p first fails, then stop (done)
     final case class DropWhileS(p: Term) extends Stage                 // skip the leading run matching p
     final case class DistinctS(key: Option[Term]) extends Stage        // distinct (None) / distinctBy (Some f)
+    final case class ScanLeftS(z: Term, op: Term, zTpe: TypeRepr) extends Stage // running fold (emits z then each op)
     case object ZipWithIndexS extends Stage
     final case class ZipS(that: Term, bTpe: TypeRepr, combine: Option[Term]) extends Stage // zip (None) / map2 (Some f)
 
@@ -104,7 +105,8 @@ object FuseMacro:
     // an above-loop counter; `lim` is present for take/drop (their clamped limit), absent for zipWithIndex.
     // `flag` (dropWhile: read + clear a Boolean) and `seen` (distinct: the dedup set) carry non-counter state.
     final case class Slot(read: Expr[Int], inc: Expr[Unit], lim: Option[Expr[Int]], zipThat: Option[(Expr[FBase], TypeRepr)] = None,
-                          flag: Option[(Expr[Boolean], Expr[Unit])] = None, seen: Option[Expr[scala.collection.mutable.HashSet[Any]]] = None)
+                          flag: Option[(Expr[Boolean], Expr[Unit])] = None, seen: Option[Expr[scala.collection.mutable.HashSet[Any]]] = None,
+                          acc: Option[(Term, Term => Term)] = None) // scanLeft: (read accumulator, assign accumulator)
     // how a counter-needing stage declares its above-loop state
     sealed trait CSpec
     final case class LimSpec(arg: Term) extends CSpec       // take/drop: a clamped limit
@@ -112,6 +114,7 @@ object FuseMacro:
     final case class ZipSpec(that: Term, bTpe: TypeRepr) extends CSpec // zip/map2: bind `that` + its length + a counter
     case object DropWhileSpec extends CSpec                  // dropWhile: a `var dropping = true`
     case object DistinctSpec extends CSpec                   // distinct/distinctBy: a `seen` HashSet
+    final case class ScanSpec(z: Term, zTpe: TypeRepr) extends CSpec // scanLeft: a `var acc: Z = z`
     final case class Ctx(consume: Term => Term, done: Option[Done], counters: Map[Int, Slot])
 
     // The value flowing through a pure map/filter segment, decomposed into independent columns. A `Sc`'s `read`
@@ -150,6 +153,7 @@ object FuseMacro:
         case Apply(Select(prev, "dropWhile"), List(p))                    => parse(prev, DropWhileS(unwrap(p)) :: acc)
         case Select(prev, "distinct")                                     => parse(prev, DistinctS(None) :: acc)
         case Apply(TypeApply(Select(prev, "distinctBy"), _), List(f))     => parse(prev, DistinctS(Some(unwrap(f))) :: acc)
+        case Apply(Apply(TypeApply(Select(prev, "scanLeft"), List(b)), List(z)), List(op)) => parse(prev, ScanLeftS(unwrap(z), unwrap(op), b.tpe) :: acc)
         case Select(prev, "zipWithIndex")                                 => parse(prev, ZipWithIndexS :: acc)
         case Apply(TypeApply(Select(prev, "zip"), List(b)), List(that))    => parse(prev, ZipS(unwrap(that), b.tpe, None) :: acc)
         case Apply(Apply(TypeApply(Select(prev, "map2"), List(b, _)), List(that)), List(f)) => parse(prev, ZipS(unwrap(that), b.tpe, Some(unwrap(f))) :: acc)
@@ -213,11 +217,20 @@ object FuseMacro:
       case (ZipS(that, b, _), i)    => (i, ZipSpec(that, b))
       case (DropWhileS(_), i)       => (i, DropWhileSpec)
       case (DistinctS(_), i)        => (i, DistinctSpec)
+      case (ScanLeftS(z, _, zt), i) => (i, ScanSpec(z, zt))
     }
     val takesPresent: Boolean = stages.exists(_.isInstanceOf[TakeS])
     val hasZip: Boolean        = stages.exists(_.isInstanceOf[ZipS])
     val hasFlatMap: Boolean = stages.exists(_.isInstanceOf[FlatMapS])
     val hasTakeWhile: Boolean = stages.exists(_.isInstanceOf[TakeWhileS])
+    val scanCount: Int = stages.count(_.isInstanceOf[ScanLeftS])
+    if scanCount > 1 then report.errorAndAbort("fuse: at most one scanLeft per pipeline")
+    val hasScan: Boolean = scanCount == 1
+    // scanLeft emits one MORE element than its input (the initial z), so the output can exceed the source length
+    val needsGrow: Boolean = hasFlatMap || hasScan
+    // the scanLeft stage index + the stages downstream of it (run once with z as a prologue, then per element)
+    val scanInfo: Option[(Int, List[(Stage, Int)])] =
+      indexed.collectFirst { case (ScanLeftS(_, _, _), i) => i }.map(i => (i, indexed.drop(i + 1)))
     val shortCircuit: Boolean = tag match
       case TTag.Find | TTag.Exists | TTag.Forall | TTag.HeadOption | TTag.Head | TTag.IndexWhere => true
       case _                                                                                     => false
@@ -504,6 +517,11 @@ object FuseMacro:
         val seen = ctx.counters(i).seen.get
         val key: Term = keyFn match { case Some(f) => applyLambda(f, cur); case None => cur }
         '{ if ${ seen }.add(${ key.asExpr }) then ${ buildBody(rest, cur, ctx).asExprOf[Unit] } }.asTerm
+      case (ScanLeftS(_, op, _), i) :: rest =>
+        // update the running accumulator, then emit it downstream. (The initial z is emitted by withScanPrologue.)
+        val (accRead, setAcc) = ctx.counters(i).acc.get
+        '{ ${ setAcc(applyN(op, List(accRead, cur))).asExprOf[Unit] }
+           ${ letBind(accRead)(a => buildBody(rest, a, ctx)).asExprOf[Unit] } }.asTerm
       case (TakeS(_), i) :: rest =>
         val sl = ctx.counters(i); val lim = sl.lim.get; val d = ctx.done.get
         '{ val cv = ${ sl.read }
@@ -609,15 +627,28 @@ object FuseMacro:
         case (idx, DistinctSpec) :: rest =>   // distinct/distinctBy: a dedup set keyed by element/key value
           '{ val seen = new scala.collection.mutable.HashSet[Any]()
              ${ declareSlots(rest, acc + (idx -> Slot('{ 0 }, '{ () }, None, seen = Some('{ seen }))))(k).asExpr } }.asTerm
+        case (idx, ScanSpec(z, zt)) :: rest => // scanLeft: a mutable accumulator initialized to z
+          zt.asType match
+            case '[zz] =>
+              '{ var acc0: zz = ${ z.asExprOf[zz] }
+                 ${ val slot = Slot('{ 0 }, '{ () }, None,
+                                    acc = Some(('{ acc0 }.asTerm, (v: Term) => '{ acc0 = ${ v.asExprOf[zz] } }.asTerm)))
+                    declareSlots(rest, acc + (idx -> slot))(k).asExpr } }.asTerm
 
     /** static upper bound on output length = min(source length, every `take` limit and zip `that` length). */
     def capExpr(n0: Expr[Int], counters: Map[Int, Slot]): Expr[Int] =
       indexed.collect { case (TakeS(_), i) => counters(i).lim.get; case (ZipS(_, _, _), i) => counters(i).lim.get }
         .foldLeft(n0)((a, l) => '{ java.lang.Math.min($a, $l) })
 
+    // scanLeft: emit the initial `z` through the downstream ONCE before the loop (so the result has its leading
+    // element even for empty input). Both `loop` callers below go through this, so it works for every terminal.
+    def withScanPrologue(c: Ctx, body: Expr[Unit]): Expr[Unit] = scanInfo match
+      case Some((i, post)) => '{ ${ buildBody(post, c.counters(i).acc.get._1, c).asExprOf[Unit] }; $body }
+      case None            => body
+
     def assemble(src0: Expr[FBase], n0: Expr[Int], done: Option[Done], counters: Map[Int, Slot]): Term =
       def ctx(consume: Term => Term) = Ctx(consume, done, counters)
-      def loop(consume: Term => Term): Expr[Unit] = loopOver(src0, srcK, srcElem, indexed, ctx(consume))
+      def loop(consume: Term => Term): Expr[Unit] = { val c = ctx(consume); withScanPrologue(c, loopOver(src0, srcK, srcElem, indexed, c)) }
       tag match
         case TTag.Count =>
           '{ var cnt = 0; ${ loop(_ => '{ cnt += 1 }.asTerm) }; cnt }.asTerm
@@ -693,10 +724,10 @@ object FuseMacro:
 
     // output array assembly: grow via ensureCap when a flatMap can expand it, else preallocate the upper bound.
     def assembleOut(src0: Expr[FBase], n0: Expr[Int], counters: Map[Int, Slot], ctx: (Term => Term) => Ctx): Term =
-      def loop(consume: Term => Term): Expr[Unit] = loopOver(src0, srcK, srcElem, indexed, ctx(consume))
+      def loop(consume: Term => Term): Expr[Unit] = { val c = ctx(consume); withScanPrologue(c, loopOver(src0, srcK, srcElem, indexed, c)) }
       outK match
         case Kind.KInt =>
-          if hasFlatMap then
+          if needsGrow then
             '{ var out = new Array[Int](java.lang.Math.max(8, $n0)); var o = 0
                ${ loop(v => '{ if o >= out.length then out = FArrayOps.ensureCapInt(out, o + 1); out(o) = ${ v.asExprOf[Int] }; o += 1 }.asTerm) }
                if o == 0 then (IntArr.EMPTY: FBase) else if o == out.length then new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o) }.asTerm
@@ -705,7 +736,7 @@ object FuseMacro:
                ${ loop(v => '{ out(o) = ${ v.asExprOf[Int] }; o += 1 }.asTerm) }
                if o == 0 then (IntArr.EMPTY: FBase) else if o == cap then new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o) }.asTerm
         case Kind.KLong =>
-          if hasFlatMap then
+          if needsGrow then
             '{ var out = new Array[Long](java.lang.Math.max(8, $n0)); var o = 0
                ${ loop(v => '{ if o >= out.length then out = FArrayOps.ensureCapLong(out, o + 1); out(o) = ${ v.asExprOf[Long] }; o += 1 }.asTerm) }
                if o == 0 then (LongArr.EMPTY: FBase) else if o == out.length then new LongArr(out, o) else new LongArr(java.util.Arrays.copyOf(out, o), o) }.asTerm
@@ -714,7 +745,7 @@ object FuseMacro:
                ${ loop(v => '{ out(o) = ${ v.asExprOf[Long] }; o += 1 }.asTerm) }
                if o == 0 then (LongArr.EMPTY: FBase) else if o == cap then new LongArr(out, o) else new LongArr(java.util.Arrays.copyOf(out, o), o) }.asTerm
         case Kind.KDouble =>
-          if hasFlatMap then
+          if needsGrow then
             '{ var out = new Array[Double](java.lang.Math.max(8, $n0)); var o = 0
                ${ loop(v => '{ if o >= out.length then out = FArrayOps.ensureCapDouble(out, o + 1); out(o) = ${ v.asExprOf[Double] }; o += 1 }.asTerm) }
                if o == 0 then (DoubleArr.EMPTY: FBase) else if o == out.length then new DoubleArr(out, o) else new DoubleArr(java.util.Arrays.copyOf(out, o), o) }.asTerm
@@ -723,7 +754,7 @@ object FuseMacro:
                ${ loop(v => '{ out(o) = ${ v.asExprOf[Double] }; o += 1 }.asTerm) }
                if o == 0 then (DoubleArr.EMPTY: FBase) else if o == cap then new DoubleArr(out, o) else new DoubleArr(java.util.Arrays.copyOf(out, o), o) }.asTerm
         case Kind.KRef =>
-          if hasFlatMap then
+          if needsGrow then
             '{ var out = new Array[Object](java.lang.Math.max(8, $n0)); var o = 0
                ${ loop(v => '{ if o >= out.length then out = FArrayOps.ensureCapRef(out, o + 1); out(o) = ${ v.asExpr }.asInstanceOf[Object]; o += 1 }.asTerm) }
                if o == 0 then (RefArr.EMPTY: FBase) else if o == out.length then new RefArr(out, o) else new RefArr(java.util.Arrays.copyOf(out, o), o) }.asTerm

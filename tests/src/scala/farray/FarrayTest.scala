@@ -1021,6 +1021,8 @@ class FListTest:
     check("slice")(_.fuse.slice(2, 7).toFArray.toList)(_.slice(2, 7))
     check("collect.takeWhile.filter")(_.fuse.collect { case x if x > 0 => x * 2 }.takeWhile(_ < 16).filter(_ % 3 == 0).toFArray.toList)(_.collect { case x if x > 0 => x * 2 }.takeWhile(_ < 16).filter(_ % 3 == 0))
     check("dropWhile.distinct")(_.fuse.dropWhile(_ < 0).distinct.toFArray.toList)(_.dropWhile(_ < 0).distinct)
+    check("scanLeft")(_.fuse.scanLeft(0)(_ + _).toFArray.toList)(_.scanLeft(0)(_ + _))
+    check("filter.scanLeft.take")(_.fuse.filter(_ > 0).scanLeft(0)(_ + _).take(5).toFArray.toList)(_.filter(_ > 0).scanLeft(0)(_ + _).take(5))
     // Long / Double / Ref element kinds
     var t2 = 0
     while t2 < 200 do
@@ -1092,6 +1094,25 @@ class FListTest:
     aeq(l.map(_ + 1).takeWhile(_ < 6).filter(_ % 2 == 0), r.fuse.map(_ + 1).takeWhile(_ < 6).filter(_ % 2 == 0).toList)
     aeq(l.collect { case x if x % 2 == 1 => x * 2 }.takeWhile(_ < 11), r.fuse.collect { case x if x % 2 == 1 => x * 2 }.takeWhile(_ < 11).toList)
     aeq(l.filter(_ > 2).distinctBy(_ % 4).take(2), r.fuse.filter(_ > 2).distinctBy(_ % 4).take(2).toList)
+
+  // ---- scanLeft (running fold; emits z then each op; one more element than input) ----
+  @Test def test_fuse_scanLeft: Unit =
+    import org.junit.Assert.{assertEquals => aeq}
+    val r = FArray(1, 2, 3, 4); val l = List(1, 2, 3, 4)
+    aeq(l.scanLeft(0)(_ + _), r.fuse.scanLeft(0)(_ + _).toFArray.toList)
+    aeq(l.scanLeft(100)(_ - _), r.fuse.scanLeft(100)(_ - _).toFArray.toList)
+    aeq(List.empty[Int].scanLeft(7)(_ + _), FArray.empty[Int].fuse.scanLeft(7)(_ + _).toFArray.toList) // empty → [z]
+    aeq(l.scanLeft("")(_ + _.toString), r.fuse.scanLeft("")(_ + _.toString).toFArray.toList)            // Int -> String
+    // upstream / downstream stages compose around the scan
+    aeq(l.map(_ * 2).scanLeft(0)(_ + _), r.fuse.map(_ * 2).scanLeft(0)(_ + _).toFArray.toList)
+    aeq(l.filter(_ % 2 == 0).scanLeft(0)(_ + _), r.fuse.filter(_ % 2 == 0).scanLeft(0)(_ + _).toFArray.toList)
+    aeq(l.scanLeft(0)(_ + _).filter(_ % 2 == 0), r.fuse.scanLeft(0)(_ + _).filter(_ % 2 == 0).toFArray.toList)
+    aeq(l.scanLeft(0)(_ + _).map(_ * 10), r.fuse.scanLeft(0)(_ + _).map(_ * 10).toFArray.toList)
+    // scanLeft into other terminals (the prologue counts z too)
+    aeq(l.scanLeft(0)(_ + _).sum, r.fuse.scanLeft(0)(_ + _).sum)
+    aeq(l.scanLeft(0)(_ + _).length, r.fuse.scanLeft(0)(_ + _).count)
+    aeq(l.scanLeft(0)(_ + _).last, r.fuse.scanLeft(0)(_ + _).last)
+    aeq(l.scanLeft(0)(_ + _).take(3), r.fuse.scanLeft(0)(_ + _).take(3).toFArray.toList)
 
   // ---- zipWithIndex ----
   @Test def test_fuse_zipWithIndex: Unit =
@@ -1202,6 +1223,8 @@ class FListTest:
       FuseDebug.show(ints.fuse.collect { case x if x % 2 == 0 => x * 10 }.toFArray))
     scenario("TAKEWHILE: ints.fuse.takeWhile(_ < 5).toFArray  [stops the stream via done on first failure]",
       FuseDebug.show(ints.fuse.takeWhile(_ < 5).toFArray))
+    scenario("SCANLEFT: ints.fuse.scanLeft(0)(_ + _).toFArray  [emit z prologue before the loop, then acc per element]",
+      FuseDebug.show(ints.fuse.scanLeft(0)(_ + _).toFArray))
     scenario("INDEXWHERE: ints.fuse.map(x => x*x).indexWhere(_ > 9)  [bare var idx + counter — NO pair allocated]",
       FuseDebug.show(ints.fuse.map(x => x * x).indexWhere(_ > 9)))
     scenario("MIN: ints.fuse.filter(_%2==0).min  [seeded var acc — NO per-element Option]",
