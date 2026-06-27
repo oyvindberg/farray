@@ -856,6 +856,24 @@ object GenSets extends BleepCodegenScript("GenSets") {
     val countV = dispatchA(k => s"countLeaf${k.name}(xs, (v) => p(${wrapElem(k, "v")}))")
     val filterV = dispatchA(k => s"filterLeaf${k.name}(xs, (v) => p(${wrapElem(k, "v")}))")
 
+    // map[B]: the N×N read-kind A × write-kind B matrix. Read each element unboxed (kind A), apply the inline
+    // user `f` to get a B, store the raw B (kind B), then buildSorted${B} DEDUPS (map can collapse distinct A→B).
+    // Both A and B are concrete at the call site, so summonFrom picks one (A,B) path — no megamorphism, no box.
+    val mapV = {
+      val refSrc = "{ val acc = scala.collection.mutable.HashSet.empty[Object]; collectElemsRef(xs, acc); val sa = new Array[Object](acc.size); var k = 0; acc.foreach { e => sa(k) = e; k += 1 }; sa }"
+      def srcOf(ka: Kind): String = if ka.isPrim then s"asArr${ka.name}(materialize${ka.name}(xs))" else refSrc
+      def readA(ka: Kind): String = if ka.isPrim then "ra.wrap(src(i))" else "src(i).asInstanceOf[A]"
+      def storeB(kb: Kind, b: String): String = if kb.isPrim then s"rb.unwrap($b)" else s"($b).asInstanceOf[Object]"
+      "summonFrom {\n" + opKinds.map { ka =>
+        s"      case ra: ${ka.name}Repr[A] => summonFrom {\n" +
+          opKinds.map { kb =>
+            val body = s"{ val src = ${srcOf(ka)}; val n = src.length; val out = new Array[${kb.arr}](n); var i = 0; while (i < n) { out(i) = ${storeB(kb, "f(" + readA(ka) + ")")}; i += 1 }; buildSorted${kb.name}(out, n) }"
+            s"        case rb: ${kb.name}Repr[B] => $body"
+          }.mkString("\n") +
+          "\n      }"
+      }.mkString("\n") + "\n    }"
+    }
+
     // ---- value equals / hashCode helpers — MATERIALIZED-ONLY (throw on a lazy SView) ----
     val valueHelpers = {
       val ee = new Emit("  ")
@@ -947,6 +965,7 @@ object GenSets extends BleepCodegenScript("GenSets") {
        |  inline def existsImpl[A](xs: SBase)(inline p: A => Boolean): Boolean = $existsV
        |  inline def countImpl[A](xs: SBase)(inline p: A => Boolean): Int = $countV
        |  inline def filterImpl[A](xs: SBase)(inline p: A => Boolean): SBase = $filterV
+       |  inline def mapImpl[A, B](xs: SBase)(inline f: A => B): SBase = $mapV
        |  inline def inclImpl[A, B](xs: SBase, elem: B): SBase = $inclV
        |  inline def exclImpl[A, B](xs: SBase, elem: B): SBase = $exclV
        |}

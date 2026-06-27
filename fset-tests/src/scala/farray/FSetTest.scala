@@ -196,6 +196,15 @@ class FSetTest:
     assertTrue(f.contains(75)); assertFalse(f.contains(25))
     assertEquals(40, (FSet(1, 2, 3) ++ big).count(_ >= 60))
 
+  @Test def map_nxn(): Unit =
+    // read kind × write kind, with dedup-on-build (map can collapse).
+    assertEquals(List(2, 4, 6), FSet(1, 2, 3).map(_ * 2).toList)        // Int → Int
+    assertEquals(List(0, 1), FSet(1, 2, 3, 4).map(_ % 2).toList)         // Int → Int, collapses to {0,1}
+    assertEquals(List(10L, 20L, 30L), FSet(1, 2, 3).map(_.toLong * 10).toList) // Int → Long
+    assertEquals(Set("1", "2", "3"), FSet(1, 2, 3).map(_.toString).toList.toSet) // Int → Ref
+    assertEquals(List(1, 5, 6), FSet.from(List("a", "apple", "banana")).map(_.length).toList) // Ref → Int
+    assertEquals(Set("A", "B"), FSet.from(List("apple", "avocado", "banana")).map(s => s.substring(0, 1).toUpperCase).toList.toSet) // Ref → Ref, collapses
+
   @Test def filter_ref(): Unit =
     val fs = FSet.from(List("apple", "banana", "avocado", "cherry"))
     assertEquals(Set("apple", "avocado"), fs.filter(_.startsWith("a")).toList.toSet)

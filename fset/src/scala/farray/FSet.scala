@@ -89,6 +89,8 @@ object FSet:
     inline def count(inline p: A => Boolean): Int = FSetOps.countImpl[A](xs)(p)
     inline def filter(inline p: A => Boolean): FSet[A] = FSetOps.filterImpl[A](xs)(p)
     inline def filterNot(inline p: A => Boolean): FSet[A] = FSetOps.filterImpl[A](xs)(a => !p(a))
+    // map[B]: apply f to each element (read kind A × write kind B, unboxed) and DEDUP into a kind-B set.
+    inline def map[B](inline f: A => B): FSet[B] = FSetOps.mapImpl[A, B](xs)(f)
     inline def materialize: FSet[A] = FSetOps.materializeImpl[A](xs)
 
     // ---- value equals / hashCode — MATERIALIZED-ONLY (throws on a still-lazy set; call .materialize first).
