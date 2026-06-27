@@ -38,6 +38,15 @@ object FSet:
   inline def from[A](it: IterableOnce[A]): FSet[A] = FSetOps.fromImpl[A](it)
   inline def fromIterable[A](it: Iterable[A]): FSet[A] = FSetOps.fromImpl[A](it)
 
+  // ---- predicate / range factories (§2.5) — O(1), no element storage. `above`/`below`/`universal` fall out
+  // of the [lo,hi] bounds. These are MEMBERSHIP-ONLY (possibly infinite): contains works and distributes
+  // through the algebra; size/iterator/materialize throw (you cannot enumerate an infinite set). ----
+  def range(lo: Int, hi: Int): FSet[Int] = if lo > hi then SEmpty.INSTANCE else new SIntRange(lo, hi)
+  def range(lo: Long, hi: Long): FSet[Long] = if lo > hi then SEmpty.INSTANCE else new SLongRange(lo, hi)
+  def above(k: Int): FSet[Int] = if k == Int.MaxValue then SEmpty.INSTANCE else new SIntRange(k + 1, Int.MaxValue)
+  def below(k: Int): FSet[Int] = if k == Int.MinValue then SEmpty.INSTANCE else new SIntRange(Int.MinValue, k - 1)
+  def universalInt: FSet[Int] = new SIntRange(Int.MinValue, Int.MaxValue)
+
   extension [A](xs: FSet[A])
     // ---- query (the hot read path) ----
     // Each op dispatches the element kind at the concrete call site via `summonFrom` inside the inline impl,
@@ -74,6 +83,9 @@ object FSet:
     inline def &(that: FSet[A]): FSet[A] = xs.intersect(that)
     inline def &~(that: FSet[A]): FSet[A] = xs.diff(that)
     inline def ^(that: FSet[A]): FSet[A] = xs.xor(that)
+    // complement: !contains — a membership-only (co-finite) set; contains distributes, enumeration throws.
+    def complement: FSet[A] = new SComplement(xs)
+    inline def unary_~ : FSet[A] = xs.complement
 
     // ---- materialize / iterate — force the deferred merge once (memoized on the node), then walk the leaf ----
     // For prim kinds the merge is the unboxed sorted×sorted pass (§3.2), so iteration is ORDERED; Ref is

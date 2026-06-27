@@ -196,6 +196,29 @@ class FSetTest:
     assertTrue(f.contains(75)); assertFalse(f.contains(25))
     assertEquals(40, (FSet(1, 2, 3) ++ big).count(_ >= 60))
 
+  @Test def range_and_predicate_membership(): Unit =
+    // the headline: union two HUGE ranges, query membership — O(1), nothing materialized.
+    val u = FSet.range(1, 1000000) ++ FSet.range(2000000, 3000000)
+    assertTrue(u.contains(500000))
+    assertTrue(u.contains(2500000))
+    assertFalse(u.contains(1500000))
+    assertFalse(u.contains(0))
+    // above / below / universal via the [lo,hi] bounds
+    assertTrue(FSet.above(5).contains(6)); assertFalse(FSet.above(5).contains(5))
+    assertTrue(FSet.below(5).contains(4)); assertFalse(FSet.below(5).contains(5))
+    assertTrue(FSet.universalInt.contains(Int.MinValue))
+    assertTrue(FSet.universalInt.contains(0))
+    // complement distributes
+    val notEvens = FSet(2, 4, 6, 8).complement
+    assertTrue(notEvens.contains(3)); assertFalse(notEvens.contains(4))
+    // predicate ∩ finite is queryable; finite stays the materializable side
+    val evensInRange = FSet(1, 2, 3, 4, 5, 6) & FSet.above(3)
+    assertTrue(evensInRange.contains(4)); assertFalse(evensInRange.contains(2))
+    // enumerating an infinite set throws (membership-only)
+    var threw = false
+    try u.size catch { case _: UnsupportedOperationException => threw = true }
+    assertTrue("size of an infinite set throws", threw)
+
   @Test def map_nxn(): Unit =
     // read kind × write kind, with dedup-on-build (map can collapse).
     assertEquals(List(2, 4, 6), FSet(1, 2, 3).map(_ * 2).toList)        // Int → Int
