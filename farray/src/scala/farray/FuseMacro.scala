@@ -265,7 +265,11 @@ object FuseMacro:
      *  param use (Nil path) forces materializing the whole shape; otherwise each path resolves to a leaf column. */
     def substColumns(body: Term, param: Symbol, cur: Shape)(k: Term => Term): Term =
       val paths = collectPaths(body, param)
-      if paths.contains(Nil) then readShape(cur)(ct => k(substParam(body, param, ct)))
+      // whole-param use → substitute the materialized shape for every param mention. A Tup must be re-tupled
+      // (mkTuple) — bind it to ONE val first so it isn't rebuilt per occurrence; a Sc is already a bound ref.
+      if paths.contains(Nil) then cur match
+        case Tup(_) => readShape(cur)(ct => letBind(ct)(r => k(substParam(body, param, r))))
+        case _      => readShape(cur)(ct => k(substParam(body, param, ct)))
       else readPaths(cur, paths, Map.empty)(refs => k(substPaths(body, param, refs)))
     def readPaths(cur: Shape, paths: List[List[Int]], acc: Map[List[Int], Term])(k: Map[List[Int], Term] => Term): Term =
       paths match
