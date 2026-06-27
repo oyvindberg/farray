@@ -1012,6 +1012,15 @@ class FListTest:
     check("cc.dce")(_.fuse.map(x => P2(x, x * x)).filter(_.a > 0).map(_.a).toFArray.toList)(_.filter(_ > 0))
     check("cc.nested")(_.fuse.map(x => Outer(Inner(x, x + 1), x * 2)).filter(_.inner.x % 2 == 0).map(o => o.inner.y + o.z).toFArray.toList)(_.filter(_ % 2 == 0).map(x => (x + 1) + (x * 2)))
     check("cc.materialize")(_.fuse.map(x => P2(x, x * 10)).filter(_.a > 0).toFArray.toList)(_.filter(_ > 0).map(x => P2(x, x * 10)))
+    // new stages
+    check("collect")(_.fuse.collect { case x if x % 2 == 0 => x * 3 }.toFArray.toList)(_.collect { case x if x % 2 == 0 => x * 3 })
+    check("takeWhile")(_.fuse.takeWhile(_ < 5).toFArray.toList)(_.takeWhile(_ < 5))
+    check("dropWhile")(_.fuse.dropWhile(_ < 5).toFArray.toList)(_.dropWhile(_ < 5))
+    check("distinct")(_.fuse.distinct.toFArray.toList)(_.distinct)
+    check("distinctBy")(_.fuse.distinctBy(_ % 4).toFArray.toList)(_.distinctBy(_ % 4))
+    check("slice")(_.fuse.slice(2, 7).toFArray.toList)(_.slice(2, 7))
+    check("collect.takeWhile.filter")(_.fuse.collect { case x if x > 0 => x * 2 }.takeWhile(_ < 16).filter(_ % 3 == 0).toFArray.toList)(_.collect { case x if x > 0 => x * 2 }.takeWhile(_ < 16).filter(_ % 3 == 0))
+    check("dropWhile.distinct")(_.fuse.dropWhile(_ < 0).distinct.toFArray.toList)(_.dropWhile(_ < 0).distinct)
     // Long / Double / Ref element kinds
     var t2 = 0
     while t2 < 200 do
@@ -1049,6 +1058,40 @@ class FListTest:
   @Test def test_fuse_caseclass_whole: Unit = // case class used whole (rebuilt), then field
     org.junit.Assert.assertEquals(List(P2(2, 20)),
       FArray(1, 2, 3).fuse.map(x => P2(x, x * 10)).filter(p => p == P2(2, 20)).toFArray.toList)
+
+  // ---- new stages: collect / takeWhile / dropWhile / distinct / distinctBy / slice / flatten ----
+  @Test def test_fuse_stages: Unit =
+    import org.junit.Assert.{assertEquals => aeq}
+    val r = FArray(1, 2, 3, 4, 5, 6, 7, 8); val l = List(1, 2, 3, 4, 5, 6, 7, 8)
+    // collect (inlined PartialFunction match)
+    aeq(l.collect { case x if x % 2 == 0 => x * 10 }, r.fuse.collect { case x if x % 2 == 0 => x * 10 }.toFArray.toList)
+    aeq(l.collect { case x if x > 4 => x }, r.fuse.collect { case x if x > 4 => x }.toList)
+    aeq(l.collect { case 3 => 30; case 5 => 50 }, r.fuse.collect { case 3 => 30; case 5 => 50 }.toList)
+    // collect changing the element type, then a further stage
+    aeq(l.collect { case x if x % 2 == 0 => x.toString }.map(_ + "!"),
+        r.fuse.collect { case x if x % 2 == 0 => x.toString }.map(_ + "!").toList)
+    // takeWhile / dropWhile (incl. all / none boundaries)
+    aeq(l.takeWhile(_ < 5), r.fuse.takeWhile(_ < 5).toList)
+    aeq(l.dropWhile(_ < 5), r.fuse.dropWhile(_ < 5).toList)
+    aeq(l.takeWhile(_ < 100), r.fuse.takeWhile(_ < 100).toList)
+    aeq(l.dropWhile(_ < 100), r.fuse.dropWhile(_ < 100).toList)
+    aeq(l.takeWhile(_ < 0), r.fuse.takeWhile(_ < 0).toList)
+    // dropWhile then re-encountering a matching element keeps it (only the LEADING run is dropped)
+    aeq(List(1, 1, 2, 1, 3).dropWhile(_ == 1), FArray(1, 1, 2, 1, 3).fuse.dropWhile(_ == 1).toList)
+    // distinct / distinctBy
+    aeq(List(1, 1, 2, 3, 3, 3, 2, 4).distinct, FArray(1, 1, 2, 3, 3, 3, 2, 4).fuse.distinct.toList)
+    aeq(l.distinctBy(_ % 3), r.fuse.distinctBy(_ % 3).toList)
+    aeq(List("a", "bb", "cc", "d").distinctBy(_.length), FArray("a", "bb", "cc", "d").fuse.distinctBy(_.length).toList)
+    // slice
+    aeq(l.slice(2, 5), r.fuse.slice(2, 5).toList)
+    aeq(l.slice(-1, 100), r.fuse.slice(-1, 100).toList)
+    aeq(l.slice(5, 3), r.fuse.slice(5, 3).toList)
+    // flatten
+    aeq(List(List(1, 2), List(3), List(4, 5)).flatten, FArray(FArray(1, 2), FArray(3), FArray(4, 5)).fuse.flatten.toList)
+    // composition (with short-circuit + segments)
+    aeq(l.map(_ + 1).takeWhile(_ < 6).filter(_ % 2 == 0), r.fuse.map(_ + 1).takeWhile(_ < 6).filter(_ % 2 == 0).toList)
+    aeq(l.collect { case x if x % 2 == 1 => x * 2 }.takeWhile(_ < 11), r.fuse.collect { case x if x % 2 == 1 => x * 2 }.takeWhile(_ < 11).toList)
+    aeq(l.filter(_ > 2).distinctBy(_ % 4).take(2), r.fuse.filter(_ > 2).distinctBy(_ % 4).take(2).toList)
 
   // ---- zipWithIndex ----
   @Test def test_fuse_zipWithIndex: Unit =
@@ -1155,6 +1198,10 @@ class FListTest:
       FuseDebug.show(ints.fuse.map(x => (x * x + 1, x * x + 2)).map(t => t._1 + t._2).toFArray))
     scenario("ints.fuse.map(x=>(x+1, x*1000)).filter(_._1%2==0).map(_._2).toFArray  [SINK: 2nd col inside the guard]",
       FuseDebug.show(ints.fuse.map(x => (x + 1, x * 1000)).filter(_._1 % 2 == 0).map(_._2).toFArray))
+    scenario("COLLECT: ints.fuse.collect { case x if x%2==0 => x*10 }.toFArray  [PF match INLINED — no PartialFunction object]",
+      FuseDebug.show(ints.fuse.collect { case x if x % 2 == 0 => x * 10 }.toFArray))
+    scenario("TAKEWHILE: ints.fuse.takeWhile(_ < 5).toFArray  [stops the stream via done on first failure]",
+      FuseDebug.show(ints.fuse.takeWhile(_ < 5).toFArray))
     scenario("INDEXWHERE: ints.fuse.map(x => x*x).indexWhere(_ > 9)  [bare var idx + counter — NO pair allocated]",
       FuseDebug.show(ints.fuse.map(x => x * x).indexWhere(_ > 9)))
     scenario("MIN: ints.fuse.filter(_%2==0).min  [seeded var acc — NO per-element Option]",

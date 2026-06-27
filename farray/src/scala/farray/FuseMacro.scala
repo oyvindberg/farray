@@ -76,6 +76,10 @@ object FuseMacro:
     final case class TakeS(n: Term) extends Stage
     final case class DropS(n: Term) extends Stage
     final case class FlatMapS(f: Term, bTpe: TypeRepr) extends Stage
+    final case class CollectS(pf: Term, bTpe: TypeRepr) extends Stage // collect: filter+map via a PartialFunction
+    final case class TakeWhileS(p: Term) extends Stage                 // emit until p first fails, then stop (done)
+    final case class DropWhileS(p: Term) extends Stage                 // skip the leading run matching p
+    final case class DistinctS(key: Option[Term]) extends Stage        // distinct (None) / distinctBy (Some f)
     case object ZipWithIndexS extends Stage
     final case class ZipS(that: Term, bTpe: TypeRepr, combine: Option[Term]) extends Stage // zip (None) / map2 (Some f)
 
@@ -98,12 +102,16 @@ object FuseMacro:
     // --- loop-state handles (Exprs that read/mutate vars declared above the loop) ---
     final case class Done(set: Expr[Unit], read: Expr[Boolean])
     // an above-loop counter; `lim` is present for take/drop (their clamped limit), absent for zipWithIndex.
-    final case class Slot(read: Expr[Int], inc: Expr[Unit], lim: Option[Expr[Int]], zipThat: Option[(Expr[FBase], TypeRepr)] = None)
+    // `flag` (dropWhile: read + clear a Boolean) and `seen` (distinct: the dedup set) carry non-counter state.
+    final case class Slot(read: Expr[Int], inc: Expr[Unit], lim: Option[Expr[Int]], zipThat: Option[(Expr[FBase], TypeRepr)] = None,
+                          flag: Option[(Expr[Boolean], Expr[Unit])] = None, seen: Option[Expr[scala.collection.mutable.HashSet[Any]]] = None)
     // how a counter-needing stage declares its above-loop state
     sealed trait CSpec
     final case class LimSpec(arg: Term) extends CSpec       // take/drop: a clamped limit
     case object IdxSpec extends CSpec                        // zipWithIndex: a bare counter
     final case class ZipSpec(that: Term, bTpe: TypeRepr) extends CSpec // zip/map2: bind `that` + its length + a counter
+    case object DropWhileSpec extends CSpec                  // dropWhile: a `var dropping = true`
+    case object DistinctSpec extends CSpec                   // distinct/distinctBy: a `seen` HashSet
     final case class Ctx(consume: Term => Term, done: Option[Done], counters: Map[Int, Slot])
 
     // The value flowing through a pure map/filter segment, decomposed into independent columns. A `Sc`'s `read`
@@ -135,8 +143,13 @@ object FuseMacro:
         case Apply(TypeApply(Select(prev, "flatMap"), List(b)), List(f))  => parse(prev, FlatMapS(unwrap(f), b.tpe) :: acc)
         case Apply(Select(prev, "filter"), List(p))                       => parse(prev, FilterS(unwrap(p), false) :: acc)
         case Apply(Select(prev, "filterNot"), List(p))                    => parse(prev, FilterS(unwrap(p), true) :: acc)
+        case Apply(TypeApply(Select(prev, "collect"), List(b)), List(pf)) => parse(prev, CollectS(unwrap(pf), b.tpe) :: acc)
         case Apply(Select(prev, "take"), List(n))                         => parse(prev, TakeS(unwrap(n)) :: acc)
         case Apply(Select(prev, "drop"), List(n))                         => parse(prev, DropS(unwrap(n)) :: acc)
+        case Apply(Select(prev, "takeWhile"), List(p))                    => parse(prev, TakeWhileS(unwrap(p)) :: acc)
+        case Apply(Select(prev, "dropWhile"), List(p))                    => parse(prev, DropWhileS(unwrap(p)) :: acc)
+        case Select(prev, "distinct")                                     => parse(prev, DistinctS(None) :: acc)
+        case Apply(TypeApply(Select(prev, "distinctBy"), _), List(f))     => parse(prev, DistinctS(Some(unwrap(f))) :: acc)
         case Select(prev, "zipWithIndex")                                 => parse(prev, ZipWithIndexS :: acc)
         case Apply(TypeApply(Select(prev, "zip"), List(b)), List(that))    => parse(prev, ZipS(unwrap(that), b.tpe, None) :: acc)
         case Apply(Apply(TypeApply(Select(prev, "map2"), List(b, _)), List(that)), List(f)) => parse(prev, ZipS(unwrap(that), b.tpe, Some(unwrap(f))) :: acc)
@@ -198,14 +211,17 @@ object FuseMacro:
       case (DropS(n), i)            => (i, LimSpec(n))
       case (ZipWithIndexS, i)       => (i, IdxSpec)
       case (ZipS(that, b, _), i)    => (i, ZipSpec(that, b))
+      case (DropWhileS(_), i)       => (i, DropWhileSpec)
+      case (DistinctS(_), i)        => (i, DistinctSpec)
     }
     val takesPresent: Boolean = stages.exists(_.isInstanceOf[TakeS])
     val hasZip: Boolean        = stages.exists(_.isInstanceOf[ZipS])
     val hasFlatMap: Boolean = stages.exists(_.isInstanceOf[FlatMapS])
+    val hasTakeWhile: Boolean = stages.exists(_.isInstanceOf[TakeWhileS])
     val shortCircuit: Boolean = tag match
       case TTag.Find | TTag.Exists | TTag.Forall | TTag.HeadOption | TTag.Head | TTag.IndexWhere => true
       case _                                                                                     => false
-    val needsDone: Boolean = takesPresent || shortCircuit || hasZip // zip breaks when `that` is exhausted
+    val needsDone: Boolean = takesPresent || shortCircuit || hasZip || hasTakeWhile // any stage that can stop the stream
 
     // ===== Layer B: pure map/filter segment optimizer (compute-for-survivors via memoized lazy columns) =====
 
@@ -414,6 +430,41 @@ object FuseMacro:
       case FilterS(p, neg) :: rest => predShape(p, neg, cur)(b => If(b, buildSegment(rest, cur)(k), unit))
       case _                    => k(cur) // segment is map/filter only
 
+    /** lower `collect(pf)` by inlining the PartialFunction literal's match into the loop. Scala 3 encodes a
+     *  `{ case … }` literal as `new PartialFunction { def applyOrElse(x, default) = x match { <cases>; case _ =>
+     *  default(x) } … }`; we splice that match with scrutinee = `cur`, each real case continuing downstream and
+     *  the `default(x)` fallthrough → skip. Falls back to isDefinedAt/apply if the literal's shape is unusual. */
+    def collectBody(pf: Term, bTpe: TypeRepr, cur: Term, rest: List[(Stage, Int)], ctx: Ctx): Term =
+      // a PF literal is `Block(DefDef($anonfun, (x$1), Match(x$1, userCases)), Closure(_, PartialFunction))` — the
+      // user's cases only, partiality carried by the Closure type. We splice the match with scrutinee = `cur`,
+      // each case continuing downstream, plus our own `case _ => skip` (the match is partial).
+      def extract(t: Term): Option[(Symbol, List[CaseDef])] = unwrap(t) match
+        case Block(stats, _: Closure) =>
+          stats.collectFirst { case dd: DefDef => dd }.flatMap { dd =>
+            val ps = dd.paramss.flatMap { case TermParamClause(tps) => tps; case _ => Nil }
+            dd.rhs.map(unwrap).collect { case Match(_, cs) if ps.nonEmpty => (ps.head.symbol, cs) }
+          }
+        case _ => None
+      def isCatchAll(cd: CaseDef): Boolean =
+        cd.guard.isEmpty && (cd.pattern match { case Wildcard() => true; case Bind(_, Wildcard()) => true; case _ => false })
+      def subX(xSym: Symbol)(t: Term): Term =
+        (new TreeMap:
+          override def transformTerm(x: Term)(o: Symbol): Term =
+            x match { case id: Ident if id.symbol == xSym => cur; case _ => super.transformTerm(x)(o) }
+        ).transformTerm(t)(Symbol.spliceOwner)
+      extract(pf) match
+        case Some((xSym, cases)) =>
+          val mapped = cases.map(cd => CaseDef(cd.pattern, cd.guard.map(subX(xSym)), buildBody(rest, subX(xSym)(cd.rhs), ctx)))
+          // append a skip default unless the user's match is already total (avoids an unreachable-case warning)
+          val newCases = if cases.exists(isCatchAll) then mapped else mapped :+ CaseDef(Wildcard(), None, unit)
+          Match(cur, newCases).changeOwner(Symbol.spliceOwner)
+        case None =>
+          bTpe.asType match
+            case '[bb] =>
+              '{ val pf0 = ${ pf.asExpr }.asInstanceOf[PartialFunction[Any, Any]]
+                 if pf0.isDefinedAt(${ cur.asExpr }) then
+                   ${ buildBody(rest, '{ pf0(${ cur.asExpr }).asInstanceOf[bb] }.asTerm, ctx).asExprOf[Unit] } }.asTerm
+
     // --- per-element body: map/filter/take/drop/flatMap chain, ending in `ctx.consume` ---
     def buildBody(ss: List[(Stage, Int)], cur: Term, ctx: Ctx): Term = ss match
       case Nil => ctx.consume(cur)
@@ -424,6 +475,24 @@ object FuseMacro:
         // open a nested loop over f(cur): everything downstream runs inside it.
         val inner: Expr[FBase] = '{ ${ applyLambda(f, cur).asExpr }.asInstanceOf[FBase] }
         loopOver(inner, kindOf(bTpe), bTpe, rest, ctx).asTerm
+      case (CollectS(pf, bTpe), _) :: rest =>
+        // inline the PartialFunction's match into the loop: each real case continues downstream, the synthetic
+        // `case _ => default(x)` fallthrough becomes a skip. So collect is filter+map+match fused, no PF object.
+        collectBody(pf, bTpe, cur, rest, ctx)
+      case (TakeWhileS(p), _) :: rest =>
+        // emit while p holds; the first failure stops the whole (possibly nested) traversal via `done`.
+        val d = ctx.done.get
+        '{ if ${ applyLambda(p, cur).asExprOf[Boolean] } then ${ buildBody(rest, cur, ctx).asExprOf[Unit] } else ${ d.set } }.asTerm
+      case (DropWhileS(p), i) :: rest =>
+        // skip the leading run matching p; once we stop dropping, never drop again (&& short-circuits p after).
+        val sl = ctx.counters(i); val (dropping, stopDropping) = sl.flag.get
+        '{ if $dropping && ${ applyLambda(p, cur).asExprOf[Boolean] } then ()
+           else { $stopDropping; ${ buildBody(rest, cur, ctx).asExprOf[Unit] } } }.asTerm
+      case (DistinctS(keyFn), i) :: rest =>
+        // emit only if the element/key is newly seen (HashSet.add returns true on first insertion).
+        val seen = ctx.counters(i).seen.get
+        val key: Term = keyFn match { case Some(f) => applyLambda(f, cur); case None => cur }
+        '{ if ${ seen }.add(${ key.asExpr }) then ${ buildBody(rest, cur, ctx).asExprOf[Unit] } }.asTerm
       case (TakeS(_), i) :: rest =>
         val sl = ctx.counters(i); val lim = sl.lim.get; val d = ctx.done.get
         '{ val cv = ${ sl.read }
@@ -523,6 +592,12 @@ object FuseMacro:
           '{ val zthat: FBase = ${ thatT.asExpr }.asInstanceOf[FBase]; val zn: Int = zthat.length
              var c: Int = 0
              ${ declareSlots(rest, acc + (idx -> Slot('{ c }, '{ c += 1 }, Some('{ zn }), Some(('{ zthat }, bTpe)))))(k).asExpr } }.asTerm
+        case (idx, DropWhileSpec) :: rest =>  // dropWhile: a Boolean flag, read + cleared in the loop
+          '{ var dropping: Boolean = true
+             ${ declareSlots(rest, acc + (idx -> Slot('{ 0 }, '{ () }, None, flag = Some(('{ dropping }, '{ dropping = false })))))(k).asExpr } }.asTerm
+        case (idx, DistinctSpec) :: rest =>   // distinct/distinctBy: a dedup set keyed by element/key value
+          '{ val seen = new scala.collection.mutable.HashSet[Any]()
+             ${ declareSlots(rest, acc + (idx -> Slot('{ 0 }, '{ () }, None, seen = Some('{ seen }))))(k).asExpr } }.asTerm
 
     /** static upper bound on output length = min(source length, every `take` limit and zip `that` length). */
     def capExpr(n0: Expr[Int], counters: Map[Int, Slot]): Expr[Int] =

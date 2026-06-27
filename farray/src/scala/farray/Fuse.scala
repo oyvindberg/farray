@@ -29,14 +29,30 @@ final class Fuse[+A](private[farray] val base: FBase):
   def flatMap[B](f: A => FArray[B]): Fuse[B] = this.asInstanceOf[Fuse[B]]
   def filter(p: A => Boolean): Fuse[A] = this
   def filterNot(p: A => Boolean): Fuse[A] = this
+  /** keep elements that match `pf`, mapping each through it — filter + map + pattern-match fused in one pass. */
+  def collect[B](pf: PartialFunction[A, B]): Fuse[B] = this.asInstanceOf[Fuse[B]]
   def take(n: Int): Fuse[A] = this
   def drop(n: Int): Fuse[A] = this
+  /** emit elements until `p` first fails, then stop the whole traversal (short-circuits like `take`). */
+  def takeWhile(p: A => Boolean): Fuse[A] = this
+  /** skip the leading run of elements matching `p`, then emit all the rest. */
+  def dropWhile(p: A => Boolean): Fuse[A] = this
+  /** keep only the first occurrence of each element (by `==`/hashCode). */
+  def distinct: Fuse[A] = this
+  /** keep only the first element for each distinct key `f(a)`. */
+  def distinctBy[K](f: A => K): Fuse[A] = this
   /** pair each element with its position in the stream at this point (post-upstream-filtering). */
   def zipWithIndex: Fuse[(A, Int)] = this.asInstanceOf[Fuse[(A, Int)]]
   /** lock-step with another source: pair element k of this pipeline with `that(k)`; stops at the shorter. */
   def zip[B](that: FArray[B]): Fuse[(A, B)] = this.asInstanceOf[Fuse[(A, B)]]
   /** lock-step combine with another source via `f` (like `zip(that).map(f)` but never builds the pair). */
   def map2[B, C](that: FArray[B])(f: (A, B) => C): Fuse[C] = this.asInstanceOf[Fuse[C]]
+
+  // ---- derived stages (inline sugar over the markers above; still one fused pass) ----
+  /** elements in index range `[from, until)` — `drop(from).take(until - from)`. */
+  inline def slice(from: Int, until: Int): Fuse[A] = drop(from).take(until - from)
+  /** concatenate a pipeline of `FArray`s — `flatMap(identity)`. */
+  inline def flatten[B](using asArray: A <:< FArray[B]): Fuse[B] = flatMap(a => asArray(a))
 
   // ---- terminals (macros: rewrite the whole chain into one fused loop) ----
   inline def toFArray: FArray[A] = ${ FuseMacro.toFArrayImpl[A]('this) }
