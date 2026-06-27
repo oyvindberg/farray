@@ -257,10 +257,21 @@ object FuseMacro:
       case TTag.Find | TTag.Exists | TTag.Forall | TTag.HeadOption | TTag.Head | TTag.IndexWhere => true
       case _                                                                                     => false
     val needsDone: Boolean = takesPresent || shortCircuit || hasZip || hasTakeWhile // any stage that can stop the stream
-    // a terminal that IGNORES the element value entirely (count survivors). A trailing pure `map` then produces a
-    // DEAD value — nothing reads it — so its final shape must NOT be materialized (e.g. `map(_.category).count`
-    // must not decode the strings, and `map(expensive).count` must not run `expensive`). The filters still run.
-    val discardsElem: Boolean = tag == TTag.Count
+    // Does this terminal IGNORE the element value? If so, a trailing pure `map` produces a DEAD value — nothing
+    // reads it — so its final shape must NOT be materialized (`map(_.category).count` must not decode the
+    // strings; `map(expensive).count` must not run `expensive`). The filters still run.
+    //   - count                : always discards the value.
+    //   - exists/forall(p)      : discard the value IFF the predicate `p` ignores its argument — i.e. `_ => true`
+    //                             / `_ => false`, which is exactly how `isEmpty`/`nonEmpty` desugar.
+    // (lazy: `decomposeLambda`/`collectPaths` are defined further down; this is forced only later, in
+    //  continueShape/buildBody.)
+    lazy val discardsElem: Boolean = tag match
+      case TTag.Count                => true
+      case TTag.Exists | TTag.Forall =>
+        decomposeLambda(args(0)) match
+          case Some((param, body)) => collectPaths(body, param).isEmpty // predicate never reads its argument
+          case None                => false
+      case _ => false
 
     // ===== Layer B: pure map/filter segment optimizer (compute-for-survivors via memoized lazy columns) =====
 

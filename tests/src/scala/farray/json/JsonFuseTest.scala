@@ -68,4 +68,33 @@ class JsonFuseTest:
     assertEquals(3, n)       // 3 even numbers survive
     assertEquals(0, calls)   // but the map function was never invoked — its result is dead for count
 
+  /** discard-DCE extended to nonEmpty/isEmpty (which desugar to exists(_ => true)): `map(f).nonEmpty` and
+   *  `map(f).isEmpty` ignore the mapped value, so `f` is dead and must not run. */
+  @Test def inMemory_mapNonEmpty_skips_map(): Unit =
+    var calls = 0
+    val ne = farray.FArray(1, 2, 3, 4).fuse.filter(_ > 2).map(x => { calls += 1; x * 10 }).nonEmpty
+    assertTrue(ne)           // 3,4 survive → nonEmpty
+    assertEquals(0, calls)   // the map was never run
+
+  @Test def inMemory_mapIsEmpty_skips_map(): Unit =
+    var calls = 0
+    val empty = farray.FArray(1, 2, 3).fuse.filter(_ > 100).map(x => { calls += 1; x * 10 }).isEmpty
+    assertTrue(empty)        // nothing > 100 → isEmpty
+    assertEquals(0, calls)
+
+  /** exists with a value-IGNORING predicate discards too; exists with a value-READING predicate does NOT. */
+  @Test def inMemory_existsConst_skips_map_but_existsPred_does_not(): Unit =
+    var c1 = 0
+    val any = farray.FArray(1, 2, 3).fuse.map(x => { c1 += 1; x * 10 }).exists(_ => true)
+    assertTrue(any); assertEquals(0, c1) // predicate ignores arg → map dead
+    var c2 = 0
+    val hit = farray.FArray(1, 2, 3).fuse.map(x => { c2 += 1; x * 10 }).exists(_ > 25)
+    assertTrue(hit); assertEquals(3, c2) // predicate reads the mapped value → map MUST run
+
+  /** JSON: `map(_.category).nonEmpty` must not decode any category strings. */
+  @Test def fused_mapNonEmpty_matches_jsoniter(): Unit =
+    val ref = jsoniterRecs.exists(_.amount > threshold)
+    val got = Json.ndjson[Rec](buf).fuse.filter(_.amount > threshold).map(_.category).nonEmpty
+    assertEquals(ref, got)
+
 end JsonFuseTest
