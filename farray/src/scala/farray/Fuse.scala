@@ -13,9 +13,13 @@ package farray
  * Semantics — assume PURE stage functions. A fused pipeline is lazy/short-circuiting: `take`, `find`, `head`,
  * `exists`/`forall` stop the traversal as soon as the answer is known, so a stage function (incl. a `flatMap`'s)
  * may run FEWER times than in the equivalent strict `List` pipeline (e.g. `xs.fuse.flatMap(f).take(3)` invokes
- * `f` only until 3 elements are produced). For a pure `f` the result is identical; with a side-effecting or
- * throwing `f` the observable behavior can differ. The element type must be Int/Long/Double or a reference type
- * (`<: AnyRef`) — a primitive-backed FArray widened to `Any`/`AnyVal` is a compile error, not a silent miscompile.
+ * `f` only until 3 elements are produced). Likewise, when a `map` produces a tuple of independent columns and a
+ * later `filter` uses only some of them, the OTHER columns are computed only for elements that pass the filter —
+ * "compute-for-survivors" (e.g. `xs.fuse.map(x => (cheap(x), expensive(x))).filter(_._1 > 0).map(_._2)` runs
+ * `expensive` only on survivors, and never allocates the tuple). For a pure `f` the result is identical; with a
+ * side-effecting or throwing `f` the observable behavior (call count, whether it throws) can differ. The element
+ * type must be Int/Long/Double or a reference type (`<: AnyRef`) — a primitive-backed FArray widened to
+ * `Any`/`AnyVal` is a compile error, not a silent miscompile.
  */
 final class Fuse[+A](private[farray] val base: FBase):
   // ---- stage markers (bodies irrelevant; the macro reads these calls off the AST) ----

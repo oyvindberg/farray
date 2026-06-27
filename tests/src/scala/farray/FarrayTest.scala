@@ -812,6 +812,26 @@ class FListTest:
     org.junit.Assert.assertEquals(false, e.fuse.exists(_ > 0))
     org.junit.Assert.assertEquals(List(), e.fuse.flatMap(x => FArray(x, x)).toFArray.toList)
 
+  // ---- Layer B: compute-for-survivors (an expensive independent column computes only past the filter) ----
+  @Test def test_fuse_compute_for_survivors: Unit =
+    var cheapCalls = 0; var expCalls = 0
+    def cheap(x: Int): Int = { cheapCalls += 1; x }
+    def expensive(x: Int): Int = { expCalls += 1; x * 1000 }
+    val result = FArray(1, 2, 3, 4, 5, 6).fuse
+      .map(x => (cheap(x), expensive(x)))   // two independent columns
+      .filter(_._1 % 2 == 0)                // uses only the cheap column; keeps 2,4,6
+      .map(_._2)                            // uses only the expensive column
+      .toFArray.toList
+    org.junit.Assert.assertEquals(List(2000, 4000, 6000), result)
+    org.junit.Assert.assertEquals("cheap runs for every element", 6, cheapCalls)
+    org.junit.Assert.assertEquals("expensive runs ONLY for survivors (sunk past the filter)", 3, expCalls)
+  @Test def test_fuse_no_recompute: Unit = // a column used twice binds once (no recomputation regression)
+    var calls = 0
+    def f(x: Int): Int = { calls += 1; x * 2 }
+    val r = FArray(1, 2, 3).fuse.map(x => f(x)).map(y => y + y).toFArray.toList
+    org.junit.Assert.assertEquals(List(4, 8, 12), r)
+    org.junit.Assert.assertEquals("f bound once per element, not recomputed", 3, calls)
+
   // ---- zipWithIndex ----
   @Test def test_fuse_zipWithIndex: Unit =
     org.junit.Assert.assertEquals(l10.zipWithIndex, r10.fuse.zipWithIndex.toFArray.toList)
@@ -880,6 +900,8 @@ class FListTest:
       FuseDebug.show(ints.fuse.map(_ + 1).find(_ % 3 == 0)))
     scenario("ints.fuse.zipWithIndex.filter(_._2%2==0).map(_._1).toFArray  [specialized tuple, idx counter]",
       FuseDebug.show(ints.fuse.zipWithIndex.filter(_._2 % 2 == 0).map(_._1).toFArray))
+    scenario("ints.fuse.map(x=>(x+1, x*1000)).filter(_._1%2==0).map(_._2).toFArray  [SINK: 2nd col inside the guard]",
+      FuseDebug.show(ints.fuse.map(x => (x + 1, x * 1000)).filter(_._1 % 2 == 0).map(_._2).toFArray))
     Snapshots.check("fused-pipeline.snap", sb.toString)
 
   @Test def test_hashCode_matchesList(): Unit =

@@ -89,6 +89,13 @@ object FuseMacro:
     final case class Slot(read: Expr[Int], inc: Expr[Unit], lim: Option[Expr[Int]])
     final case class Ctx(consume: Term => Term, done: Option[Done], counters: Map[Int, Slot])
 
+    // The value flowing through a pure map/filter segment, decomposed into independent columns. A `Sc`'s `read`
+    // is CPS: it binds the column to a fresh val on FIRST read (memoized, so no recomputation) and yields the
+    // ref — so a column read only inside a guard binds there, i.e. computes only for survivors (the sink).
+    sealed trait Shape
+    final case class Sc(read: (Term => Term) => Term) extends Shape
+    final case class Tup(parts: List[Shape]) extends Shape
+
     val unit: Term = '{ () }.asTerm
 
     // --- AST helpers ---
@@ -168,14 +175,123 @@ object FuseMacro:
       case _                                                                   => false
     val needsDone: Boolean = takesPresent || shortCircuit
 
+    // ===== Layer B: pure map/filter segment optimizer (compute-for-survivors via memoized lazy columns) =====
+
+    /** a column that binds to a val on first read (memoized), then yields the ref. */
+    def memoScalar(compute: (Term => Term) => Term): Shape =
+      var bound: Option[Term] = None
+      Sc(k => bound match
+        case Some(r) => k(r)
+        case None    => compute(v => letBind(v)(r => { bound = Some(r); k(r) })))
+
+    def srcShape(cur: Term): Shape = Sc(k => k(cur)) // already bound by the loop / an upstream stage
+
+    /** materialize a shape to a single Term (binding columns as needed); tuples re-tuple (boxes, like eager). */
+    def readShape(shape: Shape)(k: Term => Term): Term = shape match
+      case Sc(read)   => read(k)
+      case Tup(parts) => readAll(parts, Nil)(ts => k(mkTuple(ts)))
+    def readAll(parts: List[Shape], acc: List[Term])(k: List[Term] => Term): Term = parts match
+      case Nil       => k(acc.reverse)
+      case p :: rest => readShape(p)(t => readAll(rest, t :: acc)(k))
+    def mkTuple(ts: List[Term]): Term = ts match
+      case List(a, b)    => '{ scala.Tuple2(${ a.asExpr }, ${ b.asExpr }) }.asTerm
+      case List(a, b, c) => '{ scala.Tuple3(${ a.asExpr }, ${ b.asExpr }, ${ c.asExpr }) }.asTerm
+      case _             => report.errorAndAbort("fuse: only tuple arities 2 and 3 are supported in fused projections")
+
+    // --- AST shape detection / substitution ---
+    def decomposeLambda(t: Term): Option[(Symbol, Term)] = unwrap(t) match
+      case Lambda(List(vd), body) => Some((vd.symbol, body))
+      case _                      => None
+    def isProj(name: String): Boolean = name.length > 1 && name(0) == '_' && name.drop(1).forall(_.isDigit)
+    def isProjection(t: Term): Option[(Term, Int)] = t match
+      case Select(inner, name) if isProj(name) => Some((inner, name.drop(1).toInt - 1))
+      case _                                    => None
+    def isTupleLiteral(t: Term): Option[List[Term]] =
+      def ok(obj: Term, args: List[Term]) =
+        if (args.length == 2 || args.length == 3) && obj.symbol.fullName.startsWith("scala.Tuple") then Some(args) else None
+      t match
+        case Apply(TypeApply(Select(obj, "apply"), _), args) => ok(obj, args)
+        case Apply(Select(obj, "apply"), args)               => ok(obj, args)
+        case _                                               => None
+    def collectProjIndices(body: Term, param: Symbol): List[Int] =
+      val buf = scala.collection.mutable.LinkedHashSet.empty[Int]
+      (new TreeTraverser:
+        override def traverseTree(t: Tree)(owner: Symbol): Unit = t match
+          case Select(inner, name) if isProj(name) && inner.symbol == param => buf += name.drop(1).toInt - 1
+          case _                                                            => super.traverseTree(t)(owner)
+      ).traverseTree(body)(Symbol.spliceOwner)
+      buf.toList
+    def usesParamDirectly(body: Term, param: Symbol): Boolean =
+      var found = false
+      (new TreeTraverser:
+        override def traverseTree(t: Tree)(owner: Symbol): Unit = t match
+          case Select(inner, name) if isProj(name) && inner.symbol == param => () // projection — don't descend
+          case id: Ident if id.symbol == param                              => found = true
+          case _                                                            => super.traverseTree(t)(owner)
+      ).traverseTree(body)(Symbol.spliceOwner)
+      found
+    def substParam(body: Term, param: Symbol, repl: Term): Term =
+      (new TreeMap:
+        override def transformTerm(t: Term)(owner: Symbol): Term = t match
+          case id: Ident if id.symbol == param => repl
+          case _                                => super.transformTerm(t)(owner)
+      ).transformTerm(body)(Symbol.spliceOwner)
+    def substProjs(body: Term, param: Symbol, refs: Map[Int, Term]): Term =
+      (new TreeMap:
+        override def transformTerm(t: Term)(owner: Symbol): Term = t match
+          case Select(inner, name) if isProj(name) && inner.symbol == param && refs.contains(name.drop(1).toInt - 1) =>
+            refs(name.drop(1).toInt - 1)
+          case _ => super.transformTerm(t)(owner)
+      ).transformTerm(body)(Symbol.spliceOwner)
+
+    // --- interpret a map lambda body symbolically into a Shape (decomposing tuples, resolving projections) ---
+    def interp(body: Term, param: Symbol, cur: Shape): Shape =
+      isTupleLiteral(body) match
+        case Some(parts) => Tup(parts.map(interp(_, param, cur)))
+        case None => isProjection(body) match
+          case Some((inner, j)) => interp(inner, param, cur) match
+            case Tup(ps) if j >= 0 && j < ps.length => ps(j)
+            case sc                                  => projScalar(sc, j)
+          case None => body match
+            case id: Ident if id.symbol == param => cur
+            case _                               => memoScalar(k => substColumns(body, param, cur)(k))
+    def projScalar(sc: Shape, j: Int): Shape =
+      memoScalar(k => readShape(sc)(t => k(Select.unique(t, "_" + (j + 1)))))
+    /** substitute param-uses in an atomic body with the columns it reads (binding only those columns). */
+    def substColumns(body: Term, param: Symbol, cur: Shape)(k: Term => Term): Term =
+      if usesParamDirectly(body, param) then readShape(cur)(ct => k(substParam(body, param, ct)))
+      else readColumns(cur, collectProjIndices(body, param), Map.empty)(refs => k(substProjs(body, param, refs)))
+    def readColumns(cur: Shape, js: List[Int], acc: Map[Int, Term])(k: Map[Int, Term] => Term): Term = js match
+      case Nil       => k(acc)
+      case j :: rest => readPart(cur, j)(ref => readColumns(cur, rest, acc + (j -> ref))(k))
+    def readPart(cur: Shape, j: Int)(k: Term => Term): Term = cur match
+      case Tup(ps) if j >= 0 && j < ps.length => readShape(ps(j))(k)
+      case other                              => readShape(other)(t => k(Select.unique(t, "_" + (j + 1))))
+
+    def applyMap(f: Term, cur: Shape): Shape = decomposeLambda(f) match
+      case Some((param, body)) => interp(body, param, cur)
+      case None                => memoScalar(k => readShape(cur)(ct => k(applyLambda(f, ct))))
+
+    /** read a filter predicate (binding only the columns it touches), then hand the Boolean term to `k`. */
+    def predShape(p: Term, neg: Boolean, cur: Shape)(k: Term => Term): Term =
+      def fin(b: Term): Term = k(if neg then '{ !${ b.asExprOf[Boolean] } }.asTerm else b)
+      decomposeLambda(p) match
+        case Some((param, body)) => readShape(interp(body, param, cur))(fin)
+        case None                => readShape(cur)(ct => fin(applyLambda(p, ct)))
+
+    /** lower a contiguous map/filter run; columns sink past filters automatically (lazy memoized reads). */
+    def buildSegment(ss: List[Stage], cur: Shape)(k: Shape => Term): Term = ss match
+      case Nil                  => k(cur)
+      case MapS(f) :: rest      => buildSegment(rest, applyMap(f, cur))(k)
+      case FilterS(p, neg) :: rest => predShape(p, neg, cur)(b => If(b, buildSegment(rest, cur)(k), unit))
+      case _                    => k(cur) // segment is map/filter only
+
     // --- per-element body: map/filter/take/drop/flatMap chain, ending in `ctx.consume` ---
     def buildBody(ss: List[(Stage, Int)], cur: Term, ctx: Ctx): Term = ss match
       case Nil => ctx.consume(cur)
-      case (MapS(f), _) :: rest => letBind(applyLambda(f, cur))(v => buildBody(rest, v, ctx))
-      case (FilterS(p, neg), _) :: rest =>
-        val raw  = applyLambda(p, cur)
-        val cond = if neg then '{ !${ raw.asExprOf[Boolean] } }.asTerm else raw
-        If(cond, buildBody(rest, cur, ctx), unit)
+      case (MapS(_) | FilterS(_, _), _) :: _ =>
+        val (seg, rest) = ss.span { case (MapS(_), _) => true; case (FilterS(_, _), _) => true; case _ => false }
+        buildSegment(seg.map(_._1), srcShape(cur))(finalShape => readShape(finalShape)(t => buildBody(rest, t, ctx)))
       case (FlatMapS(f, bTpe), _) :: rest =>
         // open a nested loop over f(cur): everything downstream runs inside it.
         val inner: Expr[FBase] = '{ ${ applyLambda(f, cur).asExpr }.asInstanceOf[FBase] }
