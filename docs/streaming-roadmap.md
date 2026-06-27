@@ -31,6 +31,51 @@ the Scala ecosystem currently offers.
 
 ---
 
+## 0.5 Research synthesis (fs2 + ox — see `docs/fs2-research.md`, `docs/ox-research.md`)
+
+Two independent research passes (fs2 verified against a v3.13 clone; ox against v1.0.5 source + JDK 25)
+**converged on the same architecture**. The load-bearing conclusions:
+
+1. **The keystone is one abstraction + one loop change.** A minimal pull source —
+   `trait Source[+A] { def pullChunk(): FArray[A] | Source.End }` (the unboxed analogue of fs2's
+   `Pull.uncons`, chunk-granular so the one virtual call amortizes over a whole `int[]`) — plus a **chunk
+   driver** that wraps fuse's existing element loop in an outer chunk loop and hoists stage/terminal state one
+   level further out. **This converts the entire existing fused surface (every CONST + SINK-O(1) terminal)
+   into constant-memory streaming in a single move** — the existing `(init, step, finalize)` terminals need
+   *no change*. fs2's `Chunk` ≈ our `FArray` exactly (`ArraySlice`≈`IntArr`, `Chunk.Queue`≈`Concat`).
+
+2. **Constant memory = pull + chunk + discard.** Live data at any instant = `acc` + stage slots + **one
+   chunk's backing array**, independent of stream length. A 100 GB file folds in O(chunkSize). `scanLeft`'s
+   "run the prologue once before the loop" already generalizes to "before the chunk loop."
+
+3. **Unboxed is our moat, and it survives concurrency** — *if* we pass **`FArray` chunks across thread seams,
+   not elements**. fs2 (`Chunk.map` → `new Array[Any]`, `apply(i): Object`) and ox (`Channel[Int]`/`Flow[Int]`
+   both box) box at the element level; a `BlockingQueue[FArray[Int]]` moves one pointer per chunk (leaf stays
+   `int[]`), so zero per-element boxing even at a `parMap` seam.
+
+4. **Concurrency: build on the JDK, do NOT depend on ox.** The structured-concurrency core we need is ~250
+   lines on **final** Loom primitives (`Thread.ofVirtual` / `newVirtualThreadPerTaskExecutor` +
+   `ArrayBlockingQueue` + `Semaphore`). Reasons: `StructuredTaskScope` is **still preview in JDK 25** (5th
+   preview, JEP 505 — shipping a preview API to library users is hostile); ox itself doesn't even use it (its
+   own `ThreadHerd`), so "depend on ox to dodge JEP churn" is a non-reason; and ox's `Flow` is **push/callback
+   + boxed**, the opposite shape from our pull/fused/unboxed engine — adopting it re-introduces the `Function1`
+   indirection fuse exists to kill. Borrow two ox *designs* (not the dep): ordered/unordered `parEvalMap(n)`
+   (`Semaphore` + in-order collector) and deterministic cancel-on-first-error (sibling interrupt-and-await).
+   Reconsider à-la-carte `ox-core` later only for off-critical-path extras (adaptive retry, rate limiting,
+   fair `select`). `ScopedValue` is final (JEP 506) and usable.
+
+5. **The clean boundary (what won't statically fuse).** Runtime-decided *topology* (dynamic
+   `flatMap`-of-runtime-`Source`, `parJoin`/stream-of-streams) and independently-paced concurrent producers
+   (`merge`/`parEvalMap`) cannot be one static loop. The rule both reports reached: **a concurrency or
+   dynamic-topology operator is a scope-opening SEAM** — fuse up to it, open a `supervised` scope, bounded
+   chunk-channel across, fuse again on the other side. Producer and consumer are each fused loops; only the
+   queue+threads at the seam are not. The `IO`/effect-monad layer is dropped entirely: `evalMap(f)` is just
+   `map` doing I/O on a virtual thread.
+
+The phased sequence in §7 below is updated to the **S1–S4** plan both reports recommend.
+
+---
+
 ## 1. Where fuse is today (the foundation)
 
 - **Model:** a Scala 3 macro reads the whole `xs.fuse.…` chain off the typed AST and emits ONE specialized
@@ -188,19 +233,35 @@ pure stages without forcing the whole pipeline into a runtime?
 
 ---
 
-## 7. Sequenced plan
+## 7. Sequenced plan (S1–S4, per the research synthesis)
 
-1. **Buffer-slot + epilogue infra** (§3a) — small, unblocks the rest.
-2. **`foldAdjacentBy`** (§3c) — O(1) streaming aggregate, low risk, immediately useful.
-3. **`groupAdjacentBy` (materializing form)** (§3b) — streaming group stage.
-4. **Nested fusion / push-fold** (§3d) — the key architectural piece; `groupAdjacentBy(key)(Fuse[A]=>B)`.
-   *This is the same machinery as §4, so prototype it with §4 in mind.*
-5. **Bounded-heap terminals** (§3e) — topN / takeRight.
-6. **Incremental `Source[A]` + chunk-driver** (§4) — the streaming leap; constant memory over unbounded input.
-7. **Resource safety** (§4) — bracket/scope for file/socket sources.
-8. **Structured-concurrency stages** (§5) — `parEvalMap`, `merge`, informed by the fs2 research.
+The research reordered priorities: the **`Source` + chunk-driver is the keystone** (it makes the whole
+existing surface constant-memory in one move), so it comes first — not after the in-memory grouping niceties.
 
-`grouped`/`sliding`-as-stages (§3f) slot in opportunistically once §3a exists.
+- **S0 — buffer-slot + epilogue infra** (§3a): mirror of `scanLeft`'s prologue. Small; unblocks the
+  cross-chunk state hoisting AND `groupAdjacentBy`/`grouped`-as-stages. Do this first as plumbing.
+- **S1 — incremental `Source[A]` + chunk-driver** (§4) ← **the keystone.** `trait Source[A] { pullChunk():
+  FArray[A] | End }`, specialized per kind; teach the macro to stage over a `Source` by wrapping the element
+  loop in a chunk loop with state hoisted above it. Ship sources: `fromIterator`, `fromInputStream`/`lines`
+  (the O(1) file-reader demo), `unfold`/`unfoldChunk`, `iterate`, `repeat`, `range`. Turns every existing
+  CONST/SINK-O(1) terminal into constant-memory streaming for free. Subsumes fs2's source constructors,
+  unboxed.
+- **S2 — resource safety via an ox-style scope** (§4.4): emit a `supervised` scope (built on JDK Loom, not
+  the ox dep — see §0.5.4) ONLY when a source/stage needs it; `useInScope(acquire)(release)`; guaranteed
+  release on completion / short-circuit / exception. Validate with "`take(1)` over a file still closes it."
+- **S3 — cross-chunk stateful + bounded-buffer stages** (§3b/§3c/§3f): hoist `scan`/`distinct`/
+  `zipWithIndex`/`mapAccumulate` slots above the chunk loop; add `groupAdjacentBy`, `foldAdjacentBy`,
+  `grouped`/`sliding`-as-stages, `chunkN`, `takeRight`/`dropRight` (ring buffers), bounded-heap `topN` (§3e).
+  This is also where **nested fusion** (§3d, `groupAdjacentBy(key)(Fuse[A]=>B)`) lands — it's the same
+  push-fold shape as the chunk-driver, so it's cheap once S1 exists.
+- **S4 — the structured-concurrency seam** (§5) ← **the differentiator.** `parMap(n)`/`mapAsync(n)`,
+  `merge`, `prefetch(n)`, `concurrently`, and the runtime drivers for dynamic `flatMap`-of-`Source` /
+  `parJoin`. Each is a scope-opening seam: fused-producer loop → bounded `ArrayBlockingQueue[FArray[A]]` →
+  fused-consumer loop. ~250 lines of JDK-Loom structured concurrency (borrow ox's `parEvalMap` ordering +
+  cancel-on-first-error designs). Keep chunks-across-the-seam so it stays unboxed.
+
+Note the resequencing vs the original list: nested fusion (§3d) and the in-memory adjacency stages move to S3
+because S1's push-fold machinery is their prerequisite and delivers far more leverage first.
 
 ---
 
@@ -208,6 +269,9 @@ pure stages without forcing the whole pipeline into a runtime?
 - `docs/inside-the-fusion-macro.md` — how the current fusion works (hygiene, predicates, applicative core,
   zip, nesting, dynamism, collect).
 - `docs/fused-pipeline-design.md` — original design.
-- `docs/fs2-research.md` — **(to be produced by the fs2 research pass)**: fs2 combinator inventory categorized
-  by memory behavior, Chunk/Pull/Stream architecture, concurrency model, and the ox-based reimagining. Feeds
-  §4 and §5 concretely.
+- `docs/fs2-research.md` — fs2 combinator inventory categorized by memory behavior, Chunk/Pull/Stream/Scope
+  architecture (verified vs a v3.13 clone), where fs2 boxes, concurrency reimagined in ox terms, the concrete
+  `Source`/chunk-driver proposal (§4 there), the honest "won't port" boundary, and S1–S4 recommendations.
+- `docs/ox-research.md` — ox inventory (incl. its `Flow`/`Channel` model), side-by-side ox-vs-raw-JDK-25 for
+  each primitive we need, the `StructuredTaskScope`-still-preview finding, and the **build-on-JDK (don't
+  depend on ox)** recommendation with the ~250-line minimal core.
