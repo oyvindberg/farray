@@ -254,8 +254,26 @@ object FuseMacro:
     def readAll(parts: List[Shape], acc: List[Term])(k: List[Term] => Term): Term = parts match
       case Nil       => k(acc.reverse)
       case p :: rest => readShape(p)(t => readAll(rest, t :: acc)(k))
+    /** materialize a 2-tuple. If BOTH fields are primitive (Int/Long/Double), build the stdlib @specialized
+     *  `Tuple2$mcXY$sp` subclass so the fields stay UNBOXED, then cast to the generic `(A, B)` — a runtime no-op
+     *  (it really IS a Tuple2). Mixed/reference fields fall back to the generic `Tuple2` (only a primitive in a
+     *  generic slot would box, and that's Scala's Tuple2 erasure, not ours). Tuple3 isn't @specialized. */
+    def mkPair(a: Term, b: Term): Term =
+      val ti = TypeRepr.of[Int]; val tj = TypeRepr.of[Long]; val td = TypeRepr.of[Double]
+      val ta = a.tpe.widen; val tb = b.tpe.widen
+      def is(t: TypeRepr, u: TypeRepr) = t =:= u
+      if      is(ta, ti) && is(tb, ti) then '{ new scala.Tuple2$mcII$sp(${ a.asExprOf[Int] }, ${ b.asExprOf[Int] }).asInstanceOf[(Int, Int)] }.asTerm
+      else if is(ta, ti) && is(tb, tj) then '{ new scala.Tuple2$mcIJ$sp(${ a.asExprOf[Int] }, ${ b.asExprOf[Long] }).asInstanceOf[(Int, Long)] }.asTerm
+      else if is(ta, ti) && is(tb, td) then '{ new scala.Tuple2$mcID$sp(${ a.asExprOf[Int] }, ${ b.asExprOf[Double] }).asInstanceOf[(Int, Double)] }.asTerm
+      else if is(ta, tj) && is(tb, ti) then '{ new scala.Tuple2$mcJI$sp(${ a.asExprOf[Long] }, ${ b.asExprOf[Int] }).asInstanceOf[(Long, Int)] }.asTerm
+      else if is(ta, tj) && is(tb, tj) then '{ new scala.Tuple2$mcJJ$sp(${ a.asExprOf[Long] }, ${ b.asExprOf[Long] }).asInstanceOf[(Long, Long)] }.asTerm
+      else if is(ta, tj) && is(tb, td) then '{ new scala.Tuple2$mcJD$sp(${ a.asExprOf[Long] }, ${ b.asExprOf[Double] }).asInstanceOf[(Long, Double)] }.asTerm
+      else if is(ta, td) && is(tb, ti) then '{ new scala.Tuple2$mcDI$sp(${ a.asExprOf[Double] }, ${ b.asExprOf[Int] }).asInstanceOf[(Double, Int)] }.asTerm
+      else if is(ta, td) && is(tb, tj) then '{ new scala.Tuple2$mcDJ$sp(${ a.asExprOf[Double] }, ${ b.asExprOf[Long] }).asInstanceOf[(Double, Long)] }.asTerm
+      else if is(ta, td) && is(tb, td) then '{ new scala.Tuple2$mcDD$sp(${ a.asExprOf[Double] }, ${ b.asExprOf[Double] }).asInstanceOf[(Double, Double)] }.asTerm
+      else '{ scala.Tuple2(${ a.asExpr }, ${ b.asExpr }) }.asTerm
     def mkTuple(ts: List[Term]): Term = ts match
-      case List(a, b)    => '{ scala.Tuple2(${ a.asExpr }, ${ b.asExpr }) }.asTerm
+      case List(a, b)    => mkPair(a, b)
       case List(a, b, c) => '{ scala.Tuple3(${ a.asExpr }, ${ b.asExpr }, ${ c.asExpr }) }.asTerm
       case _             => report.errorAndAbort("fuse: only tuple arities 2 and 3 are supported here")
 
@@ -267,6 +285,8 @@ object FuseMacro:
       else None
     /** reconstruct a product value of `tpe` from its field values (companion `apply`, e.g. `C(...)` / tuple). */
     def mkProduct(tpe: TypeRepr, vs: List[Term]): Term =
+      // a 2-tuple goes through mkPair so an all-primitive pair uses the unboxed @specialized Tuple2
+      if vs.length == 2 && tpe.typeSymbol == TypeRepr.of[Tuple2[Any, Any]].typeSymbol then return mkPair(vs(0), vs(1))
       val comp = tpe.typeSymbol.companionModule
       comp.methodMember("apply").find(_.paramSymss.flatMap(_.filter(_.isTerm)).length == vs.length) match
         case Some(m) =>

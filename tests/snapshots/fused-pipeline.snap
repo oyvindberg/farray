@@ -244,6 +244,50 @@
 }
 
 ====================================================================================================
+// UNBOXED-PAIR: ints.fuse.map(x => (x, x*2)).run  [FArray[(Int,Int)] via @specialized Tuple2$mcII$sp — no boxing]
+====================================================================================================
+{
+  val $proxy: FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  } = FArray$package.$asInstanceOf$[FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  }]
+  val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
+  val Fuse_this: Fuse[Tuple2[Int, Int]] = (new Fuse[Int](xs$proxy): Fuse[Int]).map[Tuple2[Int, Int]](((x: Int) => Tuple2.apply[Int, Int](x, x.*(2))))
+
+  ({
+    val src0: FBase = ints.$asInstanceOf$[ints & FArray[Int]].asInstanceOf[FBase]
+    val n0: Int = src0.length
+    val cap: Int = n0
+    val out: Array[Object] = new Array[Object](cap)
+    var o: Int = 0
+    val s: FBase = src0
+    val len: Int = s.length
+    if (s.isInstanceOf[IntArr]) {
+      val a: Array[Int] = s.asInstanceOf[IntArr].arr
+      var i: Int = 0
+      while (i.<(len)) {
+        val v: Int = a.apply(i)
+        val `v₂`: Int = v.*(2)
+        out.update(o, new Tuple2$mcII$sp(v, `v₂`).asInstanceOf[Tuple2[Int, Int]].asInstanceOf[Object])
+        o = o.+(1)
+        i = i.+(1)
+      }
+    } else {
+      var `i₂`: Int = 0
+      while (`i₂`.<(len)) {
+        val `v₃`: Int = FArrayOps.intAt(s, `i₂`)
+        val `v₄`: Int = `v₃`.*(2)
+        out.update(o, new Tuple2$mcII$sp(`v₃`, `v₄`).asInstanceOf[Tuple2[Int, Int]].asInstanceOf[Object])
+        o = o.+(1)
+        `i₂` = `i₂`.+(1)
+      }
+    }
+    if (o.==(0)) (RefArr.EMPTY: FBase) else if (o.==(cap)) new RefArr(out, o) else new RefArr(java.util.Arrays.copyOf[Object](out, o), o)
+  }.asInstanceOf[FArray[Tuple2[Int, Int]]]: FArray[Tuple2[Int, Int]])
+}
+
+====================================================================================================
 // ints.fuse.filter(_%2==0).count
 ====================================================================================================
 {

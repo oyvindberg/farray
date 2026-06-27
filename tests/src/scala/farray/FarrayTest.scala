@@ -1307,6 +1307,8 @@ class FListTest:
       FuseDebug.show(ints.fuse.drop(2).take(3).run))
     scenario("ints.fuse.map(_+1).foldLeft(0)(_+_)",
       FuseDebug.show(ints.fuse.map(_ + 1).foldLeft(0)(_ + _)))
+    scenario("UNBOXED-PAIR: ints.fuse.map(x => (x, x*2)).run  [FArray[(Int,Int)] via @specialized Tuple2$mcII$sp — no boxing]",
+      FuseDebug.show(ints.fuse.map(x => (x, x * 2)).run))
     scenario("ints.fuse.filter(_%2==0).count",
       FuseDebug.show(ints.fuse.filter(_ % 2 == 0).count))
     scenario("strs.fuse.map(_.toUpperCase).run  [Ref]",
