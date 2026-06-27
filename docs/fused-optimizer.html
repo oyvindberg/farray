@@ -9,6 +9,9 @@ font:16px/1.65 -apple-system,Segoe UI,Roboto,sans-serif;max-width:1000px;margin:
 h1{font-size:1.9rem;margin:.3rem 0}.lede{color:var(--mut);font-size:1.08rem}
 h2{font-size:1.12rem;margin:0 0 .5rem;color:var(--acc)}
 section.ex{border:1px solid var(--bd);border-radius:12px;padding:1.1rem 1.25rem;margin:1.25rem 0;background:#11141d}
+section.setup{border:1px solid #2b3a4a;border-radius:12px;padding:1.1rem 1.25rem;margin:1.25rem 0;background:#10161f}
+section.setup b{color:#cfe6ff}pre.sample{color:#bfe8c8;border-color:#234534;background:#10180f;white-space:pre-wrap}
+.method{color:var(--mut);font-size:.9rem;margin-top:.7rem}
 .prose code,.lede code{color:#ffd9a8}
 .cap{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.07em;margin:1rem 0 .25rem}
 .cap.rival{color:#f0a8a8}
@@ -27,6 +30,7 @@ footer{color:var(--mut);font-size:.85rem;margin-top:2rem;display:flex;justify-co
 footer .nav{color:var(--acc);text-decoration:none;font-weight:600;white-space:nowrap}</style></head><body>
 <header><div class="tabs"><a class="on"" href="fused-optimizer.html">1 · The optimizer</a><a href="fused-json.html">2 · Fused JSON</a></div>
 <h1>The fuse optimizer</h1><p class="lede"><code>xs.fuse.map(f).filter(p).&lt;terminal&gt;</code> is a macro, not a runtime data structure. It reads the WHOLE chain off the typed AST at compile time and emits one specialized <code>while</code> loop with the lambdas inlined into the body — no view nodes, no <code>Function1</code>, no boxing, no megamorphism. Below: the same loop you'd write by hand, produced from the pipeline you'd actually want to write. Every code block is the verbatim post-typer expansion.</p></header>
+
 <section class="ex"><h2>One loop, no closures</h2>
 <p class="prose">Three stages, one <code>int[]</code> scan. <code>_ + 1</code> became the bytecode <code>iadd</code>; no <code>Function1</code> was allocated; the filter is an <code>if</code> that wraps everything downstream of it. A <code>View</code> would store three <code>Function1</code>s and call each through an interface per element.</p>
 <p class="cap">you write</p><pre class="scala">xs.fuse.map(_ + 1).filter(_ % 2 == 0).map(_ * 2).run</pre>

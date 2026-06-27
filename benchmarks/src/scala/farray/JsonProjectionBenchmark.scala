@@ -5,6 +5,7 @@ import java.util.concurrent.TimeUnit
 import java.nio.charset.StandardCharsets.UTF_8
 import com.github.plokhotnyuk.jsoniter_scala.core.*
 import com.github.plokhotnyuk.jsoniter_scala.macros.*
+import org.typelevel.jawn.ast.{JParser, JValue}
 import farray.json.{RecScan, Rec, FatScan, FatRec, Json}
 
 /** THE kill-or-prove experiment (docs/json-parser-research.md §5.6).
@@ -108,6 +109,31 @@ class JsonProjectionBenchmark:
       start = end + 1
     acc
 
+  /** jawn (typelevel's high-reputation parser): parse each line DIRECTLY FROM BYTES to a JValue AST, then
+   *  extract the field. jawn is a fast tokenizer, but it has no projection — it builds the whole AST (a JObject
+   *  of all 20 fields, every value boxed into a JValue) per record before you can read one field. */
+  @Benchmark def sum_jawn(): Double =
+    var acc = 0.0; var start = 0
+    while start < buf.length do
+      var end = start; while end < buf.length && buf(end) != '\n' do end += 1
+      val j = JParser.parseFromByteBuffer(java.nio.ByteBuffer.wrap(buf, start, end - start)).get
+      val a = j.get("amount").asDouble
+      if a > threshold then acc += a
+      start = end + 1
+    acc
+
+  /** Jackson databind, tree model: build a JsonNode tree (all 20 fields) per line, then read one. The classic
+   *  reflection-free-but-allocation-heavy path everyone reaches for first. (Included for scale.) */
+  @Benchmark def sum_jackson(): Double =
+    var acc = 0.0; var start = 0
+    while start < buf.length do
+      var end = start; while end < buf.length && buf(end) != '\n' do end += 1
+      val node = JsonProjectionBenchmark.jackson.readTree(buf, start, end - start)
+      val a = node.get("amount").asDouble
+      if a > threshold then acc += a
+      start = end + 1
+    acc
+
   /** THE strongest jsoniter baseline: a hand-written JsonReader loop (jsoniter's own tuned reader + SWAR),
    *  manual key dispatch, decode ONLY `amount`, skip the other 19, and return the PRIMITIVE — no case-class
    *  object allocated. This is jsoniter at its absolute best for this projection: no codec object, folds into
@@ -172,6 +198,9 @@ class JsonProjectionBenchmark:
 end JsonProjectionBenchmark
 
 object JsonProjectionBenchmark:
+  /** a single reused Jackson mapper (allocating one per call would be even slower / unfair). */
+  val jackson: com.fasterxml.jackson.databind.ObjectMapper = new com.fasterxml.jackson.databind.ObjectMapper()
+
   /** the narrow projection record jsoniter parses (everything else is skipped). */
   final case class Narrow(amount: Double, category: String)
 

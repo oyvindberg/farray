@@ -29,7 +29,8 @@ object JsonDemo:
     java.nio.file.Files.writeString(java.nio.file.Path.of(s"$dir/fused-optimizer.html"),
       page("The fuse optimizer", optimizerLede, optimizerSections, prevNext = ("", "fused-json.html", "The JSON demo →")))
     java.nio.file.Files.writeString(java.nio.file.Path.of(s"$dir/fused-json.html"),
-      page("Fused JSON: the optimizer parses", jsonLede, jsonSections, prevNext = ("fused-optimizer.html", "", "← The optimizer")))
+      page("Fused JSON: an enormously fast, projection-aware parser", jsonLede, jsonSections,
+           prevNext = ("fused-optimizer.html", "", "← The optimizer"), setup = setupCard))
     println(s"wrote $dir/fused-optimizer.html and $dir/fused-json.html")
 
   // ════════════════════════════════ PAGE 1: the optimizer over collections ═══════════════════════════════
@@ -77,15 +78,33 @@ object JsonDemo:
 
   // ════════════════════════════════ PAGE 2: the optimizer parses JSON ════════════════════════════════════
   val jsonLede: String =
-    """A JSON object is a PRODUCT whose fields are COLUMNS, sourced from byte ranges. So the same optimizer —
-      |unchanged — drives a parser: it works out which fields the pipeline reads, and emits ONE per-record byte
-      |scanner. Dead fields are skipped at the byte level; a projected string is decoded only for survivors; a
-      |record whose filter fails is abandoned mid-scan; no per-record object is ever allocated. Each example
-      |shows the generated scanner, the jsoniter-scala code it beats, and the measured score (JMH, `-prof gc`,
-      |10 000-record NDJSON; B/op is bytes per 10 000-record op, so ÷10 000 ≈ bytes/record)."""
+    """Now turn the optimizer loose on JSON. The insight that makes it work: a JSON object is a PRODUCT whose
+      |fields are COLUMNS, sourced from byte ranges. So the SAME optimizer — unchanged — becomes an enormously
+      |fast, projection-aware JSON parser. It reads your `.filter(…).map(…)` pipeline, works out which fields it
+      |actually touches, and emits ONE specialized per-record scanner that reads straight off the `byte[]`: dead
+      |fields are skipped at the byte level, a projected string is decoded only for survivors, a record whose
+      |filter fails is abandoned mid-scan, and no per-record object is ever allocated. The result beats the JVM's
+      |best hand-tuned parser on a projection query — and laps the popular AST parsers."""
 
-  /** the 20-field record the JSON examples parse. */
-  // (defined as Event below; queries touch 1–2 fields of it.)
+  /** the benchmark setup, shown up front so the numbers below have context. (Sizes measured from the real
+   *  10 000-record buffer the benchmark uses: 3 348 775 bytes total, ~334 bytes/record.) */
+  val jsonSetup: String =
+    """The dataset is NDJSON — one JSON object per line — of <b>10 000 records</b>, <b>3 348 775 bytes (~3.2 MB)</b>,
+      |each record a <b>20-field</b> object averaging <b>~334 bytes</b> (a realistic mix of longs, ints, doubles,
+      |and strings). Every query below touches just <b>1–2 of those 20 fields</b> — the projection case where
+      |pushdown pays. A representative record:"""
+
+  val sampleRecordPretty: String =
+    """{ "id":7, "ts":1700000000000, "age":34, "amount":250.50, "score":88.0,
+      |  "name":"Ada", "category":"books", "status":"active", "region":"eu", … 11 more fields … }"""
+
+  /** benchmark methodology note, shown once under the setup. */
+  val jsonMethod: String =
+    """Measured with JMH (5×2s warmup, 5×2s measurement) and `-prof gc` for allocation. Throughput is ops/s
+      |over the whole 10 000-record buffer; allocation (B/op) is bytes per buffer-op, so ÷10 000 ≈ bytes per
+      |record. Each parser does the SAME query: filter on one field, project another. The fuse column is the
+      |generated scanner; the others are each library's best idiom for "read a couple of fields per line." Run
+      |on a warm JVM (GraalVM 25, Apple Silicon); your machine will differ, but the ratios are the story."""
 
   def jsonSections(): List[Example] =
     val b = sample
@@ -98,12 +117,14 @@ object JsonDemo:
           |`var`.""".stripMargin,
         "Json.ndjson[Event](src).fuse.filter(_.amount > 150).map(_.amount).foldLeft(0.0)(_ + _)",
         clean(j_sum),
-        rival = Some(("jsoniter-scala, hand-written reader (the strongest baseline: no object, folds into a var)", jsoniterReaderSrc)),
-        bench = Some(Bench("fuse 1.70× faster than the strongest hand-tuned jsoniter, ~zero allocation",
+        rival = Some(("the field — jsoniter-scala (hand-written reader, no object), jawn, and Jackson all do the same query", rivalsSrc)),
+        bench = Some(Bench("fuse beats the JVM's best hand-tuned parser 1.5×, and laps the AST parsers 4–9× — at ~zero allocation",
           List(
-            ("fuse (generated scanner)", "401 ops/s", "0.5 B/op"),
-            ("jsoniter — hand-written reader, no object", "235 ops/s", "0.9 B/op"),
-            ("jsoniter — full codec (parses all 20 fields)", "141 ops/s", "6 464 001 B/op"))))),
+            ("fuse (generated scanner)", "395 ops/s", "0.6 B/op"),
+            ("jsoniter — hand-written reader, no object", "256 ops/s", "0.8 B/op"),
+            ("jsoniter — full codec (parses all 20 fields)", "145 ops/s", "6 464 001 B/op"),
+            ("Jackson — tree model (JsonNode)", "87 ops/s", "31 047 490 B/op"),
+            ("jawn — AST (JValue)", "46 ops/s", "45 885 204 B/op"))))),
       Example(
         "Lazy decode — a String built only for survivors",
         """`category` gets a slot, but a STRING slot is just `(start, len)` into the buffer — not a decoded
@@ -182,6 +203,22 @@ object JsonDemo:
       |val r = readFromSubArray[Narrow](buf, start, end)   // allocates a Narrow object every record,
       |if r.amount > 150 then r.category                   // and decodes `category` for ALL survivors""".stripMargin
 
+  /** all three rivals doing the SAME query, so the table rows have code. */
+  val rivalsSrc: String =
+    """// jsoniter-scala — hand-written reader, the strongest baseline (no object, folds into a var):
+      |val len = in.readKeyAsCharBuf()                 // still decodes EVERY key into a char[] + hashes it
+      |if in.isCharBufEqualsTo(len, "amount") then     // …then compares — even for the 19 fields we skip
+      |  amount = in.readDouble()
+      |else in.skip()                                  // walks the value's bytes; no predicate early-out
+      |
+      |// jawn — typelevel's well-regarded parser. No projection: it builds the WHOLE AST per record.
+      |val j = JParser.parseFromByteBuffer(ByteBuffer.wrap(buf, start, len)).get   // JObject of all 20 fields,
+      |val a = j.get("amount").asDouble                                            // every value boxed as a JValue
+      |
+      |// Jackson — databind tree model. Same story: a full JsonNode tree per record, then read one field.
+      |val node = mapper.readTree(buf, start, len)     // builds & boxes all 20 fields,
+      |val a = node.get("amount").asDouble             // to read exactly one""".stripMargin
+
   // ════════════════════════════════════ generated-code captures ══════════════════════════════════════════
   private val xs5 = FArray(1, 2, 3, 4, 5)
   private inline def c_mapfilter: String = FuseDebug.show(xs5.fuse.map(_ + 1).filter(_ % 2 == 0).map(_ * 2).run)
@@ -217,7 +254,8 @@ object JsonDemo:
       .replaceAll("""(\w+)\.unary_!""", "!$1") // seen.unary_! -> !seen
 
   // ══════════════════════════════════════════ HTML rendering ═════════════════════════════════════════════
-  private def page(title: String, lede: String, sections: () => List[Example], prevNext: (String, String, String)): String =
+  private def page(title: String, lede: String, sections: () => List[Example], prevNext: (String, String, String),
+                   setup: String = ""): String =
     val (prevHref, nextHref, navLabel) = prevNext
     val nav =
       if nextHref.nonEmpty then s"""<a class="nav" href="$nextHref">$navLabel</a>"""
@@ -228,9 +266,17 @@ object JsonDemo:
        |<style>$css</style></head><body>
        |<header><div class="tabs"><a${cls(prevHref.isEmpty && nextHref.nonEmpty)} href="fused-optimizer.html">1 · The optimizer</a><a${cls(prevHref.nonEmpty)} href="fused-json.html">2 · Fused JSON</a></div>
        |<h1>${esc(title)}</h1><p class="lede">${prose(lede)}</p></header>
+       |$setup
        |$body
        |<footer>$nav<span>Code blocks are the verbatim post-typer expansion (<code>FuseDebug.show</code>), shown, never executed. Generated by <code>farray.json.JsonDemo</code>.</span></footer>
        |</body></html>""".stripMargin
+
+  /** the data-setup card for the JSON page (sizes + a sample record + the methodology). */
+  private def setupCard: String =
+    s"""<section class="setup"><h2>The benchmark</h2>
+       |<p class="prose">${prose(jsonSetup)}</p>
+       |<pre class="sample">${esc(sampleRecordPretty.stripMargin)}</pre>
+       |<p class="prose method">${prose(jsonMethod)}</p></section>""".stripMargin
 
   private def cls(active: Boolean): String = if active then """ class="on"""" + "\"" else ""
 
@@ -259,7 +305,7 @@ object JsonDemo:
 
   private def prose(s: String): String =
     val e = "`([^`]+)`".r.replaceAllIn(esc(s.stripMargin), m => s"<code>${m.group(1)}</code>")
-    e.replace("\n", " ")
+    e.replace("\n", " ").replace("&lt;b&gt;", "<b>").replace("&lt;/b&gt;", "</b>") // allow bold in prose
 
   private def highlightScala(s: String): String =
     var h = esc(s)
@@ -280,6 +326,9 @@ object JsonDemo:
       |h1{font-size:1.9rem;margin:.3rem 0}.lede{color:var(--mut);font-size:1.08rem}
       |h2{font-size:1.12rem;margin:0 0 .5rem;color:var(--acc)}
       |section.ex{border:1px solid var(--bd);border-radius:12px;padding:1.1rem 1.25rem;margin:1.25rem 0;background:#11141d}
+      |section.setup{border:1px solid #2b3a4a;border-radius:12px;padding:1.1rem 1.25rem;margin:1.25rem 0;background:#10161f}
+      |section.setup b{color:#cfe6ff}pre.sample{color:#bfe8c8;border-color:#234534;background:#10180f;white-space:pre-wrap}
+      |.method{color:var(--mut);font-size:.9rem;margin-top:.7rem}
       |.prose code,.lede code{color:#ffd9a8}
       |.cap{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.07em;margin:1rem 0 .25rem}
       |.cap.rival{color:#f0a8a8}

@@ -1,5 +1,5 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>Fused JSON: the optimizer parses</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Fused JSON: an enormously fast, projection-aware parser</title>
 <style>:root{--bg:#0e1016;--fg:#e7eaf0;--mut:#8b95a6;--acc:#7dd3fc;--ok:#86efac;--code:#151925;--bd:#232a38;--win:#16321f}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);
 font:16px/1.65 -apple-system,Segoe UI,Roboto,sans-serif;max-width:1000px;margin:0 auto;padding:1.5rem 1.25rem 4rem}
@@ -9,6 +9,9 @@ font:16px/1.65 -apple-system,Segoe UI,Roboto,sans-serif;max-width:1000px;margin:
 h1{font-size:1.9rem;margin:.3rem 0}.lede{color:var(--mut);font-size:1.08rem}
 h2{font-size:1.12rem;margin:0 0 .5rem;color:var(--acc)}
 section.ex{border:1px solid var(--bd);border-radius:12px;padding:1.1rem 1.25rem;margin:1.25rem 0;background:#11141d}
+section.setup{border:1px solid #2b3a4a;border-radius:12px;padding:1.1rem 1.25rem;margin:1.25rem 0;background:#10161f}
+section.setup b{color:#cfe6ff}pre.sample{color:#bfe8c8;border-color:#234534;background:#10180f;white-space:pre-wrap}
+.method{color:var(--mut);font-size:.9rem;margin-top:.7rem}
 .prose code,.lede code{color:#ffd9a8}
 .cap{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.07em;margin:1rem 0 .25rem}
 .cap.rival{color:#f0a8a8}
@@ -26,7 +29,12 @@ table.bench tr.win{background:var(--win)}table.bench tr.win td{color:var(--ok)}
 footer{color:var(--mut);font-size:.85rem;margin-top:2rem;display:flex;justify-content:space-between;gap:1rem;align-items:center}
 footer .nav{color:var(--acc);text-decoration:none;font-weight:600;white-space:nowrap}</style></head><body>
 <header><div class="tabs"><a href="fused-optimizer.html">1 · The optimizer</a><a class="on"" href="fused-json.html">2 · Fused JSON</a></div>
-<h1>Fused JSON: the optimizer parses</h1><p class="lede">A JSON object is a PRODUCT whose fields are COLUMNS, sourced from byte ranges. So the same optimizer — unchanged — drives a parser: it works out which fields the pipeline reads, and emits ONE per-record byte scanner. Dead fields are skipped at the byte level; a projected string is decoded only for survivors; a record whose filter fails is abandoned mid-scan; no per-record object is ever allocated. Each example shows the generated scanner, the jsoniter-scala code it beats, and the measured score (JMH, <code>-prof gc</code>, 10 000-record NDJSON; B/op is bytes per 10 000-record op, so ÷10 000 ≈ bytes/record).</p></header>
+<h1>Fused JSON: an enormously fast, projection-aware parser</h1><p class="lede">Now turn the optimizer loose on JSON. The insight that makes it work: a JSON object is a PRODUCT whose fields are COLUMNS, sourced from byte ranges. So the SAME optimizer — unchanged — becomes an enormously fast, projection-aware JSON parser. It reads your <code>.filter(…).map(…)</code> pipeline, works out which fields it actually touches, and emits ONE specialized per-record scanner that reads straight off the <code>byte[]</code>: dead fields are skipped at the byte level, a projected string is decoded only for survivors, a record whose filter fails is abandoned mid-scan, and no per-record object is ever allocated. The result beats the JVM's best hand-tuned parser on a projection query — and laps the popular AST parsers.</p></header>
+<section class="setup"><h2>The benchmark</h2>
+<p class="prose">The dataset is NDJSON — one JSON object per line — of <b>10 000 records</b>, <b>3 348 775 bytes (~3.2 MB)</b>, each record a <b>20-field</b> object averaging <b>~334 bytes</b> (a realistic mix of longs, ints, doubles, and strings). Every query below touches just <b>1–2 of those 20 fields</b> — the projection case where pushdown pays. A representative record:</p>
+<pre class="sample">{ "id":7, "ts":1700000000000, "age":34, "amount":250.50, "score":88.0,
+  "name":"Ada", "category":"books", "status":"active", "region":"eu", … 11 more fields … }</pre>
+<p class="prose method">Measured with JMH (5×2s warmup, 5×2s measurement) and <code>-prof gc</code> for allocation. Throughput is ops/s over the whole 10 000-record buffer; allocation (B/op) is bytes per buffer-op, so ÷10 000 ≈ bytes per record. Each parser does the SAME query: filter on one field, project another. The fuse column is the generated scanner; the others are each library's best idiom for "read a couple of fields per line." Run on a warm JVM (GraalVM 25, Apple Silicon); your machine will differ, but the ratios are the story.</p></section>
 <section class="ex"><h2>Projection pushdown — read 1 field of 20</h2>
 <p class="prose">The pipeline reads only <code>amount</code>. Every other field is a dead column with no slot: the generated scanner hands it to <code>skipValue</code>, which advances past its bytes without decoding or allocating. A 20-field record costs one number-parse and 19 byte-skips. No <code>Event</code> is built; the fold runs into a <code>var</code>.</p>
 <p class="cap">you write</p><pre class="scala">Json.ndjson[Event](src).fuse.filter(_.amount &gt; 150).map(_.amount).foldLeft(0.0)(_ + _)</pre>
@@ -70,24 +78,22 @@ footer .nav{color:var(--acc);text-decoration:none;font-weight:600;white-space:no
     (acc: Double)
   }.asInstanceOf[Double]: Double)
 }</pre>
-<p class="cap rival">what we beat — jsoniter-scala, hand-written reader (the strongest baseline: no object, folds into a var)</p><pre class="rival"><span class="kw">new</span> JsonValueCodec[Double]:
-  <span class="kw">def</span> decodeValue(in: JsonReader, default: Double): Double =
-    <span class="kw">var</span> amount = default
-    <span class="kw">if</span> !in.isNextToken('{') <span class="kw">then</span> in.decodeError("expected {")
-    <span class="kw">if</span> !in.isNextToken('}') <span class="kw">then</span>
-      in.rollbackToken()
-      <span class="kw">var</span> continue = true
-      <span class="kw">while</span> continue do
-        <span class="kw">val</span> len = in.readKeyAsCharBuf()              <span class="cm">// decodes EVERY key into a char[] + hashes it</span>
-        <span class="kw">if</span> in.isCharBufEqualsTo(len, "amount") <span class="kw">then</span>  <span class="cm">// …<span class="kw">then</span> compares — even for the 19 we skip</span>
-          amount = in.readDouble()
-        <span class="kw">else</span> in.skip()                               <span class="cm">// walks the value's bytes; no early-out</span>
-        continue = in.isNextToken(',')
-      <span class="kw">if</span> !in.isCurrentToken('}') <span class="kw">then</span> in.objectEndOrCommaError()
-    amount</pre>
+<p class="cap rival">what we beat — the field — jsoniter-scala (hand-written reader, no object), jawn, and Jackson all do the same query</p><pre class="rival"><span class="cm">// jsoniter-scala — hand-written reader, the strongest baseline (no object, folds into a <span class="kw">var</span>):</span>
+<span class="kw">val</span> len = in.readKeyAsCharBuf()                 <span class="cm">// still decodes EVERY key into a char[] + hashes it</span>
+<span class="kw">if</span> in.isCharBufEqualsTo(len, "amount") <span class="kw">then</span>     <span class="cm">// …<span class="kw">then</span> compares — even for the 19 fields we skip</span>
+  amount = in.readDouble()
+<span class="kw">else</span> in.skip()                                  <span class="cm">// walks the value's bytes; no predicate early-out</span>
+
+<span class="cm">// jawn — typelevel's well-regarded parser. No projection: it builds the WHOLE AST per record.</span>
+<span class="kw">val</span> j = JParser.parseFromByteBuffer(ByteBuffer.wrap(buf, start, len)).get   <span class="cm">// JObject of all 20 fields,</span>
+<span class="kw">val</span> a = j.get("amount").asDouble                                            <span class="cm">// every value boxed as a JValue</span>
+
+<span class="cm">// Jackson — databind tree model. Same story: a full JsonNode tree per record, <span class="kw">then</span> read one field.</span>
+<span class="kw">val</span> node = mapper.readTree(buf, start, len)     <span class="cm">// builds &amp; boxes all 20 fields,</span>
+<span class="kw">val</span> a = node.get("amount").asDouble             <span class="cm">// to read exactly one</span></pre>
 <p class="cap">measured (JMH, -prof gc)</p>
-<table class="bench"><thead><tr><th></th><th>throughput</th><th>allocation</th></tr></thead><tbody><tr class="r win"><td>fuse (generated scanner)</td><td class="num">401 ops/s</td><td class="num">0.5 B/op</td></tr><tr class="r"><td>jsoniter — hand-written reader, no object</td><td class="num">235 ops/s</td><td class="num">0.9 B/op</td></tr><tr class="r"><td>jsoniter — full codec (parses all 20 fields)</td><td class="num">141 ops/s</td><td class="num">6 464 001 B/op</td></tr></tbody></table>
-<p class="headline"><span class="trophy">▲</span> fuse 1.70× faster than the strongest hand-tuned jsoniter, ~zero allocation</p>
+<table class="bench"><thead><tr><th></th><th>throughput</th><th>allocation</th></tr></thead><tbody><tr class="r win"><td>fuse (generated scanner)</td><td class="num">395 ops/s</td><td class="num">0.6 B/op</td></tr><tr class="r"><td>jsoniter — hand-written reader, no object</td><td class="num">256 ops/s</td><td class="num">0.8 B/op</td></tr><tr class="r"><td>jsoniter — full codec (parses all 20 fields)</td><td class="num">145 ops/s</td><td class="num">6 464 001 B/op</td></tr><tr class="r"><td>Jackson — tree model (JsonNode)</td><td class="num">87 ops/s</td><td class="num">31 047 490 B/op</td></tr><tr class="r"><td>jawn — AST (JValue)</td><td class="num">46 ops/s</td><td class="num">45 885 204 B/op</td></tr></tbody></table>
+<p class="headline"><span class="trophy">▲</span> fuse beats the JVM's best hand-tuned parser 1.5×, and laps the AST parsers 4–9× — at ~zero allocation</p>
 </section>
 <section class="ex"><h2>Lazy decode — a String built only for survivors</h2>
 <p class="prose"><code>category</code> gets a slot, but a STRING slot is just <code>(start, len)</code> into the buffer — not a decoded String. <code>amount</code> decodes (the filter needs it); <code>category</code> stays a byte slice and becomes a real <code>String</code> only INSIDE the survivor <code>if</code>. Rejected rows never allocate a String. This is the same compute-for-survivors sink from page 1, now over bytes.</p>
