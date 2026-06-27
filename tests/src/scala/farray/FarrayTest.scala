@@ -904,6 +904,52 @@ class FListTest:
     org.junit.Assert.assertEquals(l10.map(x => x + 1).filter(_ % 2 == 0).zipWithIndex,
       r10.fuse.map(x => x + 1).filter(_ % 2 == 0).zipWithIndex.toFArray.toList)
 
+  // ---- fuzz: a matrix of fused pipelines over random leaf AND tree-shaped inputs, all == List ----
+  @Test def test_fuse_fuzz: Unit =
+    val rng = new java.util.Random(0xFA5EL)
+    val zf = FArray(10, 20, 30, 40, 50, 60); val zl = List(10, 20, 30, 40, 50, 60) // zip operand
+    // an FArray equal to `xs`, sometimes a tree (append-chain / Concat) to exercise the <kind>At fallback
+    def mk(xs: List[Int]): FArray[Int] = rng.nextInt(3) match
+      case 0 => FArray.fromIterable(xs)
+      case 1 => xs.foldLeft(FArray.empty[Int])(_ :+ _)
+      case _ => val (l, r) = xs.splitAt(xs.length / 2); FArray.fromIterable(l) ++ FArray.fromIterable(r)
+    def check[X](label: String)(fa: FArray[Int] => X)(la: List[Int] => X): Unit =
+      var t = 0
+      while t < 250 do
+        val xs = List.tabulate(rng.nextInt(22))(_ => rng.nextInt(16) - 4) // small range → dups/collisions/negatives
+        val got = fa(mk(xs)); val exp = la(xs)
+        assert(got == exp, s"$label on $xs: $got != $exp")
+        t += 1
+    check("map.filter.map")(_.fuse.map(_ + 1).filter(_ % 2 == 0).map(_ * 3).toFArray.toList)(_.map(_ + 1).filter(_ % 2 == 0).map(_ * 3))
+    check("filter.take")(_.fuse.filter(_ > 0).take(3).toFArray.toList)(_.filter(_ > 0).take(3))
+    check("drop.take.map")(_.fuse.drop(2).take(4).map(_ * 2).toFArray.toList)(_.drop(2).take(4).map(_ * 2))
+    check("take.filter.drop")(_.fuse.take(8).filter(_ % 2 == 0).drop(1).toFArray.toList)(_.take(8).filter(_ % 2 == 0).drop(1))
+    check("flatMap")(_.fuse.flatMap(x => FArray(x, -x)).toFArray.toList)(_.flatMap(x => List(x, -x)))
+    check("flatMap.filter.take")(_.fuse.flatMap(x => FArray(x, x * 2)).filter(_ > 0).take(5).toFArray.toList)(_.flatMap(x => List(x, x * 2)).filter(_ > 0).take(5))
+    check("map.flatMap.map")(_.fuse.map(_ + 1).flatMap(x => FArray.tabulate(if x > 0 then 2 else 0)(_ => x)).map(_ * 10).toFArray.toList)(_.map(_ + 1).flatMap(x => List.fill(if x > 0 then 2 else 0)(x)).map(_ * 10))
+    check("zipWithIndex.filter.map")(_.fuse.zipWithIndex.filter(_._2 % 2 == 0).map(_._1).toFArray.toList)(_.zipWithIndex.filter(_._2 % 2 == 0).map(_._1))
+    check("filter.zipWithIndex")(_.fuse.filter(_ > 0).zipWithIndex.toFArray.toList)(_.filter(_ > 0).zipWithIndex)
+    check("zip")(_.fuse.zip(zf).toFArray.toList)(_.zip(zl))
+    check("filter.zip.map")(_.fuse.filter(_ % 2 == 0).zip(zf).map((a, b) => a + b).toFArray.toList)(_.filter(_ % 2 == 0).zip(zl).map((a, b) => a + b))
+    check("map2")(_.fuse.map2(zf)((a, b) => a * b).toFArray.toList)(_.zip(zl).map((a, b) => a * b))
+    check("tuple.sink")(_.fuse.map(x => (x, x * x)).filter(_._1 % 2 == 0).map(_._2).toFArray.toList)(_.map(x => (x, x * x)).filter(_._1 % 2 == 0).map(_._2))
+    check("cse")(_.fuse.map(x => (x * x + 1, x * x + 2)).map(t => t._1 + t._2).toFArray.toList)(_.map(x => (x * x + 1, x * x + 2)).map(t => t._1 + t._2))
+    check("foldLeft")(_.fuse.filter(_ > 0).map(_ + 1).foldLeft(0)(_ + _))(_.filter(_ > 0).map(_ + 1).foldLeft(0)(_ + _))
+    check("count")(_.fuse.filter(_ % 3 == 0).map(_ * 2).count)(_.filter(_ % 3 == 0).map(_ * 2).size)
+    check("find")(_.fuse.map(_ + 1).find(_ % 4 == 0))(_.map(_ + 1).find(_ % 4 == 0))
+    check("exists")(_.fuse.map(_ * 2).exists(_ == 8))(_.map(_ * 2).exists(_ == 8))
+    check("forall")(_.fuse.filter(_ > -10).forall(_ < 100))(_.filter(_ > -10).forall(_ < 100))
+    check("headOption")(_.fuse.filter(_ % 2 == 0).map(_ * 3).headOption)(_.filter(_ % 2 == 0).map(_ * 3).headOption)
+    check("flatMap.zipWithIndex")(_.fuse.flatMap(x => FArray(x, x)).zipWithIndex.take(6).toFArray.toList)(_.flatMap(x => List(x, x)).zipWithIndex.take(6))
+    // Long / Double / Ref element kinds
+    var t2 = 0
+    while t2 < 200 do
+      val xs = List.tabulate(rng.nextInt(20))(_ => rng.nextInt(16) - 4)
+      assert(FArray.fromIterable(xs.map(_.toLong)).fuse.filter(_ % 2L == 0L).map(_ * 3L).take(4).toFArray.toList == xs.map(_.toLong).filter(_ % 2 == 0).map(_ * 3).take(4))
+      assert(FArray.fromIterable(xs.map(_.toDouble)).fuse.map(_ + 0.5).filter(_ > 0.0).toFArray.toList == xs.map(_.toDouble).map(_ + 0.5).filter(_ > 0.0))
+      assert(FArray.fromIterable(xs.map(_.toString)).fuse.filter(_.length <= 2).map(s => (s, s.length)).filter(_._2 >= 1).map(_._1).toFArray.toList == xs.map(_.toString).filter(_.length <= 2).map(s => (s, s.length)).filter(_._2 >= 1).map(_._1))
+      t2 += 1
+
   // ---- zipWithIndex ----
   @Test def test_fuse_zipWithIndex: Unit =
     org.junit.Assert.assertEquals(l10.zipWithIndex, r10.fuse.zipWithIndex.toFArray.toList)
