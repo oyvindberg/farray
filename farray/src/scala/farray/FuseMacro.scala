@@ -266,17 +266,56 @@ object FuseMacro:
         case Tup(ps) if j >= 0 && j < ps.length => navigate(ps(j), rest)
         case other                              => navigate(projScalar(other, j), rest)
 
+    // --- deep CSE: hash-cons identical sub-expressions into memoized columns (shared across one map's tuple
+    //     components / one predicate), so e.g. `(f(x)+1, f(x)+2)` computes f(x) ONCE. Keyed structurally; the
+    //     memo binds each unique sub-expr on first read, so it still respects the sink. ---
+    type CseT = scala.collection.mutable.Map[String, Shape]
+    def trivial(t: Term): Boolean = t match
+      case _: Ident | _: Literal => true
+      case Typed(e, _)           => trivial(e)
+      case _                     => false
+    /** the immediate sub-terms of `t` worth CSE-ing — only plain value expressions (Apply/Select/TypeApply), so
+     *  we never try to bind a varargs/repeated/by-name child. `&&`/`||` are left whole to keep short-circuiting. */
+    def cseChildren(t: Term): List[Term] =
+      // a value computation worth binding: an Apply/Select/TypeApply that is NOT a package/module/type path
+      // (binding `_root_.scala` or a companion-object ref is nonsense and miscompiles).
+      def pathLike(c: Term): Boolean =
+        val s = c.symbol; !s.isNoSymbol && (s.flags.is(Flags.Package) || s.flags.is(Flags.Module) || s.isType)
+      def ok(c: Term): Boolean = (c match { case _: Apply | _: Select | _: TypeApply => true; case _ => false }) && !pathLike(c)
+      t match
+        case Apply(Select(_, "&&" | "||"), _)           => Nil
+        case Apply(TypeApply(Select(recv, _), _), args) => (recv :: args).filter(ok)
+        case Apply(Select(recv, _), args)               => (recv :: args).filter(ok)
+        case Apply(fn, args)                            => (fn :: args).filter(ok)
+        case Select(recv, _)                            => List(recv).filter(ok)
+        case TypeApply(inner, _)                        => List(inner).filter(ok)
+        case Typed(e, _)                                => List(e).filter(ok)
+        case _                                          => Nil
+    /** rebuild `t` with each given child sub-term replaced (by identity) by its bound ref. */
+    def replaceChildren(t: Term, repl: Map[Term, Term]): Term =
+      (new TreeMap:
+        override def transformTerm(x: Term)(owner: Symbol): Term = repl.getOrElse(x, super.transformTerm(x)(owner))
+      ).transformTerm(t)(Symbol.spliceOwner)
+    def cse(t: Term, cseT: CseT): Shape =
+      if trivial(t) then Sc(k => k(t))
+      else cseT.getOrElseUpdate(t.show(using Printer.TreeStructure), decomposeCse(t, cseT))
+    def decomposeCse(t: Term, cseT: CseT): Shape =
+      val children = cseChildren(t)
+      if children.isEmpty then memoScalar(k => k(t)) // opaque non-trivial → memoize whole
+      else memoScalar(k => readAll(children.map(c => cse(c, cseT)), Nil)(refs =>
+        k(replaceChildren(t, children.zip(refs).toMap))))
+
     // --- interpret a map lambda body symbolically into a Shape (decomposing tuples, resolving projections) ---
-    def interp(body: Term, param: Symbol, cur: Shape): Shape =
+    def interp(body: Term, param: Symbol, cur: Shape, cseT: CseT): Shape =
       isTupleLiteral(body) match
-        case Some(parts) => Tup(parts.map(interp(_, param, cur)))
+        case Some(parts) => Tup(parts.map(interp(_, param, cur, cseT))) // share cseT across components → CSE
         case None => isProjection(body) match
-          case Some((inner, j)) => interp(inner, param, cur) match
+          case Some((inner, j)) => interp(inner, param, cur, cseT) match
             case Tup(ps) if j >= 0 && j < ps.length => ps(j)
             case sc                                  => projScalar(sc, j)
           case None => body match
             case id: Ident if id.symbol == param => cur
-            case _                               => memoScalar(k => substColumns(body, param, cur)(k))
+            case _ => Sc(k => substColumns(body, param, cur)(subst => readShape(cse(subst, cseT))(k)))
     def projScalar(sc: Shape, j: Int): Shape =
       memoScalar(k => readShape(sc)(t => k(Select.unique(t, "_" + (j + 1)))))
     /** substitute param-uses in an atomic body with the columns it reads (binding only those columns). A bare
@@ -295,14 +334,14 @@ object FuseMacro:
         case p :: rest => readShape(navigate(cur, p))(ref => readPaths(cur, rest, acc + (p -> ref))(k))
 
     def applyMap(f: Term, cur: Shape): Shape = decomposeLambda(f) match
-      case Some((param, body)) => interp(body, param, cur)
+      case Some((param, body)) => interp(body, param, cur, scala.collection.mutable.Map.empty) // fresh CSE table per map
       case None                => memoScalar(k => readShape(cur)(ct => k(applyLambda(f, ct))))
 
     /** read a filter predicate (binding only the columns it touches), then hand the Boolean term to `k`. */
     def predShape(p: Term, neg: Boolean, cur: Shape)(k: Term => Term): Term =
       def fin(b: Term): Term = k(if neg then '{ !${ b.asExprOf[Boolean] } }.asTerm else b)
       decomposeLambda(p) match
-        case Some((param, body)) => readShape(interp(body, param, cur))(fin)
+        case Some((param, body)) => readShape(interp(body, param, cur, scala.collection.mutable.Map.empty))(fin)
         case None                => readShape(cur)(ct => fin(applyLambda(p, ct)))
 
     /** lower a contiguous map/filter run; columns sink past filters automatically (lazy memoized reads). */

@@ -831,6 +831,24 @@ class FListTest:
     val r = FArray(1, 2, 3).fuse.map(x => f(x)).map(y => y + y).toFArray.toList
     org.junit.Assert.assertEquals(List(4, 8, 12), r)
     org.junit.Assert.assertEquals("f bound once per element, not recomputed", 3, calls)
+  @Test def test_fuse_cse_across_columns: Unit = // f(x) shared by two tuple components -> computed ONCE (List: twice)
+    var fCalls = 0
+    def f(x: Int): Int = { fCalls += 1; x * x }
+    val r = FArray(1, 2, 3).fuse.map(x => (f(x) + 1, f(x) + 2)).map(t => t._1 + t._2).toFArray.toList
+    org.junit.Assert.assertEquals(List(5, 11, 21), r) // (f+1)+(f+2) = 2*x*x + 3
+    org.junit.Assert.assertEquals("f(x) CSE'd across both columns", 3, fCalls)
+  @Test def test_fuse_cse_within_expr: Unit = // f(x) + f(x) within one expression -> computed once
+    var c = 0
+    def g(x: Int): Int = { c += 1; x + 10 }
+    val r = FArray(1, 2).fuse.map(x => g(x) + g(x)).toFArray.toList
+    org.junit.Assert.assertEquals(List(22, 24), r)
+    org.junit.Assert.assertEquals("g(x) CSE'd within one expression", 2, c)
+  @Test def test_fuse_cse_sink: Unit = // a shared expr used only past the filter still sinks (computed for survivors)
+    var e = 0
+    def exp(x: Int): Int = { e += 1; x * 100 }
+    val r = FArray(1, 2, 3, 4).fuse.map(x => (x, exp(x) + 1, exp(x) + 2)).filter(_._1 % 2 == 0).map(t => t._2 + t._3).toFArray.toList
+    org.junit.Assert.assertEquals(List(2 * 200 + 3, 2 * 400 + 3), r) // survivors x=2,4
+    org.junit.Assert.assertEquals("exp(x) CSE'd AND sunk: once per survivor", 2, e)
 
   // ---- Layer B adversarial: tuple decomposition / projection / fallback correctness (pure -> == List) ----
   @Test def test_fuse_lb_identity_map: Unit =
@@ -973,6 +991,8 @@ class FListTest:
       FuseDebug.show(ints.fuse.zipWithIndex.filter(_._2 % 2 == 0).map(_._1).toFArray))
     scenario("ints.fuse.zip(ys).map((a,b) => a+b).toFArray  [lock-step; reads that(c); no pair built]",
       FuseDebug.show(ints.fuse.zip(FArray(10, 20, 30, 40)).map((a, b) => a + b).toFArray))
+    scenario("ints.fuse.map(x => (f(x)+1, f(x)+2)).map(_._1 + _._2).toFArray  [CSE: f(x)=x*x once]",
+      FuseDebug.show(ints.fuse.map(x => (x * x + 1, x * x + 2)).map(t => t._1 + t._2).toFArray))
     scenario("ints.fuse.map(x=>(x+1, x*1000)).filter(_._1%2==0).map(_._2).toFArray  [SINK: 2nd col inside the guard]",
       FuseDebug.show(ints.fuse.map(x => (x + 1, x * 1000)).filter(_._1 % 2 == 0).map(_._2).toFArray))
     Snapshots.check("fused-pipeline.snap", sb.toString)

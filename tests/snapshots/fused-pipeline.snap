@@ -30,10 +30,11 @@
       while (i.<(len)) {
         val v: Int = a.apply(i)
         val `v₂`: Int = v.+(1)
-        val `v₃`: Boolean = `v₂`.%(2).==(0)
-        if (`v₃`) {
-          val `v₄`: Int = `v₂`.*(2)
-          out.update(o, `v₄`)
+        val `v₃`: Int = `v₂`.%(2)
+        val `v₄`: Boolean = `v₃`.==(0)
+        if (`v₄`) {
+          val `v₅`: Int = `v₂`.*(2)
+          out.update(o, `v₅`)
           o = o.+(1)
         } else ()
         i = i.+(1)
@@ -41,12 +42,13 @@
     } else {
       var `i₂`: Int = 0
       while (`i₂`.<(len)) {
-        val `v₅`: Int = FArrayOps.intAt(s, `i₂`)
-        val `v₆`: Int = `v₅`.+(1)
-        val `v₇`: Boolean = `v₆`.%(2).==(0)
-        if (`v₇`) {
-          val `v₈`: Int = `v₆`.*(2)
-          out.update(o, `v₈`)
+        val `v₆`: Int = FArrayOps.intAt(s, `i₂`)
+        val `v₇`: Int = `v₆`.+(1)
+        val `v₈`: Int = `v₇`.%(2)
+        val `v₉`: Boolean = `v₈`.==(0)
+        if (`v₉`) {
+          val `v₁₀`: Int = `v₇`.*(2)
+          out.update(o, `v₁₀`)
           o = o.+(1)
         } else ()
         `i₂` = `i₂`.+(1)
@@ -88,12 +90,13 @@
       var i: Int = 0
       while (i.<(len).&&(done.unary_!)) {
         val v: Int = a.apply(i)
-        val `v₂`: Boolean = v.%(2).==(0)
-        if (`v₂`) {
+        val `v₂`: Int = v.%(2)
+        val `v₃`: Boolean = `v₂`.==(0)
+        if (`v₃`) {
           val cv: Int = c
           if (cv.>=(lim)) done = true else {
-            val `v₃`: Int = v.*(10)
-            out.update(o, `v₃`)
+            val `v₄`: Int = v.*(10)
+            out.update(o, `v₄`)
             o = o.+(1)
             c = c.+(1)
             if (cv.+(1).>=(lim)) done = true else ()
@@ -104,13 +107,14 @@
     } else {
       var `i₂`: Int = 0
       while (`i₂`.<(len).&&(done.unary_!)) {
-        val `v₄`: Int = FArrayOps.intAt(s, `i₂`)
-        val `v₅`: Boolean = `v₄`.%(2).==(0)
-        if (`v₅`) {
+        val `v₅`: Int = FArrayOps.intAt(s, `i₂`)
+        val `v₆`: Int = `v₅`.%(2)
+        val `v₇`: Boolean = `v₆`.==(0)
+        if (`v₇`) {
           val `cv₂`: Int = c
           if (`cv₂`.>=(lim)) done = true else {
-            val `v₆`: Int = `v₄`.*(10)
-            out.update(o, `v₆`)
+            val `v₈`: Int = `v₅`.*(10)
+            out.update(o, `v₈`)
             o = o.+(1)
             c = c.+(1)
             if (`cv₂`.+(1).>=(lim)) done = true else ()
@@ -262,16 +266,18 @@
       var i: Int = 0
       while (i.<(len)) {
         val v: Int = a.apply(i)
-        val `v₂`: Boolean = v.%(2).==(0)
-        if (`v₂`) cnt = cnt.+(1) else ()
+        val `v₂`: Int = v.%(2)
+        val `v₃`: Boolean = `v₂`.==(0)
+        if (`v₃`) cnt = cnt.+(1) else ()
         i = i.+(1)
       }
     } else {
       var `i₂`: Int = 0
       while (`i₂`.<(len)) {
-        val `v₃`: Int = FArrayOps.intAt(s, `i₂`)
-        val `v₄`: Boolean = `v₃`.%(2).==(0)
-        if (`v₄`) cnt = cnt.+(1) else ()
+        val `v₄`: Int = FArrayOps.intAt(s, `i₂`)
+        val `v₅`: Int = `v₄`.%(2)
+        val `v₆`: Boolean = `v₅`.==(0)
+        if (`v₆`) cnt = cnt.+(1) else ()
         `i₂` = `i₂`.+(1)
       }
     }
@@ -346,16 +352,18 @@
       var i: Int = 0
       while (i.<(len)) {
         val v: String = a.apply(i).asInstanceOf[String]
-        val `v₂`: Boolean = augmentString(v).nonEmpty
-        if (`v₂`) System.out.println(v) else ()
+        val `v₂`: StringOps = augmentString(v)
+        val `v₃`: Boolean = `v₂`.nonEmpty
+        if (`v₃`) System.out.println(v) else ()
         i = i.+(1)
       }
     } else {
       var `i₂`: Int = 0
       while (`i₂`.<(len)) {
-        val `v₃`: String = FArrayOps.refAt(s, `i₂`).asInstanceOf[String]
-        val `v₄`: Boolean = augmentString(`v₃`).nonEmpty
-        if (`v₄`) System.out.println(`v₃`) else ()
+        val `v₄`: String = FArrayOps.refAt(s, `i₂`).asInstanceOf[String]
+        val `v₅`: StringOps = augmentString(`v₄`)
+        val `v₆`: Boolean = `v₅`.nonEmpty
+        if (`v₆`) System.out.println(`v₄`) else ()
         `i₂` = `i₂`.+(1)
       }
     }
@@ -577,10 +585,11 @@
         val `v₂`: Tuple2[Int, Int] = new Tuple2$mcII$sp(v, c).asInstanceOf[Tuple2[Int, Int]]
         c = c.+(1)
         val `v₃`: Int = `v₂`._2
-        val `v₄`: Boolean = `v₃`.%(2).==(0)
-        if (`v₄`) {
-          val `v₅`: Int = `v₂`._1
-          out.update(o, `v₅`)
+        val `v₄`: Int = `v₃`.%(2)
+        val `v₅`: Boolean = `v₄`.==(0)
+        if (`v₅`) {
+          val `v₆`: Int = `v₂`._1
+          out.update(o, `v₆`)
           o = o.+(1)
         } else ()
         i = i.+(1)
@@ -588,14 +597,15 @@
     } else {
       var `i₂`: Int = 0
       while (`i₂`.<(len)) {
-        val `v₆`: Int = FArrayOps.intAt(s, `i₂`)
-        val `v₇`: Tuple2[Int, Int] = new Tuple2$mcII$sp(`v₆`, c).asInstanceOf[Tuple2[Int, Int]]
+        val `v₇`: Int = FArrayOps.intAt(s, `i₂`)
+        val `v₈`: Tuple2[Int, Int] = new Tuple2$mcII$sp(`v₇`, c).asInstanceOf[Tuple2[Int, Int]]
         c = c.+(1)
-        val `v₈`: Int = `v₇`._2
-        val `v₉`: Boolean = `v₈`.%(2).==(0)
-        if (`v₉`) {
-          val `v₁₀`: Int = `v₇`._1
-          out.update(o, `v₁₀`)
+        val `v₉`: Int = `v₈`._2
+        val `v₁₀`: Int = `v₉`.%(2)
+        val `v₁₁`: Boolean = `v₁₀`.==(0)
+        if (`v₁₁`) {
+          val `v₁₂`: Int = `v₈`._1
+          out.update(o, `v₁₂`)
           o = o.+(1)
         } else ()
         `i₂` = `i₂`.+(1)
@@ -728,6 +738,56 @@
 }
 
 ====================================================================================================
+// ints.fuse.map(x => (f(x)+1, f(x)+2)).map(_._1 + _._2).toFArray  [CSE: f(x)=x*x once]
+====================================================================================================
+{
+  val $proxy: FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  } = FArray$package.$asInstanceOf$[FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  }]
+  val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
+  val Fuse_this: Fuse[Int] = (new Fuse[Int](xs$proxy): Fuse[Int]).map[Tuple2[Int, Int]](((x: Int) => Tuple2.apply[Int, Int](x.*(x).+(1), x.*(x).+(2)))).map[Int](((t: Tuple2[Int, Int]) => t._1.+(t._2)))
+
+  ({
+    val src0: FBase = ints.$asInstanceOf$[ints & FArray[Int]].asInstanceOf[FBase]
+    val n0: Int = src0.length
+    val cap: Int = n0
+    val out: Array[Int] = new Array[Int](cap)
+    var o: Int = 0
+    val s: FBase = src0
+    val len: Int = s.length
+    if (s.isInstanceOf[IntArr]) {
+      val a: Array[Int] = s.asInstanceOf[IntArr].arr
+      var i: Int = 0
+      while (i.<(len)) {
+        val v: Int = a.apply(i)
+        val `v₂`: Int = v.*(v)
+        val `v₃`: Int = `v₂`.+(1)
+        val `v₄`: Int = `v₂`.+(2)
+        val `v₅`: Int = `v₃`.+(`v₄`)
+        out.update(o, `v₅`)
+        o = o.+(1)
+        i = i.+(1)
+      }
+    } else {
+      var `i₂`: Int = 0
+      while (`i₂`.<(len)) {
+        val `v₆`: Int = FArrayOps.intAt(s, `i₂`)
+        val `v₇`: Int = `v₆`.*(`v₆`)
+        val `v₈`: Int = `v₇`.+(1)
+        val `v₉`: Int = `v₇`.+(2)
+        val `v₁₀`: Int = `v₈`.+(`v₉`)
+        out.update(o, `v₁₀`)
+        o = o.+(1)
+        `i₂` = `i₂`.+(1)
+      }
+    }
+    if (o.==(0)) (IntArr.EMPTY: FBase) else if (o.==(cap)) new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o)
+  }.asInstanceOf[FArray[Int]]: FArray[Int])
+}
+
+====================================================================================================
 // ints.fuse.map(x=>(x+1, x*1000)).filter(_._1%2==0).map(_._2).toFArray  [SINK: 2nd col inside the guard]
 ====================================================================================================
 {
@@ -753,10 +813,11 @@
       while (i.<(len)) {
         val v: Int = a.apply(i)
         val `v₂`: Int = v.+(1)
-        val `v₃`: Boolean = `v₂`.%(2).==(0)
-        if (`v₃`) {
-          val `v₄`: Int = v.*(1000)
-          out.update(o, `v₄`)
+        val `v₃`: Int = `v₂`.%(2)
+        val `v₄`: Boolean = `v₃`.==(0)
+        if (`v₄`) {
+          val `v₅`: Int = v.*(1000)
+          out.update(o, `v₅`)
           o = o.+(1)
         } else ()
         i = i.+(1)
@@ -764,12 +825,13 @@
     } else {
       var `i₂`: Int = 0
       while (`i₂`.<(len)) {
-        val `v₅`: Int = FArrayOps.intAt(s, `i₂`)
-        val `v₆`: Int = `v₅`.+(1)
-        val `v₇`: Boolean = `v₆`.%(2).==(0)
-        if (`v₇`) {
-          val `v₈`: Int = `v₅`.*(1000)
-          out.update(o, `v₈`)
+        val `v₆`: Int = FArrayOps.intAt(s, `i₂`)
+        val `v₇`: Int = `v₆`.+(1)
+        val `v₈`: Int = `v₇`.%(2)
+        val `v₉`: Boolean = `v₈`.==(0)
+        if (`v₉`) {
+          val `v₁₀`: Int = `v₆`.*(1000)
+          out.update(o, `v₁₀`)
           o = o.+(1)
         } else ()
         `i₂` = `i₂`.+(1)
