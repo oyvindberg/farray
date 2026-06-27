@@ -5,7 +5,7 @@
 // fused loop that runs: one pass, leaf fast-path + <kind>At fallback, lambdas inlined.
 
 ====================================================================================================
-// ints.fuse.map(_+1).filter(_%2==0).map(_*2).toFArray
+// ints.fuse.map(_+1).filter(_%2==0).map(_*2).run
 ====================================================================================================
 {
   val $proxy: FArray$package {
@@ -59,7 +59,7 @@
 }
 
 ====================================================================================================
-// ints.fuse.filter(_%2==0).take(2).map(_*10).toFArray  [positional break]
+// ints.fuse.filter(_%2==0).take(2).map(_*10).run  [positional break]
 ====================================================================================================
 {
   val $proxy: FArray$package {
@@ -128,7 +128,7 @@
 }
 
 ====================================================================================================
-// ints.fuse.drop(2).take(3).toFArray
+// ints.fuse.drop(2).take(3).run
 ====================================================================================================
 {
   val $proxy: FArray$package {
@@ -287,7 +287,7 @@
 }
 
 ====================================================================================================
-// strs.fuse.map(_.toUpperCase).toFArray  [Ref]
+// strs.fuse.map(_.toUpperCase).run  [Ref]
 ====================================================================================================
 {
   val $proxy: FArray$package {
@@ -372,7 +372,7 @@
 }
 
 ====================================================================================================
-// ints.fuse.flatMap(x => FArray(x, x*10)).map(_+1).toFArray  [nested loop, growable out]
+// ints.fuse.flatMap(x => FArray(x, x*10)).map(_+1).run  [nested loop, growable out]
 ====================================================================================================
 {
   val $proxy: FArray$package {
@@ -557,7 +557,7 @@
 }
 
 ====================================================================================================
-// ints.fuse.zipWithIndex.filter(_._2%2==0).map(_._1).toFArray  [(value,index) DECOMPOSED — no pair built]
+// ints.fuse.zipWithIndex.filter(_._2%2==0).map(_._1).run  [(value,index) DECOMPOSED — no pair built]
 ====================================================================================================
 {
   val $proxy: FArray$package {
@@ -612,7 +612,7 @@
 }
 
 ====================================================================================================
-// ints.fuse.zip(ys).map((a,b) => a+b).toFArray  [lock-step; reads that(c); no pair built]
+// ints.fuse.zip(ys).map((a,b) => a+b).run  [lock-step; reads that(c); no pair built]
 ====================================================================================================
 {
   val $proxy: FArray$package {
@@ -728,7 +728,7 @@
 }
 
 ====================================================================================================
-// ints.fuse.map(x => (f(x)+1, f(x)+2)).map(_._1 + _._2).toFArray  [CSE: f(x)=x*x once]
+// ints.fuse.map(x => (f(x)+1, f(x)+2)).map(_._1 + _._2).run  [CSE: f(x)=x*x once]
 ====================================================================================================
 {
   val $proxy: FArray$package {
@@ -778,7 +778,7 @@
 }
 
 ====================================================================================================
-// ints.fuse.map(x=>(x+1, x*1000)).filter(_._1%2==0).map(_._2).toFArray  [SINK: 2nd col inside the guard]
+// ints.fuse.map(x=>(x+1, x*1000)).filter(_._1%2==0).map(_._2).run  [SINK: 2nd col inside the guard]
 ====================================================================================================
 {
   val $proxy: FArray$package {
@@ -832,7 +832,7 @@
 }
 
 ====================================================================================================
-// COLLECT: ints.fuse.collect { case x if x%2==0 => x*10 }.toFArray  [PF match INLINED — no PartialFunction object]
+// COLLECT: ints.fuse.collect { case x if x%2==0 => x*10 }.run  [PF match INLINED — no PartialFunction object]
 ====================================================================================================
 {
   val $proxy: FArray$package {
@@ -893,7 +893,7 @@
 }
 
 ====================================================================================================
-// TAKEWHILE: ints.fuse.takeWhile(_ < 5).toFArray  [stops the stream via done on first failure]
+// TAKEWHILE: ints.fuse.takeWhile(_ < 5).run  [stops the stream via done on first failure]
 ====================================================================================================
 {
   val $proxy: FArray$package {
@@ -940,7 +940,7 @@
 }
 
 ====================================================================================================
-// SCANLEFT: ints.fuse.scanLeft(0)(_ + _).toFArray  [emit z prologue before the loop, then acc per element]
+// SCANLEFT: ints.fuse.scanLeft(0)(_ + _).run  [emit z prologue before the loop, then acc per element]
 ====================================================================================================
 {
   val $proxy: FArray$package {
