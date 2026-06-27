@@ -430,6 +430,13 @@ object FuseMacro:
       case FilterS(p, neg) :: rest => predShape(p, neg, cur)(b => If(b, buildSegment(rest, cur)(k), unit))
       case _                    => k(cur) // segment is map/filter only
 
+    /** continue downstream from a decomposed Shape: run the leading map/filter run column-aware (so independent
+     *  columns sink/DCE), then materialize and hand off to buildBody for the rest. Used by collect / zipWithIndex
+     *  / zip so a produced value stays decomposed through the following segment. */
+    def continueShape(shape: Shape, rest: List[(Stage, Int)], ctx: Ctx): Term =
+      val (seg, tail) = rest.span { case (MapS(_), _) => true; case (FilterS(_, _), _) => true; case _ => false }
+      buildSegment(seg.map(_._1), shape)(fs => readShape(fs)(t => buildBody(tail, t, ctx)))
+
     /** lower `collect(pf)` by inlining the PartialFunction literal's match into the loop. Scala 3 encodes a
      *  `{ case … }` literal as `new PartialFunction { def applyOrElse(x, default) = x match { <cases>; case _ =>
      *  default(x) } … }`; we splice that match with scrutinee = `cur`, each real case continuing downstream and
@@ -454,7 +461,11 @@ object FuseMacro:
         ).transformTerm(t)(Symbol.spliceOwner)
       extract(pf) match
         case Some((xSym, cases)) =>
-          val mapped = cases.map(cd => CaseDef(cd.pattern, cd.guard.map(subX(xSym)), buildBody(rest, subX(xSym)(cd.rhs), ctx)))
+          // each case body goes through interp (param = the scrutinee x$1, bound to the element) so a tuple/product
+          // case result decomposes into columns — the same DCE/sink/CSE a `map` body gets. Guards stay literal.
+          val mapped = cases.map(cd =>
+            CaseDef(cd.pattern, cd.guard.map(subX(xSym)),
+                    continueShape(interp(cd.rhs, xSym, srcShape(cur), scala.collection.mutable.Map.empty), rest, ctx)))
           // append a skip default unless the user's match is already total (avoids an unreachable-case warning)
           val newCases = if cases.exists(isCatchAll) then mapped else mapped :+ CaseDef(Wildcard(), None, unit)
           Match(cur, newCases).changeOwner(Symbol.spliceOwner)
@@ -503,10 +514,12 @@ object FuseMacro:
         '{ if ${ sl.read } < ${ sl.lim.get } then ${ sl.inc }
            else ${ buildBody(rest, cur, ctx).asExprOf[Unit] } }.asTerm
       case (ZipWithIndexS, i) :: rest =>
-        // pair the element with the current index, then advance the index (once per element reaching here).
+        // capture the index, advance it, then hand a DECOMPOSED (value, index) pair downstream — so a filter on
+        // the index or a map keeping only the value never builds the tuple. The pair is rebuilt only if read whole.
         val sl = ctx.counters(i)
-        letBind(tupleWithIndex(cur, sl.read)) { t =>
-          '{ ${ sl.inc }; ${ buildBody(rest, t, ctx).asExprOf[Unit] } }.asTerm
+        letBind(sl.read.asTerm) { pos =>
+          '{ ${ sl.inc }
+             ${ continueShape(Tup(List(srcShape(cur), srcShape(pos)), ts => tupleWithIndex(ts(0), ts(1).asExprOf[Int])), rest, ctx).asExprOf[Unit] } }.asTerm
         }
       case (ZipS(_, bTpe, combine), i) :: rest =>
         // lock-step: stop (done) when `that` is exhausted; otherwise capture the position, advance, and continue
@@ -521,9 +534,7 @@ object FuseMacro:
                   // map2 forces the value (f uses it); zip hands a Tup([cur, lazyB]) to the downstream segment so
                   // projections resolve to typed columns, no pair is allocated, and a discarded side is never read.
                   case Some(f) => readShape(lazyB)(b => buildBody(rest, applyN(f, List(cur, b)), ctx))
-                  case None =>
-                    val (seg, tail) = rest.span { case (MapS(_), _) => true; case (FilterS(_, _), _) => true; case _ => false }
-                    buildSegment(seg.map(_._1), Tup(List(srcShape(cur), lazyB), mkTuple))(fs => readShape(fs)(t => buildBody(tail, t, ctx)))
+                  case None    => continueShape(Tup(List(srcShape(cur), lazyB), mkTuple), rest, ctx)
                 continue.asExprOf[Unit] }
            } }.asTerm
 

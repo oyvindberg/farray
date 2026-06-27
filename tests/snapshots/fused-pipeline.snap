@@ -557,7 +557,7 @@
 }
 
 ====================================================================================================
-// ints.fuse.zipWithIndex.filter(_._2%2==0).map(_._1).toFArray  [specialized tuple, idx counter]
+// ints.fuse.zipWithIndex.filter(_._2%2==0).map(_._1).toFArray  [(value,index) DECOMPOSED — no pair built]
 ====================================================================================================
 {
   val $proxy: FArray$package {
@@ -582,14 +582,12 @@
       var i: Int = 0
       while (i.<(len)) {
         val v: Int = a.apply(i)
-        val `v₂`: Tuple2[Int, Int] = new Tuple2$mcII$sp(v, c).asInstanceOf[Tuple2[Int, Int]]
+        val `v₂`: Int = c
         c = c.+(1)
-        val `v₃`: Int = `v₂`._2
-        val `v₄`: Int = `v₃`.%(2)
-        val `v₅`: Boolean = `v₄`.==(0)
-        if (`v₅`) {
-          val `v₆`: Int = `v₂`._1
-          out.update(o, `v₆`)
+        val `v₃`: Int = `v₂`.%(2)
+        val `v₄`: Boolean = `v₃`.==(0)
+        if (`v₄`) {
+          out.update(o, v)
           o = o.+(1)
         } else ()
         i = i.+(1)
@@ -597,15 +595,13 @@
     } else {
       var `i₂`: Int = 0
       while (`i₂`.<(len)) {
-        val `v₇`: Int = FArrayOps.intAt(s, `i₂`)
-        val `v₈`: Tuple2[Int, Int] = new Tuple2$mcII$sp(`v₇`, c).asInstanceOf[Tuple2[Int, Int]]
+        val `v₅`: Int = FArrayOps.intAt(s, `i₂`)
+        val `v₆`: Int = c
         c = c.+(1)
-        val `v₉`: Int = `v₈`._2
-        val `v₁₀`: Int = `v₉`.%(2)
-        val `v₁₁`: Boolean = `v₁₀`.==(0)
-        if (`v₁₁`) {
-          val `v₁₂`: Int = `v₈`._1
-          out.update(o, `v₁₂`)
+        val `v₇`: Int = `v₆`.%(2)
+        val `v₈`: Boolean = `v₇`.==(0)
+        if (`v₈`) {
+          out.update(o, `v₅`)
           o = o.+(1)
         } else ()
         `i₂` = `i₂`.+(1)
@@ -866,7 +862,8 @@
         v match {
           case x if `x₂`.%(2).==(0) =>
             {
-              out.update(o, `x₂`.*(10))
+              val `v₂`: Int = `x₂`.*(10)
+              out.update(o, `v₂`)
               o = o.+(1)
             }
           case _ =>
@@ -877,11 +874,12 @@
     } else {
       var `i₂`: Int = 0
       while (`i₂`.<(len)) {
-        val `v₂`: Int = FArrayOps.intAt(s, `i₂`)
-        `v₂` match {
+        val `v₃`: Int = FArrayOps.intAt(s, `i₂`)
+        `v₃` match {
           case x if `x₃`.%(2).==(0) =>
             {
-              out.update(o, `x₃`.*(10))
+              val `v₄`: Int = `x₃`.*(10)
+              out.update(o, `v₄`)
               o = o.+(1)
             }
           case _ =>
@@ -1478,5 +1476,64 @@
       }
     }
     if (o.==(0)) (IntArr.EMPTY: FBase) else if (o.==(cap)) new IntArr(`out₃`, o) else new IntArr(java.util.Arrays.copyOf(`out₃`, o), o)
+  }.asInstanceOf[FArray[Int]]: FArray[Int])
+}
+
+====================================================================================================
+// DCE-4: collect { case x if x>2 => (x, expensive(x)) }.map(_._1)  [collect body decomposes: expensive DEAD]
+====================================================================================================
+{
+  val $proxy: FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  } = FArray$package.$asInstanceOf$[FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  }]
+  val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
+  val Fuse_this: Fuse[Int] = (new Fuse[Int](xs$proxy): Fuse[Int]).collect[Tuple2[Int, Int]](((x$1: Int) => x$1 match {
+    case x if x.>(2) =>
+      Tuple2.apply[Int, Int](x, expensive(x))
+  })).map[Int](((_$: Tuple2[Int, Int]) => _$._1))
+
+  ({
+    val src0: FBase = ints.$asInstanceOf$[ints & FArray[Int]].asInstanceOf[FBase]
+    val n0: Int = src0.length
+    val cap: Int = n0
+    val out: Array[Int] = new Array[Int](cap)
+    var o: Int = 0
+    val s: FBase = src0
+    val len: Int = s.length
+    if (s.isInstanceOf[IntArr]) {
+      val a: Array[Int] = s.asInstanceOf[IntArr].arr
+      var i: Int = 0
+      while (i.<(len)) {
+        val v: Int = a.apply(i)
+        v match {
+          case x if `x₂`.>(2) =>
+            {
+              out.update(o, `x₂`)
+              o = o.+(1)
+            }
+          case _ =>
+            ()
+        }
+        i = i.+(1)
+      }
+    } else {
+      var `i₂`: Int = 0
+      while (`i₂`.<(len)) {
+        val `v₂`: Int = FArrayOps.intAt(s, `i₂`)
+        `v₂` match {
+          case x if `x₃`.>(2) =>
+            {
+              out.update(o, `x₃`)
+              o = o.+(1)
+            }
+          case _ =>
+            ()
+        }
+        `i₂` = `i₂`.+(1)
+      }
+    }
+    if (o.==(0)) (IntArr.EMPTY: FBase) else if (o.==(cap)) new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o)
   }.asInstanceOf[FArray[Int]]: FArray[Int])
 }

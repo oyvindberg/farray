@@ -1190,7 +1190,7 @@ class FListTest:
       FuseDebug.show(ints.fuse.flatMap(x => FArray(x, x * 10)).map(_ + 1).toFArray))
     scenario("ints.fuse.map(_+1).find(_%3==0)  [short-circuit via done]",
       FuseDebug.show(ints.fuse.map(_ + 1).find(_ % 3 == 0)))
-    scenario("ints.fuse.zipWithIndex.filter(_._2%2==0).map(_._1).toFArray  [specialized tuple, idx counter]",
+    scenario("ints.fuse.zipWithIndex.filter(_._2%2==0).map(_._1).toFArray  [(value,index) DECOMPOSED — no pair built]",
       FuseDebug.show(ints.fuse.zipWithIndex.filter(_._2 % 2 == 0).map(_._1).toFArray))
     scenario("ints.fuse.zip(ys).map((a,b) => a+b).toFArray  [lock-step; reads that(c); no pair built]",
       FuseDebug.show(ints.fuse.zip(FArray(10, 20, 30, 40)).map((a, b) => a + b).toFArray))
@@ -1219,6 +1219,8 @@ class FListTest:
       FuseDebug.show(ints.fuse.zip(FArray(7, 8, 9, 10, 11)).map(_._1).toFArray))
     scenario("DCE-3: zip(ys).map((a,b) => (a, expensive(b))).filter(_._1%4==0).map(_._1)  [expensive(b) AND ys DEAD]",
       FuseDebug.show(ints.fuse.zip(FArray(7, 8, 9, 10, 11)).map((a, b) => (a, expensive(b))).filter(_._1 % 4 == 0).map(_._1).toFArray))
+    scenario("DCE-4: collect { case x if x>2 => (x, expensive(x)) }.map(_._1)  [collect body decomposes: expensive DEAD]",
+      FuseDebug.show(ints.fuse.collect { case x if x > 2 => (x, expensive(x)) }.map(_._1).toFArray))
     Snapshots.check("fused-pipeline.snap", sb.toString)
 
   @Test def test_hashCode_matchesList(): Unit =
