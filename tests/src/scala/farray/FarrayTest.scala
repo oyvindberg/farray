@@ -1114,6 +1114,21 @@ class FListTest:
     aeq(l.scanLeft(0)(_ + _).last, r.fuse.scanLeft(0)(_ + _).last)
     aeq(l.scanLeft(0)(_ + _).take(3), r.fuse.scanLeft(0)(_ + _).take(3).toFArray.toList)
 
+  // ---- ordering: stages compose in source order; counters advance at their position (post-upstream) ----
+  @Test def test_fuse_ordering: Unit =
+    import org.junit.Assert.{assertEquals => aeq}
+    val r = FArray(0, 1, 2, 3, 4, 5, 6, 7); val l = List(0, 1, 2, 3, 4, 5, 6, 7)
+    // filter THEN index: index counts survivors (dense) → [(0,0),(2,1)]
+    aeq(l.filter(_ % 2 == 0).zipWithIndex.take(2), r.fuse.filter(_ % 2 == 0).zipWithIndex.take(2).toFArray.toList)
+    // index THEN filter: index is the original position (gaps) → [(0,0),(2,2)]
+    aeq(l.zipWithIndex.filter(_._1 % 2 == 0).take(2), r.fuse.zipWithIndex.filter(_._1 % 2 == 0).take(2).toFArray.toList)
+    // take before vs after the index changes both what's kept and the indices
+    aeq(l.zipWithIndex.take(3).filter(_._1 % 2 == 0), r.fuse.zipWithIndex.take(3).filter(_._1 % 2 == 0).toFArray.toList)
+    aeq(l.take(3).zipWithIndex.filter(_._2 > 0), r.fuse.take(3).zipWithIndex.filter(_._2 > 0).toFArray.toList)
+    // drop interacts with index position too
+    aeq(l.drop(2).zipWithIndex.take(2), r.fuse.drop(2).zipWithIndex.take(2).toFArray.toList)
+    aeq(l.zipWithIndex.drop(2).take(2), r.fuse.zipWithIndex.drop(2).take(2).toFArray.toList)
+
   // ---- zipWithIndex ----
   @Test def test_fuse_zipWithIndex: Unit =
     org.junit.Assert.assertEquals(l10.zipWithIndex, r10.fuse.zipWithIndex.toFArray.toList)
@@ -1265,6 +1280,10 @@ class FListTest:
       FuseDebug.show(ints.fuse.filter(_ % 2 == 0).take(k).toFArray))
     scenario("BLOG-DONE-NESTING: flatMap(x => FArray(x, x, x)).take(5)  [done breaks inner AND outer loop]",
       FuseDebug.show(ints.fuse.flatMap(x => FArray(x, x, x)).take(5).toFArray))
+    scenario("BLOG-ORDER-A: filter(_%2==0).zipWithIndex.take(2)  [index counter advances INSIDE the filter guard]",
+      FuseDebug.show(ints.fuse.filter(_ % 2 == 0).zipWithIndex.take(2).toFArray))
+    scenario("BLOG-ORDER-B: zipWithIndex.filter(_._1%2==0).take(2)  [index counter advances BEFORE the filter]",
+      FuseDebug.show(ints.fuse.zipWithIndex.filter(_._1 % 2 == 0).take(2).toFArray))
     Snapshots.check("fused-pipeline.snap", sb.toString)
 
   @Test def test_hashCode_matchesList(): Unit =

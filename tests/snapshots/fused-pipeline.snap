@@ -2621,3 +2621,147 @@
     if (o.==(0)) (IntArr.EMPTY: FBase) else if (o.==(`out₂`.length)) new IntArr(`out₂`, o) else new IntArr(java.util.Arrays.copyOf(`out₂`, o), o)
   }.asInstanceOf[FArray[Int]]: FArray[Int])
 }
+
+====================================================================================================
+// BLOG-ORDER-A: filter(_%2==0).zipWithIndex.take(2)  [index counter advances INSIDE the filter guard]
+====================================================================================================
+{
+  val $proxy: FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  } = FArray$package.$asInstanceOf$[FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  }]
+  val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
+  val Fuse_this: Fuse[Tuple2[Int, Int]] = (new Fuse[Int](xs$proxy): Fuse[Int]).filter(((_$: Int) => _$.%(2).==(0))).zipWithIndex.take(2)
+
+  ({
+    val src0: FBase = ints.$asInstanceOf$[ints & FArray[Int]].asInstanceOf[FBase]
+    val n0: Int = src0.length
+    var done: Boolean = false
+    var c: Int = 0
+    val lim: Int = {
+      val t: Int = 2
+
+      (if (t.<(0)) 0 else t: Int)
+    }
+    var `c₂`: Int = 0
+    val cap: Int = java.lang.Math.min(n0, lim)
+    val out: Array[Object] = new Array[Object](cap)
+    var o: Int = 0
+    val s: FBase = src0
+    val len: Int = s.length
+    if (s.isInstanceOf[IntArr]) {
+      val a: Array[Int] = s.asInstanceOf[IntArr].arr
+      var i: Int = 0
+      while (i.<(len).&&(done.unary_!)) {
+        val v: Int = a.apply(i)
+        val `v₂`: Int = v.%(2)
+        val `v₃`: Boolean = `v₂`.==(0)
+        if (`v₃`) {
+          val `v₄`: Int = c
+          c = c.+(1)
+          val cv: Int = `c₂`
+          if (cv.>=(lim)) done = true else {
+            out.update(o, new Tuple2$mcII$sp(v, `v₄`).asInstanceOf[Tuple2[Int, Int]].asInstanceOf[Object])
+            o = o.+(1)
+            `c₂` = `c₂`.+(1)
+            if (cv.+(1).>=(lim)) done = true else ()
+          }
+        } else ()
+        i = i.+(1)
+      }
+    } else {
+      var `i₂`: Int = 0
+      while (`i₂`.<(len).&&(done.unary_!)) {
+        val `v₅`: Int = FArrayOps.intAt(s, `i₂`)
+        val `v₆`: Int = `v₅`.%(2)
+        val `v₇`: Boolean = `v₆`.==(0)
+        if (`v₇`) {
+          val `v₈`: Int = c
+          c = c.+(1)
+          val `cv₂`: Int = `c₂`
+          if (`cv₂`.>=(lim)) done = true else {
+            out.update(o, new Tuple2$mcII$sp(`v₅`, `v₈`).asInstanceOf[Tuple2[Int, Int]].asInstanceOf[Object])
+            o = o.+(1)
+            `c₂` = `c₂`.+(1)
+            if (`cv₂`.+(1).>=(lim)) done = true else ()
+          }
+        } else ()
+        `i₂` = `i₂`.+(1)
+      }
+    }
+    if (o.==(0)) (RefArr.EMPTY: FBase) else if (o.==(cap)) new RefArr(out, o) else new RefArr(java.util.Arrays.copyOf[Object](out, o), o)
+  }.asInstanceOf[FArray[Tuple2[Int, Int]]]: FArray[Tuple2[Int, Int]])
+}
+
+====================================================================================================
+// BLOG-ORDER-B: zipWithIndex.filter(_._1%2==0).take(2)  [index counter advances BEFORE the filter]
+====================================================================================================
+{
+  val $proxy: FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  } = FArray$package.$asInstanceOf$[FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  }]
+  val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
+  val Fuse_this: Fuse[Tuple2[Int, Int]] = (new Fuse[Int](xs$proxy): Fuse[Int]).zipWithIndex.filter(((_$: Tuple2[Int, Int]) => _$._1.%(2).==(0))).take(2)
+
+  ({
+    val src0: FBase = ints.$asInstanceOf$[ints & FArray[Int]].asInstanceOf[FBase]
+    val n0: Int = src0.length
+    var done: Boolean = false
+    var c: Int = 0
+    val lim: Int = {
+      val t: Int = 2
+
+      (if (t.<(0)) 0 else t: Int)
+    }
+    var `c₂`: Int = 0
+    val cap: Int = java.lang.Math.min(n0, lim)
+    val out: Array[Object] = new Array[Object](cap)
+    var o: Int = 0
+    val s: FBase = src0
+    val len: Int = s.length
+    if (s.isInstanceOf[IntArr]) {
+      val a: Array[Int] = s.asInstanceOf[IntArr].arr
+      var i: Int = 0
+      while (i.<(len).&&(done.unary_!)) {
+        val v: Int = a.apply(i)
+        val `v₂`: Int = c
+        c = c.+(1)
+        val `v₃`: Int = v.%(2)
+        val `v₄`: Boolean = `v₃`.==(0)
+        if (`v₄`) {
+          val cv: Int = `c₂`
+          if (cv.>=(lim)) done = true else {
+            out.update(o, new Tuple2$mcII$sp(v, `v₂`).asInstanceOf[Tuple2[Int, Int]].asInstanceOf[Object])
+            o = o.+(1)
+            `c₂` = `c₂`.+(1)
+            if (cv.+(1).>=(lim)) done = true else ()
+          }
+        } else ()
+        i = i.+(1)
+      }
+    } else {
+      var `i₂`: Int = 0
+      while (`i₂`.<(len).&&(done.unary_!)) {
+        val `v₅`: Int = FArrayOps.intAt(s, `i₂`)
+        val `v₆`: Int = c
+        c = c.+(1)
+        val `v₇`: Int = `v₅`.%(2)
+        val `v₈`: Boolean = `v₇`.==(0)
+        if (`v₈`) {
+          val `cv₂`: Int = `c₂`
+          if (`cv₂`.>=(lim)) done = true else {
+            out.update(o, new Tuple2$mcII$sp(`v₅`, `v₆`).asInstanceOf[Tuple2[Int, Int]].asInstanceOf[Object])
+            o = o.+(1)
+            `c₂` = `c₂`.+(1)
+            if (`cv₂`.+(1).>=(lim)) done = true else ()
+          }
+        } else ()
+        `i₂` = `i₂`.+(1)
+      }
+    }
+    if (o.==(0)) (RefArr.EMPTY: FBase) else if (o.==(cap)) new RefArr(out, o) else new RefArr(java.util.Arrays.copyOf[Object](out, o), o)
+  }.asInstanceOf[FArray[Tuple2[Int, Int]]]: FArray[Tuple2[Int, Int]])
+}
