@@ -324,6 +324,9 @@ because S1's push-fold machinery is their prerequisite and delivers far more lev
 ## 8. Inputs to this plan
 - `docs/inside-the-fusion-macro.md` — how the current fusion works (hygiene, predicates, applicative core,
   zip, nesting, dynamism, collect).
+- `docs/nested-fusion.md` — `groupAdjacentReduceBy` (§3d, DONE): per-run reduction as a fused sub-pipeline with
+  rows never materialized — the `(prep)(agg)` signature rationale, the `@compileTimeOnly`/`AggRaw` trick,
+  verbatim generated code, and the `NestedFusionBenchmark` numbers.
 - `docs/fused-pipeline-design.md` — original design.
 - `docs/fs2-research.md` — fs2 combinator inventory categorized by memory behavior, Chunk/Pull/Stream/Scope
   architecture (verified vs a v3.13 clone), where fs2 boxes, concurrency reimagined in ox terms, the concrete
