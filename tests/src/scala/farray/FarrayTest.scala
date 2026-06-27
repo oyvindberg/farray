@@ -701,6 +701,50 @@ class FListTest:
   @Test def test_fuse_count_take: Unit =
     org.junit.Assert.assertEquals(2, r10.fuse.filter(_ % 2 == 0).take(2).count)
 
+  // ---- derived terminals (sugar over the base terminals); each must match List ----
+  @Test def test_fuse_derived_terminals: Unit =
+    val r = FArray(1, 2, 3, 4, 5, 6); val l = List(1, 2, 3, 4, 5, 6)
+    // conversions
+    org.junit.Assert.assertEquals(l.filter(_ % 2 == 0).map(_ * 10), r.fuse.filter(_ % 2 == 0).map(_ * 10).toList)
+    org.junit.Assert.assertEquals(l.map(_ + 1).toVector, r.fuse.map(_ + 1).toVector)
+    org.junit.Assert.assertEquals(l.toSeq.toList, r.fuse.toSeq.toList)
+    org.junit.Assert.assertEquals(l.filter(_ > 3).toSet, r.fuse.filter(_ > 3).toSet)
+    org.junit.Assert.assertEquals(l.map(x => x -> x * 2).toMap, r.fuse.map(x => x -> x * 2).toMap)
+    org.junit.Assert.assertEquals(l.map(_ + 1), r.fuse.map(_ + 1).toArray.toList)
+    org.junit.Assert.assertEquals(l.filter(_ % 2 == 0).mkString("[", ",", "]"), r.fuse.filter(_ % 2 == 0).mkString("[", ",", "]"))
+    org.junit.Assert.assertEquals(l.mkString("-"), r.fuse.mkString("-"))
+    // reductions
+    org.junit.Assert.assertEquals(l.filter(_ % 2 == 0).sum, r.fuse.filter(_ % 2 == 0).sum)
+    org.junit.Assert.assertEquals(l.map(_ + 1).product, r.fuse.map(_ + 1).product)
+    org.junit.Assert.assertEquals(l.fold(0)(_ + _), r.fuse.fold(0)(_ + _))
+    org.junit.Assert.assertEquals(l.map(_ * 2).reduce(_ + _), r.fuse.map(_ * 2).reduce(_ + _))
+    org.junit.Assert.assertEquals(l.map(_ * 2).min, r.fuse.map(_ * 2).min)
+    org.junit.Assert.assertEquals(l.map(_ * 2).max, r.fuse.map(_ * 2).max)
+    org.junit.Assert.assertEquals(l.minBy(x => -x), r.fuse.minBy(x => -x))
+    org.junit.Assert.assertEquals(l.maxBy(x => -x), r.fuse.maxBy(x => -x))
+    // last
+    org.junit.Assert.assertEquals(l.filter(_ % 2 == 0).last, r.fuse.filter(_ % 2 == 0).last)
+    org.junit.Assert.assertEquals(l.filter(_ > 100).lastOption, r.fuse.filter(_ > 100).lastOption)
+    org.junit.Assert.assertEquals(l.lastOption, r.fuse.lastOption)
+    // predicates / counts
+    org.junit.Assert.assertEquals(l.contains(4), r.fuse.contains(4))
+    org.junit.Assert.assertEquals(l.contains(99), r.fuse.contains(99))
+    org.junit.Assert.assertEquals(l.filter(_ > 100).isEmpty, r.fuse.filter(_ > 100).isEmpty)
+    org.junit.Assert.assertEquals(l.nonEmpty, r.fuse.nonEmpty)
+    org.junit.Assert.assertEquals(l.filter(_ % 2 == 0).size, r.fuse.filter(_ % 2 == 0).size)
+    org.junit.Assert.assertEquals(l.filter(_ % 2 == 0).length, r.fuse.filter(_ % 2 == 0).length)
+    // positional / partial (short-circuit)
+    org.junit.Assert.assertEquals(l.map(_ + 1).indexWhere(_ == 4), r.fuse.map(_ + 1).indexWhere(_ == 4))
+    org.junit.Assert.assertEquals(l.indexWhere(_ > 100), r.fuse.indexWhere(_ > 100))
+    org.junit.Assert.assertEquals(l.indexOf(4), r.fuse.indexOf(4))
+    org.junit.Assert.assertEquals(l.collectFirst { case x if x > 3 => x * 10 }, r.fuse.collectFirst { case x if x > 3 => x * 10 })
+    // empties throw like List
+    org.junit.Assert.assertThrows(classOf[UnsupportedOperationException], () => FArray.empty[Int].fuse.reduce(_ + _))
+    org.junit.Assert.assertThrows(classOf[NoSuchElementException], () => FArray.empty[Int].fuse.last)
+    // Ref + Long kinds
+    org.junit.Assert.assertEquals(List("a", "bb", "ccc").filter(_.length <= 2).mkString(","), FArray("a", "bb", "ccc").fuse.filter(_.length <= 2).mkString(","))
+    org.junit.Assert.assertEquals(List(1L, 2L, 3L).sum, FArray(1L, 2L, 3L).fuse.sum)
+
   // ---- kind coverage for take/drop/terminals (Long / Double / Ref) ----
   @Test def test_fuse_long_take_fold: Unit =
     org.junit.Assert.assertEquals((0L until 10L).toList.drop(2).take(4).sum,
@@ -1106,6 +1150,8 @@ class FListTest:
       FuseDebug.show(ints.fuse.map(x => (x + 1, x * 1000)).filter(_._1 % 2 == 0).map(_._2).toFArray))
     scenario("PRODUCT: map(x => Outer(Inner(x, x*99), x*3)).map(o => o.inner.x + o.z)  [nested case class, Inner.y DEAD]",
       FuseDebug.show(ints.fuse.map(x => Outer(Inner(x, x * 99), x * 3)).map(o => o.inner.x + o.z).toFArray))
+    scenario("DERIVED TERMINAL: ints.fuse.filter(_%2==0).map(_*10).sum  [foldLeft fusion: acc updated in one pass]",
+      FuseDebug.show(ints.fuse.filter(_ % 2 == 0).map(_ * 10).sum))
     def expensive(x: Int): Int = { var s = x; var k = 0; while (k < 24) { s = s * 1103515245 + 12345; k += 1 }; s }
     scenario("DCE-1: map(x => (x+1, expensive(x))).map(_._1)  [expensive(x) DEAD]",
       FuseDebug.show(ints.fuse.map(x => (x + 1, expensive(x))).map(_._1).toFArray))

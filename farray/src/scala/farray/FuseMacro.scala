@@ -316,7 +316,10 @@ object FuseMacro:
       // (binding `_root_.scala` or a companion-object ref is nonsense and miscompiles).
       def pathLike(c: Term): Boolean =
         val s = c.symbol; !s.isNoSymbol && (s.flags.is(Flags.Package) || s.flags.is(Flags.Module) || s.isType)
-      def ok(c: Term): Boolean = (c match { case _: Apply | _: Select | _: TypeApply => true; case _ => false }) && !pathLike(c)
+      // a partially-applied method ref (e.g. the `Predef.ArrowAssoc` under `x -> y`) has a method/poly type — it
+      // is not a value, so binding it to a val fails ("partially applied Term"). Only bind real value terms.
+      def isValue(c: Term): Boolean = c.tpe.widen match { case _: MethodType | _: PolyType => false; case _ => true }
+      def ok(c: Term): Boolean = (c match { case _: Apply | _: Select | _: TypeApply => true; case _ => false }) && !pathLike(c) && isValue(c)
       t match
         case Apply(Select(_, "&&" | "||"), _)           => Nil
         case Apply(TypeApply(Select(recv, _), _), args) => (recv :: args).filter(ok)
@@ -526,7 +529,10 @@ object FuseMacro:
           '{ ${ loop(v => applyLambda(f, v)) }; () }.asTerm
         case TTag.Fold =>
           val z = args(0); val op = args(1)
-          z.tpe.widen.asType match
+          // Z = op's result type (op: (Z, A) => Z). Using z's own type would over-narrow when the seed is more
+          // specific than Z — e.g. `foldLeft[Option[B]](None)(…)`, where z: None.type but acc must be Option[B].
+          val zTpe = op.tpe.widen.dealias match { case AppliedType(_, targs) => targs.last; case _ => z.tpe.widen }
+          zTpe.asType match
             case '[zz] =>
               '{ var acc: zz = ${ z.asExprOf[zz] }
                  ${ loop(v => '{ acc = ${ applyN(op, List('{ acc }.asTerm, v)).asExprOf[zz] } }.asTerm) }

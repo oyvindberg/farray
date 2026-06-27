@@ -882,6 +882,65 @@
 }
 
 ====================================================================================================
+// DERIVED TERMINAL: ints.fuse.filter(_%2==0).map(_*10).sum  [foldLeft fusion: acc updated in one pass]
+====================================================================================================
+{
+  val $proxy: FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  } = FArray$package.$asInstanceOf$[FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  }]
+  val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
+  val Fuse_this: Fuse[Int] = (new Fuse[Int](xs$proxy): Fuse[Int]).filter(((_$: Int) => _$.%(2).==(0))).map[Int](((_$: Int) => _$.*(10)))
+
+  ({
+    val z$proxy: Int = IntIsIntegral.zero
+
+    ({
+      val src0: FBase = ints.$asInstanceOf$[ints & FArray[Int]].asInstanceOf[FBase]
+      val n0: Int = src0.length
+      var acc: Int = z$proxy
+      val s: FBase = src0
+      val len: Int = s.length
+      if (s.isInstanceOf[IntArr]) {
+        val a: Array[Int] = s.asInstanceOf[IntArr].arr
+        var i: Int = 0
+        while (i.<(len)) {
+          val v: Int = a.apply(i)
+          val `v₂`: Int = v.%(2)
+          val `v₃`: Boolean = `v₂`.==(0)
+          if (`v₃`) {
+            val `v₄`: Int = v.*(10)
+            acc = {
+              val `acc₂`: Int = acc
+              IntIsIntegral.plus(`acc₂`, `v₄`)
+            }
+          } else ()
+          i = i.+(1)
+        }
+      } else {
+        var `i₂`: Int = 0
+        while (`i₂`.<(len)) {
+          val `v₅`: Int = FArrayOps.intAt(s, `i₂`)
+          val `v₆`: Int = `v₅`.%(2)
+          val `v₇`: Boolean = `v₆`.==(0)
+          if (`v₇`) {
+            val `v₈`: Int = `v₅`.*(10)
+            acc = {
+              val `acc₃`: Int = acc
+              IntIsIntegral.plus(`acc₃`, `v₈`)
+            }
+          } else ()
+          `i₂` = `i₂`.+(1)
+        }
+      }
+
+      (acc: Int)
+    }.asInstanceOf[Int]: Int)
+  }: Int)
+}
+
+====================================================================================================
 // DCE-1: map(x => (x+1, expensive(x))).map(_._1)  [expensive(x) DEAD]
 ====================================================================================================
 {
