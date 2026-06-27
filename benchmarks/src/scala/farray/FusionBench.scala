@@ -36,3 +36,12 @@ class FusionBench extends IntInputs:
     val b = scala.collection.mutable.ArrayBuilder.make[Int]
     farrayInput.foreach { x => val y = x + 1; if (y % 2 == 0) b.addOne(y * 2) }
     b.result()
+
+  // ---- FArray -> FArray (apples-to-apples): same pipeline, eager 3-pass vs the fused macro ----
+  // eager: 2 intermediate FArrays + 3 passes, returns FArray[Int]
+  @Benchmark def eagerF(): FArray[Int] =
+    farrayInput.map(_ + 1).filter(_ % 2 == 0).map(_ * 2)
+
+  // fused macro: one unboxed pass, one output FArray, no intermediates, no per-element closures
+  @Benchmark def fuseMacro(): FArray[Int] =
+    farrayInput.fuse.map(_ + 1).filter(_ % 2 == 0).map(_ * 2).toFArray

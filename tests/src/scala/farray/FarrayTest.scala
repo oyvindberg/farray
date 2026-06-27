@@ -624,6 +624,128 @@ class FListTest:
       assertCanonical(fa.partitionMap(em)._1, s"$name partitionMap._1 canon")
       assertCanonical(fa.partitionMap(em)._2, s"$name partitionMap._2 canon")
 
+  // ---- fused pipelines (xs.fuse.…) ----
+  @Test def test_fuse_identity_int: Unit =
+    org.junit.Assert.assertEquals(FArray(1, 2, 3, 4, 5).toList, FArray(1, 2, 3, 4, 5).fuse.toFArray.toList)
+  @Test def test_fuse_identity_empty: Unit =
+    org.junit.Assert.assertEquals(FArray.empty[Int].toList, FArray.empty[Int].fuse.toFArray.toList)
+  @Test def test_fuse_identity_ref: Unit =
+    org.junit.Assert.assertEquals(FArray("a", "b", "c").toList, FArray("a", "b", "c").fuse.toFArray.toList)
+  @Test def test_fuse_map_int: Unit =
+    org.junit.Assert.assertEquals(List(2, 3, 4, 5, 6), FArray(1, 2, 3, 4, 5).fuse.map(_ + 1).toFArray.toList)
+  @Test def test_fuse_filter_int: Unit =
+    org.junit.Assert.assertEquals(List(2, 4), FArray(1, 2, 3, 4, 5).fuse.filter(_ % 2 == 0).toFArray.toList)
+  @Test def test_fuse_map_filter_map_int: Unit =
+    org.junit.Assert.assertEquals(
+      FArray(1, 2, 3, 4, 5, 6).map(_ + 1).filter(_ % 2 == 0).map(_ * 2).toList,
+      FArray(1, 2, 3, 4, 5, 6).fuse.map(_ + 1).filter(_ % 2 == 0).map(_ * 2).toFArray.toList)
+  @Test def test_fuse_map_changes_kind: Unit = // Int -> String (Ref output)
+    org.junit.Assert.assertEquals(List("1!", "2!", "3!"), FArray(1, 2, 3).fuse.map(i => s"$i!").toFArray.toList)
+  @Test def test_fuse_ref_map_filter: Unit =
+    org.junit.Assert.assertEquals(List("AA", "BBBB"),
+      FArray("a", "bb", "b").fuse.filter(_.length <= 2).map(_.toUpperCase).filter(_ != "B").map(s => s + s).toFArray.toList)
+  @Test def test_fuse_filter_all_out: Unit =
+    org.junit.Assert.assertEquals(List(), FArray(1, 2, 3).fuse.filter(_ > 100).toFArray.toList)
+  @Test def test_fuse_long_double: Unit =
+    org.junit.Assert.assertEquals(List(4L, 8L), FArray(1L, 2L, 3L, 4L).fuse.filter(_ % 2L == 0L).map(_ * 2L).toFArray.toList)
+  @Test def test_fuse_tree_source: Unit = // non-leaf source (Concat) exercises the <kind>At fallback
+    org.junit.Assert.assertEquals(List(20, 40, 60),
+      (FArray(1, 2, 3) ++ FArray(4, 5, 6)).fuse.filter(_ % 2 == 0).map(_ * 10).toFArray.toList)
+
+  // ---- take / drop (positional) ----
+  private val r10 = FArray.tabulate(10)(i => i)         // 0..9
+  private val l10 = (0 until 10).toList
+  @Test def test_fuse_take: Unit =
+    org.junit.Assert.assertEquals(l10.take(3), r10.fuse.take(3).toFArray.toList)
+  @Test def test_fuse_drop: Unit =
+    org.junit.Assert.assertEquals(l10.drop(3), r10.fuse.drop(3).toFArray.toList)
+  @Test def test_fuse_take0: Unit =
+    org.junit.Assert.assertEquals(l10.take(0), r10.fuse.take(0).toFArray.toList)
+  @Test def test_fuse_take_over: Unit =
+    org.junit.Assert.assertEquals(l10.take(99), r10.fuse.take(99).toFArray.toList)
+  @Test def test_fuse_drop_over: Unit =
+    org.junit.Assert.assertEquals(l10.drop(99), r10.fuse.drop(99).toFArray.toList)
+  @Test def test_fuse_take_neg: Unit =
+    org.junit.Assert.assertEquals(l10.take(-1), r10.fuse.take(-1).toFArray.toList)
+  @Test def test_fuse_drop_take: Unit =
+    org.junit.Assert.assertEquals(l10.drop(2).take(3), r10.fuse.drop(2).take(3).toFArray.toList)
+  @Test def test_fuse_filter_then_take: Unit = // take bounds the POST-filter stream (real fuse.take)
+    org.junit.Assert.assertEquals(l10.filter(_ % 2 == 0).take(2).map(_ * 10),
+      r10.fuse.filter(_ % 2 == 0).take(2).map(_ * 10).toFArray.toList)
+  @Test def test_fuse_take_then_filter: Unit = // take FIRST (first 5), then filter
+    org.junit.Assert.assertEquals(l10.take(5).filter(_ % 2 == 0),
+      r10.fuse.take(5).filter(_ % 2 == 0).toFArray.toList)
+  @Test def test_fuse_map_filter_take_map: Unit =
+    org.junit.Assert.assertEquals(l10.map(_ + 1).filter(_ % 2 == 0).take(2).map(_ * 100),
+      r10.fuse.map(_ + 1).filter(_ % 2 == 0).take(2).map(_ * 100).toFArray.toList)
+  @Test def test_fuse_take_short_circuits: Unit = // take(3) on a 1e6 range must not read the whole thing
+    org.junit.Assert.assertEquals(List(0, 1, 2), FArray.range(0, 1000000).fuse.take(3).toFArray.toList)
+
+  // ---- terminals: foreach / foldLeft / count ----
+  @Test def test_fuse_foreach: Unit =
+    val sb = new StringBuilder
+    r10.fuse.filter(_ % 2 == 0).map(_ + 1).foreach(x => sb.append(x).append(','))
+    org.junit.Assert.assertEquals("1,3,5,7,9,", sb.toString)
+  @Test def test_fuse_foldLeft: Unit =
+    org.junit.Assert.assertEquals(l10.filter(_ % 2 == 0).map(_ * 2).sum,
+      r10.fuse.filter(_ % 2 == 0).map(_ * 2).foldLeft(0)(_ + _))
+  @Test def test_fuse_foldLeft_string: Unit = // Z is a reference accumulator
+    org.junit.Assert.assertEquals("a-b-c-", FArray("a", "b", "c").fuse.foldLeft("")((acc, s) => acc + s + "-"))
+  @Test def test_fuse_count: Unit =
+    org.junit.Assert.assertEquals(l10.count(_ % 3 == 0), r10.fuse.filter(_ % 3 == 0).count)
+  @Test def test_fuse_count_take: Unit =
+    org.junit.Assert.assertEquals(2, r10.fuse.filter(_ % 2 == 0).take(2).count)
+
+  // ---- kind coverage for take/drop/terminals (Long / Double / Ref) ----
+  @Test def test_fuse_long_take_fold: Unit =
+    org.junit.Assert.assertEquals((0L until 10L).toList.drop(2).take(4).sum,
+      FArray.tabulate(10)(i => i.toLong).fuse.drop(2).take(4).foldLeft(0L)(_ + _))
+  @Test def test_fuse_double_pipeline: Unit =
+    org.junit.Assert.assertEquals(List(2.0, 4.0),
+      FArray(1.0, 2.0, 3.0, 4.0).fuse.filter(_ % 2.0 == 0.0).map(_ * 1.0).take(2).toFArray.toList)
+  @Test def test_fuse_ref_take_drop_count: Unit =
+    val ss = FArray("a", "bb", "ccc", "dddd", "e")
+    org.junit.Assert.assertEquals(List("ccc", "dddd"), ss.fuse.drop(2).take(2).toFArray.toList)
+    org.junit.Assert.assertEquals(3, ss.fuse.filter(_.length >= 2).count)
+  @Test def test_fuse_ref_tree_take: Unit = // Ref non-leaf (Concat) + take short-circuit
+    org.junit.Assert.assertEquals(List("A", "B"),
+      (FArray("a", "b") ++ FArray("c", "d")).fuse.map(_.toUpperCase).take(2).toFArray.toList)
+  @Test def test_fuse_long_chain: Unit = // 8+ stages must stay correct (and one method under the size limit)
+    org.junit.Assert.assertEquals(
+      l10.map(_ + 1).filter(_ % 2 == 0).map(_ * 3).filter(_ > 5).drop(1).map(_ - 1).take(3).filter(_ != 17).map(_ + 100),
+      r10.fuse.map(_ + 1).filter(_ % 2 == 0).map(_ * 3).filter(_ > 5).drop(1).map(_ - 1).take(3).filter(_ != 17).map(_ + 100).toFArray.toList)
+
+  // ---- snapshot: the EXPANDED generated code (golden file tracked in git) ----
+  @Test def test_fuse_snapshots: Unit =
+    val ints = FArray.tabulate(8)(i => i)
+    val strs = FArray("a", "b", "c")
+    val sb = new StringBuilder
+    sb.append(
+      """// GENERATED golden file (post-typer expansion of fused pipelines) — do not edit by hand.
+        |// Regenerate by deleting this file and running the tests (or set UPDATE_SNAPSHOTS=1).
+        |// The `Fuse_this`/`$proxy` preamble is the parsed marker chain; it is dead-code-eliminated by
+        |// -opt at runtime (the benchmarks allocate nothing for it). The `({ ... })` block is the actual
+        |// fused loop that runs: one pass, leaf fast-path + <kind>At fallback, lambdas inlined.
+        |""".stripMargin).append('\n')
+    def scenario(title: String, code: String): Unit =
+      sb.append("=" * 100).append('\n').append("// ").append(title).append('\n')
+        .append("=" * 100).append('\n').append(code.strip).append("\n\n")
+    scenario("ints.fuse.map(_+1).filter(_%2==0).map(_*2).toFArray",
+      FuseDebug.show(ints.fuse.map(_ + 1).filter(_ % 2 == 0).map(_ * 2).toFArray))
+    scenario("ints.fuse.filter(_%2==0).take(2).map(_*10).toFArray  [positional break]",
+      FuseDebug.show(ints.fuse.filter(_ % 2 == 0).take(2).map(_ * 10).toFArray))
+    scenario("ints.fuse.drop(2).take(3).toFArray",
+      FuseDebug.show(ints.fuse.drop(2).take(3).toFArray))
+    scenario("ints.fuse.map(_+1).foldLeft(0)(_+_)",
+      FuseDebug.show(ints.fuse.map(_ + 1).foldLeft(0)(_ + _)))
+    scenario("ints.fuse.filter(_%2==0).count",
+      FuseDebug.show(ints.fuse.filter(_ % 2 == 0).count))
+    scenario("strs.fuse.map(_.toUpperCase).toFArray  [Ref]",
+      FuseDebug.show(strs.fuse.map(_.toUpperCase).toFArray))
+    scenario("strs.fuse.filter(_.nonEmpty).foreach(println)  [Ref, inlined op]",
+      FuseDebug.show(strs.fuse.filter(_.nonEmpty).foreach(s => System.out.println(s))))
+    Snapshots.check("fused-pipeline.snap", sb.toString)
+
   @Test def test_hashCode_matchesList(): Unit =
     def chk(name: String, fa: FArray[Any], l: List[Any]): Unit =
       assertEquals(name, l.hashCode.toLong, fa.hashCode.toLong)
