@@ -531,8 +531,9 @@ object FArray:
   inline def fromArray[A](as: Array[A]): FArray[A] = FArrayOps.fromArrayImpl[A](as)
   inline def fromIterable[A](it: Iterable[A]): FArray[A] = FArrayOps.applyImpl[A](it.toSeq)
 
-  /** wrap a boxed `Array[Object]` (e.g. from the fused topN heap) into an FArray, UNBOXING per element kind so a
-   *  primitive element type lands in a flat primitive leaf rather than a boxed `RefArr`. Internal — used by the macro. */
+  /** wrap a boxed `Array[Object]` (e.g. from the fused topN heap) into an FArray, UNBOXING per element kind so a primitive element type lands in a flat
+    * primitive leaf rather than a boxed `RefArr`. Internal — used by the macro.
+    */
   inline def fromBoxedArray[A](as: Array[Object]): FArray[A] = FArrayOps.fromBoxedArrayImpl[A](as)
 
   def range(start: Int, end: Int, step: Int = 1): FArray[Int] =
@@ -617,6 +618,7 @@ object FArray:
 
     /** boxed element read; works for an abstract A (no specialization). Used by ListSyntax's extractor. */
     private[farray] def boxedAt(i: Int): A = (xs: FBase).applyBoxed(i).asInstanceOf[A]
+
     /** enter a fused pipeline: `xs.fuse.map(..).filter(..).run` compiles to one unboxed loop. */
     inline def fuse: Fuse[A] = new Fuse[A](xs)
     inline def foldLeft[Z](z: Z)(inline op: (Z, A) => Z): Z = FArrayOps.foldLeftImpl[A, Z](xs, z)(op)

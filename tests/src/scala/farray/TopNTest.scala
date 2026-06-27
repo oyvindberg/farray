@@ -3,15 +3,23 @@ package farray
 import org.junit.Test
 import org.junit.Assert.*
 
-/** standalone top-N terminals (`topN`/`bottomN`/`topNBy`/`bottomNBy`) + the `Agg.topNBy`/`largest`/`smallest`
- *  agg specs: the `n` best elements by a key in ONE fused pass via a bounded size-`n` heap — same answer as
- *  `List.sortBy(key).take(n)` (best-first), without a full sort or an O(N) buffer. */
+/** standalone top-N terminals (`topN`/`bottomN`/`topNBy`/`bottomNBy`) + the `Agg.topNBy`/`largest`/`smallest` agg specs: the `n` best elements by a key in ONE
+  * fused pass via a bounded size-`n` heap — same answer as `List.sortBy(key).take(n)` (best-first), without a full sort or an O(N) buffer.
+  */
 class TopNTest:
   import TopNTest.Rec
 
   private val recs = List(
-    Rec(1, 50.0), Rec(2, 10.0), Rec(3, 90.0), Rec(4, 30.0), Rec(5, 70.0),
-    Rec(6, 20.0), Rec(7, 80.0), Rec(8, 40.0), Rec(9, 60.0), Rec(10, 100.0)
+    Rec(1, 50.0),
+    Rec(2, 10.0),
+    Rec(3, 90.0),
+    Rec(4, 30.0),
+    Rec(5, 70.0),
+    Rec(6, 20.0),
+    Rec(7, 80.0),
+    Rec(8, 40.0),
+    Rec(9, 60.0),
+    Rec(10, 100.0)
   )
   private val xs = FArray.fromIterable(recs)
 
@@ -63,9 +71,9 @@ class TopNTest:
     assertEquals(List(9, 7), big.toList)
     assertEquals(List(1, 2), small.toList)
 
-  /** the heap RETAINS only n elements: top-3 over a large input, repeated, must not hold the whole input.
-   *  We measure LIVE (post-GC) memory growth — transient per-element boxing is collected; an O(N) retained
-   *  buffer (a sortBy-the-whole-input implementation) would survive the GC and balloon by hundreds of MB. */
+  /** the heap RETAINS only n elements: top-3 over a large input, repeated, must not hold the whole input. We measure LIVE (post-GC) memory growth — transient
+    * per-element boxing is collected; an O(N) retained buffer (a sortBy-the-whole-input implementation) would survive the GC and balloon by hundreds of MB.
+    */
   @Test def topN_bounded_memory(): Unit =
     val big = FArray.tabulate(200000)(i => i.toLong)
     var sink = 0L; var iter = 0
@@ -76,12 +84,12 @@ class TopNTest:
     val live = rt.totalMemory - rt.freeMemory
     // the only large live object should be `big` itself (~1.6 MB LongArr). An O(N) retained buffer per pass,
     // or retaining all 50 results, would push live memory far past this.
-    assertTrue(s"live memory ${live / 1000000} MB — topN may be retaining O(N) instead of O(n)",
-      live < 80_000_000L)
+    assertTrue(s"live memory ${live / 1000000} MB — topN may be retaining O(N) instead of O(n)", live < 80_000_000L)
 
-  /** the PRIMITIVE-KEY path must not box the key per element. With the heap full after the first n records, every
-   *  later record is rejected by a single key comparison — that comparison runs on a `double[]`/`long[]`, never a
-   *  boxed Double/Long. A boxing regression would allocate ~N wrappers per pass (hundreds of MB over 50 passes). */
+  /** the PRIMITIVE-KEY path must not box the key per element. With the heap full after the first n records, every later record is rejected by a single key
+    * comparison — that comparison runs on a `double[]`/`long[]`, never a boxed Double/Long. A boxing regression would allocate ~N wrappers per pass (hundreds
+    * of MB over 50 passes).
+    */
   @Test def topNBy_primitiveKey_doesnt_box(): Unit =
     val big = FArray.tabulate(200000)(i => Rec(i.toLong, (i % 997).toDouble))
     val rt = Runtime.getRuntime
@@ -93,8 +101,7 @@ class TopNTest:
     val after = rt.totalMemory - rt.freeMemory
     assertTrue(s"sink=$sink", sink > 0.0)
     // unboxed key compare ≈ 0 alloc/element; a boxed-Double compare would be ~10M wrappers → >150 MB. Allow slack.
-    assertTrue(s"alloc grew ${(after - before) / 1000000} MB — primitive topN key likely boxing",
-      (after - before) < 80_000_000L)
+    assertTrue(s"alloc grew ${(after - before) / 1000000} MB — primitive topN key likely boxing", (after - before) < 80_000_000L)
 
 end TopNTest
 

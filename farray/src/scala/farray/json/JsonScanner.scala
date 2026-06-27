@@ -1,18 +1,16 @@
 package farray.json
 
-/** Byte-level JSON scanning primitives — the runtime helpers the `fuse` JSON macro GENERATES calls to
- *  per record (`internKey`/`keyEquals`/`scanStringEnd`/`skipValue`/`readIntAt`/`readLongAt`/`readDoubleAt`/
- *  `decodeLatin1`), and which the hand-written reference scanners in `Demo`/`FatNumeric` also use.
- *
- *  Techniques lifted from jsoniter-scala's `JsonReader` (the JVM king): the position threaded as an explicit
- *  `Int`, the string-aware skip family (string = quote+escape scan, containers = brace counting that routes
- *  strings through the same scan so braces inside them don't miscount), and negated-magnitude integer
- *  accumulation. The hot string-end scan is SWAR (8 bytes/word) in `JsonBytes`; double parsing is the
- *  allocation-free tiered parser in `JsonNum`.
- *
- *  All methods take `(buf, pos, end)` and return the new `pos` (the `…At` decoders stash it in `numEnd`).
- *  Cursor invariant: `pos` points at the next unread byte.
- */
+/** Byte-level JSON scanning primitives — the runtime helpers the `fuse` JSON macro GENERATES calls to per record
+  * (`internKey`/`keyEquals`/`scanStringEnd`/`skipValue`/`readIntAt`/`readLongAt`/`readDoubleAt`/ `decodeLatin1`), and which the hand-written reference scanners
+  * in `Demo`/`FatNumeric` also use.
+  *
+  * Techniques lifted from jsoniter-scala's `JsonReader` (the JVM king): the position threaded as an explicit `Int`, the string-aware skip family (string =
+  * quote+escape scan, containers = brace counting that routes strings through the same scan so braces inside them don't miscount), and negated-magnitude
+  * integer accumulation. The hot string-end scan is SWAR (8 bytes/word) in `JsonBytes`; double parsing is the allocation-free tiered parser in `JsonNum`.
+  *
+  * All methods take `(buf, pos, end)` and return the new `pos` (the `…At` decoders stash it in `numEnd`). Cursor invariant: `pos` points at the next unread
+  * byte.
+  */
 object JsonScanner:
 
   inline def isWs(b: Byte): Boolean =
@@ -26,16 +24,17 @@ object JsonScanner:
 
   // ---- string scanning (escape-aware) ----
 
-  /** `pos` points just AFTER the opening quote of a string; scan to the closing unescaped quote (SWAR,
-   *  8 bytes at a time, in Java). Returns the position of the closing quote (so [start, ret) is content). */
+  /** `pos` points just AFTER the opening quote of a string; scan to the closing unescaped quote (SWAR, 8 bytes at a time, in Java). Returns the position of the
+    * closing quote (so [start, ret) is content).
+    */
   inline def scanStringEnd(buf: Array[Byte], start: Int, end: Int): Int =
     JsonBytes.scanStringEnd(buf, start, end)
 
   // ---- value skipping (THE projection primitive) ----
 
-  /** skip a whole JSON value at `pos` (which must already be AT the value's first byte — callers in compact
-   *  NDJSON position the cursor exactly, avoiding a redundant whitespace scan, which the v0a profile showed
-   *  was the #1 cost). No decode, no allocation — the heart of projection pushdown. */
+  /** skip a whole JSON value at `pos` (which must already be AT the value's first byte — callers in compact NDJSON position the cursor exactly, avoiding a
+    * redundant whitespace scan, which the v0a profile showed was the #1 cost). No decode, no allocation — the heart of projection pushdown.
+    */
   def skipValue(buf: Array[Byte], pos: Int, end: Int): Int =
     val b = buf(pos)
     if b == '"' then scanStringEnd(buf, pos + 1, end) + 1
@@ -55,8 +54,9 @@ object JsonScanner:
       else return pos
     pos
 
-  /** `pos` is just past the opening `open`; skip to the matching `close`, string-aware (braces inside
-   *  string values don't miscount). Returns the position just past `close`. */
+  /** `pos` is just past the opening `open`; skip to the matching `close`, string-aware (braces inside string values don't miscount). Returns the position just
+    * past `close`.
+    */
   def skipContainer(buf: Array[Byte], pos0: Int, end: Int, open: Byte, close: Byte): Int =
     var pos = pos0
     var depth = 0
@@ -72,8 +72,9 @@ object JsonScanner:
 
   // ---- number decoding (scalar, correct; SWAR later) ----
 
-  /** decode a JSON double via the allocation-free Java byte-level parser (tiers 1-2 allocate nothing;
-   *  only genuinely-long/out-of-window inputs fall back to Double.parseDouble). Returns the position past it. */
+  /** decode a JSON double via the allocation-free Java byte-level parser (tiers 1-2 allocate nothing; only genuinely-long/out-of-window inputs fall back to
+    * Double.parseDouble). Returns the position past it.
+    */
   def readDouble(buf: Array[Byte], pos0: Int, end: Int, out: JsonNum.D): Int =
     val start = skipWs(buf, pos0, end)
     JsonNum.parseDouble(buf, start, end, out)
@@ -108,8 +109,9 @@ object JsonScanner:
 
   // ---- key dispatch by raw byte comparison (the edge over jsoniter: NO key decode) ----
 
-  /** intern a wanted field name to a cached UTF-8 byte array (allocated once per distinct name, ever) — the
-   *  macro binds the result to a val above the scan loop so per-record key compares allocate nothing. */
+  /** intern a wanted field name to a cached UTF-8 byte array (allocated once per distinct name, ever) — the macro binds the result to a val above the scan loop
+    * so per-record key compares allocate nothing.
+    */
   private val keyCache = new java.util.concurrent.ConcurrentHashMap[String, Array[Byte]]()
   def internKey(name: String): Array[Byte] =
     keyCache.computeIfAbsent(name, n => n.getBytes(java.nio.charset.StandardCharsets.UTF_8))

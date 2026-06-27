@@ -3,8 +3,9 @@ package farray
 import org.junit.Test
 import org.junit.Assert.*
 
-/** `groupReduceBy` / `groupReduce` / `groupCount` / `groupSum`: a primitive-keyed group-reduce in ONE fused
- *  pass — Int keys stay unboxed in the hot loop (via IntKeyMap), boxing only at the O(#keys) materialization. */
+/** `groupReduceBy` / `groupReduce` / `groupCount` / `groupSum`: a primitive-keyed group-reduce in ONE fused pass — Int keys stay unboxed in the hot loop (via
+  * IntKeyMap), boxing only at the O(#keys) materialization.
+  */
 class GroupReduceTest:
 
   private val xs = FArray(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
@@ -72,8 +73,9 @@ class GroupReduceTest:
     val r = (0 until 10000).toList.groupMapReduce(_ % 1000)(identity)(_ + _)
     assertEquals(r, got)
 
-  /** the unboxed-key headline: an Int-key Int-value group-sum over a large input must not box per element.
-   *  50 passes over 100k with a few keys would allocate millions of Integers if boxing; IntKeyMap → ~0. */
+  /** the unboxed-key headline: an Int-key Int-value group-sum over a large input must not box per element. 50 passes over 100k with a few keys would allocate
+    * millions of Integers if boxing; IntKeyMap → ~0.
+    */
   @Test def intKeyIntValue_doesNotBox(): Unit =
     val big = FArray.tabulate(100000)(i => i)
     val rt = Runtime.getRuntime

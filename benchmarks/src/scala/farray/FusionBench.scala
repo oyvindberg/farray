@@ -8,7 +8,7 @@ import java.util.concurrent.TimeUnit
 // no intermediate FArray per stage. Compare to the eager chain (3 intermediate IntArrs).
 object Fusion:
   final class IntProducer(val run: (Int => Unit) => Unit):
-    def map(f: Int => Int): IntProducer       = IntProducer(push => run(x => push(f(x))))
+    def map(f: Int => Int): IntProducer = IntProducer(push => run(x => push(f(x))))
     def filter(p: Int => Boolean): IntProducer = IntProducer(push => run(x => if p(x) then push(x)))
     def toArray: Array[Int] =
       val b = scala.collection.mutable.ArrayBuilder.make[Int]
@@ -34,7 +34,9 @@ class FusionBench extends IntInputs:
   // hand-inlined: what a macro/staging would generate — one pass, NO closures, fully inlined+unboxed
   @Benchmark def handFused(): Array[Int] =
     val b = scala.collection.mutable.ArrayBuilder.make[Int]
-    farrayInput.foreach { x => val y = x + 1; if (y % 2 == 0) b.addOne(y * 2) }
+    farrayInput.foreach { x =>
+      val y = x + 1; if (y % 2 == 0) b.addOne(y * 2)
+    }
     b.result()
 
   // ---- FArray -> FArray (apples-to-apples): same pipeline, eager 3-pass vs the fused macro ----

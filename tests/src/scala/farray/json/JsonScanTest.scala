@@ -5,8 +5,9 @@ import org.junit.Assert.*
 import com.github.plokhotnyuk.jsoniter_scala.core.*
 import com.github.plokhotnyuk.jsoniter_scala.macros.*
 
-/** Correctness gate for the v0a hand-written projection scanners. The scanner's answers must match (a) the
- *  generator's reference and (b) jsoniter-scala's full parse. If this fails, the thesis benchmark is moot. */
+/** Correctness gate for the v0a hand-written projection scanners. The scanner's answers must match (a) the generator's reference and (b) jsoniter-scala's full
+  * parse. If this fails, the thesis benchmark is moot.
+  */
 class JsonScanTest:
 
   // jsoniter codec for the full Rec — the independent oracle.
@@ -56,8 +57,9 @@ class JsonScanTest:
     val got = RecScan.categoryWhereAmountGt(buf, 0, buf.length, threshold)
     assertEquals(ref.toList, got.toList)
 
-  /** Query C: a projected NUMERIC field stays a raw byte slice (zero decode). Decode the slice here only to
-   *  check it equals the reference `id` — proving the slice points at the right bytes. */
+  /** Query C: a projected NUMERIC field stays a raw byte slice (zero decode). Decode the slice here only to check it equals the reference `id` — proving the
+    * slice points at the right bytes.
+    */
   @Test def idSlices_match_jsoniter(): Unit =
     val recs = jsoniterRecs
     val ref = recs.filter(_.amount > threshold).map(_.id).toList
@@ -91,8 +93,9 @@ class JsonScanTest:
     val got = FatScan.sumM1M2M3WhereM0Gt(fatBuf, 0, fatBuf.length, fatThreshold)
     assertEquals(ref, got, 1e-6)
 
-  /** verify the strongest jsoniter baseline (hand-written JsonReader projection) is CORRECT before we trust
-   *  its benchmark — a fast-but-wrong baseline is worthless. */
+  /** verify the strongest jsoniter baseline (hand-written JsonReader projection) is CORRECT before we trust its benchmark — a fast-but-wrong baseline is
+    * worthless.
+    */
   @Test def jsoniterReaderManual_is_correct(): Unit =
     val codec: JsonValueCodec[Double] = new JsonValueCodec[Double]:
       def decodeValue(in: JsonReader, default: Double): Double =

@@ -9,20 +9,20 @@ import org.typelevel.jawn.ast.{JParser, JValue}
 import farray.json.{RecScan, Rec, FatScan, FatRec, Json}
 
 /** THE kill-or-prove experiment (docs/json-parser-research.md §5.6).
- *
- *  Query: over NDJSON of 20-field records, `filter(amount > t).map(amount).sum` (aggregate, the zero-alloc
- *  headline) and `filter(amount > t).map(category)` (projection + lazy string).
- *
- *  Contenders:
- *   - fused        : the hand-written projection scanner (the shape the macro will generate) — reads 1-2 of
- *                    20 fields, skips the rest by the byte, lazy string decode, predicate early-out.
- *   - jsoniterFull : jsoniter parses the FULL 20-field Rec, then filter/map in Scala (the common baseline).
- *   - jsoniterNarrow: jsoniter parses a NARROW record (only the read fields), skipping the rest — jsoniter's
- *                    own best projection. The FAIREST baseline (still decodes every key + byte-walks skips).
- *
- *  Success criterion: fused throughput >= jsoniterNarrow (target >=1.3x), and near-zero alloc on the sum
- *  variant (run with -prof gc). Selectivity ~25% here (amount > 150, amounts in [0,298.5]).
- */
+  *
+  * Query: over NDJSON of 20-field records, `filter(amount > t).map(amount).sum` (aggregate, the zero-alloc headline) and `filter(amount > t).map(category)`
+  * (projection + lazy string).
+  *
+  * Contenders:
+  *   - fused : the hand-written projection scanner (the shape the macro will generate) — reads 1-2 of 20 fields, skips the rest by the byte, lazy string
+  *     decode, predicate early-out.
+  *   - jsoniterFull : jsoniter parses the FULL 20-field Rec, then filter/map in Scala (the common baseline).
+  *   - jsoniterNarrow: jsoniter parses a NARROW record (only the read fields), skipping the rest — jsoniter's own best projection. The FAIREST baseline (still
+  *     decodes every key + byte-walks skips).
+  *
+  * Success criterion: fused throughput >= jsoniterNarrow (target >=1.3x), and near-zero alloc on the sum variant (run with -prof gc). Selectivity ~25% here
+  * (amount > 150, amounts in [0,298.5]).
+  */
 @State(Scope.Thread)
 @Warmup(iterations = 5, time = 1, timeUnit = TimeUnit.SECONDS)
 @Measurement(iterations = 5, time = 1, timeUnit = TimeUnit.SECONDS)
@@ -64,8 +64,12 @@ class JsonProjectionBenchmark:
   val wideKeyThreshold = 90 // key in [0,100); keep > 90 → 10% pass
 
   @Benchmark def wide_fuseMacro(): Int =
-    Json.ndjson[JsonProjectionBenchmark.Wide](wideBuf).fuse
-      .filter(_.key > wideKeyThreshold).map(_.payload).count
+    Json
+      .ndjson[JsonProjectionBenchmark.Wide](wideBuf)
+      .fuse
+      .filter(_.key > wideKeyThreshold)
+      .map(_.payload)
+      .count
 
   /** jsoniter-narrow {key, payload}: must still byte-walk to find both, and decodes payload for survivors. */
   @Benchmark def wide_jsoniterNarrow(): Int =
@@ -79,8 +83,9 @@ class JsonProjectionBenchmark:
 
   // ---- AGGREGATE query: filter(amount > t).map(amount).sum ----
 
-  /** the MACRO-DRIVEN path: the EXISTING fuse optimizer (filter→if, map, sink, DCE, fold) drives the byte
-   *  scanner. This is the real product — the hand-written `sum_fused` is just its spec. */
+  /** the MACRO-DRIVEN path: the EXISTING fuse optimizer (filter→if, map, sink, DCE, fold) drives the byte scanner. This is the real product — the hand-written
+    * `sum_fused` is just its spec.
+    */
   @Benchmark def sum_fuseMacro(): Double =
     Json.ndjson[Rec](buf).fuse.filter(_.amount > threshold).map(_.amount).sum
 
@@ -109,9 +114,9 @@ class JsonProjectionBenchmark:
       start = end + 1
     acc
 
-  /** jawn (typelevel's high-reputation parser): parse each line DIRECTLY FROM BYTES to a JValue AST, then
-   *  extract the field. jawn is a fast tokenizer, but it has no projection — it builds the whole AST (a JObject
-   *  of all 20 fields, every value boxed into a JValue) per record before you can read one field. */
+  /** jawn (typelevel's high-reputation parser): parse each line DIRECTLY FROM BYTES to a JValue AST, then extract the field. jawn is a fast tokenizer, but it
+    * has no projection — it builds the whole AST (a JObject of all 20 fields, every value boxed into a JValue) per record before you can read one field.
+    */
   @Benchmark def sum_jawn(): Double =
     var acc = 0.0; var start = 0
     while start < buf.length do
@@ -122,8 +127,9 @@ class JsonProjectionBenchmark:
       start = end + 1
     acc
 
-  /** Jackson databind, tree model: build a JsonNode tree (all 20 fields) per line, then read one. The classic
-   *  reflection-free-but-allocation-heavy path everyone reaches for first. (Included for scale.) */
+  /** Jackson databind, tree model: build a JsonNode tree (all 20 fields) per line, then read one. The classic reflection-free-but-allocation-heavy path
+    * everyone reaches for first. (Included for scale.)
+    */
   @Benchmark def sum_jackson(): Double =
     var acc = 0.0; var start = 0
     while start < buf.length do
@@ -134,10 +140,10 @@ class JsonProjectionBenchmark:
       start = end + 1
     acc
 
-  /** THE strongest jsoniter baseline: a hand-written JsonReader loop (jsoniter's own tuned reader + SWAR),
-   *  manual key dispatch, decode ONLY `amount`, skip the other 19, and return the PRIMITIVE — no case-class
-   *  object allocated. This is jsoniter at its absolute best for this projection: no codec object, folds into
-   *  a var. Beating (or honestly measuring against) this is the real proof the win is fuse's model. */
+  /** THE strongest jsoniter baseline: a hand-written JsonReader loop (jsoniter's own tuned reader + SWAR), manual key dispatch, decode ONLY `amount`, skip the
+    * other 19, and return the PRIMITIVE — no case-class object allocated. This is jsoniter at its absolute best for this projection: no codec object, folds
+    * into a var. Beating (or honestly measuring against) this is the real proof the win is fuse's model.
+    */
   @Benchmark def sum_jsoniterReaderManual(): Double =
     var acc = 0.0; var start = 0
     while start < buf.length do
@@ -204,11 +210,23 @@ object JsonProjectionBenchmark:
   /** the narrow projection record jsoniter parses (everything else is skipped). */
   final case class Narrow(amount: Double, category: String)
 
-  /** Wide record for the predicate-fail early-out showcase: `key` FIRST, 10 filler fields, `payload` LAST.
-   *  Field declaration order matches the JSON write order (the generator emits them in this order). */
+  /** Wide record for the predicate-fail early-out showcase: `key` FIRST, 10 filler fields, `payload` LAST. Field declaration order matches the JSON write order
+    * (the generator emits them in this order).
+    */
   final case class Wide(
-      key: Int, f1: Int, f2: Int, f3: Int, f4: Double, f5: Double,
-      f6: String, f7: String, f8: String, f9: String, f10: String, payload: String)
+      key: Int,
+      f1: Int,
+      f2: Int,
+      f3: Int,
+      f4: Double,
+      f5: Double,
+      f6: String,
+      f7: String,
+      f8: String,
+      f9: String,
+      f10: String,
+      payload: String
+  )
   final case class WideNarrow(key: Int, payload: String)
 
   def wideRecord(i: Int): String =
@@ -222,8 +240,9 @@ object JsonProjectionBenchmark:
     while i < n do { sb.append(wideRecord(i)).append('\n'); i += 1 }
     sb.toString.getBytes(UTF_8)
 
-  /** Hand-written jsoniter JsonReader projection: decode ONLY `amount`, skip the rest, return the primitive
-   *  (no object). The strongest jsoniter contender — the same shape as our fused scanner, on jsoniter's reader. */
+  /** Hand-written jsoniter JsonReader projection: decode ONLY `amount`, skip the rest, return the primitive (no object). The strongest jsoniter contender — the
+    * same shape as our fused scanner, on jsoniter's reader.
+    */
   val amountCodec: JsonValueCodec[Double] = new JsonValueCodec[Double]:
     def decodeValue(in: JsonReader, default: Double): Double =
       var amount = default
@@ -240,6 +259,7 @@ object JsonProjectionBenchmark:
       amount
     def encodeValue(x: Double, out: JsonWriter): Unit = out.writeVal(x)
     def nullValue: Double = 0.0
+
   /** fat-numeric narrow schemas — jsoniter DECODES exactly these numeric fields. */
   final case class FatN2(m0: Double, m5: Double)
   final case class FatN4(m0: Double, m1: Double, m2: Double, m3: Double)
@@ -276,16 +296,26 @@ object JsonProjectionBenchmark:
   private def fields(i: Int): Array[(String, String)] =
     val s = i.toString
     Array(
-      "id" -> (i.toLong * 1000L + 7L).toString, "ts" -> (1_700_000_000_000L + i).toString,
-      "age" -> (i % 100).toString, "count" -> (i % 50).toString,
-      "score" -> f"${(i % 1000) / 10.0}%.2f", "amount" -> f"${(i % 200) * 1.5}%.2f",
-      "rank" -> (i % 10).toString, "lat" -> f"${(i % 180) - 90}.${i % 100}",
-      "lon" -> f"${(i % 360) - 180}.${i % 100}", "flags" -> (i % 8).toString,
-      "name" -> s""""name_$s"""", "category" -> s""""cat_${i % 12}"""",
-      "region" -> s""""region_${i % 6}"""", "status" -> s""""${if i % 2 == 0 then "active" else "inactive"}"""",
-      "code" -> s""""C${i % 1000}"""", "note" -> s""""note text for record $s with some words"""",
-      "tag" -> s""""tag_${i % 20}"""", "kind" -> s""""kind_${i % 4}"""",
-      "source" -> s""""src_${i % 7}"""", "label" -> s""""label_${i % 15}""""
+      "id" -> (i.toLong * 1000L + 7L).toString,
+      "ts" -> (1_700_000_000_000L + i).toString,
+      "age" -> (i % 100).toString,
+      "count" -> (i % 50).toString,
+      "score" -> f"${(i % 1000) / 10.0}%.2f",
+      "amount" -> f"${(i % 200) * 1.5}%.2f",
+      "rank" -> (i % 10).toString,
+      "lat" -> f"${(i % 180) - 90}.${i % 100}",
+      "lon" -> f"${(i % 360) - 180}.${i % 100}",
+      "flags" -> (i % 8).toString,
+      "name" -> s""""name_$s"""",
+      "category" -> s""""cat_${i % 12}"""",
+      "region" -> s""""region_${i % 6}"""",
+      "status" -> s""""${if i % 2 == 0 then "active" else "inactive"}"""",
+      "code" -> s""""C${i % 1000}"""",
+      "note" -> s""""note text for record $s with some words"""",
+      "tag" -> s""""tag_${i % 20}"""",
+      "kind" -> s""""kind_${i % 4}"""",
+      "source" -> s""""src_${i % 7}"""",
+      "label" -> s""""label_${i % 15}""""
     )
 
   def record(i: Int): String =

@@ -3,34 +3,41 @@ package farray.json
 import farray.{FuseDebug, FArray}
 
 /** Educational, runnable demos for the fused pipeline. Generates TWO self-contained HTML pages:
- *
- *    bleep run farray --class farray.json.JsonDemo            # writes both pages into docs/
- *    bleep run farray --class farray.json.JsonDemo -- DIR     # writes both pages into DIR
- *
- *  Page 1  docs/fused-optimizer.html  — what the fuse optimizer is, taught over ordinary in-memory FArray
- *                                        collections (map/filter fusion, DCE, compute-for-survivors, CSE),
- *                                        each example showing the VERBATIM generated loop.
- *  Page 2  docs/fused-json.html        — the same optimizer pointed at JSON bytes: projection pushdown, lazy
- *                                        decode, discard-DCE, predicate-fail early-out — each with the generated
- *                                        scanner, the jsoniter code we beat, and measured benchmark scores.
- *
- *  All generated code is captured at compile time via FuseDebug.show (shown, never executed).
- */
+  *
+  * bleep run farray --class farray.json.JsonDemo # writes both pages into docs/ bleep run farray --class farray.json.JsonDemo -- DIR # writes both pages into
+  * DIR
+  *
+  * Page 1 docs/fused-optimizer.html — what the fuse optimizer is, taught over ordinary in-memory FArray collections (map/filter fusion, DCE,
+  * compute-for-survivors, CSE), each example showing the VERBATIM generated loop. Page 2 docs/fused-json.html — the same optimizer pointed at JSON bytes:
+  * projection pushdown, lazy decode, discard-DCE, predicate-fail early-out — each with the generated scanner, the jsoniter code we beat, and measured benchmark
+  * scores.
+  *
+  * All generated code is captured at compile time via FuseDebug.show (shown, never executed).
+  */
 object JsonDemo:
 
   // ════════════════════════════════════════ shared types ════════════════════════════════════════════════
-  final case class Example(title: String, prose: String, code: String, gen: String,
-                           rival: Option[(String, String)] = None, bench: Option[Bench] = None)
+  final case class Example(title: String, prose: String, code: String, gen: String, rival: Option[(String, String)] = None, bench: Option[Bench] = None)
+
   /** a measured comparison: (label, ops/s, bytes/op) rows + a headline. */
   final case class Bench(headline: String, rows: List[(String, String, String)])
 
   def main(args: Array[String]): Unit =
     val dir = args.headOption.getOrElse("docs")
-    java.nio.file.Files.writeString(java.nio.file.Path.of(s"$dir/fused-optimizer.html"),
-      page("The fuse optimizer", optimizerLede, optimizerSections, prevNext = ("", "fused-json.html", "The JSON demo →")))
-    java.nio.file.Files.writeString(java.nio.file.Path.of(s"$dir/fused-json.html"),
-      page("Fused JSON: an enormously fast, projection-aware parser", jsonLede, jsonSections,
-           prevNext = ("fused-optimizer.html", "", "← The optimizer"), setup = setupCard))
+    java.nio.file.Files.writeString(
+      java.nio.file.Path.of(s"$dir/fused-optimizer.html"),
+      page("The fuse optimizer", optimizerLede, optimizerSections, prevNext = ("", "fused-json.html", "The JSON demo →"))
+    )
+    java.nio.file.Files.writeString(
+      java.nio.file.Path.of(s"$dir/fused-json.html"),
+      page(
+        "Fused JSON: an enormously fast, projection-aware parser",
+        jsonLede,
+        jsonSections,
+        prevNext = ("fused-optimizer.html", "", "← The optimizer"),
+        setup = setupCard
+      )
+    )
     println(s"wrote $dir/fused-optimizer.html and $dir/fused-json.html")
 
   // ════════════════════════════════ PAGE 1: the optimizer over collections ═══════════════════════════════
@@ -50,7 +57,8 @@ object JsonDemo:
           |filter is an `if` that wraps everything downstream of it. A `View` would store three `Function1`s and
           |call each through an interface per element.""".stripMargin,
         "xs.fuse.map(_ + 1).filter(_ % 2 == 0).map(_ * 2).run",
-        clean(c_mapfilter)),
+        clean(c_mapfilter)
+      ),
       Example(
         "Dead-column elimination",
         """A tuple/case class is a set of independent COLUMNS. Here `map` builds three, then the pipeline reads
@@ -58,7 +66,8 @@ object JsonDemo:
           |is DEAD and absent from the output; column 0 (`x % 3`) is needed by the filter, so it's computed
           |eagerly. A `View` allocates the 3-tuple (plus 3 boxed Ints) every element and throws most of it away.""".stripMargin,
         "xs.fuse.map(x => (x % 3, x * 7, x * 13)).filter(_._1 == 0).map(_._2).run",
-        clean(c_dce)),
+        clean(c_dce)
+      ),
       Example(
         "Compute-for-survivors (the sink)",
         """Look at WHERE `x * 7` lands: INSIDE the `if`. Column 1 is only needed by the final `map`, which is
@@ -66,14 +75,16 @@ object JsonDemo:
           |a selective filter runs a fraction of the time — work the lazy-collection model cannot express,
           |because it has no idea which columns a later stage will read.""".stripMargin,
         "xs.fuse.map(x => (x % 2, expensive(x))).filter(_._1 == 0).map(_._2).sum",
-        clean(c_survivors)),
+        clean(c_survivors)
+      ),
       Example(
         "Common-subexpression elimination",
         """`x * x` is written twice but computed ONCE — hash-consed across both tuple components, bound to one
           |`val`, reused. Decomposition + DCE + the sink + CSE all fall out of one idea: model a product as
           |independent lazy columns and bind each at its first use.""".stripMargin,
         "xs.fuse.map(x => (x*x + 1, x*x + 2)).map(t => t._1 + t._2).run",
-        clean(c_cse)),
+        clean(c_cse)
+      ),
       Example(
         "…and the decomposition reaches the terminal's lambda",
         """The same column analysis applies to a `foldLeft`/`reduce` lambda. Here the fold reads only `s.score`,
@@ -82,7 +93,8 @@ object JsonDemo:
           |the whole object and correctly rebuilds it; only field accessors project to columns.) Before this, the
           |fold rebuilt the entire product per element just to read one field.""".stripMargin,
         "xs.fuse.map(x => Stat(x, x * 100, x * 1000)).foldLeft(0)((acc, s) => acc + s.score)",
-        clean(c_foldop))
+        clean(c_foldop)
+      )
     )
 
   // ════════════════════════════════ PAGE 2: the optimizer parses JSON ════════════════════════════════════
@@ -98,8 +110,9 @@ object JsonDemo:
       |allocated. The result beats the JVM's best hand-tuned parser on a projection query — and laps the popular
       |AST parsers."""
 
-  /** the benchmark setup, shown up front so the numbers below have context. (Sizes measured from the real
-   *  10 000-record buffer the benchmark uses: 3 348 775 bytes total, ~334 bytes/record.) */
+  /** the benchmark setup, shown up front so the numbers below have context. (Sizes measured from the real 10 000-record buffer the benchmark uses: 3 348 775
+    * bytes total, ~334 bytes/record.)
+    */
   val jsonSetup: String =
     """The dataset is NDJSON — one JSON object per line — of <b>10 000 records</b>, <b>3 348 775 bytes (~3.2 MB)</b>,
       |each record a <b>20-field</b> object averaging <b>~334 bytes</b> (a realistic mix of longs, ints, doubles,
@@ -130,13 +143,19 @@ object JsonDemo:
         "Json.ndjson[Event](src).stream.filter(_.amount > 150).map(_.amount).foldLeft(0.0)(_ + _)",
         clean(j_sum),
         rival = Some(("the field — jsoniter-scala (hand-written reader, no object), jawn, and Jackson all do the same query", rivalsSrc)),
-        bench = Some(Bench("fuse beats the JVM's best hand-tuned parser 1.5×, and laps the AST parsers 4–9× — at ~zero allocation",
-          List(
-            ("fuse (generated scanner)", "395 ops/s", "0.6 B/op"),
-            ("jsoniter — hand-written reader, no object", "256 ops/s", "0.8 B/op"),
-            ("jsoniter — full codec (parses all 20 fields)", "145 ops/s", "6 464 001 B/op"),
-            ("Jackson — tree model (JsonNode)", "87 ops/s", "31 047 490 B/op"),
-            ("jawn — AST (JValue)", "46 ops/s", "45 885 204 B/op"))))),
+        bench = Some(
+          Bench(
+            "fuse beats the JVM's best hand-tuned parser 1.5×, and laps the AST parsers 4–9× — at ~zero allocation",
+            List(
+              ("fuse (generated scanner)", "395 ops/s", "0.6 B/op"),
+              ("jsoniter — hand-written reader, no object", "256 ops/s", "0.8 B/op"),
+              ("jsoniter — full codec (parses all 20 fields)", "145 ops/s", "6 464 001 B/op"),
+              ("Jackson — tree model (JsonNode)", "87 ops/s", "31 047 490 B/op"),
+              ("jawn — AST (JValue)", "46 ops/s", "45 885 204 B/op")
+            )
+          )
+        )
+      ),
       Example(
         "Lazy decode — a String built only for survivors",
         """`category` gets a slot, but a STRING slot is just `(start, len)` into the buffer — not a decoded
@@ -145,7 +164,8 @@ object JsonDemo:
           |compute-for-survivors sink from page 1, now over bytes.""".stripMargin,
         "Json.ndjson[Event](src).stream.filter(_.amount > 150).map(_.category).toList",
         clean(j_cat),
-        rival = Some(("jsoniter-scala, narrow codec (only the read fields; the rest skipped)", jsoniterNarrowSrc))),
+        rival = Some(("jsoniter-scala, narrow codec (only the read fields; the rest skipped)", jsoniterNarrowSrc))
+      ),
       Example(
         "Discard-DCE — count never decodes the projection",
         """`count` ignores the element, so `map(_.category)` is a dead value. The optimizer captures the slice
@@ -153,10 +173,13 @@ object JsonDemo:
           |`map(expensive).count`, where `expensive` never runs. Dead-column elimination reaching the terminal.""".stripMargin,
         """Json.ndjson[Event](src).stream.filter(_.status == "active").map(_.category).count""",
         clean(j_count),
-        bench = Some(Bench("fuse 1.47× faster, and ~zero allocation vs jsoniter's per-record object",
-          List(
-            ("fuse (no String decoded at all)", "340 ops/s", "0.6 B/op"),
-            ("jsoniter — narrow codec", "231 ops/s", "720 001 B/op"))))),
+        bench = Some(
+          Bench(
+            "fuse 1.47× faster, and ~zero allocation vs jsoniter's per-record object",
+            List(("fuse (no String decoded at all)", "340 ops/s", "0.6 B/op"), ("jsoniter — narrow codec", "231 ops/s", "720 001 B/op"))
+          )
+        )
+      ),
       Example(
         "Predicate-fail early-out — abandon a record mid-scan",
         """The filter field is decoded DURING the scan; the instant it's known the predicate is checked INLINE,
@@ -166,10 +189,16 @@ object JsonDemo:
           |queries.""".stripMargin,
         "Json.ndjson[Wide](src).stream.filter(_.key > 90).map(_.payload).count",
         clean(j_wide),
-        bench = Some(Bench("fuse 2.47× faster, near-zero allocation vs 1.4 MB/op",
-          List(
-            ("fuse (rejected records stop at `key`)", "1212 ops/s", "0.17 B/op"),
-            ("jsoniter — narrow codec {key, payload}", "491 ops/s", "1 432 000 B/op"))))),
+        bench = Some(
+          Bench(
+            "fuse 2.47× faster, near-zero allocation vs 1.4 MB/op",
+            List(
+              ("fuse (rejected records stop at `key`)", "1212 ops/s", "0.17 B/op"),
+              ("jsoniter — narrow codec {key, payload}", "491 ops/s", "1 432 000 B/op")
+            )
+          )
+        )
+      ),
       Example(
         "Multi-aggregate — three aggregates, ONE pass, into a case class",
         """Sum the amount, count the rows, and take the peak score of the active events — `agg` runs all three
@@ -178,17 +207,35 @@ object JsonDemo:
           |reads nothing extra. `aggTo(Stats.apply)` returns a case class, not a tuple. No `Event` is built; the
           |`sum`/`max` use `dadd`/`dcmp`, not the boxing `Numeric`/`Ordering`.""".stripMargin,
         "Json.ndjson[Event](src).stream.filter(_.status == \"active\")\n  .aggTo(Stats.apply)(Agg.sum(_.amount), Agg.count, Agg.max1(_.score))",
-        clean(j_agg))
+        clean(j_agg)
+      )
     )
 
   // ════════════════════════════════════ records + jsoniter source ════════════════════════════════════════
   final case class Event(
-      id: Long, ts: Long, userId: Long, sessionId: Long,
-      amount: Double, score: Double, lat: Double, lon: Double,
-      age: Int, rank: Int, count: Int, flags: Int,
-      name: String, category: String, region: String, status: String,
-      country: String, device: String, source: String, label: String)
+      id: Long,
+      ts: Long,
+      userId: Long,
+      sessionId: Long,
+      amount: Double,
+      score: Double,
+      lat: Double,
+      lon: Double,
+      age: Int,
+      rank: Int,
+      count: Int,
+      flags: Int,
+      name: String,
+      category: String,
+      region: String,
+      status: String,
+      country: String,
+      device: String,
+      source: String,
+      label: String
+  )
   final case class Wide(key: Int, f1: Int, f2: Int, f3: Double, payload: String)
+
   /** the case-class result of the multi-aggregate example. */
   final case class Stats(revenue: Double, n: Int, peak: Double)
 
@@ -245,22 +292,26 @@ object JsonDemo:
   // ════════════════════════════════════ generated-code captures ══════════════════════════════════════════
   private val xs5 = FArray(1, 2, 3, 4, 5)
   private inline def c_mapfilter: String = FuseDebug.show(xs5.fuse.map(_ + 1).filter(_ % 2 == 0).map(_ * 2).run)
-  private inline def c_dce: String       = FuseDebug.show(xs5.fuse.map(x => (x % 3, x * 7, x * 13)).filter(_._1 == 0).map(_._2).run)
+  private inline def c_dce: String = FuseDebug.show(xs5.fuse.map(x => (x % 3, x * 7, x * 13)).filter(_._1 == 0).map(_._2).run)
   private inline def c_survivors: String = FuseDebug.show(xs5.fuse.map(x => (x % 2, expensive(x))).filter(_._1 == 0).map(_._2).sum)
-  private inline def c_cse: String       = FuseDebug.show(xs5.fuse.map(x => (x*x + 1, x*x + 2)).map(t => t._1 + t._2).run)
-  private inline def c_foldop: String    = FuseDebug.show(xs5.fuse.map(x => Stat(x, x * 100, x * 1000)).foldLeft(0)((acc, s) => acc + s.score))
+  private inline def c_cse: String = FuseDebug.show(xs5.fuse.map(x => (x * x + 1, x * x + 2)).map(t => t._1 + t._2).run)
+  private inline def c_foldop: String = FuseDebug.show(xs5.fuse.map(x => Stat(x, x * 100, x * 1000)).foldLeft(0)((acc, s) => acc + s.score))
   private def expensive(x: Int): Int = { var s = 0; var i = 0; while i < x do { s += i; i += 1 }; s }
 
   /** a 3-field product for the fold-decomposition example. The fold reads only `score`; `id`/`weight` are dead. */
   final case class Stat(id: Int, score: Int, weight: Int)
 
-  private inline def j_sum: String   = FuseDebug.show(Json.ndjson[Event](sample).stream.filter(_.amount > 150).map(_.amount).foldLeft(0.0)(_ + _))
-  private inline def j_cat: String   = FuseDebug.show(Json.ndjson[Event](sample).stream.filter(_.amount > 150).map(_.category).toList)
+  private inline def j_sum: String = FuseDebug.show(Json.ndjson[Event](sample).stream.filter(_.amount > 150).map(_.amount).foldLeft(0.0)(_ + _))
+  private inline def j_cat: String = FuseDebug.show(Json.ndjson[Event](sample).stream.filter(_.amount > 150).map(_.category).toList)
   private inline def j_count: String = FuseDebug.show(Json.ndjson[Event](sample).stream.filter(_.status == "active").map(_.category).count)
-  private inline def j_wide: String  = FuseDebug.show(Json.ndjson[Wide](wideSample).stream.filter(_.key > 90).map(_.payload).count)
-  private inline def j_agg: String   = FuseDebug.show(
-    Json.ndjson[Event](sample).stream.filter(_.status == "active")
-      .aggTo(Stats.apply)(farray.Agg.sum(_.amount), farray.Agg.count, farray.Agg.max1(_.score)))
+  private inline def j_wide: String = FuseDebug.show(Json.ndjson[Wide](wideSample).stream.filter(_.key > 90).map(_.payload).count)
+  private inline def j_agg: String = FuseDebug.show(
+    Json
+      .ndjson[Event](sample)
+      .stream
+      .filter(_.status == "active")
+      .aggTo(Stats.apply)(farray.Agg.sum(_.amount), farray.Agg.count, farray.Agg.max1(_.score))
+  )
 
   /** strip the dead `$proxy`/`Fuse_this` preamble and opacity-cast noise so the loop reads cleanly. */
   private def clean(code: String): String =
@@ -269,23 +320,35 @@ object JsonDemo:
     val start = lines.indexWhere(l => l.contains("val out") || l.contains("var acc") || l.contains("val buf"))
     val body = if start < 0 then lines else lines.drop(start)
     body.iterator
-      .filterNot(l => l.contains("$proxy") || l.contains("asInstanceOf$") || l.contains("FArray$package") ||
-                      l.trim.startsWith("type FArray") || l.trim == "}]" || l.trim.isEmpty ||
-                      l.contains("val src0: FBase = null") || l.contains("val n0: Int = 16"))
-      .map(_.replace(".asInstanceOf[FArray[Int]]", "").replace("`", "")
-            // unwrap the opaque NdjsonSource accessors so they read as plain field reads
-            .replaceAll("""inline\$(buf|until|from)\$i1\(src\)""", "src.$1")
-            .replaceAll("""val src: NdjsonSource\[.*""", "val src = source")
-            .replace("null.asInstanceOf[String]", "null"))
+      .filterNot(l =>
+        l.contains("$proxy") || l.contains("asInstanceOf$") || l.contains("FArray$package") ||
+          l.trim.startsWith("type FArray") || l.trim == "}]" || l.trim.isEmpty ||
+          l.contains("val src0: FBase = null") || l.contains("val n0: Int = 16")
+      )
+      .map(
+        _.replace(".asInstanceOf[FArray[Int]]", "")
+          .replace("`", "")
+          // unwrap the opaque NdjsonSource accessors so they read as plain field reads
+          .replaceAll("""inline\$(buf|until|from)\$i1\(src\)""", "src.$1")
+          .replaceAll("""val src: NdjsonSource\[.*""", "val src = source")
+          .replace("null.asInstanceOf[String]", "null")
+      )
       .mkString("\n")
-      .replace(".+(", " + (").replace(".*(", " * (").replace(".%(", " % (").replace(".<(", " < (")
-      .replace(".==(", " == (").replace(".>(", " > (").replace(".!=(", " != (").replace(".&&(", " && (")
-      .replace(".||(", " || (").replace(".apply(", "(").replace(".update(", ".set(")
+      .replace(".+(", " + (")
+      .replace(".*(", " * (")
+      .replace(".%(", " % (")
+      .replace(".<(", " < (")
+      .replace(".==(", " == (")
+      .replace(".>(", " > (")
+      .replace(".!=(", " != (")
+      .replace(".&&(", " && (")
+      .replace(".||(", " || (")
+      .replace(".apply(", "(")
+      .replace(".update(", ".set(")
       .replaceAll("""(\w+)\.unary_!""", "!$1") // seen.unary_! -> !seen
 
   // ══════════════════════════════════════════ HTML rendering ═════════════════════════════════════════════
-  private def page(title: String, lede: String, sections: () => List[Example], prevNext: (String, String, String),
-                   setup: String = ""): String =
+  private def page(title: String, lede: String, sections: () => List[Example], prevNext: (String, String, String), setup: String = ""): String =
     val (prevHref, nextHref, navLabel) = prevNext
     val nav =
       if nextHref.nonEmpty then s"""<a class="nav" href="$nextHref">$navLabel</a>"""
@@ -294,7 +357,9 @@ object JsonDemo:
     s"""<!doctype html><html lang="en"><head><meta charset="utf-8">
        |<meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(title)}</title>
        |<style>$css</style></head><body>
-       |<header><div class="tabs"><a${cls(prevHref.isEmpty && nextHref.nonEmpty)} href="fused-optimizer.html">1 · The optimizer</a><a${cls(prevHref.nonEmpty)} href="fused-json.html">2 · Fused JSON</a></div>
+       |<header><div class="tabs"><a${cls(prevHref.isEmpty && nextHref.nonEmpty)} href="fused-optimizer.html">1 · The optimizer</a><a${cls(
+        prevHref.nonEmpty
+      )} href="fused-json.html">2 · Fused JSON</a></div>
        |<h1>${esc(title)}</h1><p class="lede">${prose(lede)}</p></header>
        |$setup
        |$body
@@ -311,9 +376,11 @@ object JsonDemo:
   private def cls(active: Boolean): String = if active then """ class="on"""" + "\"" else ""
 
   private def renderExample(e: Example): String =
-    val rival = e.rival.map { case (label, src) =>
-      s"""<p class="cap rival">what we beat — ${esc(label)}</p><pre class="rival">${highlightScala(src)}</pre>"""
-    }.getOrElse("")
+    val rival = e.rival
+      .map { case (label, src) =>
+        s"""<p class="cap rival">what we beat — ${esc(label)}</p><pre class="rival">${highlightScala(src)}</pre>"""
+      }
+      .getOrElse("")
     val bench = e.bench.map(renderBench).getOrElse("")
     s"""<section class="ex"><h2>${esc(e.title)}</h2>
        |<p class="prose">${prose(e.prose)}</p>
@@ -339,10 +406,32 @@ object JsonDemo:
 
   private def highlightScala(s: String): String =
     var h = esc(s)
-    for kw <- List("filter", "foldLeft", "fuse", "stream", "ndjson", "map", "toList", "count", "headOption", "sum", "run",
-                   "aggTo", "agg", "Agg",
-                   "def", "val", "var", "while", "if", "then", "else", "new", "given") do
-      h = raw"(?<![A-Za-z_.])($kw)(?![A-Za-z0-9_])".r.replaceAllIn(h, m => s"""<span class="kw">${m.group(1)}</span>""")
+    for kw <- List(
+        "filter",
+        "foldLeft",
+        "fuse",
+        "stream",
+        "ndjson",
+        "map",
+        "toList",
+        "count",
+        "headOption",
+        "sum",
+        "run",
+        "aggTo",
+        "agg",
+        "Agg",
+        "def",
+        "val",
+        "var",
+        "while",
+        "if",
+        "then",
+        "else",
+        "new",
+        "given"
+      )
+    do h = raw"(?<![A-Za-z_.])($kw)(?![A-Za-z0-9_])".r.replaceAllIn(h, m => s"""<span class="kw">${m.group(1)}</span>""")
     h.replace("//", """<span class="cm">//""").linesIterator.map(l => if l.contains("<span class=\"cm\">") then l + "</span>" else l).mkString("\n")
 
   private def esc(s: String): String = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")

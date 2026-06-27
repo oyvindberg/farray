@@ -63,8 +63,9 @@ class AggTest:
     val (s, n, mn, mx) = xs.fuse.agg(Agg.sum(_.a), Agg.count, Agg.min(_.b), Agg.max(_.b))
     assertEquals(10, s); assertEquals(4, n); assertEquals(Some(10), mn); assertEquals(Some(40), mx)
 
-  /** aggTo: aggregate into a CASE CLASS instead of a tuple (field types must match the aggregate results:
-   *  sum→B, count→Int, max→Option[B]). Same fused pass, same column merge. */
+  /** aggTo: aggregate into a CASE CLASS instead of a tuple (field types must match the aggregate results: sum→B, count→Int, max→Option[B]). Same fused pass,
+    * same column merge.
+    */
   @Test def aggTo_caseClass(): Unit =
     val s = xs.fuse.aggTo(AggTest.Summary.apply)(Agg.sum(_.a), Agg.count, Agg.max(_.b))
     assertEquals(AggTest.Summary(10, 4, Some(40)), s)
@@ -77,11 +78,10 @@ class AggTest:
     assertEquals(1, mn); assertEquals(40, mx) // plain Int, not Option
     val s = xs.fuse.aggTo(AggTest.Stats.apply)(Agg.sum(_.a), Agg.max1(_.b))
     assertEquals(AggTest.Stats(10, 40), s)
-    org.junit.Assert.assertThrows(classOf[NoSuchElementException], () =>
-      FArray.empty[Rec].fuse.agg(Agg.min1(_.a), Agg.count))
+    org.junit.Assert.assertThrows(classOf[NoSuchElementException], () => FArray.empty[Rec].fuse.agg(Agg.min1(_.a), Agg.count))
 
-  /** minBy / maxBy as aggregates: return the ELEMENT with the extreme key, composing alongside sum/count in
-   *  ONE pass. Cross-checked vs List.minBy/maxBy. */
+  /** minBy / maxBy as aggregates: return the ELEMENT with the extreme key, composing alongside sum/count in ONE pass. Cross-checked vs List.minBy/maxBy.
+    */
   @Test def minBy_maxBy_inAgg(): Unit =
     val (lo, hi, total) = xs.fuse.agg(Agg.minBy(_.a), Agg.maxBy(_.b), Agg.sum(_.a))
     assertEquals(Some(recs.minBy(_.a)), lo)
@@ -96,8 +96,7 @@ class AggTest:
     val (lo, hi) = xs.fuse.agg(Agg.minBy1(_.a), Agg.maxBy1(_.b))
     assertEquals(recs.minBy(_.a), lo) // plain Rec, not Option
     assertEquals(recs.maxBy(_.b), hi)
-    org.junit.Assert.assertThrows(classOf[NoSuchElementException], () =>
-      FArray.empty[Rec].fuse.agg(Agg.minBy1(_.a), Agg.count))
+    org.junit.Assert.assertThrows(classOf[NoSuchElementException], () => FArray.empty[Rec].fuse.agg(Agg.minBy1(_.a), Agg.count))
 
   /** reduce / reduce1 as aggregates over a primitive pipeline, alongside count. */
   @Test def reduce_inAgg(): Unit =
@@ -122,8 +121,9 @@ class AggTest:
     assertEquals(None, FArray.empty[Int].fuse.reduceOption(_ + _))
     assertEquals(None, FArray.empty[Rec].fuse.minByOption(_.a))
 
-  /** sum/max over PRIMITIVE fields must be UNBOXED — fold a large input many times and assert it doesn't
-   *  allocate per element (a boxing regression would allocate millions of wrappers). */
+  /** sum/max over PRIMITIVE fields must be UNBOXED — fold a large input many times and assert it doesn't allocate per element (a boxing regression would
+    * allocate millions of wrappers).
+    */
   @Test def primitiveAggs_dont_box(): Unit =
     val big = FArray.tabulate(100000)(i => Rec(i, i % 1000, i.toDouble))
     val rt = Runtime.getRuntime

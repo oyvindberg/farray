@@ -4,11 +4,11 @@ import org.junit.Test
 import org.junit.Assert.*
 import farray.Agg
 
-/** Plan-DESCRIPTION tests: the macro emits a structured string describing the plan it built (which fields are
- *  scanned, decoded vs kept as lazy slices, the predicate/early-out set, whether the record is rebuilt). We
- *  assert on that STRUCTURE — the precise, stable way to test a macro. The value-only tests missed two real
- *  bugs (a terminal-read field defaulting to 0.0; a type-changing `map` inflating the live-set to all 20
- *  fields) because outputs were coincidentally right; these plan assertions fail loudly on both. */
+/** Plan-DESCRIPTION tests: the macro emits a structured string describing the plan it built (which fields are scanned, decoded vs kept as lazy slices, the
+  * predicate/early-out set, whether the record is rebuilt). We assert on that STRUCTURE — the precise, stable way to test a macro. The value-only tests missed
+  * two real bugs (a terminal-read field defaulting to 0.0; a type-changing `map` inflating the live-set to all 20 fields) because outputs were coincidentally
+  * right; these plan assertions fail loudly on both.
+  */
 class JsonPlanTest:
   private val b = Array.emptyByteArray
   private def fields(plan: String, key: String): Set[String] =
@@ -39,8 +39,8 @@ class JsonPlanTest:
   @Test def filterMapCategory_slices_category_earlyOut(): Unit =
     val p = Json.ndjson[Rec](b).stream.filter(_.amount > 1).map(_.category).plan
     assertEquals(Set("amount", "category"), fields(p, "live"))
-    assertEquals(Set("amount"), fields(p, "decoded"))     // amount decoded for the predicate
-    assertEquals(Set("category"), fields(p, "sliced"))    // category kept as a lazy slice
+    assertEquals(Set("amount"), fields(p, "decoded")) // amount decoded for the predicate
+    assertEquals(Set("category"), fields(p, "sliced")) // category kept as a lazy slice
     assertEquals(Set("amount"), fields(p, "predicate"))
     assertTrue("early-out: predicate field present, projection field later", flag(p, "earlyOut"))
 
@@ -76,7 +76,7 @@ class JsonPlanTest:
     val p = Json.ndjson[Rec](b).stream.planFold((acc: String, r) => acc + r.id + r.amount + r.name + r.age)
     assertEquals(Set("id", "amount", "name", "age"), fields(p, "live"))
     assertEquals(Set("id", "amount", "age"), fields(p, "decoded")) // Long/Double/Int decode
-    assertEquals(Set("name"), fields(p, "sliced"))                  // String slices
+    assertEquals(Set("name"), fields(p, "sliced")) // String slices
 
   // ── agg: live-set = union of the aggregates' read fields (count adds nothing) ────────────────────────
   @Test def planAgg_scans_union(): Unit =
