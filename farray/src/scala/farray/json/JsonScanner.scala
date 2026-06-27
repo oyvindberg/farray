@@ -1,0 +1,143 @@
+package farray.json
+
+/** Byte-level JSON scanning primitives — the hand-written form of the code the `fuse` JSON macro will
+ *  eventually GENERATE per record. This is the v0a proof-of-thesis: projection pushdown (skip unwanted
+ *  fields by the byte), key dispatch by raw byte comparison (NO key decode), lazy string slices (decode a
+ *  string only when forced), and predicate early-out (abandon the record when a predicate fails).
+ *
+ *  Techniques lifted from jsoniter-scala's `JsonReader` (the JVM king): the head/tail cursor with the
+ *  position threaded as an explicit `Int`, the SWAR-friendly skip family (string = quote+escape scan,
+ *  containers = string-aware brace counting), and negated-magnitude integer accumulation. Number/string
+ *  decode is intentionally scalar-and-correct here; the SWAR fast paths are a later optimization once the
+ *  thesis is proven.
+ *
+ *  All methods take `(buf, pos)` and return the new `pos` (or pack a result via the out-params on the
+ *  mutable scanner). Cursor invariant: `pos` points at the next unread byte; whitespace is skipped lazily.
+ */
+object JsonScanner:
+
+  inline def isWs(b: Byte): Boolean =
+    b == ' ' || b == '\n' || b == '\t' || b == '\r'
+
+  /** advance past whitespace; returns the position of the first non-ws byte. */
+  def skipWs(buf: Array[Byte], pos0: Int, end: Int): Int =
+    var pos = pos0
+    while pos < end && isWs(buf(pos)) do pos += 1
+    pos
+
+  /** at `pos` (a `"` or after `:`), expect and consume `'{'`, returning the position after it. */
+  def expectByte(buf: Array[Byte], pos0: Int, end: Int, b: Byte): Int =
+    val pos = skipWs(buf, pos0, end)
+    if pos >= end || buf(pos) != b then
+      throw JsonParseException(s"expected '${b.toChar}' at $pos, got ${if pos < end then buf(pos).toChar.toString else "<eof>"}")
+    pos + 1
+
+  // ---- string scanning (escape-aware) ----
+
+  /** `pos` points just AFTER the opening quote of a string; scan to the closing unescaped quote (SWAR,
+   *  8 bytes at a time, in Java). Returns the position of the closing quote (so [start, ret) is content). */
+  inline def scanStringEnd(buf: Array[Byte], start: Int, end: Int): Int =
+    JsonBytes.scanStringEnd(buf, start, end)
+
+  // ---- value skipping (THE projection primitive) ----
+
+  /** skip a whole JSON value at `pos` (which must already be AT the value's first byte — callers in compact
+   *  NDJSON position the cursor exactly, avoiding a redundant whitespace scan, which the v0a profile showed
+   *  was the #1 cost). No decode, no allocation — the heart of projection pushdown. */
+  def skipValue(buf: Array[Byte], pos: Int, end: Int): Int =
+    val b = buf(pos)
+    if b == '"' then scanStringEnd(buf, pos + 1, end) + 1
+    else if (b >= '0' && b <= '9') || b == '-' then skipNumber(buf, pos, end)
+    else if b == '{' then skipContainer(buf, pos + 1, end, '{', '}')
+    else if b == '[' then skipContainer(buf, pos + 1, end, '[', ']')
+    else if b == 't' || b == 'n' then pos + 4 // true / null
+    else if b == 'f' then pos + 5 // false
+    else throw JsonParseException(s"unexpected value byte '${b.toChar}' at $pos")
+
+  /** consume the maximal run of number bytes. */
+  def skipNumber(buf: Array[Byte], pos0: Int, end: Int): Int =
+    var pos = pos0
+    while pos < end do
+      val b = buf(pos)
+      if (b >= '0' && b <= '9') || b == '-' || b == '+' || b == '.' || b == 'e' || b == 'E' then pos += 1
+      else return pos
+    pos
+
+  /** `pos` is just past the opening `open`; skip to the matching `close`, string-aware (braces inside
+   *  string values don't miscount). Returns the position just past `close`. */
+  def skipContainer(buf: Array[Byte], pos0: Int, end: Int, open: Byte, close: Byte): Int =
+    var pos = pos0
+    var depth = 0
+    while pos < end do
+      val b = buf(pos)
+      if b == '"' then pos = scanStringEnd(buf, pos + 1, end) + 1
+      else if b == open then { depth += 1; pos += 1 }
+      else if b == close then
+        if depth == 0 then return pos + 1
+        else { depth -= 1; pos += 1 }
+      else pos += 1
+    throw JsonParseException(s"unterminated container from $pos0")
+
+  /** skip the rest of the CURRENT object (we're mid-object, `pos` after some value); returns position
+   *  just past the object's closing `}`. Used for predicate early-out: reject a record and abandon its
+   *  remaining bytes. */
+  def skipObjectRest(buf: Array[Byte], pos0: Int, end: Int): Int =
+    skipContainer(buf, pos0, end, '{', '}')
+
+  // ---- number decoding (scalar, correct; SWAR later) ----
+
+  /** decode a JSON int at `pos` into the result; returns the position just past the number.
+   *  Negated-magnitude accumulation (à la jsoniter) so Int.MinValue doesn't overflow. */
+  def readInt(buf: Array[Byte], pos0: Int, end: Int, out: IntResult): Int =
+    var pos = skipWs(buf, pos0, end)
+    var neg = false
+    if pos < end && buf(pos) == '-' then { neg = true; pos += 1 }
+    var x = 0
+    var any = false
+    while pos < end && { val b = buf(pos); b >= '0' && b <= '9' } do
+      x = x * 10 - (buf(pos) - '0') // negative magnitude
+      any = true
+      pos += 1
+    if !any then throw JsonParseException(s"expected int at $pos0")
+    out.value = if neg then x else -x
+    pos
+
+  /** decode a JSON long at `pos`. */
+  def readLong(buf: Array[Byte], pos0: Int, end: Int, out: LongResult): Int =
+    var pos = skipWs(buf, pos0, end)
+    var neg = false
+    if pos < end && buf(pos) == '-' then { neg = true; pos += 1 }
+    var x = 0L
+    var any = false
+    while pos < end && { val b = buf(pos); b >= '0' && b <= '9' } do
+      x = x * 10 - (buf(pos) - '0')
+      any = true
+      pos += 1
+    if !any then throw JsonParseException(s"expected long at $pos0")
+    out.value = if neg then x else -x
+    pos
+
+  /** decode a JSON double via the allocation-free Java byte-level parser (tiers 1-2 allocate nothing;
+   *  only genuinely-long/out-of-window inputs fall back to Double.parseDouble). Returns the position past it. */
+  def readDouble(buf: Array[Byte], pos0: Int, end: Int, out: JsonNum.D): Int =
+    val start = skipWs(buf, pos0, end)
+    JsonNum.parseDouble(buf, start, end, out)
+    out.pos
+
+  // ---- key dispatch by raw byte comparison (the edge over jsoniter: NO key decode) ----
+
+  /** does the key slice [start, stop) equal the wanted name bytes, length-then-memcmp? */
+  inline def keyEquals(buf: Array[Byte], start: Int, stop: Int, name: Array[Byte]): Boolean =
+    val len = stop - start
+    len == name.length && java.util.Arrays.equals(buf, start, stop, name, 0, len)
+
+  /** ASCII/latin-1 fast-path string decode for a slice known to be escape-free. */
+  inline def decodeLatin1(buf: Array[Byte], start: Int, len: Int): String =
+    new String(buf, start, len, java.nio.charset.StandardCharsets.ISO_8859_1)
+
+end JsonScanner
+
+/** Mutable single-slot result carriers — avoid boxing primitives across the return.
+ *  (The macro path will use local `var` slots instead; these exist for the hand-written v0a scanner.
+ *  Doubles/longs use the Java `JsonNum.D`/`JsonNum.L` holders.) */
+final class IntResult(var value: Int = 0)
