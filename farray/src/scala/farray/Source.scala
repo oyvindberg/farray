@@ -20,6 +20,12 @@ trait Source[+A]:
     */
   def pullChunk(): FArray[A] | Source.End
 
+  /** Release any resources the source holds (file handle, socket, …). Default: no-op — pure sources (FArray, unfold, iterate) override nothing. The fused
+    * driver ALWAYS wraps its chunk loop in `try/finally close()`, so a source is closed on normal exhaustion, on short-circuit (`take`/`find` stops early), AND
+    * on exception — the three exit paths a resource must survive. Idempotent: `close()` may be called more than once.
+    */
+  def close(): Unit = ()
+
 object Source:
   /** The end-of-stream sentinel. A union member (`FArray[A] | End`) so no `Option`/boxing on the hot pull. */
   sealed trait End
@@ -114,6 +120,41 @@ object Source:
   inline def range(start: Int, end: Int, step: Int = 1, chunkSize: Int = DefaultChunkSize): Source[Int] =
     require(step != 0, "range step cannot be 0")
     unfold[Int, Int](start, chunkSize)(i => if (if step > 0 then i < end else i > end) then Some((i, i + step)) else None)
+
+  // ── resource-owning sources (S2) — the driver always try/finally close()s, so the handle is released on
+  //    exhaustion, on short-circuit (`take(10)` over a huge file), AND on exception. The headline streaming case:
+  //    fold a file larger than heap, line by line, in constant memory, and it closes itself. ──────────────────
+
+  /** Lines of a `BufferedReader`, chunked — the reader is OWNED: `close()` closes it. Constant memory (one chunk of lines live), back-pressured by the pull.
+    * `null` line (EOF) ends the stream.
+    */
+  def fromReader(reader: java.io.BufferedReader, chunkSize: Int = DefaultChunkSize): Source[String] =
+    val cs = math.max(1, chunkSize)
+    new Source[String]:
+      def pullChunk(): FArray[String] | End =
+        val buf = new Array[Object](cs); var n = 0; var eof = false
+        while n < cs && !eof do
+          val line = reader.readLine()
+          if line == null then eof = true else { buf(n) = line; n += 1 }
+        if n == 0 then End
+        else FArray.fromBoxedArray[String](if n == cs then buf else java.util.Arrays.copyOf(buf, n))
+      override def close(): Unit = reader.close()
+
+  /** Lines of an `InputStream` (UTF-8), reader owned + closed. */
+  def lines(in: java.io.InputStream, chunkSize: Int = DefaultChunkSize): Source[String] =
+    fromReader(new java.io.BufferedReader(new java.io.InputStreamReader(in, java.nio.charset.StandardCharsets.UTF_8)), chunkSize)
+
+  /** Lines of a file (UTF-8), opened lazily on the first pull, reader owned + closed. */
+  def fromFile(path: java.nio.file.Path, chunkSize: Int = DefaultChunkSize): Source[String] =
+    new Source[String]:
+      private var reader: java.io.BufferedReader = null
+      private var delegate: Source[String] = null
+      def pullChunk(): FArray[String] | End =
+        if delegate == null then
+          reader = java.nio.file.Files.newBufferedReader(path, java.nio.charset.StandardCharsets.UTF_8)
+          delegate = fromReader(reader, chunkSize)
+        delegate.pullChunk()
+      override def close(): Unit = if reader != null then reader.close()
 
   /** Enter the fused pipeline over a streaming source: `src.fuse.filter(_ > 0).map(_ * 2).sum` runs in constant memory (one chunk live at a time). Identical
     * surface to `FArray#fuse` — the macro wraps the element loop in an outer chunk-pull loop.

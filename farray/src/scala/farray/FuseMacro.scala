@@ -1151,12 +1151,16 @@ object FuseMacro:
       // CRUCIAL: the next pull is GATED on `!done`. After the element loop sets `done` mid-chunk, we must NOT pull
       // the next chunk (that would be one chunk of wasted I/O, and breaks `take(1)`-reads-one-chunk). So the
       // trailing re-pull only happens while not done; otherwise we fall to End and exit.
+      // ALWAYS try/finally close() — resource safety on all three exit paths (exhaustion / short-circuit / throw).
+      // `close()` defaults to a no-op, so pure sources pay only the (JIT-elided) try/finally frame.
       '{
         val src = $srcExpr
-        var chunk: FArray[Any] | Source.End = src.pullChunk().asInstanceOf[FArray[Any] | Source.End]
-        while (chunk ne Source.End) && $notDone do
-          ${ elementLoop('{ chunk.asInstanceOf[FArray[Any]].asInstanceOf[FBase] }, k, elemTpe, ss, ctx) }
-          chunk = if $notDone then src.pullChunk().asInstanceOf[FArray[Any] | Source.End] else Source.End
+        try
+          var chunk: FArray[Any] | Source.End = src.pullChunk().asInstanceOf[FArray[Any] | Source.End]
+          while (chunk ne Source.End) && $notDone do
+            ${ elementLoop('{ chunk.asInstanceOf[FArray[Any]].asInstanceOf[FBase] }, k, elemTpe, ss, ctx) }
+            chunk = if $notDone then src.pullChunk().asInstanceOf[FArray[Any] | Source.End] else Source.End
+        finally src.close()
       }
 
     // ===== JSON source lowering: a per-record byte scanner whose record is a Tup of byte-sourced columns =====

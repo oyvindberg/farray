@@ -146,4 +146,97 @@ class SourceTest:
     var ref = 0L; var k = 0L; while k < n do { if k % 2L == 0L then ref += k; k += 1 }
     assertEquals(ref, sum)
 
+  // ── S2: resource safety — the driver ALWAYS try/finally close()s the source ─────────────────────────────
+  /** a source that counts close() calls (and yields several chunks), to prove the driver closes it on every exit path. Mirrors a real file/socket source whose
+    * `close()` releases a handle.
+    */
+  final class ClosingSource[A](chunks: List[FArray[A]]) extends Source[A]:
+    private var rest = chunks
+    var closes = 0
+    def pullChunk(): FArray[A] | Source.End =
+      rest match
+        case h :: t => rest = t; h
+        case Nil    => Source.End
+    override def close(): Unit = closes += 1
+
+  private def closingInts(cs: List[List[Int]]) = new ClosingSource(cs.map(FArray.fromIterable))
+
+  /** normal exhaustion → closed exactly once. */
+  @Test def close_onExhaustion(): Unit =
+    val s = closingInts(List(List(1, 2), List(3, 4), List(5, 6)))
+    assertEquals(21, s.fuse.sum)
+    assertEquals(1, s.closes)
+
+  /** short-circuit (take satisfied mid-stream) → STILL closed. The resource a `take(1)` over a file leaks without this is the whole point of S2.
+    */
+  @Test def close_onShortCircuit(): Unit =
+    val s = closingInts(List(List(1, 2, 3, 4), List(5, 6), List(7, 8)))
+    assertEquals(List(1, 2), s.fuse.take(2).run.toList)
+    assertEquals("a short-circuited stream must still close its source", 1, s.closes)
+
+  /** find short-circuit → closed. */
+  @Test def close_onFind(): Unit =
+    val s = closingInts(List(List(1, 2), List(3, 4), List(5, 6)))
+    assertEquals(Some(4), s.fuse.find(_ == 4))
+    assertEquals(1, s.closes)
+
+  /** an exception in the user's lambda → the source is STILL closed (finally runs), and the exception propagates. (`sum` reads every mapped value, so the `map`
+    * lambda actually runs — a value-ignoring terminal would DCE it.)
+    */
+  @Test def close_onException(): Unit =
+    val s = closingInts(List(List(1, 2, 3), List(4, 5, 6)))
+    val boom = new RuntimeException("boom")
+    val thrown = org.junit.Assert.assertThrows(
+      classOf[RuntimeException],
+      () => s.fuse.map(x => if x == 4 then throw boom else x).sum
+    )
+    assertSame(boom, thrown)
+    assertEquals("an exception mid-stream must still close the source", 1, s.closes)
+
+  /** an empty stream → closed (the finally always runs). */
+  @Test def close_onEmpty(): Unit =
+    val s = closingInts(Nil)
+    assertEquals(0, s.fuse.sum)
+    assertEquals(1, s.closes)
+
+  // ── S2 headline: a real resource-owning source (a Reader/file) folds in constant memory and closes itself ──
+  /** lines of a Reader, fused — correctness vs reading the lines directly, and the reader is closed. */
+  @Test def fromReader_parity_andCloses(): Unit =
+    val text = (1 to 250).map(i => s"line$i").mkString("\n")
+    var closed = false
+    val reader = new java.io.BufferedReader(new java.io.StringReader(text)):
+      override def close(): Unit = { closed = true; super.close() }
+    val total = Source.fromReader(reader, chunkSize = 16).fuse.filter(_.length > 5).map(_.drop(4).toInt).sum
+    assertEquals((1 to 250).filter(i => s"line$i".length > 5).sum, total)
+    assertTrue("the reader must be closed after a full fold", closed)
+
+  /** the spec's acceptance: `take(n)` over a Reader reads only what it needs AND still closes the reader. */
+  @Test def fromReader_take_closesOnShortCircuit(): Unit =
+    val text = (1 to 100000).map(i => s"row$i").mkString("\n") // far more than we'll read
+    var closed = false
+    val reader = new java.io.BufferedReader(new java.io.StringReader(text)):
+      override def close(): Unit = { closed = true; super.close() }
+    val first3 = Source.fromReader(reader, chunkSize = 8).fuse.take(3).run.toList
+    assertEquals(List("row1", "row2", "row3"), first3)
+    assertTrue("take(3) over a Reader must still close it (short-circuit + finally)", closed)
+
+  /** lines(InputStream) — the UTF-8 convenience, closed. */
+  @Test def lines_inputStream(): Unit =
+    val bytes = "a\nbb\nccc\ndddd".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+    var closed = false
+    val in = new java.io.ByteArrayInputStream(bytes):
+      override def close(): Unit = { closed = true; super.close() }
+    val lens = Source.lines(in).fuse.map(_.length).run.toList
+    assertEquals(List(1, 2, 3, 4), lens)
+    assertTrue(closed)
+
+  /** fromFile — opened lazily, read in constant memory, closed. */
+  @Test def fromFile_readsAndCloses(): Unit =
+    val tmp = java.nio.file.Files.createTempFile("farray-src", ".txt")
+    try
+      java.nio.file.Files.writeString(tmp, (1 to 500).map(i => s"n$i").mkString("\n"))
+      val sum = Source.fromFile(tmp, chunkSize = 32).fuse.map(_.drop(1).toInt).filter(_ % 2 == 0).sum
+      assertEquals((1 to 500).filter(_ % 2 == 0).sum, sum)
+    finally java.nio.file.Files.deleteIfExists(tmp)
+
 end SourceTest
