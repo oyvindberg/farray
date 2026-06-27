@@ -167,6 +167,30 @@ class FSetTest:
     assertEquals(a.setHashCode, b.setHashCode)
     assertFalse(a === FSet.from(List("a", "b")))
 
+  @Test def traversal_int(): Unit =
+    val fs = FSet(3, 1, 4, 1, 5, 9, 2, 6)
+    val ref = Set(3, 1, 4, 5, 9, 2, 6)
+    var sum = 0
+    fs.foreach(x => sum += x)
+    assertEquals(ref.sum, sum)
+    assertTrue(fs.forall(_ > 0))
+    assertFalse(fs.forall(_ > 2))
+    assertTrue(fs.exists(_ == 9))
+    assertFalse(fs.exists(_ == 100))
+    // over a lazy algebra result (auto-materialized), still each element once
+    val u = FSet(1, 2, 3) ++ FSet(3, 4, 5)
+    var c = 0; u.foreach(_ => c += 1)
+    assertEquals(5, c)
+    assertTrue(u.forall(_ < 6))
+
+  @Test def traversal_ref(): Unit =
+    val fs = FSet.from(List("a", "bb", "ccc", "a"))
+    var lens = 0
+    fs.foreach(s => lens += s.length)
+    assertEquals(1 + 2 + 3, lens)
+    assertTrue(fs.exists(_.length == 3))
+    assertFalse(fs.forall(_.length == 1))
+
   @Test def min_max_int(): Unit =
     assertEquals(1, FSet(5, 1, 3).min)
     assertEquals(5, FSet(5, 1, 3).max)

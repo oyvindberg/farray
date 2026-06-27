@@ -307,6 +307,8 @@ object GenSets extends BleepCodegenScript("GenSets") {
 
     // unwrap an A-typed element to its raw kind value (prim → the primitive; Ref → cast to Object).
     def unwrapElem(k: Kind, e: String): String = if k.name == "Ref" then s"($e).asInstanceOf[Object]" else s"r.unwrap($e)"
+    // WRAP a raw kind value back to A (for handing a leaf element to the user's inline lambda — unboxed).
+    def wrapElem(k: Kind, v: String): String = if k.name == "Ref" then s"($v).asInstanceOf[A]" else s"r.wrap($v)"
     // unwrap a B-typed element (incl/excl dispatch on the element kind B, like FArray's appendImpl).
     def unwrapElemB(k: Kind, e: String): String = if k.name == "Ref" then s"($e).asInstanceOf[Object]" else s"r.unwrap($e)"
     // store an A into an Object[] (Ref) or the prim into its array — used by the build path.
@@ -779,6 +781,45 @@ object GenSets extends BleepCodegenScript("GenSets") {
       ee.result
     }
 
+    // ---- traversal leaf-walkers (§1.6.4/1.6.7): the inline surface realizes the user lambda into a kind-
+    // specialized SAM (SetTraversers.${K}Pred/Consumer, prim arg unboxed) and CALLS these shared non-inline
+    // walkers. foreach/forall/exists auto-materialize a lazy node (each element once); short-circuit where they can.
+    val traversalHelpers = {
+      val ee = new Emit("  ")
+      opKinds.foreach { k =>
+        val K = k.name
+        def primSetup(): Unit = ee.line(s"val arr = asArr$K(materialize$K(node))")
+        def refSetup(): Unit = {
+          ee.line("val acc = scala.collection.mutable.HashSet.empty[Object]")
+          ee.line(s"collectElems$K(node, acc)")
+        }
+        ee.open(s"def foreachLeaf$K(node: SBase, f: SetTraversers.${K}Consumer): Unit =")
+        if k.isPrim then {
+          primSetup(); ee.line("var i = 0")
+          ee.open("while (i < arr.length)"); ee.line("f.accept(arr(i))"); ee.line("i += 1"); ee.close()
+        } else { refSetup(); ee.line("acc.foreach(e => f.accept(e))") }
+        ee.close()
+        ee.open(s"def forallLeaf$K(node: SBase, p: SetTraversers.${K}Pred): Boolean =")
+        if k.isPrim then {
+          primSetup(); ee.line("var i = 0; var ok = true")
+          ee.open("while (i < arr.length && ok)"); ee.line("if (!p.test(arr(i))) ok = false"); ee.line("i += 1"); ee.close()
+          ee.line("ok")
+        } else { refSetup(); ee.line("acc.forall(e => p.test(e))") }
+        ee.close()
+        ee.open(s"def existsLeaf$K(node: SBase, p: SetTraversers.${K}Pred): Boolean =")
+        if k.isPrim then {
+          primSetup(); ee.line("var i = 0; var found = false")
+          ee.open("while (i < arr.length && !found)"); ee.line("if (p.test(arr(i))) found = true"); ee.line("i += 1"); ee.close()
+          ee.line("found")
+        } else { refSetup(); ee.line("acc.exists(e => p.test(e))") }
+        ee.close()
+      }
+      ee.result
+    }
+    val foreachV = dispatchA(k => s"foreachLeaf${k.name}(xs, (v) => f(${wrapElem(k, "v")}))")
+    val forallV = dispatchA(k => s"forallLeaf${k.name}(xs, (v) => p(${wrapElem(k, "v")}))")
+    val existsV = dispatchA(k => s"existsLeaf${k.name}(xs, (v) => p(${wrapElem(k, "v")}))")
+
     // ---- value equals / hashCode helpers — MATERIALIZED-ONLY (throw on a lazy SView) ----
     val valueHelpers = {
       val ee = new Emit("  ")
@@ -846,6 +887,7 @@ object GenSets extends BleepCodegenScript("GenSets") {
        |${indent1(hashHelpers)}
        |${indent1(mergeCore)}
        |${indent1(sizeHelpers)}
+       |${indent1(traversalHelpers)}
        |${indent1(valueHelpers)}
        |
        |  inline def emptyImpl[A]: SBase = $emptyV
@@ -864,6 +906,9 @@ object GenSets extends BleepCodegenScript("GenSets") {
        |  inline def subsetOfImpl[A](a: SBase, b: SBase): Boolean = $subsetOfV
        |  inline def minImpl[A](xs: SBase): A = $minV
        |  inline def maxImpl[A](xs: SBase): A = $maxV
+       |  inline def foreachImpl[A](xs: SBase)(inline f: A => Unit): Unit = $foreachV
+       |  inline def forallImpl[A](xs: SBase)(inline p: A => Boolean): Boolean = $forallV
+       |  inline def existsImpl[A](xs: SBase)(inline p: A => Boolean): Boolean = $existsV
        |  inline def inclImpl[A, B](xs: SBase, elem: B): SBase = $inclV
        |  inline def exclImpl[A, B](xs: SBase, elem: B): SBase = $exclV
        |}

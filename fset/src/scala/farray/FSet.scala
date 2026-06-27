@@ -81,6 +81,11 @@ object FSet:
     // change yet — the Option C FSet→FSetMaterialized transition is a NEXT-STEP).
     inline def iterator: Iterator[A] = FSetOps.iteratorImpl[A](xs)
     inline def toList: List[A] = FSetOps.iteratorImpl[A](xs).toList
+    // traversal — the user's lambda inlines into a kind-specialized SAM (primitives stay unboxed). Each element
+    // visited once (a lazy set is materialized first); forall/exists short-circuit.
+    inline def foreach(inline f: A => Unit): Unit = FSetOps.foreachImpl[A](xs)(f)
+    inline def forall(inline p: A => Boolean): Boolean = FSetOps.forallImpl[A](xs)(p)
+    inline def exists(inline p: A => Boolean): Boolean = FSetOps.existsImpl[A](xs)(p)
     inline def materialize: FSet[A] = FSetOps.materializeImpl[A](xs)
 
     // ---- value equals / hashCode — MATERIALIZED-ONLY (throws on a still-lazy set; call .materialize first).
