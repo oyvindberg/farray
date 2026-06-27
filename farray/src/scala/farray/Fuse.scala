@@ -68,6 +68,23 @@ final class Fuse[+A](private[farray] val base: AnyRef):
     */
   def groupAdjacentBy[K](key: A => K): Fuse[FArray[A]] = this.asInstanceOf[Fuse[FArray[A]]]
 
+  /** NESTED FUSION — the spec's headline: for input ALREADY CLUSTERED by `key`, reduce each run with a FUSED sub-pipeline and emit `(k, result)` per run.
+    * `prep` is the per-group stages (map/filter/collect/take/…) over the run's rows; `agg` is the per-group aggregate (`Agg.sum`/`count`/`min`/`fold`/…). When
+    * the aggregate is a fold, the run's rows are NEVER materialized — the inner fold runs inline as rows stream past: O(1) memory per group, zero per-group
+    * allocation. Same "clustered by key" precondition. Example: {{{src.fuse.groupAdjacentReduceBy(_.day)(_.map(_.amount))(Agg.sum(identity))}}}
+    *
+    * (Spelled `(prep)(agg)` rather than `(reduce: Fuse[A] => B)` because an inner inline terminal like `.sum` expands before this macro reads the lambda;
+    * `prep` is plain stage markers and `agg` is a macro-read value.)
+    */
+  inline def groupAdjacentReduceBy[K, B, R](inline key: A => K)(inline prep: Fuse[A] => Fuse[B])(inline agg: Agg[B, R]): Fuse[(K, R)] =
+    ${ FuseMacro.groupReduceStageImpl[A, K, B, R]('this, 'key, 'prep, 'agg) }
+
+  /** Internal non-inline marker the `.run`/agg macro reads off the AST for nested fusion. `agg` here is an `AggRaw.*` (the non-compileTimeOnly twin) —
+    * `groupReduceStageImpl` already consumed the user's `Agg.*`. Not for direct use.
+    */
+  def groupAdjacentReduceByMarker[K, B, R](key: A => K)(prep: Fuse[A] => Fuse[B])(agg: Agg[B, R]): Fuse[(K, R)] =
+    this.asInstanceOf[Fuse[(K, R)]]
+
   /** run `f` for its side effect on each surviving element, passing the element through unchanged. */
   def tapEach(f: A => Unit): Fuse[A] = this
 

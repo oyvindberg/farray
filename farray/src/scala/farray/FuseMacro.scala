@@ -48,6 +48,29 @@ object FuseMacro:
   ): Expr[Map[K, B]] =
     '{ ${ core[A](self, TTag.GroupReduce, List(key, value, reduce)) }.asInstanceOf[Map[K, B]] }
 
+  /** NESTED FUSION stage. `groupAdjacentReduceBy` is inline so its `Agg.*` argument reaches a macro splice (else `@compileTimeOnly` fires before the outer
+    * `.run` macro can read it). This impl CONSUMES that `Agg.*` here by rewriting it to the non-compileTimeOnly `AggRaw.*` twin (same method name → same
+    * `parseAgg1` shape), then re-emits the non-inline `groupAdjacentReduceByMarker` call carrying the rewritten agg. The `.run`/agg macro parses that marker
+    * normally — the agg now survives in the tree as a plain value.
+    */
+  def groupReduceStageImpl[A: Type, K: Type, B: Type, R: Type](
+      self: Expr[Fuse[A]],
+      key: Expr[A => K],
+      prep: Expr[Fuse[A] => Fuse[B]],
+      agg: Expr[Agg[B, R]]
+  )(using Quotes): Expr[Fuse[(K, R)]] =
+    import quotes.reflect.*
+    // rewrite every `Agg.<name>` selection to `AggRaw.<name>` (the compileTimeOnly twin → plain). Match by the Agg
+    // module symbol so an `import farray.Agg` alias is handled too.
+    val aggMod = Symbol.requiredModule("farray.Agg")
+    val aggRawMod = Symbol.requiredModule("farray.AggRaw")
+    val rewriter = new TreeMap:
+      override def transformTerm(t: Term)(owner: Symbol): Term = t match
+        case Select(qual, name) if qual.symbol == aggMod => Select.unique(Ref(aggRawMod), name)
+        case _                                           => super.transformTerm(t)(owner)
+    val aggRaw = rewriter.transformTerm(agg.asTerm)(Symbol.spliceOwner).asExprOf[Agg[B, R]]
+    '{ $self.groupAdjacentReduceByMarker[K, B, R]($key)($prep)($aggRaw) }
+
   // plan description (testing): TTag.Plan returns a String describing the built plan, never runs the loop.
   def planImpl[A: Type](self: Expr[Fuse[A]])(using Quotes): Expr[String] =
     '{ ${ core[A](self, TTag.Plan, Nil) }.asInstanceOf[String] }
@@ -107,6 +130,9 @@ object FuseMacro:
     final case class GroupedS(n: Term, aTpe: TypeRepr) extends Stage
     // keep only the LAST n elements (a ring buffer): nothing emitted mid-loop, the ring replayed in order at the end.
     final case class TakeRightS(n: Term, aTpe: TypeRepr) extends Stage
+    // NESTED FUSION: per run, push the rows through `innerStages` then fold into the per-run aggregate; emit (k, R).
+    // `agg` is the raw `Agg.*` term (parsed to AggSpecs later, where parseAggList is in scope).
+    final case class GroupReduceAdjacentByS(key: Term, innerStages: List[Stage], agg: Term, kTpe: TypeRepr, rTpe: TypeRepr) extends Stage
 
     enum Kind:
       case KInt, KLong, KDouble, KFloat, KShort, KByte, KChar, KBoolean, KRef
@@ -146,7 +172,20 @@ object FuseMacro:
         foldAdj: Option[FoldAdjState] = None, // foldAdjacentBy: curKey/acc/started handles + the seed
         groupAdj: Option[GroupAdjState] = None, // groupAdjacentBy: per-run row buffer + curKey/started
         grouped: Option[GroupedState] = None, // grouped(n): fixed-size row buffer + a fill count
-        takeRight: Option[TakeRightState] = None // takeRight(n): a ring buffer; `replay` emits its contents in order
+        takeRight: Option[TakeRightState] = None, // takeRight(n): a ring buffer; `replay` emits its contents in order
+        groupReduceAdj: Option[GroupReduceAdjState] = None // nested fusion: per-run inner-agg accumulator + curKey/started
+    )
+    // nested fusion's above-loop state: the run key + started flag, plus the inner agg's per-run accumulator as a
+    // (reset, step, finish) triple. `step(shape)` folds one inner-pipeline-output value (the prep output for a row)
+    // into the accumulator; `reset` re-inits it at each key change; `finish` reads it to the emitted R.
+    final case class GroupReduceAdjState(
+        curKeyRead: Term,
+        setCurKey: Term => Term,
+        started: Expr[Boolean],
+        start: Expr[Unit],
+        innerReset: Expr[Unit],
+        innerStep: Term => Term, // run the inner pipeline on one row, folding its output into the per-run acc (Unit term)
+        innerFinish: Term // reads the per-run accumulator → R
     )
     // grouped(n)'s above-loop state: append a row, the current fill count, the window-size n, build/reset the buffer.
     final case class GroupedState(append: Term => Expr[Unit], sizeRead: Expr[Int], n: Expr[Int], emitRun: Term, reset: Expr[Unit])
@@ -186,6 +225,8 @@ object FuseMacro:
     final case class GroupAdjSpec(kTpe: TypeRepr, aTpe: TypeRepr) extends CSpec // groupAdjacentBy: buffer + curKey/started
     final case class GroupedSpec(n: Term, aTpe: TypeRepr) extends CSpec // grouped(n): row buffer + a count + started
     final case class TakeRightSpec(n: Term, aTpe: TypeRepr) extends CSpec // takeRight(n): a ring buffer + pos + cnt
+    final case class GroupReduceAdjSpec(innerStages: List[Stage], innerAggs: List[AggSpec], kTpe: TypeRepr, rTpe: TypeRepr)
+        extends CSpec // nested fusion: curKey/started + the inner agg's per-run accumulator
     // `consume` takes a MATERIALIZED element. `consumeShape`, when present, takes the element's decomposed Shape
     // instead — so a terminal whose lambda projects fields (e.g. `foldLeft((acc, r) => acc + r.amount)`) reads
     // only the columns it touches and never rebuilds the whole product (DCE/sink reaching the terminal's lambda).
@@ -213,6 +254,25 @@ object FuseMacro:
     def fuseElem(t: TypeRepr): TypeRepr = t.widen.dealias match
       case AppliedType(_, List(a)) => a
       case other                   => report.errorAndAbort(s"fuse: expected Fuse[_], got ${other.show}")
+
+    /** parse the INNER pipeline of a nested fusion: `prep: Fuse[A] => Fuse[B]` whose body is a stage chain rooted at the lambda param `g` (the run's rows). The
+      * source base case is `Ident(g)` (vs `new Fuse(src)` for the outer parse). v1 supports only STATELESS inner stages (map/filter/filterNot/collect) — no
+      * per-run counters needed; take/drop/takeWhile/dropWhile inside a group (resettable per-run counters) are a documented follow-up.
+      */
+    def parseInner(prep: Term): List[Stage] =
+      val (gSym, body) = unwrap(prep) match
+        case Lambda(List(vd), b) => (vd.symbol, b)
+        case _                   => report.errorAndAbort(s"fuse: groupAdjacentReduceBy prep must be a lambda; got ${prep.show}")
+      def go(t0: Term, acc: List[Stage]): List[Stage] = unwrap(t0) match
+        case Apply(TypeApply(Select(prev, "map"), _), List(f))            => go(prev, MapS(unwrap(f)) :: acc)
+        case Apply(Select(prev, "filter"), List(p))                       => go(prev, FilterS(unwrap(p), false) :: acc)
+        case Apply(Select(prev, "withFilter"), List(p))                   => go(prev, FilterS(unwrap(p), false) :: acc)
+        case Apply(Select(prev, "filterNot"), List(p))                    => go(prev, FilterS(unwrap(p), true) :: acc)
+        case Apply(TypeApply(Select(prev, "collect"), List(b)), List(pf)) => go(prev, CollectS(unwrap(pf), b.tpe) :: acc)
+        case Ident(n) if n == gSym.name                                   => acc // source = the run's rows
+        case other                                                        =>
+          report.errorAndAbort(s"fuse: unsupported per-group stage in groupAdjacentReduceBy (v1 supports map/filter/filterNot/collect only): ${other.show}")
+      go(body, Nil)
 
     def parse(t0: Term, acc: List[Stage]): (Term, TypeRepr, List[Stage]) =
       unwrap(t0) match
@@ -246,9 +306,13 @@ object FuseMacro:
         case Select(prev, "zipWithIndex")                                                   => parse(prev, ZipWithIndexS :: acc)
         case Apply(TypeApply(Select(prev, "zip"), List(b)), List(that))                     => parse(prev, ZipS(unwrap(that), b.tpe, None) :: acc)
         case Apply(Apply(TypeApply(Select(prev, "map2"), List(b, _)), List(that)), List(f)) => parse(prev, ZipS(unwrap(that), b.tpe, Some(unwrap(f))) :: acc)
-        case base @ Apply(Select(New(_), "<init>"), List(src))                              => (src.underlyingArgument, fuseElem(base.tpe), acc)
-        case base @ Apply(TypeApply(Select(New(_), "<init>"), _), List(src))                => (src.underlyingArgument, fuseElem(base.tpe), acc)
-        case other                                                                          =>
+        // groupAdjacentReduceByMarker[K,B,R](key)(prep)(agg): nested fusion (re-emitted by groupReduceStageImpl, agg
+        // now AggRaw.*). Parse `prep` as an inner stage chain rooted at its lambda param; `agg` later via parseAgg1.
+        case Apply(Apply(Apply(TypeApply(Select(prev, "groupAdjacentReduceByMarker"), List(kt, bt, rt)), List(key)), List(prep)), List(agg)) =>
+          parse(prev, GroupReduceAdjacentByS(unwrap(key), parseInner(unwrap(prep)), unwrap(agg), kt.tpe, rt.tpe) :: acc)
+        case base @ Apply(Select(New(_), "<init>"), List(src))               => (src.underlyingArgument, fuseElem(base.tpe), acc)
+        case base @ Apply(TypeApply(Select(New(_), "<init>"), _), List(src)) => (src.underlyingArgument, fuseElem(base.tpe), acc)
+        case other                                                           =>
           report.errorAndAbort(s"fuse: unsupported pipeline step near:\n${other.show(using Printer.TreeStructure)}")
 
     /** beta-reduce `fn(args…)` to inline the lambda body (no closure); falls back to a real `.apply` call. */
@@ -432,11 +496,16 @@ object FuseMacro:
         case Repeated(es, _)           => es
         case Apply(_, List(inner))     => seqElems(inner) // wrapRefArray(…)
         case _                         => report.errorAndAbort(s"fuse: agg arg not a literal list: ${seq.show}")
-      def typeArgOf(t: Term, i: Int): TypeRepr = t match
-        case TypeApply(_, ts) if ts.length > i => ts(i).tpe
-        case Apply(fn, _)                      => typeArgOf(fn, i)
-        case _                                 => TypeRepr.of[Any]
-      def one(a: Term): AggSpec = unwrap(a) match
+      elems(t).map(parseAgg1)
+
+    def typeArgOf(t: Term, i: Int): TypeRepr = t match
+      case TypeApply(_, ts) if ts.length > i => ts(i).tpe
+      case Apply(fn, _)                      => typeArgOf(fn, i)
+      case _                                 => TypeRepr.of[Any]
+
+    /** parse a SINGLE `Agg.*` term → its AggSpec (shared by `parseAggList`'s multi-agg and nested fusion's one agg). */
+    def parseAgg1(a: Term): AggSpec =
+      unwrap(a) match
         case Apply(Apply(fn @ TypeApply(Select(_, "sum"), _), List(f)), _)     => AggSpec.Sum(unwrap(f), typeArgOf(fn, 1))
         case Apply(fn @ TypeApply(Select(_, "sum"), _), List(f))               => AggSpec.Sum(unwrap(f), typeArgOf(fn, 1))
         case TypeApply(Select(_, "count"), _)                                  => AggSpec.Count
@@ -463,7 +532,6 @@ object FuseMacro:
         case other =>
           report.errorAndAbort(s"fuse: unsupported agg — use Agg.sum/count/min/max/avg/fold/reduce/minBy/maxBy/topNBy/bottomNBy/largest/smallest. Got:\n${other
               .show(using Printer.TreeStructure)}")
-      elems(t).map(one)
 
     // --- unboxed primitive ops for Agg.sum / Agg.min/max (else fall back to Numeric/Ordering, which box). ---
     def isPrim(t: TypeRepr, p: TypeRepr): Boolean = t =:= p
@@ -547,17 +615,18 @@ object FuseMacro:
     // stages needing an above-loop counter (take/drop = a clamped limit, zipWithIndex = a bare counter,
     // zip/map2 = `that` + its length + a counter).
     val counterStages: List[(Int, CSpec)] = indexed.collect {
-      case (TakeS(n), i)                            => (i, LimSpec(n))
-      case (DropS(n), i)                            => (i, LimSpec(n))
-      case (ZipWithIndexS, i)                       => (i, IdxSpec)
-      case (ZipS(that, b, _), i)                    => (i, ZipSpec(that, b))
-      case (DropWhileS(_), i)                       => (i, DropWhileSpec)
-      case (DistinctS(_), i)                        => (i, DistinctSpec)
-      case (ScanLeftS(z, _, zt), i)                 => (i, ScanSpec(z, zt))
-      case (FoldAdjacentByS(_, seed, _, kt, bt), i) => (i, FoldAdjSpec(seed, kt, bt))
-      case (GroupAdjacentByS(_, kt, at), i)         => (i, GroupAdjSpec(kt, at))
-      case (GroupedS(n, at), i)                     => (i, GroupedSpec(n, at))
-      case (TakeRightS(n, at), i)                   => (i, TakeRightSpec(n, at))
+      case (TakeS(n), i)                                  => (i, LimSpec(n))
+      case (DropS(n), i)                                  => (i, LimSpec(n))
+      case (ZipWithIndexS, i)                             => (i, IdxSpec)
+      case (ZipS(that, b, _), i)                          => (i, ZipSpec(that, b))
+      case (DropWhileS(_), i)                             => (i, DropWhileSpec)
+      case (DistinctS(_), i)                              => (i, DistinctSpec)
+      case (ScanLeftS(z, _, zt), i)                       => (i, ScanSpec(z, zt))
+      case (FoldAdjacentByS(_, seed, _, kt, bt), i)       => (i, FoldAdjSpec(seed, kt, bt))
+      case (GroupAdjacentByS(_, kt, at), i)               => (i, GroupAdjSpec(kt, at))
+      case (GroupedS(n, at), i)                           => (i, GroupedSpec(n, at))
+      case (TakeRightS(n, at), i)                         => (i, TakeRightSpec(n, at))
+      case (GroupReduceAdjacentByS(_, is, ag, kt, rt), i) => (i, GroupReduceAdjSpec(is, List(parseAgg1(ag)), kt, rt))
     }
     val takesPresent: Boolean = stages.exists(_.isInstanceOf[TakeS])
     val hasZip: Boolean = stages.exists(_.isInstanceOf[ZipS])
@@ -570,12 +639,14 @@ object FuseMacro:
     // prologue/epilogue weave point (the epilogue flushes the final run / replays the ring) — at most ONE per
     // pipeline, and not with scanLeft (v1).
     def isBufferStage(s: Stage): Boolean = s match
-      case _: FoldAdjacentByS | _: GroupAdjacentByS | _: GroupedS | _: TakeRightS => true
-      case _                                                                      => false
+      case _: FoldAdjacentByS | _: GroupAdjacentByS | _: GroupedS | _: TakeRightS | _: GroupReduceAdjacentByS => true
+      case _                                                                                                  => false
     val adjCount: Int = stages.count(isBufferStage)
-    if adjCount > 1 then report.errorAndAbort("fuse: at most one foldAdjacentBy/groupAdjacentBy/grouped/takeRight per pipeline (v1)")
+    if adjCount > 1 then report.errorAndAbort("fuse: at most one foldAdjacentBy/groupAdjacentBy/groupAdjacentReduceBy/grouped/takeRight per pipeline (v1)")
     if adjCount == 1 && hasScan then
-      report.errorAndAbort("fuse: a buffering stage (foldAdjacentBy/groupAdjacentBy/grouped/takeRight) cannot be combined with scanLeft (v1)")
+      report.errorAndAbort(
+        "fuse: a buffering stage (foldAdjacentBy/groupAdjacentBy/groupAdjacentReduceBy/grouped/takeRight) cannot be combined with scanLeft (v1)"
+      )
     // the buffering stage's index + the stages downstream of it — the epilogue flushes its pending final run/window.
     val adjInfo: Option[(Int, List[(Stage, Int)])] =
       indexed.collectFirst { case (s, i) if isBufferStage(s) => i }.map(i => (i, indexed.drop(i + 1)))
@@ -647,6 +718,12 @@ object FuseMacro:
       */
     def emitFoldAdjRun(st: FoldAdjState, rest: List[(Stage, Int)], ctx: Ctx): Term =
       continueShape(Tup(List(srcShape(st.curKeyRead), srcShape(st.accRead)), ts => mkPair(ts(0), ts(1))), rest, ctx)
+
+    /** emit one completed nested-fusion run `(curKey, innerFinish)` downstream — same decomposed-Tup path as emitFoldAdjRun, so a downstream `.map(_._2)` never
+      * builds the tuple and an all-primitive (K, R) stays unboxed. Shared by the per-element key-change emit and the epilogue's final-run flush.
+      */
+    def emitGroupReduceRun(st: GroupReduceAdjState, rest: List[(Stage, Int)], ctx: Ctx): Term =
+      continueShape(Tup(List(srcShape(st.curKeyRead), srcShape(st.innerFinish)), ts => mkPair(ts(0), ts(1))), rest, ctx)
 
     /** materialize a shape to a single Term (binding columns as needed); a decomposed product is rebuilt. */
     def readShape(shape: Shape)(k: Term => Term): Term = shape match
@@ -1102,6 +1179,27 @@ object FuseMacro:
               ${ st.setCurKey(kv).asExprOf[Unit] }
               ${ st.reset }
               ${ st.append(cur) }
+            }
+          }.asTerm
+        }
+      case (GroupReduceAdjacentByS(key, _, _, kTpe, _), i) :: rest =>
+        // NESTED FUSION. input clustered by key. Per element: start a run (reset the inner acc, step the first row) /
+        // step the inner pipeline / on key-change EMIT (k, innerFinish) and start a new run. The rows are NEVER
+        // materialized — the inner fold runs inline. The FINAL run is flushed by the epilogue, via the SAME emit path.
+        val st = ctx.counters(i).groupReduceAdj.get
+        letBind(applyLambda(key, cur)) { kv =>
+          '{
+            if ! ${ st.started } then {
+              ${ st.setCurKey(kv).asExprOf[Unit] }
+              ${ st.innerReset }
+              ${ st.innerStep(cur).asExprOf[Unit] }
+              ${ st.start }
+            } else if ${ keyEq(kTpe, kv, st.curKeyRead) } then ${ st.innerStep(cur).asExprOf[Unit] }
+            else {
+              ${ emitGroupReduceRun(st, rest, ctx).asExprOf[Unit] } // key changed → emit completed run
+              ${ st.setCurKey(kv).asExprOf[Unit] }
+              ${ st.innerReset }
+              ${ st.innerStep(cur).asExprOf[Unit] }
             }
           }.asTerm
         }
@@ -1694,6 +1792,124 @@ object FuseMacro:
       if needsDone then '{ var done: Boolean = false; ${ k(Some(Done('{ done = true }, '{ done }))).asExpr } }.asTerm
       else k(None)
 
+    /** Nested fusion's inner aggregate as a per-run accumulator. Declares the accumulator var(s) ABOVE the loop (wrapping `k`), then hands `k` a (reset, step,
+      * finish): `reset` re-inits per run, `step(shape)` folds one inner-pipeline-output value into the accumulator, `finish` reads it → R. Mirrors the folding
+      * `stateFor` cases but in declare/reset/step/finish form (the vars persist across chunks; the loop body steps them; the run boundary + epilogue read+reset
+      * them). v1: ONE folding agg — Sum/Count/Fold/Avg/Extremum/Reduce/ExtremumByElem.
+      */
+    def innerAggState(spec: AggSpec)(k: (Expr[Unit], Shape => Term, Term) => Term): Term = spec match
+      case AggSpec.Count =>
+        '{
+          var c: Int = 0
+          ${ k('{ c = 0 }, (_: Shape) => '{ c += 1 }.asTerm, '{ c }.asTerm).asExpr }
+        }.asTerm
+      case AggSpec.Sum(f, bTpe) =>
+        bTpe.asType match
+          case '[bb] =>
+            '{
+              var acc: bb = ${ numZero(bTpe).asExprOf[bb] }
+              ${
+                k(
+                  '{ acc = ${ numZero(bTpe).asExprOf[bb] } },
+                  (sh: Shape) => fnOnShape(f, sh)(fv => '{ acc = ${ numAdd(bTpe, '{ acc }.asTerm, fv).asExprOf[bb] } }.asTerm),
+                  '{ acc }.asTerm
+                ).asExpr
+              }
+            }.asTerm
+      case AggSpec.Avg(f) =>
+        '{
+          var s: Double = 0.0; var c: Int = 0
+          ${
+            k(
+              '{ s = 0.0; c = 0 },
+              (sh: Shape) => fnOnShape(f, sh)(fv => '{ s = s + ${ fv.asExprOf[Double] }; c += 1 }.asTerm),
+              '{ if c == 0 then 0.0 else s / c }.asTerm
+            ).asExpr
+          }
+        }.asTerm
+      case AggSpec.Fold(z, op, sTpe) =>
+        sTpe.asType match
+          case '[ss] =>
+            '{
+              var acc: ss = ${ z.asExprOf[ss] }
+              ${
+                k(
+                  '{ acc = ${ z.asExprOf[ss] } },
+                  (sh: Shape) => opOnShape(op, '{ acc }.asTerm, sh)(r => '{ acc = ${ r.asExprOf[ss] } }.asTerm),
+                  '{ acc }.asTerm
+                ).asExpr
+              }
+            }.asTerm
+      case AggSpec.Extremum(f, bTpe, isMax, bare) =>
+        bTpe.asType match
+          case '[bb] =>
+            '{
+              var best: bb = null.asInstanceOf[bb]; var seen: Boolean = false
+              ${
+                k(
+                  '{ seen = false },
+                  (sh: Shape) =>
+                    fnOnShape(f, sh)(fv =>
+                      '{
+                        val kk: bb = ${ fv.asExprOf[bb] }
+                        if !seen || ${ ordWins(bTpe, '{ kk }.asTerm, '{ best }.asTerm, isMax) } then { best = kk; seen = true }
+                      }.asTerm
+                    ),
+                  if bare then '{ if seen then best else throw new java.util.NoSuchElementException("min1/max1 of empty group") }.asTerm
+                  else '{ if seen then Some(best) else None }.asTerm
+                ).asExpr
+              }
+            }.asTerm
+      case AggSpec.ExtremumByElem(f, bTpe, better, bare) =>
+        bTpe.asType match
+          case '[bb] =>
+            // best ELEMENT by key f(elem); `better(newKey, bestKey)` decides. Retains the winning element (boxed).
+            '{
+              var bestK: bb = null.asInstanceOf[bb]; var bestE: Any = null; var seen: Boolean = false
+              ${
+                k(
+                  '{ seen = false },
+                  (sh: Shape) =>
+                    readShape(sh)(elem =>
+                      fnOnShape(f, sh)(fv =>
+                        '{
+                          val kk: bb = ${ fv.asExprOf[bb] }
+                          if !seen || ${ applyN(better, List('{ kk }.asTerm, '{ bestK }.asTerm)).asExprOf[Boolean] } then {
+                            bestK = kk; bestE = ${ elem.asExpr }; seen = true
+                          }
+                        }.asTerm
+                      )
+                    ),
+                  if bare then '{ if seen then bestE else throw new java.util.NoSuchElementException("minBy1/maxBy1 of empty group") }.asTerm
+                  else '{ if seen then Some(bestE) else None }.asTerm
+                ).asExpr
+              }
+            }.asTerm
+      case AggSpec.Reduce(op, aTpe, bare) =>
+        aTpe.asType match
+          case '[aa] =>
+            '{
+              var acc: aa = null.asInstanceOf[aa]; var seen: Boolean = false
+              ${
+                k(
+                  '{ seen = false },
+                  (sh: Shape) =>
+                    readShape(sh)(elem =>
+                      '{
+                        if !seen then { acc = ${ elem.asExprOf[aa] }; seen = true }
+                        else acc = ${ applyN(op, List('{ acc }.asTerm, elem)).asExprOf[aa] }
+                      }.asTerm
+                    ),
+                  if bare then '{ if seen then acc else throw new java.util.NoSuchElementException("reduce of empty group") }.asTerm
+                  else '{ if seen then Some(acc) else None }.asTerm
+                ).asExpr
+              }
+            }.asTerm
+      case other =>
+        report.errorAndAbort(
+          s"fuse: groupAdjacentReduceBy v1 supports a single folding aggregate (Agg.sum/count/avg/fold/min/max/minBy/maxBy/reduce); got $other"
+        )
+
     def declareSlots(rem: List[(Int, CSpec)], acc: Map[Int, Slot])(k: Map[Int, Slot] => Term): Term =
       rem match
         case Nil                          => k(acc)
@@ -1814,6 +2030,33 @@ object FuseMacro:
                   declareSlots(rest, acc + (idx -> Slot('{ 0 }, '{ () }, None, takeRight = Some(st))))(k).asExpr
                 }
               }.asTerm
+        case (idx, GroupReduceAdjSpec(innerStages, innerAggs, kt, _)) :: rest => // nested fusion: curKey/started + inner agg acc
+          if innerAggs.length != 1 then
+            report.errorAndAbort("fuse: groupAdjacentReduceBy v1 supports exactly one aggregate per group (multi-aggregate is a follow-up)")
+          kt.asType match
+            case '[kk] =>
+              '{
+                var curKey: kk = null.asInstanceOf[kk]
+                var started: Boolean = false
+                ${
+                  // declare the inner agg's accumulator var(s) above the loop, then build the run state. innerStep(row)
+                  // runs the inner STATELESS stages on the row (via buildBody, empty counters), feeding each survivor
+                  // to the agg's step (consumeShape). The vars persist across chunks; reset/finish at each run boundary.
+                  innerAggState(innerAggs.head) { (reset, aggStep, finish) =>
+                    val innerIxd = innerStages.zipWithIndex
+                    val st = GroupReduceAdjState(
+                      '{ curKey }.asTerm,
+                      (v: Term) => '{ curKey = ${ v.asExprOf[kk] } }.asTerm,
+                      '{ started },
+                      '{ started = true },
+                      reset,
+                      (row: Term) => buildBody(innerIxd, row, Ctx(_ => unit, None, Map.empty, Some(aggStep))),
+                      finish
+                    )
+                    declareSlots(rest, acc + (idx -> Slot('{ 0 }, '{ () }, None, groupReduceAdj = Some(st))))(k)
+                  }.asExpr
+                }
+              }.asTerm
 
     /** static upper bound on output length = min(source length, every `take` limit and zip `that` length). */
     def capExpr(n0: Expr[Int], counters: Map[Int, Slot]): Expr[Int] =
@@ -1839,6 +2082,9 @@ object FuseMacro:
           if slot.foldAdj.isDefined then
             val fst = slot.foldAdj.get
             '{ if ${ fst.started } then ${ emitFoldAdjRun(fst, post, c).asExprOf[Unit] } }
+          else if slot.groupReduceAdj.isDefined then
+            val gst = slot.groupReduceAdj.get
+            '{ if ${ gst.started } then ${ emitGroupReduceRun(gst, post, c).asExprOf[Unit] } }
           else if slot.groupAdj.isDefined then
             val gst = slot.groupAdj.get
             '{ if ${ gst.started } then ${ continueShape(srcShape(gst.emitRun), post, c).asExprOf[Unit] } }

@@ -144,17 +144,34 @@ below.
 - O(1) memory, no hashmap, no boxing of primitive keys, streaming, short-circuits. Strictly dominates
   `groupMapReduce` *when the input is ordered*.
 
-### 3d. **Nested fusion** — `groupAdjacentBy(key)(reduce: Fuse[A] => B): Fuse[(K, B)]`  ← the big one
-- Per-group work supplied as a **fused sub-pipeline** `Fuse[A] => B` over the run's rows. When `reduce` is a
-  reduction (`_.map(f).sum`, `_.count`, `_.min`, `_.take(3).run`), the group's rows are **never materialized**
-  — the inner fold runs inline as rows stream past. **O(1) memory per group, zero per-group allocation.**
-  `_.run`/`_.toList` recovers the materializing behavior only when you actually want the rows.
-- Implementation = **nested staging**: the inner `Fuse[A]` has no concrete `FArray` source; its source is
-  "the current run's elements," delivered one at a time by the outer loop. So the inner pipeline must compile
-  to `(init, step, finalize)` — a push-driven fold — with its "above the loop" state becoming *per-run* state
-  reset at each key change. This reuses the existing terminal shape (§1) recursively, in **push** mode.
-- **This is the bridge to streaming sources (§4): the same push-consumer compilation needed for nested fusion
-  is what lets the outer source itself be an incremental stream rather than an array.**
+### 3d. **Nested fusion** — `groupAdjacentReduceBy(key)(prep)(agg): Fuse[(K, R)]`  ← the big one — DONE (v1)
+- Per-group work supplied as a **fused sub-pipeline** over the run's rows. When the aggregate is a fold
+  (`Agg.sum`/`count`/`min`/`max`/`avg`/`fold`/`reduce`/`minBy`/`maxBy`), the group's rows are **never
+  materialized** — the inner fold runs inline as rows stream past. **O(1) memory per group, zero per-group
+  allocation.** (Proven by the `neverMaterialized_eachRowVisitedOnce` test: each row touched exactly once.)
+- **Spelling — `(prep: Fuse[A] => Fuse[B])(agg: Agg[B, R])`, NOT `(reduce: Fuse[A] => B)`.** The original
+  `Fuse[A] => B` spelling is *not implementable*: a `reduce` body ending in an inline terminal (`_.map(f).sum`)
+  has its `.sum` macro-expanded BEFORE the outer macro reads the lambda (Scala inlining is inside-out), and the
+  inner `.sum`'s `parse` then fails on the lambda param as source (`Ident("g")`). Empirically confirmed. So the
+  inner pipeline is split: `prep` = the stateless inner STAGES (plain non-inline markers — `map`/`filter`/
+  `filterNot`/`collect` — that survive to the AST), and `agg` = the per-group aggregate as an `Agg.*` value.
+- **The `@compileTimeOnly` hurdle + fix.** `Agg.*` is `@compileTimeOnly`, so passing it to a *non-inline* stage
+  marker fires before the `.run` macro can consume it. Fix: `groupAdjacentReduceBy` is `inline`, splicing
+  `groupReduceStageImpl`, which CONSUMES the `Agg.*` (rewriting it to the non-compileTimeOnly `AggRaw.*` twin,
+  same method name → same `parseAgg1` shape) and re-emits a plain non-inline `groupAdjacentReduceByMarker` call
+  that the `.run`/agg macro parses normally.
+- Implementation = **nested staging**: the inner pipeline has no concrete `FArray` source; its source is "the
+  current run's elements," delivered one at a time by the outer loop. The inner agg compiles to a per-run
+  `(reset, step, finish)` (`innerAggState`, mirroring the folding `stateFor` cases) declared ABOVE the loop
+  (persists across chunks), `reset` at each key change, `step` per row (threading the inner stages via
+  `buildBody`), `finish` at the run boundary + epilogue. Emits `(k, R)` through the SAME decomposed-`Tup` path
+  as `foldAdjacentBy` (so `.map(_._2)` never builds the tuple; all-primitive `(K,R)` stays unboxed).
+- **v1 scope / follow-ups:** ONE folding aggregate per group (multi-agg = follow-up); inner stages are stateless
+  only (`take`/`drop`/`takeWhile` inside a group need resettable per-run counters = follow-up); `topN`/`exists`/
+  `find` as a per-group reduce (element-retaining / per-group short-circuit) error clearly. The `_.run`/`_.toList`
+  materialize escape hatch stays as the existing `groupAdjacentBy(key)` + `.map`.
+- **This was the bridge to streaming sources (§4): the same push-consumer compilation is what lets the outer
+  source itself be an incremental stream rather than an array.** (Works across chunk boundaries — tested.)
 
 ### 3e. Bounded-heap terminals — `topN(n)`, `smallest(n)`, `largest(n)`, `takeRight(n)`
 - The algorithmic prize for "sort then take a few": O(N log n) time, **O(n) memory**, streaming, short-circuit
