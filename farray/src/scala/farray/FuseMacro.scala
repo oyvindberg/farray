@@ -464,12 +464,20 @@ object FuseMacro:
       else None
     val isJson = jsonSrc.isDefined
 
-    // identity → hand back the source (only meaningful for Run).
-    if stages.isEmpty && tag == TTag.Run && !isJson then return '{ $selfBase.asInstanceOf[FBase] }
+    // a streaming `Source[A]` source (covariant, so check by subtyping against `Source[Any]`). The chunk driver
+    // wraps the in-memory element loop in an outer pull loop → constant memory over an incremental source.
+    val streamSrc: Option[Expr[Source[?]]] =
+      if !isJson && srcTerm.tpe.widen.dealias <:< TypeRepr.of[Source[Any]]
+      then Some('{ $selfBase.asInstanceOf[Source[?]] })
+      else None
+    val isStream = streamSrc.isDefined
+
+    // identity → hand back the source (only meaningful for Run, and only for an already-realized in-memory FArray).
+    if stages.isEmpty && tag == TTag.Run && !isJson && !isStream then return '{ $selfBase.asInstanceOf[FBase] }
 
     val srcK = if isJson then Kind.KRef else kindOf(srcElem)
     val outK = kindOf(aType)
-    val srcBase: Expr[FBase] = if isJson then '{ null.asInstanceOf[FBase] } else '{ $selfBase.asInstanceOf[FBase] }
+    val srcBase: Expr[FBase] = if isJson || isStream then '{ null.asInstanceOf[FBase] } else '{ $selfBase.asInstanceOf[FBase] }
 
     val indexed: List[(Stage, Int)] = stages.zipWithIndex
     // stages needing an above-loop counter (take/drop = a clamped limit, zipWithIndex = a bare counter,
@@ -492,7 +500,8 @@ object FuseMacro:
     val hasScan: Boolean = scanCount == 1
     // a JSON source has no static length (records are scanned, not indexed), so a Run/toList must grow the output
     // like flatMap/scan. scanLeft emits one MORE element than its input, so the output can exceed source length.
-    val needsGrow: Boolean = hasFlatMap || hasScan || isJson
+    // A JSON or streaming source has no static length, so a Run/toList must GROW the output (no `capExpr` bound).
+    val needsGrow: Boolean = hasFlatMap || hasScan || isJson || isStream
     // v1 JSON scope guard: only map/filter stages over a JSON source (no zip/flatMap/take/drop/scan/distinct yet).
     if isJson then
       val unsupported = stages.find {
@@ -1014,7 +1023,10 @@ object FuseMacro:
         }.asTerm
 
     // --- traverse one level (source OR a flatMap inner): leaf fast-path + `<kind>At` fallback, `done` break ---
-    def loopOver(src: Expr[FBase], k: Kind, elemTpe: TypeRepr, ss: List[(Stage, Int)], ctx: Ctx): Expr[Unit] =
+    // The shared INNER element loop over ONE realized chunk `s` (an `FBase` leaf/tree). Both the in-memory path
+    // (one chunk = the whole FArray) and the streaming chunk-driver (many chunks) emit this verbatim — only the
+    // SOURCE of `s` differs. `cond` already folds in `done`, so a satisfied short-circuit stops mid-chunk.
+    def elementLoop(src: Expr[FBase], k: Kind, elemTpe: TypeRepr, ss: List[(Stage, Int)], ctx: Ctx): Expr[Unit] =
       def cond(len: Expr[Int], i: Expr[Int]): Expr[Boolean] = ctx.done match
         case Some(d) => '{ $i < $len && ! ${ d.read } }
         case None    => '{ $i < $len }
@@ -1125,6 +1137,27 @@ object FuseMacro:
                     val len = s.length; var i = 0
                     while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.refAt(s, i).asInstanceOf[se] }.asTerm) }; i += 1 }
               }
+
+    // in-memory: ONE chunk = the whole FArray. Just the shared element loop.
+    def loopOver(src: Expr[FBase], k: Kind, elemTpe: TypeRepr, ss: List[(Stage, Int)], ctx: Ctx): Expr[Unit] =
+      elementLoop(src, k, elemTpe, ss, ctx)
+
+    // streaming: drive a `Source` — pull a chunk, run the shared element loop over it, repeat. CONSTANT MEMORY:
+    // live data = stage state (hoisted above by withDone/declareSlots) + ONE chunk's backing array. `done` is
+    // checked at BOTH levels — the inner loop stops mid-chunk on short-circuit, and the outer `&& !done` gate
+    // prevents the NEXT pull (so `take(1)` over a file reads one chunk and no more I/O happens).
+    def loopOverSource(srcExpr: Expr[Source[?]], k: Kind, elemTpe: TypeRepr, ss: List[(Stage, Int)], ctx: Ctx): Expr[Unit] =
+      val notDone: Expr[Boolean] = ctx.done match { case Some(d) => '{ ! ${ d.read } }; case None => '{ true } }
+      // CRUCIAL: the next pull is GATED on `!done`. After the element loop sets `done` mid-chunk, we must NOT pull
+      // the next chunk (that would be one chunk of wasted I/O, and breaks `take(1)`-reads-one-chunk). So the
+      // trailing re-pull only happens while not done; otherwise we fall to End and exit.
+      '{
+        val src = $srcExpr
+        var chunk: FArray[Any] | Source.End = src.pullChunk().asInstanceOf[FArray[Any] | Source.End]
+        while (chunk ne Source.End) && $notDone do
+          ${ elementLoop('{ chunk.asInstanceOf[FArray[Any]].asInstanceOf[FBase] }, k, elemTpe, ss, ctx) }
+          chunk = if $notDone then src.pullChunk().asInstanceOf[FArray[Any] | Source.End] else Source.End
+      }
 
     // ===== JSON source lowering: a per-record byte scanner whose record is a Tup of byte-sourced columns =====
     // The downstream (filter/map/sink/DCE/terminal) is the UNCHANGED optimizer — it consumes the Tup via
@@ -1573,9 +1606,10 @@ object FuseMacro:
     def assemble(src0: Expr[FBase], n0: Expr[Int], done: Option[Done], counters: Map[Int, Slot]): Term =
       def ctx(consume: Term => Term) = Ctx(consume, done, counters)
       def drive(c: Ctx): Expr[Unit] =
-        jsonSrc match
-          case Some(js) => loopOverJson(js, srcElem, indexed, c)
-          case None     => withScanPrologue(c, loopOver(src0, srcK, srcElem, indexed, c))
+        (jsonSrc, streamSrc) match
+          case (Some(js), _) => loopOverJson(js, srcElem, indexed, c)
+          case (_, Some(ss)) => withScanPrologue(c, loopOverSource(ss, srcK, srcElem, indexed, c))
+          case _             => withScanPrologue(c, loopOver(src0, srcK, srcElem, indexed, c))
       def loop(consume: Term => Term): Expr[Unit] = drive(ctx(consume))
       // shape-aware driver: the terminal consumes the element's decomposed Shape (so `op`/`f` projects columns
       // without rebuilding the product). `consume` is a materialize-then-apply fallback for non-segment paths.
@@ -1938,9 +1972,10 @@ object FuseMacro:
     def assembleOut(src0: Expr[FBase], n0: Expr[Int], counters: Map[Int, Slot], ctx: (Term => Term) => Ctx): Term =
       def loop(consume: Term => Term): Expr[Unit] =
         val c = ctx(consume)
-        jsonSrc match
-          case Some(js) => loopOverJson(js, srcElem, indexed, c)
-          case None     => withScanPrologue(c, loopOver(src0, srcK, srcElem, indexed, c))
+        (jsonSrc, streamSrc) match
+          case (Some(js), _) => loopOverJson(js, srcElem, indexed, c)
+          case (_, Some(ss)) => withScanPrologue(c, loopOverSource(ss, srcK, srcElem, indexed, c))
+          case _             => withScanPrologue(c, loopOver(src0, srcK, srcElem, indexed, c))
       outK match
         case Kind.KInt =>
           if needsGrow then
@@ -2115,9 +2150,9 @@ object FuseMacro:
             }.asTerm
 
     // --- final assembly: bind source + length once, then state vars, then the loop nest ---
-    // For a JSON source there's no FBase and no static length; n0 is just an initial output-capacity hint
-    // (the JSON path always uses the growable `needsGrow` assembly), so a fixed estimate is fine.
-    if isJson then
+    // A JSON or streaming source has no FBase and no static length; n0 is just an initial output-capacity hint
+    // (both always use the growable `needsGrow` assembly), so a fixed estimate is fine.
+    if isJson || isStream then
       '{
         val src0: FBase = null.asInstanceOf[FBase]; val n0: Int = 16
         ${ withDone(done => declareSlots(counterStages, Map.empty)(counters => assemble('src0, 'n0, done, counters))).asExpr }
