@@ -2112,7 +2112,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
       popTail: String => Unit, // the stack pop-loop action for a deferred tail element expr (mirror of `act`)
       cursorDecl: String = "",  // OPTIONAL output-cursor decl, threaded beside the state (Build/Partition); "" here
       cursorArgs: String = "",  // OPTIONAL output-cursor arg(s) on a recursive call; "" here
-      earlyStopAfterAct: () => Unit = () => () // OPTIONAL early-stop hook after a per-element act (ShortCircuit); no-op here
+      earlyStopAfterAct: () => Unit = () => (), // OPTIONAL early-stop hook after a per-element act (ShortCircuit); no-op here
+      prelude: () => Unit = () => (), // OPTIONAL extra local decls emitted after `int sp = 0;` (Partition's two int cursors); no-op here
+      prependVar: String = "p" // the Prepend arm's pattern-binding name; "pr" for shapes whose fn param is named `p` (Filter/Partition)
   )
 
   /** Emit the ITERATIVE MAIN WALK from a `WalkSpec` — the single source for the un-windowed, explicit-stack
@@ -2163,6 +2165,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     e.line(s"$je[] tail = null;")
     e.line("boolean[] isTail = null;")
     e.line("int sp = 0;")
+    spec.prelude()
     e.open("while (cur != null)")
     e.line("FBase next = null;")
     // leaf
@@ -2172,13 +2175,14 @@ object GenCores extends BleepCodegenScript("GenCores") {
     e.closeOpen(s"else if (cur instanceof ${K}One one)")
     spec.act("one.elem")
     // prepend: fwd elem-then-base; bwd defer elem, descend base first
-    e.closeOpen(s"else if (cur instanceof ${K}Prepend p)")
+    val pv = spec.prependVar
+    e.closeOpen(s"else if (cur instanceof ${K}Prepend $pv)")
     if !backward then {
-      spec.act("p.elem")
-      e.line("next = p.base;")
+      spec.act(s"$pv.elem")
+      e.line(s"next = $pv.base;")
     } else {
-      pushTail("p.elem")
-      e.line("next = p.base;")
+      pushTail(s"$pv.elem")
+      e.line(s"next = $pv.base;")
     }
     // append: fwd defer elem, descend base first; bwd elem-then-base
     e.closeOpen(s"else if (cur instanceof ${K}Append ap)")
@@ -2566,150 +2570,20 @@ object GenCores extends BleepCodegenScript("GenCores") {
       e.line("sp += 1;")
     }
 
-    e.open(sig)
-    e.line("FBase cur = root;")
-    e.line("FBase[] stack = null;")
-    e.line(s"$jiE[] tail = null;")
-    e.line("boolean[] isTail = null;")
-    e.line("int sp = 0;")
-    e.open("while (cur != null)")
-    e.line("FBase next = null;")
-    // leaf
-    e.open(s"if (cur instanceof ${KI}Arr leaf)")
-    runLeaf("leaf.arr")
-    // one
-    e.closeOpen(s"else if (cur instanceof ${KI}One one)")
-    writeElem("one.elem")
-    // prepend: fwd elem-then-base; bwd defer elem, descend base first
-    e.closeOpen(s"else if (cur instanceof ${KI}Prepend p)")
-    if !backward then {
-      writeElem("p.elem")
-      e.line("next = p.base;")
-    } else {
-      pushTail("p.elem")
-      e.line("next = p.base;")
-    }
-    // append: fwd defer elem, descend base first; bwd elem-then-base
-    e.closeOpen(s"else if (cur instanceof ${KI}Append ap)")
-    if !backward then {
-      pushTail("ap.elem")
-      e.line("next = ap.base;")
-    } else {
-      writeElem("ap.elem")
-      e.line("next = ap.base;")
-    }
-    // concat: fwd left-then-right; bwd right-then-left
-    e.closeOpen("else if (cur instanceof Concat c)")
-    if !backward then {
-      pushChild("c.right")
-      e.line("next = c.left;")
-    } else {
-      pushChild("c.left")
-      e.line("next = c.right;")
-    }
-    // reverse: the ONLY recursion — flip the READ direction across the JVM call boundary, threading o.
-    e.closeOpen("else if (cur instanceof ReverseNode rev)")
-    e.line(s"o = $recur(rev.base, out, o, f);")
-    // slice: leaf-base window fast path; deep base via applyBoxed
-    e.closeOpen("else if (cur instanceof SliceNode s)")
-    e.line("int so = s.offset;")
-    e.line("int sn = s.length;")
-    e.open(s"if (s.base instanceof ${KI}Arr lf)")
-    if !backward then run("lf.arr", "so", "sn")
-    else run("lf.arr", "so + sn - 1", "sn")
-    e.closeOpen("else")
-    winCall("s.base", "so", "sn")
-    e.close()
-    // pad: fwd base-then-fillers; bwd fillers-then-base
-    e.closeOpen(s"else if (cur instanceof ${KI}Pad pad)")
-    e.line("int bl = pad.base.length;")
-    e.line(s"$jiE pf = pad.filler;")
-    e.line("int pn = pad.length;")
-    if !backward then {
-      e.open(s"if (pad.base instanceof ${KI}Arr lf)")
-      run("lf.arr", "0", "bl")
-      e.closeOpen("else")
-      winCall("pad.base", "0", "bl")
-      e.close()
-      e.line("int pj = bl;")
-      e.open("while (pj < pn)")
-      writeElem("pf")
-      e.line("pj += 1;")
-      e.close()
-    } else {
-      e.line("int pj = pn;")
-      e.open("while (pj > bl)")
-      writeElem("pf")
-      e.line("pj -= 1;")
-      e.close()
-      e.open(s"if (pad.base instanceof ${KI}Arr lf)")
-      run("lf.arr", "bl - 1", "bl")
-      e.closeOpen("else")
-      winCall("pad.base", "0", "bl")
-      e.close()
-    }
-    // updated: fwd [0,ui) elem (ui,len); bwd mirror. leaf-base fast path; deep base via the windowed sub-traverse.
-    e.closeOpen(s"else if (cur instanceof ${KI}Updated u)")
-    e.line("int ui = u.index;")
-    e.line("int ul = u.length;")
-    e.open(s"if (u.base instanceof ${KI}Arr lf)")
-    e.line(s"$jiE[] la = lf.arr;")
-    if !backward then {
-      run("la", "0", "ui")
-      writeElem("u.elem")
-      run("la", "ui + 1", "ul - ui - 1")
-    } else {
-      run("la", "ul - 1", "ul - ui - 1")
-      writeElem("u.elem")
-      run("la", "ui - 1", "ui")
-    }
-    e.closeOpen("else")
-    if !backward then {
-      winCall("u.base", "0", "ui")
-      writeElem("u.elem")
-      winCall("u.base", "ui + 1", "ul - ui - 1")
-    } else {
-      winCall("u.base", "ui + 1", "ul - ui - 1")
-      writeElem("u.elem")
-      winCall("u.base", "0", "ui")
-    }
-    e.close()
-    // range (Int-only structural node — emitted only for Int input)
-    if KI == "Int" then {
-      e.closeOpen("else if (cur instanceof RangeNode rng)")
-      e.line("int rn = rng.length;")
-      if !backward then {
-        e.line("int ri = 0;")
-        e.open("while (ri < rn)")
-        writeElem("rng.start + ri * rng.step")
-        e.line("ri += 1;")
-        e.close()
-      } else {
-        e.line("int ri = rn - 1;")
-        e.open("while (ri >= 0)")
-        writeElem("rng.start + ri * rng.step")
-        e.line("ri -= 1;")
-        e.close()
-      }
-    }
-    e.close()
-    // advance: descend into `next`, else pop the explicit stack (a tail slot applies the deferred element).
-    e.open("if (next != null)")
-    e.line("cur = next;")
-    e.closeOpen("else")
-    e.line("cur = null;")
-    e.open("while (sp > 0 && cur == null)")
-    e.line("sp -= 1;")
-    e.open("if (isTail != null && isTail[sp])")
-    writeElem("tail[sp]")
-    e.closeOpen("else")
-    e.line("cur = stack[sp];")
-    e.close()
-    e.close()
-    e.close()
-    e.close() // while (cur != null)
-    e.line("return o;")
-    e.close() // method
+    // Build a Build WalkSpec and emit the iterative main walk from it (the shared emitter). Per-element action is
+    // `out[o] = f.apply(e); o += 1`; state returned is the cursor `o`; the ReverseNode arm recurses into the
+    // opposite-direction build threading `o`; the deferred-tail pop writes the deferred element. Write dir == visit
+    // dir (the run/runLeaf/writeElem callbacks all use `backward` directly).
+    val spec = WalkSpec(
+      sig = sig, K = KI, tailElemT = jiE, isInt = KI == "Int", retState = "o",
+      recurReverse = base => e.line(s"o = $recur($base, out, o, f);"),
+      act = el => writeElem(el),
+      runLeaf = arr => runLeaf(arr),
+      run = (arr, start, count) => run(arr, start, count),
+      winCall = (node, lo, len) => winCall(node, lo, len),
+      popTail = el => writeElem(el)
+    )
+    emitMainWalk(e, spec, backward)
     e.blank()
     emitWindow(e, ki, win)
   }
@@ -2850,151 +2724,21 @@ object GenCores extends BleepCodegenScript("GenCores") {
       e.line("sp += 1;")
     }
 
-    e.open(sig)
-    e.line("FBase cur = root;")
-    e.line("FBase[] stack = null;")
-    e.line(s"$je[] tail = null;")
-    e.line("boolean[] isTail = null;")
-    e.line("int sp = 0;")
-    e.open("while (cur != null)")
-    e.line("FBase next = null;")
-    // leaf
-    e.open(s"if (cur instanceof ${K}Arr leaf)")
-    runLeaf("leaf.arr")
-    // one
-    e.closeOpen(s"else if (cur instanceof ${K}One one)")
-    writeElem("one.elem")
-    // prepend: fwd elem-then-base; bwd defer elem, descend base first
-    e.closeOpen(s"else if (cur instanceof ${K}Prepend pr)")
-    if !backward then {
-      writeElem("pr.elem")
-      e.line("next = pr.base;")
-    } else {
-      pushTail("pr.elem")
-      e.line("next = pr.base;")
-    }
-    // append: fwd defer elem, descend base first; bwd elem-then-base
-    e.closeOpen(s"else if (cur instanceof ${K}Append ap)")
-    if !backward then {
-      pushTail("ap.elem")
-      e.line("next = ap.base;")
-    } else {
-      writeElem("ap.elem")
-      e.line("next = ap.base;")
-    }
-    // concat: fwd left-then-right; bwd right-then-left
-    e.closeOpen("else if (cur instanceof Concat c)")
-    if !backward then {
-      pushChild("c.right")
-      e.line("next = c.left;")
-    } else {
-      pushChild("c.left")
-      e.line("next = c.right;")
-    }
-    // reverse: the ONLY recursion — flip the READ direction across the JVM call boundary, threading the kept
-    // cursor o. The WRITE stays forward out[o++] in the recursed method too, so reversed kept order is preserved.
-    e.closeOpen("else if (cur instanceof ReverseNode rev)")
-    e.line(s"o = $recur(rev.base, out, o, p);")
-    // slice: leaf-base window fast path; deep base via applyBoxed
-    e.closeOpen("else if (cur instanceof SliceNode s)")
-    e.line("int so = s.offset;")
-    e.line("int sn = s.length;")
-    e.open(s"if (s.base instanceof ${K}Arr lf)")
-    if !backward then run("lf.arr", "so", "sn")
-    else run("lf.arr", "so + sn - 1", "sn")
-    e.closeOpen("else")
-    winCall("s.base", "so", "sn")
-    e.close()
-    // pad: fwd base-then-fillers; bwd fillers-then-base
-    e.closeOpen(s"else if (cur instanceof ${K}Pad pad)")
-    e.line("int bl = pad.base.length;")
-    e.line(s"$je pf = pad.filler;")
-    e.line("int pn = pad.length;")
-    if !backward then {
-      e.open(s"if (pad.base instanceof ${K}Arr lf)")
-      run("lf.arr", "0", "bl")
-      e.closeOpen("else")
-      winCall("pad.base", "0", "bl")
-      e.close()
-      e.line("int pj = bl;")
-      e.open("while (pj < pn)")
-      writeElem("pf")
-      e.line("pj += 1;")
-      e.close()
-    } else {
-      e.line("int pj = pn;")
-      e.open("while (pj > bl)")
-      writeElem("pf")
-      e.line("pj -= 1;")
-      e.close()
-      e.open(s"if (pad.base instanceof ${K}Arr lf)")
-      run("lf.arr", "bl - 1", "bl")
-      e.closeOpen("else")
-      winCall("pad.base", "0", "bl")
-      e.close()
-    }
-    // updated: fwd [0,ui) elem (ui,len); bwd mirror. leaf-base fast path; deep base via applyBoxed segments.
-    e.closeOpen(s"else if (cur instanceof ${K}Updated u)")
-    e.line("int ui = u.index;")
-    e.line("int ul = u.length;")
-    e.open(s"if (u.base instanceof ${K}Arr lf)")
-    e.line(s"$je[] la = lf.arr;")
-    if !backward then {
-      run("la", "0", "ui")
-      writeElem("u.elem")
-      run("la", "ui + 1", "ul - ui - 1")
-    } else {
-      run("la", "ul - 1", "ul - ui - 1")
-      writeElem("u.elem")
-      run("la", "ui - 1", "ui")
-    }
-    e.closeOpen("else")
-    if !backward then {
-      winCall("u.base", "0", "ui")
-      writeElem("u.elem")
-      winCall("u.base", "ui + 1", "ul - ui - 1")
-    } else {
-      winCall("u.base", "ui + 1", "ul - ui - 1")
-      writeElem("u.elem")
-      winCall("u.base", "0", "ui")
-    }
-    e.close()
-    // range (Int-only structural node — emitted only for Int input)
-    if K == "Int" then {
-      e.closeOpen("else if (cur instanceof RangeNode rng)")
-      e.line("int rn = rng.length;")
-      if !backward then {
-        e.line("int ri = 0;")
-        e.open("while (ri < rn)")
-        writeElem("rng.start + ri * rng.step")
-        e.line("ri += 1;")
-        e.close()
-      } else {
-        e.line("int ri = rn - 1;")
-        e.open("while (ri >= 0)")
-        writeElem("rng.start + ri * rng.step")
-        e.line("ri -= 1;")
-        e.close()
-      }
-    }
-    e.close()
-    // advance: descend into `next`, else pop the explicit stack (a tail slot applies the deferred element).
-    e.open("if (next != null)")
-    e.line("cur = next;")
-    e.closeOpen("else")
-    e.line("cur = null;")
-    e.open("while (sp > 0 && cur == null)")
-    e.line("sp -= 1;")
-    e.open("if (isTail != null && isTail[sp])")
-    writeElem("tail[sp]")
-    e.closeOpen("else")
-    e.line("cur = stack[sp];")
-    e.close()
-    e.close()
-    e.close()
-    e.close() // while (cur != null)
-    e.line("return o;")
-    e.close() // method
+    // Build a BuildFiltered WalkSpec and emit the iterative main walk from it (the shared emitter). Per-element
+    // action is the predicate-guarded keep `if (p.apply(e)) { out[o] = e; o += 1; }`; state returned is the kept
+    // cursor `o`; the ReverseNode arm recurses into the opposite-direction filter threading `o` and `p`; the
+    // deferred-tail pop re-runs the guarded keep. Write dir == visit dir.
+    val spec = WalkSpec(
+      sig = sig, K = K, tailElemT = je, isInt = K == "Int", retState = "o",
+      recurReverse = base => e.line(s"o = $recur($base, out, o, p);"),
+      act = el => writeElem(el),
+      runLeaf = arr => runLeaf(arr),
+      run = (arr, start, count) => run(arr, start, count),
+      winCall = (node, lo, len) => winCall(node, lo, len),
+      popTail = el => writeElem(el),
+      prependVar = "pr" // the fn param is named `p` (the predicate), so the Prepend binding is `pr` to avoid shadowing
+    )
+    emitMainWalk(e, spec, backward)
     e.blank()
     emitWindow(e, k, win)
   }
@@ -3137,145 +2881,27 @@ object GenCores extends BleepCodegenScript("GenCores") {
       e.line("sp += 1;")
     }
 
-    e.open(sig)
-    e.line("FBase cur = root;")
-    e.line("FBase[] stack = null;")
-    e.line(s"$je[] tail = null;")
-    e.line("boolean[] isTail = null;")
-    e.line("int sp = 0;")
-    e.line("int oa = (int) oa0;")
-    e.line("int ob = (int) ob0;")
-    e.open("while (cur != null)")
-    e.line("FBase next = null;")
-    e.open(s"if (cur instanceof ${K}Arr leaf)")
-    runLeaf("leaf.arr")
-    e.closeOpen(s"else if (cur instanceof ${K}One one)")
-    writeElem("one.elem")
-    e.closeOpen(s"else if (cur instanceof ${K}Prepend pr)")
-    if !backward then {
-      writeElem("pr.elem")
-      e.line("next = pr.base;")
-    } else {
-      pushTail("pr.elem")
-      e.line("next = pr.base;")
-    }
-    e.closeOpen(s"else if (cur instanceof ${K}Append ap)")
-    if !backward then {
-      pushTail("ap.elem")
-      e.line("next = ap.base;")
-    } else {
-      writeElem("ap.elem")
-      e.line("next = ap.base;")
-    }
-    e.closeOpen("else if (cur instanceof Concat c)")
-    if !backward then {
-      pushChild("c.right")
-      e.line("next = c.left;")
-    } else {
-      pushChild("c.left")
-      e.line("next = c.right;")
-    }
-    // reverse: the ONLY recursion — flip READ direction across the JVM call boundary, threading BOTH cursors via
-    // the packed long. BOTH writes stay forward in the recursed method too, so reversed split order is preserved.
-    e.closeOpen("else if (cur instanceof ReverseNode rev)")
-    e.line(s"long _pk = $recur(rev.base, outA, outB, (long) oa, (long) ob, p);")
-    e.line("oa = (int) (_pk & 0xffffffffL);")
-    e.line("ob = (int) (_pk >>> 32);")
-    e.closeOpen("else if (cur instanceof SliceNode s)")
-    e.line("int so = s.offset;")
-    e.line("int sn = s.length;")
-    e.open(s"if (s.base instanceof ${K}Arr lf)")
-    if !backward then run("lf.arr", "so", "sn")
-    else run("lf.arr", "so + sn - 1", "sn")
-    e.closeOpen("else")
-    winCall("s.base", "so", "sn")
-    e.close()
-    e.closeOpen(s"else if (cur instanceof ${K}Pad pad)")
-    e.line("int bl = pad.base.length;")
-    e.line(s"$je pf = pad.filler;")
-    e.line("int pn = pad.length;")
-    if !backward then {
-      e.open(s"if (pad.base instanceof ${K}Arr lf)")
-      run("lf.arr", "0", "bl")
-      e.closeOpen("else")
-      winCall("pad.base", "0", "bl")
-      e.close()
-      e.line("int pj = bl;")
-      e.open("while (pj < pn)")
-      writeElem("pf")
-      e.line("pj += 1;")
-      e.close()
-    } else {
-      e.line("int pj = pn;")
-      e.open("while (pj > bl)")
-      writeElem("pf")
-      e.line("pj -= 1;")
-      e.close()
-      e.open(s"if (pad.base instanceof ${K}Arr lf)")
-      run("lf.arr", "bl - 1", "bl")
-      e.closeOpen("else")
-      winCall("pad.base", "0", "bl")
-      e.close()
-    }
-    e.closeOpen(s"else if (cur instanceof ${K}Updated u)")
-    e.line("int ui = u.index;")
-    e.line("int ul = u.length;")
-    e.open(s"if (u.base instanceof ${K}Arr lf)")
-    e.line(s"$je[] la = lf.arr;")
-    if !backward then {
-      run("la", "0", "ui")
-      writeElem("u.elem")
-      run("la", "ui + 1", "ul - ui - 1")
-    } else {
-      run("la", "ul - 1", "ul - ui - 1")
-      writeElem("u.elem")
-      run("la", "ui - 1", "ui")
-    }
-    e.closeOpen("else")
-    if !backward then {
-      winCall("u.base", "0", "ui")
-      writeElem("u.elem")
-      winCall("u.base", "ui + 1", "ul - ui - 1")
-    } else {
-      winCall("u.base", "ui + 1", "ul - ui - 1")
-      writeElem("u.elem")
-      winCall("u.base", "0", "ui")
-    }
-    e.close()
-    if K == "Int" then {
-      e.closeOpen("else if (cur instanceof RangeNode rng)")
-      e.line("int rn = rng.length;")
-      if !backward then {
-        e.line("int ri = 0;")
-        e.open("while (ri < rn)")
-        writeElem("rng.start + ri * rng.step")
-        e.line("ri += 1;")
-        e.close()
-      } else {
-        e.line("int ri = rn - 1;")
-        e.open("while (ri >= 0)")
-        writeElem("rng.start + ri * rng.step")
-        e.line("ri -= 1;")
-        e.close()
-      }
-    }
-    e.close()
-    e.open("if (next != null)")
-    e.line("cur = next;")
-    e.closeOpen("else")
-    e.line("cur = null;")
-    e.open("while (sp > 0 && cur == null)")
-    e.line("sp -= 1;")
-    e.open("if (isTail != null && isTail[sp])")
-    writeElem("tail[sp]")
-    e.closeOpen("else")
-    e.line("cur = stack[sp];")
-    e.close()
-    e.close()
-    e.close()
-    e.close() // while (cur != null)
-    e.line("return (((long) ob) << 32) | (((long) oa) & 0xffffffffL);")
-    e.close() // method
+    // Build a Partition WalkSpec and emit the iterative main walk from it (the shared emitter). The prelude declares
+    // the two int cursors `oa`/`ob` (from the packed long params) BESIDE the stack; per-element action routes the
+    // element to outA/outB (the dual-write writeElem); state returned is the repacked (oa, ob) long; the ReverseNode
+    // arm recurses into the opposite-direction partition threading BOTH cursors via the packed long; the deferred-tail
+    // pop re-runs the dual write. The fn param is named `p` so the Prepend binding is `pr`. Write dir == visit dir.
+    val spec = WalkSpec(
+      sig = sig, K = K, tailElemT = je, isInt = K == "Int", retState = packedRet,
+      recurReverse = base => {
+        e.line(s"long _pk = $recur($base, outA, outB, (long) oa, (long) ob, p);")
+        e.line("oa = (int) (_pk & 0xffffffffL);")
+        e.line("ob = (int) (_pk >>> 32);")
+      },
+      act = el => writeElem(el),
+      runLeaf = arr => runLeaf(arr),
+      run = (arr, start, count) => run(arr, start, count),
+      winCall = (node, lo, len) => winCall(node, lo, len),
+      popTail = el => writeElem(el),
+      prelude = () => { e.line("int oa = (int) oa0;"); e.line("int ob = (int) ob0;") },
+      prependVar = "pr"
+    )
+    emitMainWalk(e, spec, backward)
     e.blank()
     emitWindow(e, k, win)
   }
@@ -3404,149 +3030,19 @@ object GenCores extends BleepCodegenScript("GenCores") {
       e.line("sp += 1;")
     }
 
-    e.open(sig)
-    e.line("FBase cur = root;")
-    e.line("FBase[] stack = null;")
-    e.line(s"$je[] tail = null;")
-    e.line("boolean[] isTail = null;")
-    e.line("int sp = 0;")
-    e.open("while (cur != null)")
-    e.line("FBase next = null;")
-    // leaf
-    e.open(s"if (cur instanceof ${K}Arr leaf)")
-    runLeaf("leaf.arr")
-    // one
-    e.closeOpen(s"else if (cur instanceof ${K}One one)")
-    e.line("f.apply(one.elem);")
-    // prepend: fwd elem-then-base; bwd defer elem, descend base first
-    e.closeOpen(s"else if (cur instanceof ${K}Prepend p)")
-    if !backward then {
-      e.line("f.apply(p.elem);")
-      e.line("next = p.base;")
-    } else {
-      pushTail("p.elem")
-      e.line("next = p.base;")
-    }
-    // append: fwd defer elem, descend base first; bwd elem-then-base
-    e.closeOpen(s"else if (cur instanceof ${K}Append ap)")
-    if !backward then {
-      pushTail("ap.elem")
-      e.line("next = ap.base;")
-    } else {
-      e.line("f.apply(ap.elem);")
-      e.line("next = ap.base;")
-    }
-    // concat: fwd left-then-right; bwd right-then-left
-    e.closeOpen("else if (cur instanceof Concat c)")
-    if !backward then {
-      pushChild("c.right")
-      e.line("next = c.left;")
-    } else {
-      pushChild("c.left")
-      e.line("next = c.right;")
-    }
-    // reverse: the ONLY recursion — flip direction across the JVM call boundary
-    e.closeOpen("else if (cur instanceof ReverseNode rev)")
-    e.line(s"$recur(rev.base, f);")
-    // slice: leaf-base window fast path; deep base via applyBoxed
-    e.closeOpen("else if (cur instanceof SliceNode s)")
-    e.line("int so = s.offset;")
-    e.line("int sn = s.length;")
-    e.open(s"if (s.base instanceof ${K}Arr lf)")
-    if !backward then run("lf.arr", "so", "sn")
-    else run("lf.arr", "so + sn - 1", "sn")
-    e.closeOpen("else")
-    winCall("s.base", "so", "sn")
-    e.close()
-    // pad: fwd base-then-fillers; bwd fillers-then-base
-    e.closeOpen(s"else if (cur instanceof ${K}Pad pad)")
-    e.line("int bl = pad.base.length;")
-    e.line(s"$je pf = pad.filler;")
-    e.line("int pn = pad.length;")
-    if !backward then {
-      e.open(s"if (pad.base instanceof ${K}Arr lf)")
-      run("lf.arr", "0", "bl")
-      e.closeOpen("else")
-      winCall("pad.base", "0", "bl")
-      e.close()
-      e.line("int pj = bl;")
-      e.open("while (pj < pn)")
-      e.line("f.apply(pf);")
-      e.line("pj += 1;")
-      e.close()
-    } else {
-      e.line("int pj = pn;")
-      e.open("while (pj > bl)")
-      e.line("f.apply(pf);")
-      e.line("pj -= 1;")
-      e.close()
-      e.open(s"if (pad.base instanceof ${K}Arr lf)")
-      run("lf.arr", "bl - 1", "bl")
-      e.closeOpen("else")
-      winCall("pad.base", "0", "bl")
-      e.close()
-    }
-    // updated: fwd [0,ui) elem (ui,len); bwd mirror. leaf-base fast path; deep base via applyBoxed segments.
-    e.closeOpen(s"else if (cur instanceof ${K}Updated u)")
-    e.line("int ui = u.index;")
-    e.line("int ul = u.length;")
-    e.open(s"if (u.base instanceof ${K}Arr lf)")
-    e.line(s"$je[] la = lf.arr;")
-    if !backward then {
-      run("la", "0", "ui")
-      e.line("f.apply(u.elem);")
-      run("la", "ui + 1", "ul - ui - 1")
-    } else {
-      run("la", "ul - 1", "ul - ui - 1")
-      e.line("f.apply(u.elem);")
-      run("la", "ui - 1", "ui")
-    }
-    e.closeOpen("else")
-    if !backward then {
-      winCall("u.base", "0", "ui")
-      e.line("f.apply(u.elem);")
-      winCall("u.base", "ui + 1", "ul - ui - 1")
-    } else {
-      winCall("u.base", "ui + 1", "ul - ui - 1")
-      e.line("f.apply(u.elem);")
-      winCall("u.base", "0", "ui")
-    }
-    e.close()
-    // range (Int-only structural node — emitted only for Int input)
-    if K == "Int" then {
-      e.closeOpen("else if (cur instanceof RangeNode rng)")
-      e.line("int rn = rng.length;")
-      if !backward then {
-        e.line("int ri = 0;")
-        e.open("while (ri < rn)")
-        e.line("f.apply(rng.start + ri * rng.step);")
-        e.line("ri += 1;")
-        e.close()
-      } else {
-        e.line("int ri = rn - 1;")
-        e.open("while (ri >= 0)")
-        e.line("f.apply(rng.start + ri * rng.step);")
-        e.line("ri -= 1;")
-        e.close()
-      }
-    }
-    e.close()
-    // advance: descend into `next`, else pop the explicit stack (a tail slot applies the deferred element).
-    e.open("if (next != null)")
-    e.line("cur = next;")
-    e.closeOpen("else")
-    e.line("cur = null;")
-    e.open("while (sp > 0 && cur == null)")
-    e.line("sp -= 1;")
-    e.open("if (isTail != null && isTail[sp])")
-    e.line("f.apply(tail[sp]);")
-    e.closeOpen("else")
-    e.line("cur = stack[sp];")
-    e.close()
-    e.close()
-    e.close()
-    e.close() // while (cur != null)
-    e.close() // method
+    // Build a Foreach WalkSpec and emit the iterative main walk from it (the shared emitter). Per-element action is
+    // `f.apply(e)` (no accumulator, no output); the walk is VOID (retState ""); the ReverseNode arm recurses into the
+    // opposite-direction foreach; the deferred-tail pop applies `f` to the deferred element.
+    val spec = WalkSpec(
+      sig = sig, K = K, tailElemT = je, isInt = K == "Int", retState = "",
+      recurReverse = base => e.line(s"$recur($base, f);"),
+      act = el => e.line(s"f.apply($el);"),
+      runLeaf = arr => runLeaf(arr),
+      run = (arr, start, count) => run(arr, start, count),
+      winCall = (node, lo, len) => winCall(node, lo, len),
+      popTail = el => e.line(s"f.apply($el);")
+    )
+    emitMainWalk(e, spec, backward)
     e.blank()
     emitWindow(e, k, win)
   }
@@ -3706,139 +3202,22 @@ object GenCores extends BleepCodegenScript("GenCores") {
       e.line("sp += 1;")
     }
 
-    e.open(sig)
-    e.line("FBase cur = root;")
-    e.line("FBase[] stack = null;")
-    e.line(s"$je[] tail = null;")
-    e.line("boolean[] isTail = null;")
-    e.line("int sp = 0;")
-    e.open("while (cur != null)")
-    e.line("FBase next = null;")
-    e.open(s"if (cur instanceof ${K}Arr leaf)")
-    runLeaf("leaf.arr")
-    e.closeOpen(s"else if (cur instanceof ${K}One one)")
-    writeElem("one.elem")
-    e.closeOpen(s"else if (cur instanceof ${K}Prepend p)")
-    if !backward then {
-      writeElem("p.elem")
-      e.line("next = p.base;")
-    } else {
-      pushTail("p.elem")
-      e.line("next = p.base;")
-    }
-    e.closeOpen(s"else if (cur instanceof ${K}Append ap)")
-    if !backward then {
-      pushTail("ap.elem")
-      e.line("next = ap.base;")
-    } else {
-      writeElem("ap.elem")
-      e.line("next = ap.base;")
-    }
-    e.closeOpen("else if (cur instanceof Concat c)")
-    if !backward then {
-      pushChild("c.right")
-      e.line("next = c.left;")
-    } else {
-      pushChild("c.left")
-      e.line("next = c.right;")
-    }
-    e.closeOpen("else if (cur instanceof ReverseNode rev)")
-    e.line(s"o = $recur(rev.base, out, o, f);")
-    e.closeOpen("else if (cur instanceof SliceNode s)")
-    e.line("int so = s.offset;")
-    e.line("int sn = s.length;")
-    e.open(s"if (s.base instanceof ${K}Arr lf)")
-    if !backward then run("lf.arr", "so", "sn")
-    else run("lf.arr", "so + sn - 1", "sn")
-    e.closeOpen("else")
-    winCall("s.base", "so", "sn")
-    e.close()
-    e.closeOpen(s"else if (cur instanceof ${K}Pad pad)")
-    e.line("int bl = pad.base.length;")
-    e.line(s"$je pf = pad.filler;")
-    e.line("int pn = pad.length;")
-    if !backward then {
-      e.open(s"if (pad.base instanceof ${K}Arr lf)")
-      run("lf.arr", "0", "bl")
-      e.closeOpen("else")
-      winCall("pad.base", "0", "bl")
-      e.close()
-      e.line("int pj = bl;")
-      e.open("while (pj < pn)")
-      writeElem("pf")
-      e.line("pj += 1;")
-      e.close()
-    } else {
-      e.line("int pj = pn;")
-      e.open("while (pj > bl)")
-      writeElem("pf")
-      e.line("pj -= 1;")
-      e.close()
-      e.open(s"if (pad.base instanceof ${K}Arr lf)")
-      run("lf.arr", "bl - 1", "bl")
-      e.closeOpen("else")
-      winCall("pad.base", "0", "bl")
-      e.close()
-    }
-    e.closeOpen(s"else if (cur instanceof ${K}Updated u)")
-    e.line("int ui = u.index;")
-    e.line("int ul = u.length;")
-    e.open(s"if (u.base instanceof ${K}Arr lf)")
-    e.line(s"$je[] la = lf.arr;")
-    if !backward then {
-      run("la", "0", "ui")
-      writeElem("u.elem")
-      run("la", "ui + 1", "ul - ui - 1")
-    } else {
-      run("la", "ul - 1", "ul - ui - 1")
-      writeElem("u.elem")
-      run("la", "ui - 1", "ui")
-    }
-    e.closeOpen("else")
-    if !backward then {
-      winCall("u.base", "0", "ui")
-      writeElem("u.elem")
-      winCall("u.base", "ui + 1", "ul - ui - 1")
-    } else {
-      winCall("u.base", "ui + 1", "ul - ui - 1")
-      writeElem("u.elem")
-      winCall("u.base", "0", "ui")
-    }
-    e.close()
-    if K == "Int" then {
-      e.closeOpen("else if (cur instanceof RangeNode rng)")
-      e.line("int rn = rng.length;")
-      if !backward then {
-        e.line("int ri = 0;")
-        e.open("while (ri < rn)")
-        writeElem("rng.start + ri * rng.step")
-        e.line("ri += 1;")
-        e.close()
-      } else {
-        e.line("int ri = rn - 1;")
-        e.open("while (ri >= 0)")
-        writeElem("rng.start + ri * rng.step")
-        e.line("ri -= 1;")
-        e.close()
-      }
-    }
-    e.close()
-    e.open("if (next != null)")
-    e.line("cur = next;")
-    e.closeOpen("else")
-    e.line("cur = null;")
-    e.open("while (sp > 0 && cur == null)")
-    e.line("sp -= 1;")
-    e.open("if (isTail != null && isTail[sp])")
-    writeElem("tail[sp]")
-    e.closeOpen("else")
-    e.line("cur = stack[sp];")
-    e.close()
-    e.close()
-    e.close()
-    e.close() // while (cur != null)
-    e.line("return o;")
-    e.close() // method
+    // Build a Scan WalkSpec and emit the iterative main walk from it (the shared emitter). KEY: emitMainWalk is
+    // driven by the VISIT direction (`backward` == visitBackward) — leaf loops + Concat/Append/Prepend descent
+    // order — while writeElem advances `o` per the WRITE convention (writeBackward), decoupled inside the callbacks.
+    // Per-element action is `out[o] = f.apply(prevAcc, e)` then o±1; state returned is the cursor `o`; the
+    // ReverseNode arm recurses into the SAME write dir with the OPPOSITE visit dir (the `Rev` mutual mirror),
+    // threading `o`; the deferred-tail pop re-runs writeElem.
+    val spec = WalkSpec(
+      sig = sig, K = K, tailElemT = je, isInt = K == "Int", retState = "o",
+      recurReverse = base => e.line(s"o = $recur($base, out, o, f);"),
+      act = el => writeElem(el),
+      runLeaf = arr => runLeaf(arr),
+      run = (arr, start, count) => run(arr, start, count),
+      winCall = (node, lo, len) => winCall(node, lo, len),
+      popTail = el => writeElem(el)
+    )
+    emitMainWalk(e, spec, backward)
     e.blank()
     emitWindow(e, k, win)
   }
