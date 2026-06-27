@@ -45,3 +45,17 @@ class FusionBench extends IntInputs:
   // fused macro: one unboxed pass, one output FArray, no intermediates, no per-element closures
   @Benchmark def fuseMacro(): FArray[Int] =
     farrayInput.fuse.map(_ + 1).filter(_ % 2 == 0).map(_ * 2).toFArray
+
+  // ---- flatMap: eager (intermediate FArrays) vs fused (one nested loop, growable out) ----
+  @Benchmark def flatMapEager(): FArray[Int] =
+    farrayInput.map(_ + 1).flatMap(x => FArray(x, x * 2))
+  @Benchmark def flatMapFused(): FArray[Int] =
+    farrayInput.fuse.map(_ + 1).flatMap(x => FArray(x, x * 2)).toFArray
+
+  // ---- compute-for-survivors: an expensive independent column. Eager computes it for EVERY element; the
+  //      fused macro sinks it past the selective filter, so it runs only for the ~1/8 survivors. ----
+  private def expensive(x: Int): Int = { var s = x; var k = 0; while (k < 24) { s = s * 1103515245 + 12345; k += 1 }; s }
+  @Benchmark def survivorEager(): FArray[Int] =
+    farrayInput.map(x => (x, expensive(x))).filter(_._1 % 8 == 0).map(_._2)
+  @Benchmark def survivorFused(): FArray[Int] =
+    farrayInput.fuse.map(x => (x, expensive(x))).filter(_._1 % 8 == 0).map(_._2).toFArray
