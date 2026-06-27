@@ -197,6 +197,45 @@ The unifying observation: **§3d (nested fusion, push-fold) and §4 (streaming s
 machinery** — "compile a fused pipeline to `(init, step, finalize)` and drive it from an external element
 source." Building one builds the other. That is the single most important architectural investment.
 
+### 4.5 The decomposed-source contract & the BACKWARDS live-set flow (the real abstraction)
+
+`Source` is richer than `pullChunk(): FArray[A]` for sources whose fields are *expensive, order-dependent, and
+lazily decodable* — JSON bytes, columnar (Parquet/Arrow), protobuf, a DB cursor. The JSON research pinned the
+gap precisely: an in-memory column (`Sc(read)`) is a **pure, random-access, position-free** thunk the
+optimizer reorders / hoists / skips freely — that's *why* DCE/sink/CSE work. A byte-sourced field violates
+four of those assumptions, and the fix defines the abstraction:
+
+1. **Not random-access, not independent.** `col_name.read` = "scan forward from the *shared* cursor to the
+   `name` field" — stateful, order-dependent; its *position* in the emitted code is load-bearing.
+2. **Two-phase shape.** Resolve by splitting one in-memory step into a **scan-pass** (one left-to-right walk
+   filling per-field `var` *slots* — a `(start,len)` slice for strings, a decoded primitive for numbers) **then
+   column-reads from the slots**. Random-access over the slots is restored ⇒ DCE/sink/CSE downstream run
+   unchanged; a column's `Sc(read)` becomes "read slot K," and a separate generated block (the scan) fills slots.
+3. **Cost is bisected.** A byte field has a *scan* half (eager + in-order — you must pass a field to reach the
+   next; deferrable only as a whole-record **early-out** once the predicate fields are filled) and a
+   *decode/alloc* half (defers past the filter exactly like the in-memory sink). The array model has only the
+   second half. ⇒ the **position of predicate fields in the record matters** (predicate field last = scanned
+   the whole record before rejecting; first = reject after one field).
+4. **Lifetime.** A slice points into the recycled chunk `byte[]`; a reused un-decoded string slice dangles
+   once the chunk advances. Rule: records stay intra-chunk, and any slice escaping per-record scope
+   (`Tup.rebuild`, `==`, an opaque call) is **forced to a real `String` before the chunk is released**. `a(i)`
+   was always valid; a slice is not.
+
+**The one genuinely new mechanism: the live-column set flows BACKWARDS to the source.** Today DCE flows
+*forward* — a dead column's thunk simply never fires. For bytes, a dead column must make the scan-pass emit
+`skipValue` (not "decode into a slot nobody reads"), so the source's codegen is **parameterized by the
+projection/predicate analysis the optimizer already computes**. The core hook is: *"here is the live-column
+set + predicate fields; emit your scan/read accordingly."*
+
+Crucially, none of this touches the **downstream** optimizer (`readShape`, DCE/sink/CSE, `Ctx.consume`, `done`,
+`loopOver`) — only the **source end** generalizes from "indexable `FBase`" to "**emit a scan-pass + a `Tup` of
+slot-backed columns, consuming the live-set**." That backwards live-set flow is what makes the JSON decoder a
+*demonstration that the optimizer is general* rather than a bespoke parser: any future expensive /
+order-dependent / lazily-decodable source plugs into the same hook. **So S1's `Source` should be designed as
+this decomposed-source contract from the start — not merely a chunk-puller.** (Caveat: the `FuseMacro` is
+welded to `package farray` internals, so the decoder lives downstream as a *consumer* of this public contract;
+build it in-repo first, hoist to `farray-json` once the hook is clean.)
+
 ---
 
 ## 5. Structured concurrency (ox-style), not an effect monad
