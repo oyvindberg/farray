@@ -50,6 +50,13 @@ final class Fuse[+A](private[farray] val base: AnyRef):
   /** running fold: emit `z`, then each successive `op(acc, a)` — yields one more element than the input. */
   def scanLeft[B](z: B)(op: (B, A) => B): Fuse[B] = this.asInstanceOf[Fuse[B]]
 
+  /** Streaming group-aggregate for input ALREADY CLUSTERED by `key`: emit `(k, acc)` once per maximal run of equal keys, where `acc` starts at
+    * `combine(seed, firstOfRun)` and folds the run with `combine`. O(1) memory (state = curKey, acc, started), no buffer, no hashmap, short-circuits under
+    * `take` — the ordered-input counterpart of `groupMapReduce`. The "already clustered by key" precondition is the USER'S declaration; on unordered input the
+    * result is per-run, not per-key (documented, not detected).
+    */
+  def foldAdjacentBy[K, B](key: A => K)(seed: B)(combine: (B, A) => B): Fuse[(K, B)] = this.asInstanceOf[Fuse[(K, B)]]
+
   /** run `f` for its side effect on each surviving element, passing the element through unchanged. */
   def tapEach(f: A => Unit): Fuse[A] = this
 
