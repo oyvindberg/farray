@@ -341,6 +341,111 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |}""".stripMargin
   }
 
+  // Per-kind combinations/permutations iterators (replicating scala.collection.SeqOps.{CombinationsItr,
+  // PermutationsItr} EXACTLY, but unboxed). The input is materialized ONCE into `src`; init() groups equal
+  // elements by first-occurrence rank (a stable counting sort — same observable order as Scala's
+  // `m.getOrElseUpdate(e, m.size)` + stable `sortBy(_._2)`); each next() writes a fresh ${k.arr} result array
+  // and wraps it to a leaf, so a primitive input yields primitive leaves (NO boxing of the elements).
+  // `elms` = sorted elements (groups of equals adjacent, in first-occurrence order); `cnts(g)` = group size;
+  // `offs` = scanLeft(0)(_+_) of cnts (group start indices in `elms`); for permutations `idxs(p)` = group of
+  // position p (== Scala's sorted weights `is`).
+  private def combPermClasses(k: Kind): String = {
+    val K = k.name
+    val arrT = if k.name == "Ref" then "Object" else k.arr
+    val boxKey = if k.name == "Ref" then "src(i)" else k.box("src(i)")
+    // canonicalizing leaf builder (same as FArrayOps.leaf, inlined here since that local isn't in scope):
+    // length 0 -> Empty, 1 -> ${K}One, else ${K}Arr. `total` is the result length.
+    val leafOut = s"{ if (total == 0) Empty.INSTANCE else if (total == 1) new ${K}One(out(0)) else new ${K}Arr(out, total) }"
+    // init: assign each position a first-occurrence group rank, then a stable counting sort into `elms`
+    // (preserving original order within each equal-group). Returns elms/cnts/offs/idxs. Boxing here is one-time
+    // (per combinations/permutations CALL), never per result — the hot next() path stays unboxed.
+    val initBody =
+      s"""    val len = src.length
+         |    val w = new Array[Int](len)
+         |    val m = new java.util.HashMap[$arrT, Integer]()
+         |    var i = 0
+         |    while (i < len) { var g = m.get($boxKey); if (g == null) { g = m.size; m.put($boxKey, g) }; w(i) = g; i += 1 }
+         |    val ng = m.size
+         |    val cnts = new Array[Int](ng)
+         |    i = 0; while (i < len) { cnts(w(i)) += 1; i += 1 }
+         |    val offs = new Array[Int](ng + 1)
+         |    i = 0; while (i < ng) { offs(i + 1) = offs(i) + cnts(i); i += 1 }
+         |    val elms = new Array[$arrT](len)
+         |    val idxs = new Array[Int](len)
+         |    val pos = java.util.Arrays.copyOf(offs, ng)
+         |    i = 0; while (i < len) { val g = w(i); val p = pos(g); elms(p) = src(i); idxs(p) = g; pos(g) += 1; i += 1 }
+         |    new ${K}CombPermInit(elms, cnts, offs, idxs)"""
+    s"""final class ${K}CombPermInit(val elms: Array[$arrT], val cnts: Array[Int], val offs: Array[Int], val idxs: Array[Int])
+       |object ${K}CombPerm {
+       |  def init(src: Array[$arrT]): ${K}CombPermInit = {
+       |$initBody
+       |  }
+       |  // combinations(total): nums(g) = how many to take from group g. Greedy init: r = total; nums(g) = min(r, cnts(g)).
+       |  def combinations(src: Array[$arrT], total: Int): scala.collection.AbstractIterator[Any] = {
+       |    val in = init(src)
+       |    val cnts = in.cnts; val ng = cnts.length
+       |    val nums = new Array[Int](ng)
+       |    var r = total; var g = 0
+       |    while (g < ng) { val t = if (r < cnts(g)) r else cnts(g); nums(g) = t; r -= t; g += 1 }
+       |    new ${K}CombinationsItr(in.elms, in.offs, cnts, nums, total)
+       |  }
+       |  def permutations(src: Array[$arrT]): scala.collection.AbstractIterator[Any] =
+       |    new ${K}PermutationsItr(init(src))
+       |}
+       |final class ${K}CombinationsItr(elms: Array[$arrT], offs: Array[Int], cnts: Array[Int], nums: Array[Int], total: Int) extends scala.collection.AbstractIterator[Any] {
+       |  private val ng = nums.length
+       |  private var _hasNext = true
+       |  def hasNext: Boolean = _hasNext
+       |  def next(): Any = {
+       |    if (!_hasNext) Iterator.empty.next()
+       |    // build this result: for each group k take nums(k) copies of its representative element
+       |    val out = new Array[$arrT](total)
+       |    var o = 0; var kk = 0
+       |    while (kk < ng) { val base = offs(kk); val nk = nums(kk); var j = 0; while (j < nk) { out(o) = elms(base + j); o += 1; j += 1 }; kk += 1 }
+       |    val res = $leafOut
+       |    // advance nums to the next combination (mirrors Scala's CombinationsItr.next)
+       |    var idx = ng - 1
+       |    while (idx >= 0 && nums(idx) == cnts(idx)) idx -= 1
+       |    idx -= 1
+       |    while (idx >= 0 && nums(idx) <= 0) idx -= 1
+       |    if (idx < 0) _hasNext = false
+       |    else {
+       |      var sum = 1; var i = idx + 1
+       |      while (i < ng) { sum += nums(i); i += 1 }
+       |      nums(idx) -= 1
+       |      var kx = idx + 1
+       |      while (kx < ng) { val t = if (sum < cnts(kx)) sum else cnts(kx); nums(kx) = t; sum -= t; kx += 1 }
+       |    }
+       |    res
+       |  }
+       |}
+       |final class ${K}PermutationsItr(in: ${K}CombPermInit) extends scala.collection.AbstractIterator[Any] {
+       |  private val elms: Array[$arrT] = java.util.Arrays.copyOf(in.elms, in.elms.length)
+       |  private val idxs: Array[Int] = java.util.Arrays.copyOf(in.idxs, in.idxs.length)
+       |  private val total = elms.length
+       |  private var _hasNext = true
+       |  def hasNext: Boolean = _hasNext
+       |  def next(): Any = {
+       |    if (!_hasNext) Iterator.empty.next()
+       |    val out = java.util.Arrays.copyOf(elms, total)
+       |    val res = $leafOut
+       |    // next lexicographic permutation of idxs (with elms swapped in parallel) — mirrors Scala's PermutationsItr.next
+       |    var i = total - 2
+       |    while (i >= 0 && idxs(i) >= idxs(i + 1)) i -= 1
+       |    if (i < 0) _hasNext = false
+       |    else {
+       |      var j = total - 1
+       |      while (idxs(j) <= idxs(i)) j -= 1
+       |      var ti = idxs(i); idxs(i) = idxs(j); idxs(j) = ti
+       |      var te = elms(i); elms(i) = elms(j); elms(j) = te
+       |      val half = (total - i) / 2; var kk = 1
+       |      while (kk <= half) { val a1 = i + kk; val b1 = total - kk; ti = idxs(a1); idxs(a1) = idxs(b1); idxs(b1) = ti; te = elms(a1); elms(a1) = elms(b1); elms(b1) = te; kk += 1 }
+       |    }
+       |    res
+       |  }
+       |}""".stripMargin
+  }
+
   private def atDef(k: Kind): String = {
     val rngCase = if k.name == "Int" then "\n       |    case rng: RangeNode => rng.start + i * rng.step" else ""
     val padBase = if k.name == "Ref" then "pad.base.applyBoxed(i)" else s"${k.lc}At(pad.base, i)"
@@ -362,6 +467,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val dfsConsumers = opKinds.map(dfsConsumer).mkString("\n")
     val cursors = opKinds.map(cursorClass).mkString("\n")
     val groupBufs = opKinds.map(groupBufClass).mkString("\n")
+    val combPerm = opKinds.map(combPermClasses).mkString("\n")
     val dfsC = opKinds.map(dfsCDef).mkString("\n")
     val ats = opKinds.map(atDef).mkString("\n")
     // Flatten a (possibly deep) Updated chain to a fresh leaf array, ONCE, so dfs can emit it tight via
@@ -1414,6 +1520,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val groupMapAcc = dispatchB(k =>
       s"new GroupMapAcc[K, B] { private val m = new java.util.HashMap[K, ${k.name}Group](); def add(key: K, v: B): Unit = { var g = m.get(key); if (g == null) { g = new ${k.name}Group(); m.put(key, g) }; g.add(${wr(k, "r.unwrap(v)")}) }; def result: Map[K, FBase] = { val b = Map.newBuilder[K, FBase]; val it = m.entrySet().iterator(); while (it.hasNext) { val en = it.next(); b += ((en.getKey, en.getValue.toLeaf)) }; b.result() } }"
     )
+    // combinations / permutations: materialize the input ONCE to the kind's primitive array, then drive the
+    // per-kind unboxed iterator (init groups equal elements; next writes a fresh primitive leaf — no boxing).
+    // n < 0 || n > length -> empty (matches Scala). The result iterator is asInstanceOf'd to Iterator[FBase].
+    val combinationsV = dispatchA(k =>
+      s"{ if (k < 0 || k > xs.length) Iterator.empty else ${k.name}CombPerm.combinations(materialize${k.name}(xs), k) }"
+    )
+    val permutationsV = dispatchA(k => s"${k.name}CombPerm.permutations(materialize${k.name}(xs))")
     val emptyB = dispatchA(k => s"Empty.INSTANCE")
     val tabulate = dispatchA(k =>
       s"if (n <= 0) Empty.INSTANCE else if (n == 1) new ${k.name}One(${wr(k, "r.unwrap(f(0))")}) else { val out = ${alloc(k, "r")}; var i = 0; while (i < n) { out(i) = ${wr(k, "r.unwrap(f(i))")}; i += 1 }; new ${k.name}Arr(out, n) }"
@@ -1521,6 +1634,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |$cursors
        |// Per-group unboxed accumulators for groupBy/groupMap (one backing array per group, doubling on demand).
        |$groupBufs
+       |// Per-kind unboxed combinations/permutations iterators (mirror SeqOps.{CombinationsItr,PermutationsItr}).
+       |$combPerm
        |// groupMap accumulator: dispatched on the VALUE kind B so the stored values stay unboxed; the SOURCE A
        |// is supplied element-by-element by the inlined `xs.foreach` at the FArray call site.
        |trait GroupMapAcc[K, B] { def add(key: K, v: B): Unit; def result: Map[K, FBase] }
@@ -1619,6 +1734,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def productImpl[A, B](xs: FBase)(using num: Numeric[B]): B = $productV
        |  inline def scanLeftImpl[A, B](xs: FBase, z: B)(inline op: (B, A) => B): FBase = { val n = xs.length; $scanLeftV }
        |  inline def scanRightImpl[A, B](xs: FBase, z: B)(inline op: (A, B) => B): FBase = { val n = xs.length; $scanRightV }
+       |  inline def combinationsImpl[A](xs: FBase, k: Int): Iterator[FBase] = ($combinationsV).asInstanceOf[Iterator[FBase]]
+       |  inline def permutationsImpl[A](xs: FBase): Iterator[FBase] = ($permutationsV).asInstanceOf[Iterator[FBase]]
        |  inline def groupByImpl[A, K](xs: FBase)(inline f: A => K): Map[K, FBase] = $groupBy
        |  inline def groupMapAcc[K, B]: GroupMapAcc[K, B] = $groupMapAcc
        |}
