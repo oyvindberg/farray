@@ -4,8 +4,12 @@ import org.openjdk.jmh.annotations.*
 import java.util.concurrent.TimeUnit
 
 // Replicates fs2 ChunksBenchmark concat: concatenate `chunkCount` chunks of
-// `chunkSize` Ints each into one. fs2 has a dedicated `Chunk.concat`; the others
-// reduce via `++`.
+// `chunkSize` Ints each into one, THEN .map(_ + 1) to force materialization. fs2 has a dedicated
+// `Chunk.concat`; the others reduce via `++`.
+// A build-only concat is meaningless here: farray's ++ is an O(1) lazy tree node, so without a traversal
+// farray "wins" by deferring all work. The trailing .map forces every impl to produce a real traversed
+// result, making the comparison fair — farray's O(1)-node build advantage shows, but it must still walk
+// its tree.
 @State(Scope.Thread)
 @BenchmarkMode(Array(Mode.Throughput))
 @OutputTimeUnit(TimeUnit.SECONDS)
@@ -31,10 +35,10 @@ class IntConcatNBenchmark:
     vectors = (0 until chunkCount).map(c => Vector.tabulate(chunkSize)(i => c * chunkSize + i))
     lists = (0 until chunkCount).map(c => List.tabulate(chunkSize)(i => c * chunkSize + i))
 
-  @Benchmark def fs2chunk_concat(): fs2.Chunk[Int] = fs2.Chunk.concat(fs2chunks)
-  @Benchmark def ziochunk_concat(): zio.Chunk[Int] = ziochunks.reduce(_ ++ _)
-  @Benchmark def farray_concat(): FArray[Int] = farrays.reduce(_ ++ _)
+  @Benchmark def fs2chunk_concat(): fs2.Chunk[Int] = fs2.Chunk.concat(fs2chunks).map(_ + 1)
+  @Benchmark def ziochunk_concat(): zio.Chunk[Int] = ziochunks.reduce(_ ++ _).map(_ + 1)
+  @Benchmark def farray_concat(): FArray[Int] = farrays.reduce(_ ++ _).map(_ + 1)
   // iarray/array reduce via repeated ++ (O(n^2) flat copies) — the baseline FArray's O(1) concat beats
-  @Benchmark def iarray_concat(): IArray[Int] = iarrays.reduce(_ ++ _)
-  @Benchmark def vector_concat(): Vector[Int] = vectors.reduce(_ ++ _)
-  @Benchmark def list_concat(): List[Int] = lists.reduce(_ ++ _)
+  @Benchmark def iarray_concat(): IArray[Int] = iarrays.reduce(_ ++ _).map(_ + 1)
+  @Benchmark def vector_concat(): Vector[Int] = vectors.reduce(_ ++ _).map(_ + 1)
+  @Benchmark def list_concat(): List[Int] = lists.reduce(_ ++ _).map(_ + 1)
