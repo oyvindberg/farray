@@ -100,6 +100,10 @@ class JsonProjectionBenchmark:
 
   // ---- PROJECTION query: filter(amount > t).map(category) ----
 
+  /** macro-driven projection + LAZY string decode (the sink decodes category only for survivors). */
+  @Benchmark def cat_fuseMacro(): Int =
+    Json.ndjson[Rec](buf).fuse.filter(_.amount > threshold).map(_.category).count
+
   @Benchmark def cat_fused(): Int =
     RecScan.categoryWhereAmountGt(buf, 0, buf.length, threshold).size
 

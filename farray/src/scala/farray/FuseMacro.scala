@@ -798,6 +798,12 @@ object FuseMacro:
         slots.foldRight[Expr[Int]]('{ JsonScanner.skipValue($buf, $p, $lineEnd) }) { (s, elseB) =>
           '{ if !${ s.seen } && JsonScanner.keyEquals($buf, $ks, $ke, ${ keyRefs(s.name) }) then ${ s.fill(p, lineEnd) } else $elseB }
         }
+      // predicate/projection EARLY-OUT: once every live field is captured, abandon the rest of the record's
+      // bytes (no point scanning fields nothing reads). `allSeen` = conjunction of the slots' `seen` flags.
+      def allSeen: Expr[Boolean] =
+        slots match
+          case Nil          => '{ false } // no live fields → never early-out (scan to '}' normally)
+          case first :: more => more.foldLeft(first.seen)((acc, s) => '{ $acc && ${ s.seen } })
       '{
         var p: Int = $lineStart + 1 // past '{'
         var open: Boolean = $buf($lineStart) == '{'
@@ -807,7 +813,8 @@ object FuseMacro:
             val ks = p + 1
             val ke = JsonScanner.scanStringEnd($buf, ks, $lineEnd)
             p = ${ dispatch('ks, 'ke, '{ ke + 2 }) } // ke+2: past closing key quote and ':'
-            if $buf(p) == ',' then p += 1 else open = false
+            if $allSeen then open = false                 // all wanted fields captured → stop scanning
+            else if $buf(p) == ',' then p += 1 else open = false
       }
 
     // --- declare loop-state vars (above the loop), then assemble the terminal body ---
