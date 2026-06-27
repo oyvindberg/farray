@@ -606,6 +606,128 @@
 }
 
 ====================================================================================================
+// ints.fuse.zip(ys).map((a,b) => a+b).toFArray  [lock-step; reads that(c); no pair built]
+====================================================================================================
+{
+  val $proxy: FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  } = FArray$package.$asInstanceOf$[FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  }]
+  val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
+  val Fuse_this: Fuse[Int] = (new Fuse[Int](xs$proxy): Fuse[Int]).zip[Int]({
+    val $proxy: FArray$package {
+      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+    } = FArray$package.$asInstanceOf$[FArray$package {
+      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+    }]
+    val FArray$package$_this: $proxy.type = $proxy
+    val as$proxy: Seq[Int] = 10, 20, 30, 40
+
+    (({
+      val r: intRepr.type = intRepr
+      if (as$proxy.isEmpty) IntArr.EMPTY else {
+        val n: Int = as$proxy.length
+        val out: Array[Int] = new Array[Int](n)
+        var i: Int = 0
+        while (i.<(n)) {
+          out.update(i, {
+            val a$proxy: Int = as$proxy.apply(i)
+
+            (a$proxy: Int)
+          })
+          i = i.+(1)
+        }
+        new IntArr(out, n)
+      }
+    }: FBase).asInstanceOf[FArray[Int]]: FArray[Int])
+  }.$asInstanceOf$[FArray[Int]]).map[Int](((x$1: Tuple2[Int, Int]) => {
+    val a: Int = x$1._1
+    val b: Int = x$1._2
+    a.+(b)
+  }))
+
+  ({
+    val src0: FBase = ints.$asInstanceOf$[ints & FArray[Int]].asInstanceOf[FBase]
+    val n0: Int = src0.length
+    var done: Boolean = false
+    val zthat: FBase = {
+      val `$proxy₂`: FArray$package {
+        type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+      } = FArray$package.$asInstanceOf$[FArray$package {
+        type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+      }]
+      val `FArray$package$_this₂`: $proxy.type = FArray$package.$asInstanceOf$[FArray$package {
+        type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+      }]
+      val `as$proxy₂`: Seq[Int] = 10, 20, 30, 40
+
+      (({
+        val `r₂`: intRepr.type = intRepr
+        if (10, 20, 30, 40.isEmpty) IntArr.EMPTY else {
+          val `n₂`: Int = 10, 20, 30, 40.length
+          val `out₂`: Array[Int] = new Array[Int](`n₂`)
+          var `i₂`: Int = 0
+          while (`i₂`.<(`n₂`)) {
+            `out₂`.update(`i₂`, {
+              val `a$proxy₂`: Int = 10, 20, 30, 40.apply(`i₂`)
+
+              (10, 20, 30, 40.apply(`i₂`): Int)
+            })
+            `i₂` = `i₂`.+(1)
+          }
+          new IntArr(`out₂`, `n₂`)
+        }
+      }: FBase).asInstanceOf[FArray[Int]]: FArray[Int])
+    }.$asInstanceOf$[FArray[Int]].asInstanceOf[FBase]
+    val zn: Int = zthat.length
+    var c: Int = 0
+    val cap: Int = java.lang.Math.min(n0, zn)
+    val `out₃`: Array[Int] = new Array[Int](cap)
+    var o: Int = 0
+    val s: FBase = src0
+    val len: Int = s.length
+    if (s.isInstanceOf[IntArr]) {
+      val `a₂`: Array[Int] = s.asInstanceOf[IntArr].arr
+      var `i₃`: Int = 0
+      while (`i₃`.<(len).&&(done.unary_!)) {
+        val v: Int = `a₂`.apply(`i₃`)
+        if (c.>=(zn)) done = true else {
+          val `v₂`: Int = FArrayOps.intAt(zthat, c)
+          c = c.+(1)
+          val `v₃`: Int = {
+            val `a₃`: Int = v
+            val `b₂`: Int = `v₂`
+            `a₃`.+(`b₂`)
+          }
+          `out₃`.update(o, `v₃`)
+          o = o.+(1)
+        }
+        `i₃` = `i₃`.+(1)
+      }
+    } else {
+      var `i₄`: Int = 0
+      while (`i₄`.<(len).&&(done.unary_!)) {
+        val `v₄`: Int = FArrayOps.intAt(s, `i₄`)
+        if (c.>=(zn)) done = true else {
+          val `v₅`: Int = FArrayOps.intAt(zthat, c)
+          c = c.+(1)
+          val `v₆`: Int = {
+            val `a₄`: Int = `v₄`
+            val `b₃`: Int = `v₅`
+            `a₄`.+(`b₃`)
+          }
+          `out₃`.update(o, `v₆`)
+          o = o.+(1)
+        }
+        `i₄` = `i₄`.+(1)
+      }
+    }
+    if (o.==(0)) (IntArr.EMPTY: FBase) else if (o.==(cap)) new IntArr(`out₃`, o) else new IntArr(java.util.Arrays.copyOf(`out₃`, o), o)
+  }.asInstanceOf[FArray[Int]]: FArray[Int])
+}
+
+====================================================================================================
 // ints.fuse.map(x=>(x+1, x*1000)).filter(_._1%2==0).map(_._2).toFArray  [SINK: 2nd col inside the guard]
 ====================================================================================================
 {

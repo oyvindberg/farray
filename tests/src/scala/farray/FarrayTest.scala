@@ -894,6 +894,37 @@ class FListTest:
     org.junit.Assert.assertEquals(List((10L, 0), (20L, 1)),
       FArray(10L, 20L).fuse.zipWithIndex.toFArray.toList)
 
+  // ---- zip / map2 (stream-level: lock-step with another source) ----
+  private val ys5 = FArray(100, 200, 300, 400, 500)
+  private val ly5 = List(100, 200, 300, 400, 500)
+  @Test def test_fuse_zip: Unit =
+    org.junit.Assert.assertEquals(l10.zip(ly5), r10.fuse.zip(ys5).toFArray.toList)
+  @Test def test_fuse_zip_map: Unit = // destructured -> pair never built
+    org.junit.Assert.assertEquals(l10.zip(ly5).map((a, b) => a + b),
+      r10.fuse.zip(ys5).map((a, b) => a + b).toFArray.toList)
+  @Test def test_fuse_filter_then_zip: Unit = // zip pairs the POST-filter stream with that(0,1,2,…)
+    org.junit.Assert.assertEquals(l10.filter(_ % 2 == 0).zip(ly5),
+      r10.fuse.filter(_ % 2 == 0).zip(ys5).toFArray.toList)
+  @Test def test_fuse_zip_then_filter: Unit =
+    org.junit.Assert.assertEquals(l10.zip(ly5).filter(_._1 % 2 == 0).map(_._2),
+      r10.fuse.zip(ys5).filter(_._1 % 2 == 0).map(_._2).toFArray.toList)
+  @Test def test_fuse_zip_shorter: Unit = // that shorter than the pipeline -> stop at that
+    org.junit.Assert.assertEquals(l10.zip(List(1, 2)), r10.fuse.zip(FArray(1, 2)).toFArray.toList)
+  @Test def test_fuse_zip_longer: Unit = // pipeline shorter than that -> stop at the pipeline
+    org.junit.Assert.assertEquals(l10.take(3).zip(ly5), r10.fuse.take(3).zip(ys5).toFArray.toList)
+  @Test def test_fuse_zip_empty: Unit =
+    org.junit.Assert.assertEquals(List(), r10.fuse.zip(FArray.empty[Int]).toFArray.toList)
+  @Test def test_fuse_zip_count: Unit =
+    org.junit.Assert.assertEquals(l10.zip(ly5).length, r10.fuse.zip(ys5).count)
+  @Test def test_fuse_map2: Unit =
+    org.junit.Assert.assertEquals(l10.zip(ly5).map((a, b) => a * b), r10.fuse.map2(ys5)((a, b) => a * b).toFArray.toList)
+  @Test def test_fuse_zip_ref: Unit = // String × Int
+    org.junit.Assert.assertEquals(List(("a", 1), ("b", 2)),
+      FArray("a", "b", "c").fuse.zip(FArray(1, 2)).toFArray.toList)
+  @Test def test_fuse_zip_long_source: Unit = // Long element × Int that
+    org.junit.Assert.assertEquals(List(11L, 22L),
+      FArray(1L, 2L).fuse.map2(FArray(10, 20))((a, b) => a + b).toFArray.toList)
+
   // ---- specialize-or-fail: a primitive-backed FArray widened to a non-specializable type must be rejected
   //      at compile time (not miscompiled into null reads) — mirrors the eager API's Repr evidence. ----
   @Test def test_fuse_rejects_unspecializable: Unit =
@@ -940,6 +971,8 @@ class FListTest:
       FuseDebug.show(ints.fuse.map(_ + 1).find(_ % 3 == 0)))
     scenario("ints.fuse.zipWithIndex.filter(_._2%2==0).map(_._1).toFArray  [specialized tuple, idx counter]",
       FuseDebug.show(ints.fuse.zipWithIndex.filter(_._2 % 2 == 0).map(_._1).toFArray))
+    scenario("ints.fuse.zip(ys).map((a,b) => a+b).toFArray  [lock-step; reads that(c); no pair built]",
+      FuseDebug.show(ints.fuse.zip(FArray(10, 20, 30, 40)).map((a, b) => a + b).toFArray))
     scenario("ints.fuse.map(x=>(x+1, x*1000)).filter(_._1%2==0).map(_._2).toFArray  [SINK: 2nd col inside the guard]",
       FuseDebug.show(ints.fuse.map(x => (x + 1, x * 1000)).filter(_._1 % 2 == 0).map(_._2).toFArray))
     Snapshots.check("fused-pipeline.snap", sb.toString)

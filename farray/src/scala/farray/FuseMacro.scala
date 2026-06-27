@@ -66,6 +66,7 @@ object FuseMacro:
     final case class DropS(n: Term) extends Stage
     final case class FlatMapS(f: Term, bTpe: TypeRepr) extends Stage
     case object ZipWithIndexS extends Stage
+    final case class ZipS(that: Term, bTpe: TypeRepr, combine: Option[Term]) extends Stage // zip (None) / map2 (Some f)
 
     enum Kind:
       case KInt, KLong, KDouble, KRef
@@ -86,7 +87,12 @@ object FuseMacro:
     // --- loop-state handles (Exprs that read/mutate vars declared above the loop) ---
     final case class Done(set: Expr[Unit], read: Expr[Boolean])
     // an above-loop counter; `lim` is present for take/drop (their clamped limit), absent for zipWithIndex.
-    final case class Slot(read: Expr[Int], inc: Expr[Unit], lim: Option[Expr[Int]])
+    final case class Slot(read: Expr[Int], inc: Expr[Unit], lim: Option[Expr[Int]], zipThat: Option[(Expr[FBase], TypeRepr)] = None)
+    // how a counter-needing stage declares its above-loop state
+    sealed trait CSpec
+    final case class LimSpec(arg: Term) extends CSpec       // take/drop: a clamped limit
+    case object IdxSpec extends CSpec                        // zipWithIndex: a bare counter
+    final case class ZipSpec(that: Term, bTpe: TypeRepr) extends CSpec // zip/map2: bind `that` + its length + a counter
     final case class Ctx(consume: Term => Term, done: Option[Done], counters: Map[Int, Slot])
 
     // The value flowing through a pure map/filter segment, decomposed into independent columns. A `Sc`'s `read`
@@ -118,6 +124,8 @@ object FuseMacro:
         case Apply(Select(prev, "take"), List(n))                         => parse(prev, TakeS(unwrap(n)) :: acc)
         case Apply(Select(prev, "drop"), List(n))                         => parse(prev, DropS(unwrap(n)) :: acc)
         case Select(prev, "zipWithIndex")                                 => parse(prev, ZipWithIndexS :: acc)
+        case Apply(TypeApply(Select(prev, "zip"), List(b)), List(that))    => parse(prev, ZipS(unwrap(that), b.tpe, None) :: acc)
+        case Apply(Apply(TypeApply(Select(prev, "map2"), List(b, _)), List(that)), List(f)) => parse(prev, ZipS(unwrap(that), b.tpe, Some(unwrap(f))) :: acc)
         case base @ Apply(Select(New(_), "<init>"), List(src))               => (src, fuseElem(base.tpe), acc)
         case base @ Apply(TypeApply(Select(New(_), "<init>"), _), List(src)) => (src, fuseElem(base.tpe), acc)
         case other =>
@@ -133,6 +141,13 @@ object FuseMacro:
     def letBind(value: Term)(cont: Term => Term): Term =
       value.tpe.widen.asType match
         case '[t] => '{ val v: t = ${ value.asExprOf[t] }; ${ cont('v.asTerm).asExprOf[Unit] } }.asTerm
+
+    /** read `src(idx)` unboxed at the given element kind (leaf fast-path lives inside `<kind>At`). */
+    def readAtKind(elemTpe: TypeRepr, src: Expr[FBase], idx: Expr[Int]): Term = kindOf(elemTpe) match
+      case Kind.KInt    => '{ FArrayOps.intAt($src, $idx) }.asTerm
+      case Kind.KLong   => '{ FArrayOps.longAt($src, $idx) }.asTerm
+      case Kind.KDouble => '{ FArrayOps.doubleAt($src, $idx) }.asTerm
+      case Kind.KRef    => elemTpe.asType match { case '[b] => '{ FArrayOps.refAt($src, $idx).asInstanceOf[b] }.asTerm }
 
     /** the `(value, index)` pair for zipWithIndex; use the stdlib @specialized Tuple2 for a primitive element
      *  (Int/Long/Double) so it isn't boxed — exactly like the eager zipWithIndex. Everything else boxes via a
@@ -162,18 +177,21 @@ object FuseMacro:
     val srcBase: Expr[FBase] = '{ ${ srcTerm.asExpr }.asInstanceOf[FBase] }
 
     val indexed: List[(Stage, Int)] = stages.zipWithIndex
-    // stages needing an above-loop counter; take/drop carry a clamped limit arg, zipWithIndex doesn't (None).
-    val counterStages: List[(Int, Option[Term])] = indexed.collect {
-      case (TakeS(n), i)     => (i, Some(n))
-      case (DropS(n), i)     => (i, Some(n))
-      case (ZipWithIndexS, i) => (i, None)
+    // stages needing an above-loop counter (take/drop = a clamped limit, zipWithIndex = a bare counter,
+    // zip/map2 = `that` + its length + a counter).
+    val counterStages: List[(Int, CSpec)] = indexed.collect {
+      case (TakeS(n), i)            => (i, LimSpec(n))
+      case (DropS(n), i)            => (i, LimSpec(n))
+      case (ZipWithIndexS, i)       => (i, IdxSpec)
+      case (ZipS(that, b, _), i)    => (i, ZipSpec(that, b))
     }
     val takesPresent: Boolean = stages.exists(_.isInstanceOf[TakeS])
+    val hasZip: Boolean        = stages.exists(_.isInstanceOf[ZipS])
     val hasFlatMap: Boolean = stages.exists(_.isInstanceOf[FlatMapS])
     val shortCircuit: Boolean = tag match
       case TTag.Find | TTag.Exists | TTag.Forall | TTag.HeadOption | TTag.Head => true
       case _                                                                   => false
-    val needsDone: Boolean = takesPresent || shortCircuit
+    val needsDone: Boolean = takesPresent || shortCircuit || hasZip // zip breaks when `that` is exhausted
 
     // ===== Layer B: pure map/filter segment optimizer (compute-for-survivors via memoized lazy columns) =====
 
@@ -319,6 +337,21 @@ object FuseMacro:
         letBind(tupleWithIndex(cur, sl.read)) { t =>
           '{ ${ sl.inc }; ${ buildBody(rest, t, ctx).asExprOf[Unit] } }.asTerm
         }
+      case (ZipS(_, bTpe, combine), i) :: rest =>
+        // lock-step: pair with that(counter); stop (done) when `that` is exhausted.
+        val sl = ctx.counters(i); val d = ctx.done.get; val zn = sl.lim.get; val (zthat, _) = sl.zipThat.get
+        '{ if ${ sl.read } >= $zn then ${ d.set }
+           else ${ letBind(readAtKind(bTpe, zthat, sl.read)) { b =>
+                     // map2 applies f to (cur, b) → a scalar; zip hands a Tup([cur, b]) to the downstream
+                     // segment so projections resolve to typed columns and no pair is allocated when destructured.
+                     val continue: Term = combine match
+                       case Some(f) => buildBody(rest, applyN(f, List(cur, b)), ctx)
+                       case None =>
+                         val (seg, tail) = rest.span { case (MapS(_), _) => true; case (FilterS(_, _), _) => true; case _ => false }
+                         buildSegment(seg.map(_._1), Tup(List(srcShape(cur), srcShape(b))))(fs =>
+                           readShape(fs)(t => buildBody(tail, t, ctx)))
+                     '{ ${ sl.inc }; ${ continue.asExprOf[Unit] } }.asTerm
+                   }.asExprOf[Unit] } }.asTerm
 
     // --- traverse one level (source OR a flatMap inner): leaf fast-path + `<kind>At` fallback, `done` break ---
     def loopOver(src: Expr[FBase], k: Kind, elemTpe: TypeRepr, ss: List[(Stage, Int)], ctx: Ctx): Expr[Unit] =
@@ -371,20 +404,25 @@ object FuseMacro:
       if needsDone then '{ var done: Boolean = false; ${ k(Some(Done('{ done = true }, '{ done }))).asExpr } }.asTerm
       else k(None)
 
-    def declareSlots(rem: List[(Int, Option[Term])], acc: Map[Int, Slot])(k: Map[Int, Slot] => Term): Term =
+    def declareSlots(rem: List[(Int, CSpec)], acc: Map[Int, Slot])(k: Map[Int, Slot] => Term): Term =
       rem match
         case Nil => k(acc)
-        case (idx, Some(argT)) :: rest => // take/drop: a clamped limit val + a counter
+        case (idx, LimSpec(argT)) :: rest => // take/drop: a clamped limit val + a counter
           '{ val lim: Int = { val t = ${ argT.asExprOf[Int] }; if t < 0 then 0 else t }
              var c: Int = 0
              ${ declareSlots(rest, acc + (idx -> Slot('{ c }, '{ c += 1 }, Some('{ lim }))))(k).asExpr } }.asTerm
-        case (idx, None) :: rest =>      // zipWithIndex: a counter only
+        case (idx, IdxSpec) :: rest =>       // zipWithIndex: a counter only
           '{ var c: Int = 0
              ${ declareSlots(rest, acc + (idx -> Slot('{ c }, '{ c += 1 }, None)))(k).asExpr } }.asTerm
+        case (idx, ZipSpec(thatT, bTpe)) :: rest => // zip/map2: bind `that` + its length + a counter
+          '{ val zthat: FBase = ${ thatT.asExpr }.asInstanceOf[FBase]; val zn: Int = zthat.length
+             var c: Int = 0
+             ${ declareSlots(rest, acc + (idx -> Slot('{ c }, '{ c += 1 }, Some('{ zn }), Some(('{ zthat }, bTpe)))))(k).asExpr } }.asTerm
 
-    /** static upper bound on output length = min(source length, every `take` limit). */
+    /** static upper bound on output length = min(source length, every `take` limit and zip `that` length). */
     def capExpr(n0: Expr[Int], counters: Map[Int, Slot]): Expr[Int] =
-      indexed.collect { case (TakeS(_), i) => counters(i).lim.get }.foldLeft(n0)((a, l) => '{ java.lang.Math.min($a, $l) })
+      indexed.collect { case (TakeS(_), i) => counters(i).lim.get; case (ZipS(_, _, _), i) => counters(i).lim.get }
+        .foldLeft(n0)((a, l) => '{ java.lang.Math.min($a, $l) })
 
     def assemble(src0: Expr[FBase], n0: Expr[Int], done: Option[Done], counters: Map[Int, Slot]): Term =
       def ctx(consume: Term => Term) = Ctx(consume, done, counters)

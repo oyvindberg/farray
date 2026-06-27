@@ -31,6 +31,10 @@ final class Fuse[+A](private[farray] val base: FBase):
   def drop(n: Int): Fuse[A] = this
   /** pair each element with its position in the stream at this point (post-upstream-filtering). */
   def zipWithIndex: Fuse[(A, Int)] = this.asInstanceOf[Fuse[(A, Int)]]
+  /** lock-step with another source: pair element k of this pipeline with `that(k)`; stops at the shorter. */
+  def zip[B](that: FArray[B]): Fuse[(A, B)] = this.asInstanceOf[Fuse[(A, B)]]
+  /** lock-step combine with another source via `f` (like `zip(that).map(f)` but never builds the pair). */
+  def map2[B, C](that: FArray[B])(f: (A, B) => C): Fuse[C] = this.asInstanceOf[Fuse[C]]
 
   // ---- terminals (macros: rewrite the whole chain into one fused loop) ----
   inline def toFArray: FArray[A] = ${ FuseMacro.toFArrayImpl[A]('this) }
