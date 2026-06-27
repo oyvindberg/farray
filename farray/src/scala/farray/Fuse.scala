@@ -28,6 +28,8 @@ final class Fuse[+A](private[farray] val base: FBase):
   def map[B](f: A => B): Fuse[B] = this.asInstanceOf[Fuse[B]]
   def flatMap[B](f: A => FArray[B]): Fuse[B] = this.asInstanceOf[Fuse[B]]
   def filter(p: A => Boolean): Fuse[A] = this
+  /** like `filter`; also lets a for-comprehension guard (`for (x <- xs.fuse if p(x)) yield …`) fuse. */
+  def withFilter(p: A => Boolean): Fuse[A] = this
   def filterNot(p: A => Boolean): Fuse[A] = this
   /** keep elements that match `pf`, mapping each through it — filter + map + pattern-match fused in one pass. */
   def collect[B](pf: PartialFunction[A, B]): Fuse[B] = this.asInstanceOf[Fuse[B]]
@@ -62,6 +64,8 @@ final class Fuse[+A](private[farray] val base: FBase):
   inline def foldLeft[Z](z: Z)(inline op: (Z, A) => Z): Z = ${ FuseMacro.foldLeftImpl[A, Z]('this, 'z, 'op) }
   /** number of elements surviving the whole pipeline. */
   inline def count: Int = ${ FuseMacro.countImpl[A]('this) }
+  /** number of elements matching `p` (one fused pass). */
+  inline def count(inline p: A => Boolean): Int = filter(p).count
   // ---- short-circuit terminals: stop as soon as the answer is known (across flatMap nesting) ----
   inline def find(inline p: A => Boolean): Option[A] = ${ FuseMacro.findImpl[A]('this, 'p) }
   inline def exists(inline p: A => Boolean): Boolean = ${ FuseMacro.existsImpl[A]('this, 'p) }

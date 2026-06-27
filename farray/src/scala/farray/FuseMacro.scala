@@ -145,6 +145,7 @@ object FuseMacro:
         case Apply(TypeApply(Select(prev, "map"), _), List(f))            => parse(prev, MapS(unwrap(f)) :: acc)
         case Apply(TypeApply(Select(prev, "flatMap"), List(b)), List(f))  => parse(prev, FlatMapS(unwrap(f), b.tpe) :: acc)
         case Apply(Select(prev, "filter"), List(p))                       => parse(prev, FilterS(unwrap(p), false) :: acc)
+        case Apply(Select(prev, "withFilter"), List(p))                   => parse(prev, FilterS(unwrap(p), false) :: acc)
         case Apply(Select(prev, "filterNot"), List(p))                    => parse(prev, FilterS(unwrap(p), true) :: acc)
         case Apply(TypeApply(Select(prev, "collect"), List(b)), List(pf)) => parse(prev, CollectS(unwrap(pf), b.tpe) :: acc)
         case Apply(Select(prev, "take"), List(n))                         => parse(prev, TakeS(unwrap(n)) :: acc)

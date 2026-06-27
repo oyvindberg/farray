@@ -1141,6 +1141,17 @@ class FListTest:
     aeq(l.map { x => def f(y: Int) = y + 1; val a = f(x); class K(val p: Int) { def q = p * p }; val k = new K(a); k.p + k.q },
         r.fuse.map { x => def f(y: Int) = y + 1; val a = f(x); class K(val p: Int) { def q = p * p }; val k = new K(a); k.p + k.q }.run.toList)
 
+  // ---- for-comprehensions (withFilter) + count(p) ----
+  @Test def test_fuse_forcomp_and_count: Unit =
+    import org.junit.Assert.{assertEquals => aeq}
+    val r = FArray(1, 2, 3, 4, 5, 6); val l = List(1, 2, 3, 4, 5, 6)
+    aeq(for (x <- l if x % 2 == 0) yield x * 10, (for (x <- r.fuse if x % 2 == 0) yield x * 10).run.toList)
+    aeq(for (x <- l if x > 1 if x < 6) yield x, (for (x <- r.fuse if x > 1 if x < 6) yield x).run.toList) // two guards
+    aeq(for (x <- l if x % 2 == 1) yield x.toString, (for (x <- r.fuse if x % 2 == 1) yield x.toString).run.toList)
+    aeq(l.count(_ % 2 == 0), r.fuse.count(_ % 2 == 0))
+    aeq(l.map(_ + 1).count(_ > 3), r.fuse.map(_ + 1).count(_ > 3))
+    aeq(l.filter(_ % 2 == 0).size, r.fuse.filter(_ % 2 == 0).count) // no-arg count still = size
+
   // ---- the one lambda-body limitation: a LOCAL case class — rejected with a clear compile error ----
   @Test def test_fuse_lambda_limits: Unit =
     import scala.compiletime.testing.typeCheckErrors
