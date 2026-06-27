@@ -13,12 +13,3 @@ class IntSetIterateBenchmark extends IntSetInputs {
   @Benchmark def eclipsemut(): Long = ecMutA.sum()
   @Benchmark def roaring(): Long = { var s = 0L; val it = roarA.getIntIterator(); while (it.hasNext) s += it.next(); s }
 }
-
-/** FSet's headline: build a union as an O(1) LAZY node and answer `contains` over it without ever merging —
-  * vs every competitor which must build the whole union first. The build-an-algebra-and-query pattern. */
-class IntSetLazyUnionContainsBenchmark extends IntSetInputs {
-  @Benchmark def fset(): Boolean = (fsetA ++ fsetB).contains(hit) // O(1) lazy node — never merges
-  @Benchmark def scalaset(): Boolean = (sSetA union sSetB).contains(hit) // must build the whole union first
-  @Benchmark def immbitset(): Boolean = (immBitA | immBitB).contains(hit)
-  @Benchmark def roaring(): Boolean = org.roaringbitmap.RoaringBitmap.or(roarA, roarB).contains(hit)
-}

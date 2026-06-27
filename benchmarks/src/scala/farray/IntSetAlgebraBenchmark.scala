@@ -6,39 +6,39 @@ import com.carrotsearch.hppc.{IntHashSet => HppcIntSet}
 import org.eclipse.collections.impl.set.mutable.primitive.{IntHashSet => EcIntSet}
 import org.roaringbitmap.RoaringBitmap
 
-/** Bulk set algebra on two overlapping Int sets — union/intersect/diff. The mutable specialized sets do
-  * DESTRUCTIVE in-place ops, so each clones the LHS first (the realistic immutable-result cost); the immutable
-  * sets (FSet/scala/BitSet/Roaring) produce a fresh result directly. FSet materializes the lazy node (the merge
-  * is the real work; the O(1) lazy construct is measured separately in IntSetLazyAlgebraBenchmark). */
+/** Bulk set algebra, measured FAIRLY as "combine two sets then answer membership" — the real use case. FSet
+  * builds the combination as an O(1) lazy node and `contains` DISTRIBUTES over it (no merge ever happens); every
+  * competitor must build the whole result set first, then probe. The mutable sets clone the LHS before the
+  * destructive in-place op. (`hit` ∈ A∩B, so it's in the union/intersection and absent from the diff.) */
 class IntSetUnionBenchmark extends IntSetInputs {
-  @Benchmark def fset(): Any = (fsetA ++ fsetB).materialize
-  @Benchmark def scalaset(): Any = sSetA union sSetB
-  @Benchmark def immbitset(): Any = immBitA | immBitB
-  @Benchmark def jubitset(): Any = { val b = juBitA.clone().asInstanceOf[java.util.BitSet]; b.or(juBitB); b }
-  @Benchmark def fastutil(): Any = { val c = new FuIntSet(fuA); c.addAll(fuB); c }
-  @Benchmark def hppc(): Any = { val c = new HppcIntSet(hppcA); c.addAll(hppcB); c }
-  @Benchmark def eclipsemut(): Any = { val c = new EcIntSet(); c.addAll(ecMutA); c.addAll(ecMutB); c }
-  @Benchmark def roaring(): Any = RoaringBitmap.or(roarA, roarB)
+  @Benchmark def fset(): Boolean = (fsetA ++ fsetB).contains(hit)
+  @Benchmark def scalaset(): Boolean = (sSetA union sSetB).contains(hit)
+  @Benchmark def immbitset(): Boolean = (immBitA | immBitB).contains(hit)
+  @Benchmark def jubitset(): Boolean = { val b = juBitA.clone().asInstanceOf[java.util.BitSet]; b.or(juBitB); b.get(hit) }
+  @Benchmark def fastutil(): Boolean = { val c = new FuIntSet(fuA); c.addAll(fuB); c.contains(hit) }
+  @Benchmark def hppc(): Boolean = { val c = new HppcIntSet(hppcA); c.addAll(hppcB); c.contains(hit) }
+  @Benchmark def eclipsemut(): Boolean = { val c = new EcIntSet(); c.addAll(ecMutA); c.addAll(ecMutB); c.contains(hit) }
+  @Benchmark def roaring(): Boolean = RoaringBitmap.or(roarA, roarB).contains(hit)
 }
 
 class IntSetIntersectBenchmark extends IntSetInputs {
-  @Benchmark def fset(): Any = (fsetA & fsetB).materialize
-  @Benchmark def scalaset(): Any = sSetA intersect sSetB
-  @Benchmark def immbitset(): Any = immBitA & immBitB
-  @Benchmark def jubitset(): Any = { val b = juBitA.clone().asInstanceOf[java.util.BitSet]; b.and(juBitB); b }
-  @Benchmark def fastutil(): Any = { val c = new FuIntSet(fuA); c.retainAll(fuB); c }
-  @Benchmark def hppc(): Any = { val c = new HppcIntSet(hppcA); c.retainAll(hppcB); c }
-  @Benchmark def eclipsemut(): Any = { val c = new EcIntSet(); c.addAll(ecMutA); c.retainAll(ecMutB); c }
-  @Benchmark def roaring(): Any = RoaringBitmap.and(roarA, roarB)
+  @Benchmark def fset(): Boolean = (fsetA & fsetB).contains(hit)
+  @Benchmark def scalaset(): Boolean = (sSetA intersect sSetB).contains(hit)
+  @Benchmark def immbitset(): Boolean = (immBitA & immBitB).contains(hit)
+  @Benchmark def jubitset(): Boolean = { val b = juBitA.clone().asInstanceOf[java.util.BitSet]; b.and(juBitB); b.get(hit) }
+  @Benchmark def fastutil(): Boolean = { val c = new FuIntSet(fuA); c.retainAll(fuB); c.contains(hit) }
+  @Benchmark def hppc(): Boolean = { val c = new HppcIntSet(hppcA); c.retainAll(hppcB); c.contains(hit) }
+  @Benchmark def eclipsemut(): Boolean = { val c = new EcIntSet(); c.addAll(ecMutA); c.retainAll(ecMutB); c.contains(hit) }
+  @Benchmark def roaring(): Boolean = RoaringBitmap.and(roarA, roarB).contains(hit)
 }
 
 class IntSetDiffBenchmark extends IntSetInputs {
-  @Benchmark def fset(): Any = (fsetA &~ fsetB).materialize
-  @Benchmark def scalaset(): Any = sSetA diff sSetB
-  @Benchmark def immbitset(): Any = immBitA &~ immBitB
-  @Benchmark def jubitset(): Any = { val b = juBitA.clone().asInstanceOf[java.util.BitSet]; b.andNot(juBitB); b }
-  @Benchmark def fastutil(): Any = { val c = new FuIntSet(fuA); c.removeAll(fuB); c }
-  @Benchmark def hppc(): Any = { val c = new HppcIntSet(hppcA); c.removeAll(hppcB: com.carrotsearch.hppc.IntContainer); c }
-  @Benchmark def eclipsemut(): Any = { val c = new EcIntSet(); c.addAll(ecMutA); c.removeAll(ecMutB); c }
-  @Benchmark def roaring(): Any = RoaringBitmap.andNot(roarA, roarB)
+  @Benchmark def fset(): Boolean = (fsetA &~ fsetB).contains(hit)
+  @Benchmark def scalaset(): Boolean = (sSetA diff sSetB).contains(hit)
+  @Benchmark def immbitset(): Boolean = (immBitA &~ immBitB).contains(hit)
+  @Benchmark def jubitset(): Boolean = { val b = juBitA.clone().asInstanceOf[java.util.BitSet]; b.andNot(juBitB); b.get(hit) }
+  @Benchmark def fastutil(): Boolean = { val c = new FuIntSet(fuA); c.removeAll(fuB); c.contains(hit) }
+  @Benchmark def hppc(): Boolean = { val c = new HppcIntSet(hppcA); c.removeAll(hppcB: com.carrotsearch.hppc.IntContainer); c.contains(hit) }
+  @Benchmark def eclipsemut(): Boolean = { val c = new EcIntSet(); c.addAll(ecMutA); c.removeAll(ecMutB); c.contains(hit) }
+  @Benchmark def roaring(): Boolean = RoaringBitmap.andNot(roarA, roarB).contains(hit)
 }
