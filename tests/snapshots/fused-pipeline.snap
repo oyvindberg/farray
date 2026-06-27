@@ -703,8 +703,9 @@
       while (`i₃`.<(len).&&(done.unary_!)) {
         val v: Int = `a₂`.apply(`i₃`)
         if (c.>=(zn)) done = true else {
-          val `v₂`: Int = FArrayOps.intAt(zthat, c)
+          val pos: Int = c
           c = c.+(1)
+          val `v₂`: Int = FArrayOps.intAt(zthat, pos)
           val `v₃`: Int = {
             val `a₃`: Int = v
             val `b₂`: Int = `v₂`
@@ -720,8 +721,9 @@
       while (`i₄`.<(len).&&(done.unary_!)) {
         val `v₄`: Int = FArrayOps.intAt(s, `i₄`)
         if (c.>=(zn)) done = true else {
-          val `v₅`: Int = FArrayOps.intAt(zthat, c)
+          val `pos₂`: Int = c
           c = c.+(1)
+          val `v₅`: Int = FArrayOps.intAt(zthat, `pos₂`)
           val `v₆`: Int = {
             val `a₄`: Int = `v₄`
             val `b₃`: Int = `v₅`

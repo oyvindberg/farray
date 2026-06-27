@@ -377,20 +377,23 @@ object FuseMacro:
           '{ ${ sl.inc }; ${ buildBody(rest, t, ctx).asExprOf[Unit] } }.asTerm
         }
       case (ZipS(_, bTpe, combine), i) :: rest =>
-        // lock-step: pair with that(counter); stop (done) when `that` is exhausted.
+        // lock-step: stop (done) when `that` is exhausted; otherwise capture the position, advance, and continue
+        // with a LAZY `that(pos)` column — so if the zipped value is never read downstream it is never read at all.
         val sl = ctx.counters(i); val d = ctx.done.get; val zn = sl.lim.get; val (zthat, _) = sl.zipThat.get
         '{ if ${ sl.read } >= $zn then ${ d.set }
-           else ${ letBind(readAtKind(bTpe, zthat, sl.read)) { b =>
-                     // map2 applies f to (cur, b) → a scalar; zip hands a Tup([cur, b]) to the downstream
-                     // segment so projections resolve to typed columns and no pair is allocated when destructured.
-                     val continue: Term = combine match
-                       case Some(f) => buildBody(rest, applyN(f, List(cur, b)), ctx)
-                       case None =>
-                         val (seg, tail) = rest.span { case (MapS(_), _) => true; case (FilterS(_, _), _) => true; case _ => false }
-                         buildSegment(seg.map(_._1), Tup(List(srcShape(cur), srcShape(b))))(fs =>
-                           readShape(fs)(t => buildBody(tail, t, ctx)))
-                     '{ ${ sl.inc }; ${ continue.asExprOf[Unit] } }.asTerm
-                   }.asExprOf[Unit] } }.asTerm
+           else {
+             val pos: Int = ${ sl.read }
+             ${ sl.inc }
+             ${ val lazyB = memoScalar(kk => kk(readAtKind(bTpe, zthat, '{ pos })))
+                val continue: Term = combine match
+                  // map2 forces the value (f uses it); zip hands a Tup([cur, lazyB]) to the downstream segment so
+                  // projections resolve to typed columns, no pair is allocated, and a discarded side is never read.
+                  case Some(f) => readShape(lazyB)(b => buildBody(rest, applyN(f, List(cur, b)), ctx))
+                  case None =>
+                    val (seg, tail) = rest.span { case (MapS(_), _) => true; case (FilterS(_, _), _) => true; case _ => false }
+                    buildSegment(seg.map(_._1), Tup(List(srcShape(cur), lazyB)))(fs => readShape(fs)(t => buildBody(tail, t, ctx)))
+                continue.asExprOf[Unit] }
+           } }.asTerm
 
     // --- traverse one level (source OR a flatMap inner): leaf fast-path + `<kind>At` fallback, `done` break ---
     def loopOver(src: Expr[FBase], k: Kind, elemTpe: TypeRepr, ss: List[(Stage, Int)], ctx: Ctx): Expr[Unit] =
