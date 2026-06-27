@@ -19,32 +19,36 @@ abstract class IntSetInputs extends CommonParams {
 
   var arrA: Array[Int] = _
   var arrB: Array[Int] = _
+  var arrC: Array[Int] = _ // a third overlapping window, for the 3-way-union benchmark
   var hit: Int = _
   var miss: Int = _
 
-  var fsetA: FSetMaterialized[Int] = _; var fsetB: FSetMaterialized[Int] = _ // FSet
-  var sSetA: Set[Int] = _; var sSetB: Set[Int] = _ // scala immutable HashSet (boxed CHAMP)
-  var immBitA: BitSet = _; var immBitB: BitSet = _ // scala immutable BitSet (unboxed)
-  var juBitA: java.util.BitSet = _; var juBitB: java.util.BitSet = _ // java.util.BitSet
-  var fuA: FuIntSet = _; var fuB: FuIntSet = _ // fastutil IntOpenHashSet (mutable unboxed hash)
-  var hppcA: HppcIntSet = _; var hppcB: HppcIntSet = _ // HPPC IntHashSet
-  var ecMutA: EcIntSet = _; var ecMutB: EcIntSet = _ // Eclipse mutable IntHashSet
+  var fsetA: FSetMaterialized[Int] = _; var fsetB: FSetMaterialized[Int] = _; var fsetC: FSetMaterialized[Int] = _ // FSet
+  var sSetA: Set[Int] = _; var sSetB: Set[Int] = _; var sSetC: Set[Int] = _ // scala immutable HashSet (boxed CHAMP)
+  var immBitA: BitSet = _; var immBitB: BitSet = _; var immBitC: BitSet = _ // scala immutable BitSet (unboxed)
+  var juBitA: java.util.BitSet = _; var juBitB: java.util.BitSet = _; var juBitC: java.util.BitSet = _ // java.util.BitSet
+  var fuA: FuIntSet = _; var fuB: FuIntSet = _; var fuC: FuIntSet = _ // fastutil IntOpenHashSet
+  var hppcA: HppcIntSet = _; var hppcB: HppcIntSet = _; var hppcC: HppcIntSet = _ // HPPC IntHashSet
+  var ecMutA: EcIntSet = _; var ecMutB: EcIntSet = _; var ecMutC: EcIntSet = _ // Eclipse mutable IntHashSet
   var ecImmA: ImmutableIntSet = _; var ecImmB: ImmutableIntSet = _ // Eclipse IMMUTABLE int set
-  var roarA: RoaringBitmap = _; var roarB: RoaringBitmap = _ // RoaringBitmap (dense+sparse Int)
+  var roarA: RoaringBitmap = _; var roarB: RoaringBitmap = _; var roarC: RoaringBitmap = _ // RoaringBitmap
 
   @Setup
   def setup(): Unit = {
     arrA = Array.tabulate(size)(i => i)
     arrB = Array.tabulate(size)(i => i + size / 2)
-    hit = size / 2; miss = 2 * size // hit ∈ A∩B; miss ∉ A∪B and non-negative (BitSets reject negative indices)
-    fsetA = FSet.fromArray(arrA); fsetB = FSet.fromArray(arrB)
-    sSetA = arrA.toSet; sSetB = arrB.toSet
-    immBitA = BitSet(arrA*); immBitB = BitSet(arrB*)
-    juBitA = new java.util.BitSet(); arrA.foreach(juBitA.set); juBitB = new java.util.BitSet(); arrB.foreach(juBitB.set)
-    fuA = new FuIntSet(arrA); fuB = new FuIntSet(arrB)
-    hppcA = HppcIntSet.from(arrA*); hppcB = HppcIntSet.from(arrB*)
-    ecMutA = new EcIntSet(); ecMutA.addAll(arrA*); ecMutB = new EcIntSet(); ecMutB.addAll(arrB*)
+    arrC = Array.tabulate(size)(i => i + size)
+    hit = size / 2; miss = 3 * size // hit ∈ A∩B; miss ∉ A∪B∪C and non-negative (BitSets reject negatives)
+    fsetA = FSet.fromArray(arrA); fsetB = FSet.fromArray(arrB); fsetC = FSet.fromArray(arrC)
+    sSetA = arrA.toSet; sSetB = arrB.toSet; sSetC = arrC.toSet
+    immBitA = BitSet(arrA*); immBitB = BitSet(arrB*); immBitC = BitSet(arrC*)
+    juBitA = new java.util.BitSet(); arrA.foreach(juBitA.set)
+    juBitB = new java.util.BitSet(); arrB.foreach(juBitB.set)
+    juBitC = new java.util.BitSet(); arrC.foreach(juBitC.set)
+    fuA = new FuIntSet(arrA); fuB = new FuIntSet(arrB); fuC = new FuIntSet(arrC)
+    hppcA = HppcIntSet.from(arrA*); hppcB = HppcIntSet.from(arrB*); hppcC = HppcIntSet.from(arrC*)
+    ecMutA = new EcIntSet(); ecMutA.addAll(arrA*); ecMutB = new EcIntSet(); ecMutB.addAll(arrB*); ecMutC = new EcIntSet(); ecMutC.addAll(arrC*)
     ecImmA = IntSets.immutable.`with`(arrA*); ecImmB = IntSets.immutable.`with`(arrB*)
-    roarA = RoaringBitmap.bitmapOf(arrA*); roarB = RoaringBitmap.bitmapOf(arrB*)
+    roarA = RoaringBitmap.bitmapOf(arrA*); roarB = RoaringBitmap.bitmapOf(arrB*); roarC = RoaringBitmap.bitmapOf(arrC*)
   }
 }

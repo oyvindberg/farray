@@ -15,32 +15,36 @@ abstract class StrSetInputs extends CommonParams {
 
   var arrA: Array[String] = _
   var arrB: Array[String] = _
+  var arrC: Array[String] = _ // a third overlapping window, for the 3-way-union benchmark
   var hit: String = _
   var miss: String = _
 
-  var fsetA: FSetMaterialized[String] = _; var fsetB: FSetMaterialized[String] = _ // FSet
-  var sSetA: Set[String] = _; var sSetB: Set[String] = _ // scala immutable HashSet (CHAMP)
-  var smSetA: SMHashSet[String] = _; var smSetB: SMHashSet[String] = _ // scala mutable HashSet
-  var juA: java.util.HashSet[String] = _; var juB: java.util.HashSet[String] = _ // java.util.HashSet
+  var fsetA: FSetMaterialized[String] = _; var fsetB: FSetMaterialized[String] = _; var fsetC: FSetMaterialized[String] = _ // FSet
+  var sSetA: Set[String] = _; var sSetB: Set[String] = _; var sSetC: Set[String] = _ // scala immutable HashSet (CHAMP)
+  var smSetA: SMHashSet[String] = _; var smSetB: SMHashSet[String] = _; var smSetC: SMHashSet[String] = _ // scala mutable
+  var juA: java.util.HashSet[String] = _; var juB: java.util.HashSet[String] = _; var juC: java.util.HashSet[String] = _ // java.util.HashSet
   var juOfA: java.util.Set[String] = _ // java.util.Set.of (immutable)
-  var guavaA: ImmutableSet[String] = _; var guavaB: ImmutableSet[String] = _ // Guava ImmutableSet
-  var ecA: UnifiedSet[String] = _; var ecB: UnifiedSet[String] = _ // Eclipse UnifiedSet
-  var fuA: FuObjSet[String] = _; var fuB: FuObjSet[String] = _ // fastutil ObjectOpenHashSet
-  var hppcA: HppcObjSet[String] = _; var hppcB: HppcObjSet[String] = _ // HPPC ObjectHashSet
+  var guavaA: ImmutableSet[String] = _; var guavaB: ImmutableSet[String] = _; var guavaC: ImmutableSet[String] = _ // Guava
+  var ecA: UnifiedSet[String] = _; var ecB: UnifiedSet[String] = _; var ecC: UnifiedSet[String] = _ // Eclipse UnifiedSet
+  var fuA: FuObjSet[String] = _; var fuB: FuObjSet[String] = _; var fuC: FuObjSet[String] = _ // fastutil
+  var hppcA: HppcObjSet[String] = _; var hppcB: HppcObjSet[String] = _; var hppcC: HppcObjSet[String] = _ // HPPC
 
   @Setup
   def setup(): Unit = {
     arrA = Array.tabulate(size)(i => "k" + i)
     arrB = Array.tabulate(size)(i => "k" + (i + size / 2))
+    arrC = Array.tabulate(size)(i => "k" + (i + size))
     hit = "k" + (size / 2); miss = "z" + (2 * size)
-    fsetA = FSet.fromArray(arrA); fsetB = FSet.fromArray(arrB)
-    sSetA = arrA.toSet; sSetB = arrB.toSet
-    smSetA = SMHashSet(arrA*); smSetB = SMHashSet(arrB*)
-    juA = new java.util.HashSet[String](); arrA.foreach(juA.add); juB = new java.util.HashSet[String](); arrB.foreach(juB.add)
+    fsetA = FSet.fromArray(arrA); fsetB = FSet.fromArray(arrB); fsetC = FSet.fromArray(arrC)
+    sSetA = arrA.toSet; sSetB = arrB.toSet; sSetC = arrC.toSet
+    smSetA = SMHashSet(arrA*); smSetB = SMHashSet(arrB*); smSetC = SMHashSet(arrC*)
+    juA = new java.util.HashSet[String](); arrA.foreach(juA.add)
+    juB = new java.util.HashSet[String](); arrB.foreach(juB.add)
+    juC = new java.util.HashSet[String](); arrC.foreach(juC.add)
     juOfA = java.util.Set.of(arrA*)
-    guavaA = ImmutableSet.copyOf(arrA); guavaB = ImmutableSet.copyOf(arrB)
-    ecA = UnifiedSet.newSetWith(arrA*); ecB = UnifiedSet.newSetWith(arrB*)
-    fuA = new FuObjSet[String](arrA); fuB = new FuObjSet[String](arrB)
-    hppcA = HppcObjSet.from(arrA*); hppcB = HppcObjSet.from(arrB*)
+    guavaA = ImmutableSet.copyOf(arrA); guavaB = ImmutableSet.copyOf(arrB); guavaC = ImmutableSet.copyOf(arrC)
+    ecA = UnifiedSet.newSetWith(arrA*); ecB = UnifiedSet.newSetWith(arrB*); ecC = UnifiedSet.newSetWith(arrC*)
+    fuA = new FuObjSet[String](arrA); fuB = new FuObjSet[String](arrB); fuC = new FuObjSet[String](arrC)
+    hppcA = HppcObjSet.from(arrA*); hppcB = HppcObjSet.from(arrB*); hppcC = HppcObjSet.from(arrC*)
   }
 }
