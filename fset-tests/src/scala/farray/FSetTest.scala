@@ -183,6 +183,25 @@ class FSetTest:
     assertEquals(5, c)
     assertTrue(u.forall(_ < 6))
 
+  @Test def filter_count_int(): Unit =
+    val fs = FSet(1, 2, 3, 4, 5, 6)
+    assertEquals(List(2, 4, 6), fs.filter(_ % 2 == 0).toList) // result stays sorted
+    assertEquals(List(1, 3, 5), fs.filterNot(_ % 2 == 0).toList)
+    assertEquals(3, fs.count(_ % 2 == 0))
+    assertTrue(fs.filter(_ > 10).isEmpty)
+    // filter a large (hash) set, and over a lazy result
+    val big = FSet.fromArray((0 until 100).toArray)
+    assertEquals(50, big.filter(_ % 2 == 0).size)
+    val f = big.filter(_ >= 50)
+    assertTrue(f.contains(75)); assertFalse(f.contains(25))
+    assertEquals(40, (FSet(1, 2, 3) ++ big).count(_ >= 60))
+
+  @Test def filter_ref(): Unit =
+    val fs = FSet.from(List("apple", "banana", "avocado", "cherry"))
+    assertEquals(Set("apple", "avocado"), fs.filter(_.startsWith("a")).toList.toSet)
+    assertEquals(2, fs.count(_.startsWith("a")))
+    assertEquals(Set("banana", "cherry"), fs.filterNot(_.startsWith("a")).toList.toSet)
+
   @Test def traversal_ref(): Unit =
     val fs = FSet.from(List("a", "bb", "ccc", "a"))
     var lens = 0

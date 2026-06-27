@@ -813,12 +813,48 @@ object GenSets extends BleepCodegenScript("GenSets") {
           ee.line("found")
         } else { refSetup(); ee.line("acc.exists(e => p.test(e))") }
         ee.close()
+        // count: number of elements satisfying p.
+        ee.open(s"def countLeaf$K(node: SBase, p: SetTraversers.${K}Pred): Int =")
+        if k.isPrim then {
+          primSetup(); ee.line("var i = 0; var c = 0")
+          ee.open("while (i < arr.length)"); ee.line("if (p.test(arr(i))) c += 1"); ee.line("i += 1"); ee.close()
+          ee.line("c")
+        } else { refSetup(); ee.line("acc.count(e => p.test(e))") }
+        ee.close()
+        // filter: keep elements satisfying p, build the same-kind leaf. Prim: the kept slice of the sorted arr
+        // stays sorted+distinct → wrap directly (no re-sort). Ref: filter the distinct set, rebuild.
+        ee.open(s"def filterLeaf$K(node: SBase, p: SetTraversers.${K}Pred): SBase =")
+        if k.isPrim then {
+          val P = k.arr
+          primSetup()
+          ee.line(s"val out = new Array[$P](arr.length)")
+          ee.line("var i = 0; var w = 0")
+          ee.open("while (i < arr.length)")
+          ee.line("val v = arr(i)")
+          ee.line("if (p.test(v)) { out(w) = v; w += 1 }")
+          ee.line("i += 1")
+          ee.close()
+          ee.line("if (w == 0) SEmpty.INSTANCE")
+          ee.line(s"else if (w == 1) new S${K}One(out(0))")
+          ee.line(s"else { val trimmed = java.util.Arrays.copyOf(out, w); if (w <= 16) new S${K}Sorted(trimmed) else buildHash$K(trimmed) }")
+        } else {
+          refSetup()
+          ee.line("val out = new Array[Object](acc.size)")
+          ee.line("var w = 0")
+          ee.line("acc.foreach { e => if (p.test(e)) { out(w) = e; w += 1 } }")
+          ee.line("if (w == 0) SEmpty.INSTANCE")
+          ee.line(s"else if (w == 1) new S${K}One(out(0))")
+          ee.line(s"else { val trimmed = java.util.Arrays.copyOf(out, w); if (w <= 16) new S${K}Sorted(trimmed) else buildHash$K(trimmed) }")
+        }
+        ee.close()
       }
       ee.result
     }
     val foreachV = dispatchA(k => s"foreachLeaf${k.name}(xs, (v) => f(${wrapElem(k, "v")}))")
     val forallV = dispatchA(k => s"forallLeaf${k.name}(xs, (v) => p(${wrapElem(k, "v")}))")
     val existsV = dispatchA(k => s"existsLeaf${k.name}(xs, (v) => p(${wrapElem(k, "v")}))")
+    val countV = dispatchA(k => s"countLeaf${k.name}(xs, (v) => p(${wrapElem(k, "v")}))")
+    val filterV = dispatchA(k => s"filterLeaf${k.name}(xs, (v) => p(${wrapElem(k, "v")}))")
 
     // ---- value equals / hashCode helpers — MATERIALIZED-ONLY (throw on a lazy SView) ----
     val valueHelpers = {
@@ -909,6 +945,8 @@ object GenSets extends BleepCodegenScript("GenSets") {
        |  inline def foreachImpl[A](xs: SBase)(inline f: A => Unit): Unit = $foreachV
        |  inline def forallImpl[A](xs: SBase)(inline p: A => Boolean): Boolean = $forallV
        |  inline def existsImpl[A](xs: SBase)(inline p: A => Boolean): Boolean = $existsV
+       |  inline def countImpl[A](xs: SBase)(inline p: A => Boolean): Int = $countV
+       |  inline def filterImpl[A](xs: SBase)(inline p: A => Boolean): SBase = $filterV
        |  inline def inclImpl[A, B](xs: SBase, elem: B): SBase = $inclV
        |  inline def exclImpl[A, B](xs: SBase, elem: B): SBase = $exclV
        |}

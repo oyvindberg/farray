@@ -86,6 +86,9 @@ object FSet:
     inline def foreach(inline f: A => Unit): Unit = FSetOps.foreachImpl[A](xs)(f)
     inline def forall(inline p: A => Boolean): Boolean = FSetOps.forallImpl[A](xs)(p)
     inline def exists(inline p: A => Boolean): Boolean = FSetOps.existsImpl[A](xs)(p)
+    inline def count(inline p: A => Boolean): Int = FSetOps.countImpl[A](xs)(p)
+    inline def filter(inline p: A => Boolean): FSet[A] = FSetOps.filterImpl[A](xs)(p)
+    inline def filterNot(inline p: A => Boolean): FSet[A] = FSetOps.filterImpl[A](xs)(a => !p(a))
     inline def materialize: FSet[A] = FSetOps.materializeImpl[A](xs)
 
     // ---- value equals / hashCode — MATERIALIZED-ONLY (throws on a still-lazy set; call .materialize first).
