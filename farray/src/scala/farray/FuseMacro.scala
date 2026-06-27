@@ -213,36 +213,40 @@ object FuseMacro:
         case Apply(TypeApply(Select(obj, "apply"), _), args) => ok(obj, args)
         case Apply(Select(obj, "apply"), args)               => ok(obj, args)
         case _                                               => None
-    def collectProjIndices(body: Term, param: Symbol): List[Int] =
-      val buf = scala.collection.mutable.LinkedHashSet.empty[Int]
+    // a maximal projection PATH rooted at a symbol: `p._1._2` -> (p, List(0,1)); a bare `p` -> (p, Nil).
+    def projPath(t: Term): Option[(Symbol, List[Int])] = t match
+      case id: Ident                            => Some((id.symbol, Nil))
+      case Select(inner, name) if isProj(name)  => projPath(inner).map((s, p) => (s, p :+ (name.drop(1).toInt - 1)))
+      case _                                    => None
+    /** every maximal projection path from `param` in `body` (Nil path = param used whole). */
+    def collectPaths(body: Term, param: Symbol): List[List[Int]] =
+      val buf = scala.collection.mutable.LinkedHashSet.empty[List[Int]]
       (new TreeTraverser:
         override def traverseTree(t: Tree)(owner: Symbol): Unit = t match
-          case Select(inner, name) if isProj(name) && inner.symbol == param => buf += name.drop(1).toInt - 1
-          case _                                                            => super.traverseTree(t)(owner)
+          case (_: Ident | _: Select) if projPath(t.asInstanceOf[Term]).exists((s, _) => s == param) =>
+            buf += projPath(t.asInstanceOf[Term]).get._2 // maximal: don't descend into inner projections
+          case _ => super.traverseTree(t)(owner)
       ).traverseTree(body)(Symbol.spliceOwner)
       buf.toList
-    def usesParamDirectly(body: Term, param: Symbol): Boolean =
-      var found = false
-      (new TreeTraverser:
-        override def traverseTree(t: Tree)(owner: Symbol): Unit = t match
-          case Select(inner, name) if isProj(name) && inner.symbol == param => () // projection — don't descend
-          case id: Ident if id.symbol == param                              => found = true
-          case _                                                            => super.traverseTree(t)(owner)
-      ).traverseTree(body)(Symbol.spliceOwner)
-      found
     def substParam(body: Term, param: Symbol, repl: Term): Term =
       (new TreeMap:
         override def transformTerm(t: Term)(owner: Symbol): Term = t match
           case id: Ident if id.symbol == param => repl
           case _                                => super.transformTerm(t)(owner)
       ).transformTerm(body)(Symbol.spliceOwner)
-    def substProjs(body: Term, param: Symbol, refs: Map[Int, Term]): Term =
+    /** replace each maximal param-projection path with its resolved column ref. */
+    def substPaths(body: Term, param: Symbol, refs: Map[List[Int], Term]): Term =
       (new TreeMap:
-        override def transformTerm(t: Term)(owner: Symbol): Term = t match
-          case Select(inner, name) if isProj(name) && inner.symbol == param && refs.contains(name.drop(1).toInt - 1) =>
-            refs(name.drop(1).toInt - 1)
-          case _ => super.transformTerm(t)(owner)
+        override def transformTerm(t: Term)(owner: Symbol): Term = projPath(t) match
+          case Some((s, p)) if s == param && refs.contains(p) => refs(p)
+          case _                                              => super.transformTerm(t)(owner)
       ).transformTerm(body)(Symbol.spliceOwner)
+    /** navigate a shape down a projection path to the leaf column (no intermediate tuple is materialized). */
+    def navigate(cur: Shape, path: List[Int]): Shape = path match
+      case Nil     => cur
+      case j :: rest => cur match
+        case Tup(ps) if j >= 0 && j < ps.length => navigate(ps(j), rest)
+        case other                              => navigate(projScalar(other, j), rest)
 
     // --- interpret a map lambda body symbolically into a Shape (decomposing tuples, resolving projections) ---
     def interp(body: Term, param: Symbol, cur: Shape): Shape =
@@ -257,16 +261,16 @@ object FuseMacro:
             case _                               => memoScalar(k => substColumns(body, param, cur)(k))
     def projScalar(sc: Shape, j: Int): Shape =
       memoScalar(k => readShape(sc)(t => k(Select.unique(t, "_" + (j + 1)))))
-    /** substitute param-uses in an atomic body with the columns it reads (binding only those columns). */
+    /** substitute param-uses in an atomic body with the columns it reads (binding only those columns). A bare
+     *  param use (Nil path) forces materializing the whole shape; otherwise each path resolves to a leaf column. */
     def substColumns(body: Term, param: Symbol, cur: Shape)(k: Term => Term): Term =
-      if usesParamDirectly(body, param) then readShape(cur)(ct => k(substParam(body, param, ct)))
-      else readColumns(cur, collectProjIndices(body, param), Map.empty)(refs => k(substProjs(body, param, refs)))
-    def readColumns(cur: Shape, js: List[Int], acc: Map[Int, Term])(k: Map[Int, Term] => Term): Term = js match
-      case Nil       => k(acc)
-      case j :: rest => readPart(cur, j)(ref => readColumns(cur, rest, acc + (j -> ref))(k))
-    def readPart(cur: Shape, j: Int)(k: Term => Term): Term = cur match
-      case Tup(ps) if j >= 0 && j < ps.length => readShape(ps(j))(k)
-      case other                              => readShape(other)(t => k(Select.unique(t, "_" + (j + 1))))
+      val paths = collectPaths(body, param)
+      if paths.contains(Nil) then readShape(cur)(ct => k(substParam(body, param, ct)))
+      else readPaths(cur, paths, Map.empty)(refs => k(substPaths(body, param, refs)))
+    def readPaths(cur: Shape, paths: List[List[Int]], acc: Map[List[Int], Term])(k: Map[List[Int], Term] => Term): Term =
+      paths match
+        case Nil       => k(acc)
+        case p :: rest => readShape(navigate(cur, p))(ref => readPaths(cur, rest, acc + (p -> ref))(k))
 
     def applyMap(f: Term, cur: Shape): Shape = decomposeLambda(f) match
       case Some((param, body)) => interp(body, param, cur)

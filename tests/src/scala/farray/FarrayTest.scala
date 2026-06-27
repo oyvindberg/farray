@@ -832,6 +832,46 @@ class FListTest:
     org.junit.Assert.assertEquals(List(4, 8, 12), r)
     org.junit.Assert.assertEquals("f bound once per element, not recomputed", 3, calls)
 
+  // ---- Layer B adversarial: tuple decomposition / projection / fallback correctness (pure -> == List) ----
+  @Test def test_fuse_lb_identity_map: Unit =
+    org.junit.Assert.assertEquals(l10.map(x => x).filter(_ > 2), r10.fuse.map(x => x).filter(_ > 2).toFArray.toList)
+  @Test def test_fuse_lb_const_map: Unit =
+    org.junit.Assert.assertEquals(l10.map(_ => 7), r10.fuse.map(_ => 7).toFArray.toList)
+  @Test def test_fuse_lb_filter_const: Unit =
+    org.junit.Assert.assertEquals(l10.filter(_ => true).filter(_ => false), r10.fuse.filter(_ => true).filter(_ => false).toFArray.toList)
+  @Test def test_fuse_lb_three_tuple: Unit =
+    org.junit.Assert.assertEquals(l10.map(x => (x, x + 1, x + 2)).filter(_._2 % 2 == 0).map(t => t._1 + t._3),
+      r10.fuse.map(x => (x, x + 1, x + 2)).filter(_._2 % 2 == 0).map(t => t._1 + t._3).toFArray.toList)
+  @Test def test_fuse_lb_tuple_of_tuple: Unit =
+    org.junit.Assert.assertEquals(
+      l10.map(x => ((x, x + 1), x + 2)).map(t => t._1._1 + t._1._2 + t._2),
+      r10.fuse.map(x => ((x, x + 1), x + 2)).map(t => t._1._1 + t._1._2 + t._2).toFArray.toList)
+  @Test def test_fuse_lb_predicate_two_columns: Unit =
+    org.junit.Assert.assertEquals(l10.map(x => (x, x * 2)).filter(t => t._1 + t._2 > 5).map(_._1),
+      r10.fuse.map(x => (x, x * 2)).filter(t => t._1 + t._2 > 5).map(_._1).toFArray.toList)
+  @Test def test_fuse_lb_same_proj_twice: Unit =
+    org.junit.Assert.assertEquals(l10.map(x => (x, x)).filter(t => t._1 > 2 && t._1 < 8).map(_._2),
+      r10.fuse.map(x => (x, x)).filter(t => t._1 > 2 && t._1 < 8).map(_._2).toFArray.toList)
+  @Test def test_fuse_lb_swap_columns: Unit =
+    org.junit.Assert.assertEquals(l10.map(x => (x, x + 100)).map(t => (t._2, t._1)).map(t => t._1 - t._2),
+      r10.fuse.map(x => (x, x + 100)).map(t => (t._2, t._1)).map(t => t._1 - t._2).toFArray.toList)
+  @Test def test_fuse_lb_whole_param_fallback: Unit = // predicate uses the whole tuple -> materialize fallback
+    org.junit.Assert.assertEquals(l10.map(x => (x, x)).filter(t => t == (2, 2)).map(_._1),
+      r10.fuse.map(x => (x, x)).filter(t => t == (2, 2)).map(_._1).toFArray.toList)
+  @Test def test_fuse_lb_ref_columns: Unit =
+    org.junit.Assert.assertEquals(
+      List("a", "bb", "ccc").map(s => (s, s.length)).filter(_._2 >= 2).map(_._1),
+      FArray("a", "bb", "ccc").fuse.map(s => (s, s.length)).filter(_._2 >= 2).map(_._1).toFArray.toList)
+  @Test def test_fuse_lb_col_reused_two_maps: Unit =
+    org.junit.Assert.assertEquals(l10.map(x => (x, x + 1)).filter(_._1 > 2).map(_._2).map(y => y * y),
+      r10.fuse.map(x => (x, x + 1)).filter(_._1 > 2).map(_._2).map(y => y * y).toFArray.toList)
+  @Test def test_fuse_lb_segment_into_flatMap: Unit = // tuple materialized at the flatMap boundary
+    org.junit.Assert.assertEquals(l10.map(x => (x, x * 10)).filter(_._1 % 2 == 0).flatMap(t => List(t._1, t._2)),
+      r10.fuse.map(x => (x, x * 10)).filter(_._1 % 2 == 0).flatMap(t => FArray(t._1, t._2)).toFArray.toList)
+  @Test def test_fuse_lb_segment_into_zip: Unit =
+    org.junit.Assert.assertEquals(l10.map(x => x + 1).filter(_ % 2 == 0).zipWithIndex,
+      r10.fuse.map(x => x + 1).filter(_ % 2 == 0).zipWithIndex.toFArray.toList)
+
   // ---- zipWithIndex ----
   @Test def test_fuse_zipWithIndex: Unit =
     org.junit.Assert.assertEquals(l10.zipWithIndex, r10.fuse.zipWithIndex.toFArray.toList)
