@@ -101,6 +101,8 @@ object FuseMacro:
     final case class ZipS(that: Term, bTpe: TypeRepr, combine: Option[Term]) extends Stage // zip (None) / map2 (Some f)
     // streaming group-aggregate for input ALREADY CLUSTERED by key: emit `(k, acc)` once per run of equal keys.
     final case class FoldAdjacentByS(key: Term, seed: Term, combine: Term, kTpe: TypeRepr, bTpe: TypeRepr) extends Stage
+    // streaming GROUP for input ALREADY CLUSTERED by key: emit each run's rows as an `FArray[A]`.
+    final case class GroupAdjacentByS(key: Term, kTpe: TypeRepr, aTpe: TypeRepr) extends Stage
 
     enum Kind:
       case KInt, KLong, KDouble, KFloat, KShort, KByte, KChar, KBoolean, KRef
@@ -137,7 +139,8 @@ object FuseMacro:
         flag: Option[(Expr[Boolean], Expr[Unit])] = None,
         seen: Option[Expr[scala.collection.mutable.HashSet[Any]]] = None,
         acc: Option[(Term, Term => Term)] = None, // scanLeft: (read accumulator, assign accumulator)
-        foldAdj: Option[FoldAdjState] = None // foldAdjacentBy: curKey/acc/started handles + the seed
+        foldAdj: Option[FoldAdjState] = None, // foldAdjacentBy: curKey/acc/started handles + the seed
+        groupAdj: Option[GroupAdjState] = None // groupAdjacentBy: per-run row buffer + curKey/started
     )
     // foldAdjacentBy's above-loop state: the run key, the run accumulator, the started flag, and the (once-bound) seed.
     final case class FoldAdjState(
@@ -149,6 +152,17 @@ object FuseMacro:
         start: Expr[Unit],
         seed: Term
     )
+    // groupAdjacentBy's above-loop state: a growable Object[] row buffer (+ fill count), the run key, the started
+    // flag. `append(elem)` grows+stores; `emitRun` builds the `FArray[A]` leaf from the buffer; `reset` empties it.
+    final case class GroupAdjState(
+        curKeyRead: Term,
+        setCurKey: Term => Term,
+        started: Expr[Boolean],
+        start: Expr[Unit],
+        append: Term => Expr[Unit],
+        emitRun: Term, // an `FArray[A]` term built from the current buffer contents
+        reset: Expr[Unit]
+    )
     // how a counter-needing stage declares its above-loop state
     sealed trait CSpec
     final case class LimSpec(arg: Term) extends CSpec // take/drop: a clamped limit
@@ -158,6 +172,7 @@ object FuseMacro:
     case object DistinctSpec extends CSpec // distinct/distinctBy: a `seen` HashSet
     final case class ScanSpec(z: Term, zTpe: TypeRepr) extends CSpec // scanLeft: a `var acc: Z = z`
     final case class FoldAdjSpec(seed: Term, kTpe: TypeRepr, bTpe: TypeRepr) extends CSpec // foldAdjacentBy: curKey/acc/started/seed
+    final case class GroupAdjSpec(kTpe: TypeRepr, aTpe: TypeRepr) extends CSpec // groupAdjacentBy: buffer + curKey/started
     // `consume` takes a MATERIALIZED element. `consumeShape`, when present, takes the element's decomposed Shape
     // instead — so a terminal whose lambda projects fields (e.g. `foldLeft((acc, r) => acc + r.amount)`) reads
     // only the columns it touches and never rebuilds the whole product (DCE/sink reaching the terminal's lambda).
@@ -204,6 +219,10 @@ object FuseMacro:
         // foldAdjacentBy[K,B](key)(seed)(combine): 3 term arg-lists on a 2-type-arg TypeApply.
         case Apply(Apply(Apply(TypeApply(Select(prev, "foldAdjacentBy"), List(kt, bt)), List(key)), List(seed)), List(combine)) =>
           parse(prev, FoldAdjacentByS(unwrap(key), unwrap(seed), unwrap(combine), kt.tpe, bt.tpe) :: acc)
+        // groupAdjacentBy[K](key): aTpe = the key lambda's argument type (A in A => K).
+        case Apply(TypeApply(Select(prev, "groupAdjacentBy"), List(kt)), List(key)) =>
+          val aTpe = unwrap(key).tpe.widen.dealias match { case AppliedType(_, ts) if ts.length >= 2 => ts.head; case _ => TypeRepr.of[Any] }
+          parse(prev, GroupAdjacentByS(unwrap(key), kt.tpe, aTpe) :: acc)
         case Apply(Select(prev, "tapEach"), List(f))                                        => parse(prev, TapEachS(unwrap(f)) :: acc)
         case Select(prev, "zipWithIndex")                                                   => parse(prev, ZipWithIndexS :: acc)
         case Apply(TypeApply(Select(prev, "zip"), List(b)), List(that))                     => parse(prev, ZipS(unwrap(that), b.tpe, None) :: acc)
@@ -517,6 +536,7 @@ object FuseMacro:
       case (DistinctS(_), i)                        => (i, DistinctSpec)
       case (ScanLeftS(z, _, zt), i)                 => (i, ScanSpec(z, zt))
       case (FoldAdjacentByS(_, seed, _, kt, bt), i) => (i, FoldAdjSpec(seed, kt, bt))
+      case (GroupAdjacentByS(_, kt, at), i)         => (i, GroupAdjSpec(kt, at))
     }
     val takesPresent: Boolean = stages.exists(_.isInstanceOf[TakeS])
     val hasZip: Boolean = stages.exists(_.isInstanceOf[ZipS])
@@ -525,12 +545,14 @@ object FuseMacro:
     val scanCount: Int = stages.count(_.isInstanceOf[ScanLeftS])
     if scanCount > 1 then report.errorAndAbort("fuse: at most one scanLeft per pipeline")
     val hasScan: Boolean = scanCount == 1
-    // foldAdjacentBy uses the single prologue/epilogue weave point — at most one, and not alongside scanLeft (v1).
-    val foldAdjCount: Int = stages.count(_.isInstanceOf[FoldAdjacentByS])
-    if foldAdjCount > 1 then report.errorAndAbort("fuse: at most one foldAdjacentBy per pipeline")
-    if foldAdjCount == 1 && hasScan then report.errorAndAbort("fuse: foldAdjacentBy and scanLeft cannot be combined in one pipeline (v1)")
-    val foldAdjInfo: Option[(Int, List[(Stage, Int)])] =
-      indexed.collectFirst { case (FoldAdjacentByS(_, _, _, _, _), i) => i }.map(i => (i, indexed.drop(i + 1)))
+    // foldAdjacentBy / groupAdjacentBy use the single prologue/epilogue weave point — at most ONE adjacency stage
+    // total, and not alongside scanLeft (v1; both want the one prologue/epilogue slot).
+    val adjCount: Int = stages.count(s => s.isInstanceOf[FoldAdjacentByS] || s.isInstanceOf[GroupAdjacentByS])
+    if adjCount > 1 then report.errorAndAbort("fuse: at most one foldAdjacentBy/groupAdjacentBy per pipeline (v1)")
+    if adjCount == 1 && hasScan then report.errorAndAbort("fuse: foldAdjacentBy/groupAdjacentBy and scanLeft cannot be combined in one pipeline (v1)")
+    // the adjacency stage's index + the stages downstream of it — the epilogue flushes its pending final run.
+    val adjInfo: Option[(Int, List[(Stage, Int)])] =
+      indexed.collectFirst { case (FoldAdjacentByS(_, _, _, _, _) | GroupAdjacentByS(_, _, _), i) => i }.map(i => (i, indexed.drop(i + 1)))
     // a JSON source has no static length (records are scanned, not indexed), so a Run/toList must grow the output
     // like flatMap/scan. scanLeft emits one MORE element than its input, so the output can exceed source length.
     // A JSON or streaming source has no static length, so a Run/toList must GROW the output (no `capExpr` bound).
@@ -1034,6 +1056,26 @@ object FuseMacro:
               ${ emitFoldAdjRun(st, rest, ctx).asExprOf[Unit] } // key changed → emit completed run, then start new
               ${ st.setCurKey(kv).asExprOf[Unit] }
               ${ st.setAcc(applyN(combine, List(st.seed, cur))).asExprOf[Unit] }
+            }
+          }.asTerm
+        }
+      case (GroupAdjacentByS(key, kTpe, _), i) :: rest =>
+        // buffer each run's rows; on key-change EMIT the run's rows as an FArray[A], then start a new run. The
+        // final run is emitted by the epilogue. O(largest run) memory.
+        val st = ctx.counters(i).groupAdj.get
+        letBind(applyLambda(key, cur)) { kv =>
+          '{
+            if ! ${ st.started } then {
+              ${ st.setCurKey(kv).asExprOf[Unit] }
+              ${ st.reset }
+              ${ st.append(cur) }
+              ${ st.start }
+            } else if ${ keyEq(kTpe, kv, st.curKeyRead) } then ${ st.append(cur) }
+            else {
+              ${ continueShape(srcShape(st.emitRun), rest, ctx).asExprOf[Unit] } // emit completed run's rows
+              ${ st.setCurKey(kv).asExprOf[Unit] }
+              ${ st.reset }
+              ${ st.append(cur) }
             }
           }.asTerm
         }
@@ -1673,6 +1715,28 @@ object FuseMacro:
                   declareSlots(rest, acc + (idx -> Slot('{ 0 }, '{ () }, None, foldAdj = Some(st))))(k).asExpr
                 }
               }.asTerm
+        case (idx, GroupAdjSpec(kt, at)) :: rest => // groupAdjacentBy: Object[] row buffer + bn + curKey + started
+          (kt.asType, at.asType) match
+            case ('[kk], '[aa]) =>
+              '{
+                var curKey: kk = null.asInstanceOf[kk]
+                var started: Boolean = false
+                var buf: Array[Object] = new Array[Object](16)
+                var bn: Int = 0
+                ${
+                  val st = GroupAdjState(
+                    '{ curKey }.asTerm,
+                    (v: Term) => '{ curKey = ${ v.asExprOf[kk] } }.asTerm,
+                    '{ started },
+                    '{ started = true },
+                    (v: Term) =>
+                      '{ if bn >= buf.length then buf = java.util.Arrays.copyOf(buf, buf.length * 2); buf(bn) = ${ v.asExpr }.asInstanceOf[Object]; bn += 1 },
+                    '{ FArray.fromBoxedArray[aa](java.util.Arrays.copyOf(buf, bn)) }.asTerm,
+                    '{ bn = 0 }
+                  )
+                  declareSlots(rest, acc + (idx -> Slot('{ 0 }, '{ () }, None, groupAdj = Some(st))))(k).asExpr
+                }
+              }.asTerm
 
     /** static upper bound on output length = min(source length, every `take` limit and zip `that` length). */
     def capExpr(n0: Expr[Int], counters: Map[Int, Slot]): Expr[Int] =
@@ -1686,14 +1750,18 @@ object FuseMacro:
       case Some((i, post)) => '{ ${ buildBody(post, c.counters(i).acc.get._1, c).asExprOf[Unit] }; $body }
       case None            => body
 
-    // foldAdjacentBy: after the whole (possibly chunked) loop, flush the FINAL run downstream — but only if a run
-    // was started AND a downstream `take`/short-circuit isn't already satisfied (`!done`, else `take(k)` could
-    // yield k+1). The flush reads the above-loop run vars (which persist across chunks) and runs the SAME downstream
-    // continuation as the per-element key-change emit. Mirror of `withScanPrologue`, on the other side of the loop.
-    def withEpilogue(c: Ctx, body: Expr[Unit]): Expr[Unit] = foldAdjInfo match
+    // foldAdjacentBy / groupAdjacentBy: after the whole (possibly chunked) loop, flush the FINAL run downstream —
+    // but only if a run was started AND a downstream `take`/short-circuit isn't already satisfied (`!done`, else
+    // `take(k)` could yield k+1). The flush reads the above-loop run vars (which persist across chunks) and runs the
+    // SAME downstream continuation as the per-element emit. Mirror of `withScanPrologue`, on the other side of the loop.
+    def withEpilogue(c: Ctx, body: Expr[Unit]): Expr[Unit] = adjInfo match
       case Some((i, post)) =>
-        val st = c.counters(i).foldAdj.get
-        val flush: Expr[Unit] = '{ if ${ st.started } then ${ emitFoldAdjRun(st, post, c).asExprOf[Unit] } }
+        val slot = c.counters(i)
+        val flush: Expr[Unit] = slot.foldAdj match
+          case Some(fst) => '{ if ${ fst.started } then ${ emitFoldAdjRun(fst, post, c).asExprOf[Unit] } }
+          case None      =>
+            val gst = slot.groupAdj.get
+            '{ if ${ gst.started } then ${ continueShape(srcShape(gst.emitRun), post, c).asExprOf[Unit] } }
         c.done match
           case Some(d) => '{ $body; if ! ${ d.read } then $flush }
           case None    => '{ $body; $flush }

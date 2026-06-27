@@ -115,4 +115,54 @@ class FoldAdjacentTest:
       FArray.fromIterable(xs).fuse.foldAdjacentBy(_.head.toString)("")(_ + _).run.toList
     )
 
+  // ── groupAdjacentBy: emit each run's ROWS as an FArray[A] (O(largest run) memory) ───────────────────────
+  /** reference grouping that honors order (per-RUN, not per-key). */
+  private def refGroup[A, K](xs: List[A])(key: A => K): List[List[A]] =
+    xs.foldLeft(List.empty[List[A]]) { (out, a) =>
+      val k = key(a)
+      out match
+        case run :: t if key(run.head) == k => (run :+ a) :: t
+        case _                              => List(a) :: out
+    }.reverse
+
+  @Test def group_parity(): Unit =
+    val xs = List(0, 1, 2, 10, 11, 20, 21, 22, 30)
+    val got = FArray.fromIterable(xs).fuse.groupAdjacentBy(_ / 10).run.toList.map(_.toList)
+    assertEquals(refGroup(xs)(_ / 10), got)
+
+  @Test def group_empty_and_single(): Unit =
+    assertEquals(Nil, FArray.empty[Int].fuse.groupAdjacentBy(_ / 10).run.toList)
+    // all one key → one run, emitted entirely by the epilogue.
+    val one = FArray.fromIterable(List(7, 7, 7)).fuse.groupAdjacentBy(_ / 10).run.toList.map(_.toList)
+    assertEquals(List(List(7, 7, 7)), one)
+
+  @Test def group_lastRunFlushed(): Unit =
+    val xs = List(0, 0, 1, 2, 2)
+    val got = FArray.fromIterable(xs).fuse.groupAdjacentBy(identity).run.toList.map(_.toList)
+    assertEquals(List(List(0, 0), List(1), List(2, 2)), got)
+
+  /** the nested-fusion sweet spot WITHOUT nested fusion: group then aggregate each run's FArray. */
+  @Test def group_thenAggregateRuns(): Unit =
+    val xs = List(0, 1, 2, 10, 11, 20)
+    // group, then aggregate each run's FArray OUTSIDE the pipeline (a downstream map over FArray-valued elements).
+    val runs = FArray.fromIterable(xs).fuse.groupAdjacentBy(_ / 10).run.toList
+    assertEquals(refGroup(xs)(_ / 10).map(_.sum), runs.map(_.toList.sum))
+
+  @Test def group_streaming_runsAcrossChunks(): Unit =
+    val chunks = List(List(0, 1), List(10, 11), List(12, 20), List(21, 30))
+    val flat = chunks.flatten
+    val src = new CountingSource(chunks.map(FArray.fromIterable))
+    val got = src.fuse.groupAdjacentBy(_ / 10).run.toList.map(_.toList)
+    assertEquals(refGroup(flat)(_ / 10), got)
+
+  @Test def group_take(): Unit =
+    val xs = List(0, 0, 1, 1, 2, 3, 3)
+    val first2 = FArray.fromIterable(xs).fuse.groupAdjacentBy(identity).take(2).run.toList.map(_.toList)
+    assertEquals(List(List(0, 0), List(1, 1)), first2)
+
+  @Test def group_stringRows(): Unit =
+    val xs = List("apple", "avocado", "banana", "cherry", "cranberry")
+    val got = FArray.fromIterable(xs).fuse.groupAdjacentBy(_.head).run.toList.map(_.toList)
+    assertEquals(refGroup(xs)(_.head), got)
+
 end FoldAdjacentTest

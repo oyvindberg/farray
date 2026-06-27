@@ -57,6 +57,12 @@ final class Fuse[+A](private[farray] val base: AnyRef):
     */
   def foldAdjacentBy[K, B](key: A => K)(seed: B)(combine: (B, A) => B): Fuse[(K, B)] = this.asInstanceOf[Fuse[(K, B)]]
 
+  /** Streaming GROUP stage for input ALREADY CLUSTERED by `key`: emit each maximal run of equal keys as its own `FArray[A]` (the rows, in order). O(largest
+    * run) memory — buffers one run at a time, not all N — no hashmap, short-circuits under `take`. The materializing counterpart of `foldAdjacentBy` (use that
+    * when you only need a per-run aggregate and never the rows). Same "clustered by key" user precondition.
+    */
+  def groupAdjacentBy[K](key: A => K): Fuse[FArray[A]] = this.asInstanceOf[Fuse[FArray[A]]]
+
   /** run `f` for its side effect on each surviving element, passing the element through unchanged. */
   def tapEach(f: A => Unit): Fuse[A] = this
 
