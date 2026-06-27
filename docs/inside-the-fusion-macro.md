@@ -14,7 +14,7 @@ So the "no intermediate collections" win is real and the "fast" part is a lie. Y
 Here is the whole thesis in one example. Input:
 
 ```scala
-xs.fuse.map(_ + 1).filter(_ % 2 == 0).map(_ * 2).toFArray
+xs.fuse.map(_ + 1).filter(_ % 2 == 0).map(_ * 2).run
 ```
 
 Generated code (lightly de-sugared from the snapshot test — `a.+(b)` rendered as `a + b`, etc. — but otherwise verbatim):
@@ -51,7 +51,7 @@ Three `map`/`filter` stages, one `int[]` scan, three `val`s and an `if`. No `Fun
 
 ## How it reads the chain
 
-The combinators are **markers**. `Fuse#map`, `#filter`, etc. have bodies that just return `this`; they never run. A terminal like `toFArray` is an `inline def` whose macro receives the `Expr` of the *whole* receiver — `xs.fuse.map(f).filter(p).map(g)` — and walks it backwards (`Apply(Select(prev, "map"), List(f))` → recurse on `prev`) until it hits `new Fuse(src)`, collecting a `List[Stage]` on the way.
+The combinators are **markers**. `Fuse#map`, `#filter`, etc. have bodies that just return `this`; they never run. A terminal like `run` is an `inline def` whose macro receives the `Expr` of the *whole* receiver — `xs.fuse.map(f).filter(p).map(g)` — and walks it backwards (`Apply(Select(prev, "map"), List(f))` → recurse on `prev`) until it hits `new Fuse(src)`, collecting a `List[Stage]` on the way.
 
 If you dump the raw expansion you see two parts. There's a preamble that reconstructs the marker chain as typed trees:
 
@@ -71,7 +71,7 @@ That "betaReduce into the body" is where the first hard problem lives.
 Inline a lambda's body into a loop and you are textually substituting code that came from somewhere else into a scope full of other people's bindings. Do it naively and you get capture. Watch what happens when three stages all call their parameter `x`:
 
 ```scala
-xs.fuse.map(x => x + 1).filter(x => x > 2).map(x => x * x).toFArray
+xs.fuse.map(x => x + 1).filter(x => x > 2).map(x => x * x).run
 ```
 
 ```scala
@@ -94,7 +94,7 @@ The names you actually see — `v`, `v₂`, `v₃`, `v₄` — are the macro's *
 It gets more interesting across a `flatMap`, where the same name lives at two different loop depths:
 
 ```scala
-xs.fuse.flatMap(x => FArray(x, x * 10)).map(x => x + 1).toFArray
+xs.fuse.flatMap(x => FArray(x, x * 10)).map(x => x + 1).run
 ```
 
 ```scala
@@ -128,7 +128,7 @@ A "filter" in this world is not a stage that produces a filtered collection; it'
 **Three filters become three nested guards in one pass** — not three passes, not three intermediate arrays:
 
 ```scala
-xs.fuse.filter(_ > 1).filter(_ < 7).filter(_ % 2 == 0).toFArray
+xs.fuse.filter(_ > 1).filter(_ < 7).filter(_ % 2 == 0).run
 ```
 
 ```scala
@@ -150,7 +150,7 @@ Short-circuiting falls out for free: if `v > 1` fails, the JVM never evaluates `
 Now mix levels. Put a filter *before* a `flatMap`, and another *inside* it:
 
 ```scala
-xs.fuse.filter(_ > 0).flatMap(x => FArray(x, -x)).filter(_ % 2 == 0).map(_ + 1).toFArray
+xs.fuse.filter(_ > 0).flatMap(x => FArray(x, -x)).filter(_ % 2 == 0).map(_ + 1).run
 ```
 
 ```scala
@@ -182,7 +182,7 @@ The outer predicate sits at the outer loop depth and decides whether the inner l
 `takeWhile` is a predicate at yet another level — it doesn't gate one element, it ends the stream:
 
 ```scala
-xs.fuse.takeWhile(_ < 5).toFArray
+xs.fuse.takeWhile(_ < 5).run
 //  while (i < len && !done) { val v = a(i); if (v < 5) { out(o)=v; o+=1 } else done = true; i += 1 }
 ```
 
@@ -195,7 +195,7 @@ xs.fuse.takeWhile(_ < 5).toFArray
 Here is the thing lazy collections *fundamentally cannot do*, and the reason this project exists. Consider:
 
 ```scala
-xs.fuse.map(x => (x % 3, x * 7, x * 13)).filter(_._1 == 0).map(_._2).toFArray
+xs.fuse.map(x => (x % 3, x * 7, x * 13)).filter(_._1 == 0).map(_._2).run
 ```
 
 A `View` builds a 3-tuple per element (heap allocation + three boxed `Integer`s), runs the filter, then projects. Every `x * 13` is computed and immediately thrown away. Every tuple is allocated and immediately discarded. Now the macro:
@@ -225,7 +225,7 @@ The product is only ever `rebuild`-materialized if something uses it *whole* (pa
 CSE, concretely — `f(x)` written twice, computed once:
 
 ```scala
-xs.fuse.map(x => (x*x + 1, x*x + 2)).map(t => t._1 + t._2).toFArray
+xs.fuse.map(x => (x*x + 1, x*x + 2)).map(t => t._1 + t._2).run
 ```
 
 ```scala
@@ -242,7 +242,7 @@ while (i < len) {
 This generalizes through arbitrary products, including **nested** ones, and the DCE reaches all the way down. `((x, x+1), (x+2, x+3))` keeping only the outer-left and inner-right leaves:
 
 ```scala
-xs.fuse.map(x => ((x, x + 1), (x + 2, x + 3))).map(t => t._1._1 + t._2._2).toFArray
+xs.fuse.map(x => ((x, x + 1), (x + 2, x + 3))).map(t => t._1._1 + t._2._2).run
 ```
 
 ```scala
@@ -260,12 +260,81 @@ The independence is *read off your syntax*, not inferred by dataflow analysis. W
 
 ---
 
-## 4. Deep nesting
+## 4. The same trick, two streams: `zip`
+
+Everything above is the *single-source* applicative — independent columns derived from one element. `zip` is the *two-source* applicative: combine this pipeline, point-wise, with a second array. And it gets the exact same lazy-column treatment, which produces a result that surprises people every time.
+
+Start with the honest case, where you actually use both sides:
+
+```scala
+xs.fuse.zip(ys).map((a, b) => a + b).run
+```
+
+```scala
+val zthat = ys                            // the second source — bound once, above the loop
+val zn    = zthat.length
+var c     = 0                             // the lock-step position
+val cap   = math.min(n0, zn)              // result length is the shorter of the two
+val out   = new Array[Int](cap)
+…
+while (i < len && !done) {
+  val v = a(i)
+  if (c >= zn) done = true                // ys ran out → stop (the shorter source wins)
+  else {
+    val pos = c; c += 1
+    val v₂ = FArrayOps.intAt(zthat, pos)  // ys(pos) — read, because the combine `a + b` needs it
+    val v₃ = v + v₂                        // (a, b) => a + b, fused — NO `(a, b)` pair is built
+    out(o) = v₃; o += 1
+  }
+  i += 1
+}
+```
+
+The pair `(a, b)` is never allocated; `map2`-style, the combine is inlined and reads `xs[i]` and `ys[pos]` directly. The `done`/`min` machinery gives you the lock-step "stops at the shorter" semantics. So far, so reasonable.
+
+Now throw the second side away:
+
+```scala
+xs.fuse.zip(ys).map(_._1).run
+```
+
+```scala
+val zthat = ys
+val zn    = zthat.length
+var c     = 0
+val cap   = math.min(n0, zn)
+…
+while (i < len && !done) {
+  val v = a(i)
+  if (c >= zn) done = true
+  else {
+    val pos = c; c += 1                    // the position STILL advances (min-length is observable)…
+    out(o) = v; o += 1                     // …but there is NO `intAt(zthat, pos)`. ys is never read.
+  }
+  i += 1
+}
+```
+
+Read those two loops side by side. The *only* difference is one line: the first has `val v₂ = intAt(zthat, pos)`, the second doesn't. You zipped against a second array and then discarded it, and the generated code **reads nothing from it** — it only touches `ys.length` (to compute the cutoff) and advances a counter. The zipped value flowed in as a *lazy memoized column* (`Tup([xs-element, lazy ys(pos)])`), exactly like a tuple column from a `map`, so "discarded ⇒ never forced" applies to a whole second stream the same way it applies to one column of a tuple. The benchmark is **12×** over an eager `xs.zip(ys).map(_._1)` — not because the loop is cleverer, but because it does a fraction of the work.
+
+And it composes with the single-source decomposition. Build a tuple *out of* a zip, filter on one side, keep the other:
+
+```scala
+xs.fuse.zip(ys).map((a, b) => (a, expensive(b))).filter(_._1 % 4 == 0).map(_._1).run
+```
+
+The second column is `expensive(b)`; nothing downstream reads it (`filter` and the final `map` both touch only `_._1`). So it's dead — and because it's dead, `b` is never forced, and because `b` is never forced, `ys` is never read *and* `expensive` never runs. Neither the network of "what depends on what" nor any reordering pass is consulted; it falls out of binding each column lazily at its first use, and never finding one. **15×.**
+
+This is the part a streaming library can't reach. `fs2.Stream(xs).zip(fs2.Stream(ys)).map(_._1)` pulls a real element from the `ys` stream for every step — it has to, because it has no compile-time view of "this projection only reads `_._1`." The lock-step is a runtime protocol; here it's a counter the optimizer can see through.
+
+---
+
+## 5. Deep nesting
 
 `flatMap` opens a real nested loop, and everything downstream lives inside it. Two `flatMap`s nest two levels deep:
 
 ```scala
-xs.fuse.flatMap(x => FArray(x, x + 1)).flatMap(y => FArray(y * 100)).toFArray
+xs.fuse.flatMap(x => FArray(x, x + 1)).flatMap(y => FArray(y * 100)).run
 ```
 
 Structurally (eliding the `IntArr`/tree dual paths and the inline `FArray(...)` construction):
@@ -295,14 +364,14 @@ Three loop levels, each with its own fresh counter/handle/length, each with the 
 
 ---
 
-## 5. Dynamism
+## 6. Dynamism
 
 "Dynamism" is everything that isn't known at compile time: runtime limits, data-dependent stopping, output sizes you can't predict. The macro handles each with a small piece of generated machinery.
 
 **Runtime limits.** `take(k)` where `k` is a value, not a literal:
 
 ```scala
-xs.fuse.filter(_ % 2 == 0).take(k).toFArray
+xs.fuse.filter(_ % 2 == 0).take(k).run
 ```
 
 ```scala
@@ -328,7 +397,7 @@ while (i < len && !done) {
 **`done` short-circuits across loop boundaries.** This is the part that's genuinely annoying to get right by hand. `done` is threaded onto *every* loop condition, so a limit reached deep inside a nested loop unwinds all of them:
 
 ```scala
-xs.fuse.flatMap(x => FArray(x, x, x)).take(5).toFArray
+xs.fuse.flatMap(x => FArray(x, x, x)).take(5).run
 ```
 
 ```scala
@@ -353,7 +422,7 @@ Once the fifth element is written, `done` is `true`, the inner `while`'s `&& !do
 **`scanLeft`** is the most interesting bit of dynamism, because it emits one *more* element than its input — the seed, even for empty input. That seed can't be emitted inside the loop (the loop might run zero times), so the macro emits a **prologue**:
 
 ```scala
-xs.fuse.scanLeft(0)(_ + _).toFArray
+xs.fuse.scanLeft(0)(_ + _).run
 ```
 
 ```scala
@@ -378,7 +447,7 @@ The accumulator is a single mutable `var` above the loop (not an `Option`, not a
 One more, because it surprised me. `collect` takes a `PartialFunction`, which is normally a heap object with `isDefinedAt` and `applyOrElse` — two virtual calls and (in the usual `filter(isDefinedAt).map(apply)` encoding) the pattern match evaluated *twice* per survivor. The macro instead reaches into the PF literal's AST. A Scala 3 `{ case … }` is `Block(DefDef($anonfun, x$1 => x$1 match { … }), Closure(_, PartialFunction))` — a closure over an `$anonfun` whose body is the match. The macro lifts that match out and splices it into the loop with `cur` as the scrutinee:
 
 ```scala
-xs.fuse.collect { case x if x % 2 == 0 => x * 10 }.toFArray
+xs.fuse.collect { case x if x % 2 == 0 => x * 10 }.run
 ```
 
 ```scala
