@@ -425,15 +425,29 @@ object FuseMacro:
         case Nil       => k(acc)
         case p :: rest => readShape(navigate(cur, p))(ref => readPaths(cur, rest, acc + (p -> ref))(k))
 
+    /** a local `case class` defined inside a lambda body can't be inlined into the fused loop — its synthesized
+     *  companion (`apply`/`unapply`/`copy`/product members) doesn't relocate (true of `betaReduce` too, not just
+     *  our TreeMap), so any relocation yields "reference … outside scope". Detect it and fail with a clear message
+     *  instead of the cryptic one. (Local `def`s, non-case `class`es, vals, and TOP-LEVEL case classes all work.) */
+    def checkNoLocalCaseClass(t: Term): Unit =
+      (new TreeTraverser:
+        override def traverseTree(x: Tree)(o: Symbol): Unit = x match
+          case cd: ClassDef if cd.symbol.flags.is(Flags.Case) => report.errorAndAbort(
+            s"fuse: a `case class` (`${cd.name}`) defined INSIDE a lambda body isn't supported — the macro can't " +
+            s"relocate its synthesized companion into the fused loop. Define the case class at the top level (a " +
+            s"top-level case class, incl. generic, decomposes fully), or use a local non-case `class`.", cd.pos)
+          case _ => super.traverseTree(x)(o)
+      ).traverseTree(t)(Symbol.spliceOwner)
+
     def applyMap(f: Term, cur: Shape): Shape = decomposeLambda(f) match
-      case Some((param, body)) => interp(body, param, cur, scala.collection.mutable.Map.empty) // fresh CSE table per map
+      case Some((param, body)) => checkNoLocalCaseClass(body); interp(body, param, cur, scala.collection.mutable.Map.empty)
       case None                => memoScalar(k => readShape(cur)(ct => k(applyLambda(f, ct))))
 
     /** read a filter predicate (binding only the columns it touches), then hand the Boolean term to `k`. */
     def predShape(p: Term, neg: Boolean, cur: Shape)(k: Term => Term): Term =
       def fin(b: Term): Term = k(if neg then '{ !${ b.asExprOf[Boolean] } }.asTerm else b)
       decomposeLambda(p) match
-        case Some((param, body)) => readShape(interp(body, param, cur, scala.collection.mutable.Map.empty))(fin)
+        case Some((param, body)) => checkNoLocalCaseClass(body); readShape(interp(body, param, cur, scala.collection.mutable.Map.empty))(fin)
         case None                => readShape(cur)(ct => fin(applyLambda(p, ct)))
 
     /** lower a contiguous map/filter run; columns sink past filters automatically (lazy memoized reads). */

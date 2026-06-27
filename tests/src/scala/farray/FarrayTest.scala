@@ -8,6 +8,11 @@ import scala.collection.BuildFrom
 case class P2(a: Int, b: Int)
 case class Inner(x: Int, y: Int)
 case class Outer(inner: Inner, z: Int)
+case class Box[T](v: T, n: Int)                       // GENERIC case class (type-arg threading in mkProduct)
+case class Rec(base: Int, label: String, extra: Int)  // mixed Int/String/Int fields
+object Cx:                                             // top-level helpers (opaque method-call columns)
+  def dbl(x: Int): Int = x * 2
+  def expensive(x: Int): Int = { var s = x; var k = 0; while (k < 8) { s = s * 31 + 7; k += 1 }; s }
 
 class FListTest:
   def foo(str: String): Either[String, String] = if (str.length > 2) Left(str) else Right(str)
@@ -1060,6 +1065,92 @@ class FListTest:
   @Test def test_fuse_caseclass_whole: Unit = // case class used whole (rebuilt), then field
     org.junit.Assert.assertEquals(List(P2(2, 20)),
       FArray(1, 2, 3).fuse.map(x => P2(x, x * 10)).filter(p => p == P2(2, 20)).run.toList)
+
+  // ---- complex lambdas: blocks/vals, conditionals, generic/mixed case classes, methods, matches, interp ----
+  @Test def test_fuse_complex_lambdas: Unit =
+    import org.junit.Assert.{assertEquals => aeq}
+    val r = FArray(1, 2, 3, 4, 5, 6); val l = List(1, 2, 3, 4, 5, 6)
+    // A. block with intermediate vals, producing a tuple
+    aeq(l.map { x => val a = x + 1; val b = a * 2; (a, b) }.filter(_._1 % 2 == 0).map(_._2),
+        r.fuse.map { x => val a = x + 1; val b = a * 2; (a, b) }.filter(_._1 % 2 == 0).map(_._2).run.toList)
+    // B. a val shared across both tuple components
+    aeq(l.map { x => val sq = x * x; (sq + 1, sq - 1) }.map(t => t._1 + t._2),
+        r.fuse.map { x => val sq = x * x; (sq + 1, sq - 1) }.map(t => t._1 + t._2).run.toList)
+    // C. conditional producing a whole tuple per branch
+    aeq(l.map(x => if (x > 3) (x, x * 10) else (-x, 0)).map(_._1),
+        r.fuse.map(x => if (x > 3) (x, x * 10) else (-x, 0)).map(_._1).run.toList)
+    // C2. conditional inside ONE column (the other column still decomposes)
+    aeq(l.map(x => (if (x > 3) x else -x, x * 2)).filter(_._1 > 0).map(_._2),
+        r.fuse.map(x => (if (x > 3) x else -x, x * 2)).filter(_._1 > 0).map(_._2).run.toList)
+    // D. generic case class Box[T], multi-field Rec, Box[String]
+    aeq(l.map(x => Box(x, x * 10)).filter(_.n > 20).map(_.v),
+        r.fuse.map(x => Box(x, x * 10)).filter(_.n > 20).map(_.v).run.toList)
+    aeq(l.map(x => Box(x.toString, x)).map(_.v),
+        r.fuse.map(x => Box(x.toString, x)).map(_.v).run.toList)
+    aeq(l.map(x => Rec(x * 10, (x % 3).toString, x * 100)).filter(_.base > 20).map(_.label),
+        r.fuse.map(x => Rec(x * 10, (x % 3).toString, x * 100)).filter(_.base > 20).map(_.label).run.toList)
+    // E. opaque method-call columns (a method result is one atomic column — sink/DCE still apply)
+    aeq(l.map(x => (x % 2, Cx.expensive(x))).filter(_._1 == 0).map(_._2),
+        r.fuse.map(x => (x % 2, Cx.expensive(x))).filter(_._1 == 0).map(_._2).run.toList)
+    aeq(l.map(x => Cx.dbl(x) + 1), r.fuse.map(x => Cx.dbl(x) + 1).run.toList)
+    // F. pattern match in the body; untupled destructuring
+    aeq(l.map(x => x % 3 match { case 0 => "zero"; case 1 => "one"; case _ => "two" }),
+        r.fuse.map(x => x % 3 match { case 0 => "zero"; case 1 => "one"; case _ => "two" }).run.toList)
+    aeq(l.map(x => (x, x * x)).map { case (a, b) => a + b },
+        r.fuse.map(x => (x, x * x)).map { case (a, b) => a + b }.run.toList)
+    // G. string interpolation (Ref result)
+    aeq(l.map(x => s"v=${x * 2}").filter(_.length > 3),
+        r.fuse.map(x => s"v=${x * 2}").filter(_.length > 3).run.toList)
+    // H. realistic combined: block + helper method + multi-field case class + projection (extra is dead)
+    aeq(l.map { x => val base = x * 10; val lab = (x % 2).toString; Rec(base, lab, Cx.expensive(x)) }
+          .filter(_.base > 20).map(_.label),
+        r.fuse.map { x => val base = x * 10; val lab = (x % 2).toString; Rec(base, lab, Cx.expensive(x)) }
+          .filter(_.base > 20).map(_.label).run.toList)
+    // I. tuple of a case class and a scalar (nested product)
+    aeq(l.map(x => (P2(x, x + 1), x * 2)).filter(_._2 > 4).map(_._1.a),
+        r.fuse.map(x => (P2(x, x + 1), x * 2)).filter(_._2 > 4).map(_._1.a).run.toList)
+    // J. a whole higher-order computation inside the lambda (opaque, but correct)
+    aeq(l.map(x => List(1, 2, 3).map(_ + x).sum), r.fuse.map(x => List(1, 2, 3).map(_ + x).sum).run.toList)
+    // K. deeply chained method calls on the element
+    aeq(l.map(x => x.toString.reverse.length + x), r.fuse.map(x => x.toString.reverse.length + x).run.toList)
+
+  // ---- craziness: case classes/defs/classes/loops defined INSIDE the lambda body ----
+  @Test def test_fuse_crazy_lambdas: Unit =
+    import org.junit.Assert.{assertEquals => aeq}
+    val r = FArray(1, 2, 3, 4, 5); val l = List(1, 2, 3, 4, 5)
+    // (a local `case class` in the body is the one unsupported shape — see test_fuse_lambda_limits.)
+    // local def
+    aeq(l.map { x => def sq(y: Int) = y * y; sq(x) + sq(x + 1) },
+        r.fuse.map { x => def sq(y: Int) = y * y; sq(x) + sq(x + 1) }.run.toList)
+    // nested lambda capturing the element
+    aeq(l.map { x => val g = (y: Int) => y + x; g(10) + g(20) },
+        r.fuse.map { x => val g = (y: Int) => y + x; g(10) + g(20) }.run.toList)
+    // local var + while loop in the body
+    aeq(l.map { x => var s = 0; var i = 0; while (i < x) { s += i; i += 1 }; s },
+        r.fuse.map { x => var s = 0; var i = 0; while (i < x) { s += i; i += 1 }; s }.run.toList)
+    // lazy val
+    aeq(l.map { x => lazy val a = x * x; a + a },
+        r.fuse.map { x => lazy val a = x * x; a + a }.run.toList)
+    // local NON-case class with a method
+    aeq(l.map { x => class C(val v: Int) { def t = v * 3 }; new C(x).t },
+        r.fuse.map { x => class C(val v: Int) { def t = v * 3 }; new C(x).t }.run.toList)
+    // try/catch
+    aeq(l.map { x => try 100 / (x - 3) catch { case _: ArithmeticException => -1 } },
+        r.fuse.map { x => try 100 / (x - 3) catch { case _: ArithmeticException => -1 } }.run.toList)
+    // a block mixing a def, vals, a local non-case class, consumed internally
+    aeq(l.map { x => def f(y: Int) = y + 1; val a = f(x); class K(val p: Int) { def q = p * p }; val k = new K(a); k.p + k.q },
+        r.fuse.map { x => def f(y: Int) = y + 1; val a = f(x); class K(val p: Int) { def q = p * p }; val k = new K(a); k.p + k.q }.run.toList)
+
+  // ---- the one lambda-body limitation: a LOCAL case class — rejected with a clear compile error ----
+  @Test def test_fuse_lambda_limits: Unit =
+    import scala.compiletime.testing.typeCheckErrors
+    val errs = typeCheckErrors("FArray(1, 2, 3).fuse.map { x => case class L(a: Int); L(x).a }.run")
+    org.junit.Assert.assertTrue("a local case class in a lambda body should be a compile error", errs.nonEmpty)
+    org.junit.Assert.assertTrue(s"expected the clear message, got: ${errs.map(_.message)}",
+      errs.exists(_.message.contains("`case class`") && errs.head.message.contains("top level")))
+    // a local non-case class in the same position is accepted
+    val ok = typeCheckErrors("FArray(1, 2, 3).fuse.map { x => class C(val a: Int); new C(x).a }.run")
+    org.junit.Assert.assertTrue(s"a local non-case class should compile, got: ${ok.map(_.message)}", ok.isEmpty)
 
   // ---- new stages: collect / takeWhile / dropWhile / distinct / distinctBy / slice / flatten ----
   @Test def test_fuse_stages: Unit =
