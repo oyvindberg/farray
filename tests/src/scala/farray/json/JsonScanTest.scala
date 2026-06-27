@@ -91,4 +91,32 @@ class JsonScanTest:
     val got = FatScan.sumM1M2M3WhereM0Gt(fatBuf, 0, fatBuf.length, fatThreshold)
     assertEquals(ref, got, 1e-6)
 
+  /** verify the strongest jsoniter baseline (hand-written JsonReader projection) is CORRECT before we trust
+   *  its benchmark — a fast-but-wrong baseline is worthless. */
+  @Test def jsoniterReaderManual_is_correct(): Unit =
+    val codec: JsonValueCodec[Double] = new JsonValueCodec[Double]:
+      def decodeValue(in: JsonReader, default: Double): Double =
+        var amount = default
+        if !in.isNextToken('{') then in.decodeError("expected {")
+        if !in.isNextToken('}') then
+          in.rollbackToken()
+          var continue = true
+          while continue do
+            val len = in.readKeyAsCharBuf()
+            if in.isCharBufEqualsTo(len, "amount") then amount = in.readDouble()
+            else in.skip()
+            continue = in.isNextToken(',')
+          if !in.isCurrentToken('}') then in.objectEndOrCommaError()
+        amount
+      def encodeValue(x: Double, out: JsonWriter): Unit = out.writeVal(x)
+      def nullValue: Double = 0.0
+    var acc = 0.0; var start = 0
+    while start < buf.length do
+      var end = start; while end < buf.length && buf(end) != '\n' do end += 1
+      val a = readFromSubArray[Double](buf, start, end)(using codec)
+      if a > threshold then acc += a
+      start = end + 1
+    val ref = RecScan.sumAmountWhereGt(buf, 0, buf.length, threshold)
+    assertEquals(ref, acc, 1e-6)
+
 end JsonScanTest

@@ -76,6 +76,19 @@ class JsonProjectionBenchmark:
       start = end + 1
     acc
 
+  /** THE strongest jsoniter baseline: a hand-written JsonReader loop (jsoniter's own tuned reader + SWAR),
+   *  manual key dispatch, decode ONLY `amount`, skip the other 19, and return the PRIMITIVE — no case-class
+   *  object allocated. This is jsoniter at its absolute best for this projection: no codec object, folds into
+   *  a var. Beating (or honestly measuring against) this is the real proof the win is fuse's model. */
+  @Benchmark def sum_jsoniterReaderManual(): Double =
+    var acc = 0.0; var start = 0
+    while start < buf.length do
+      var end = start; while end < buf.length && buf(end) != '\n' do end += 1
+      val amount = readFromSubArray[Double](buf, start, end)(using JsonProjectionBenchmark.amountCodec)
+      if amount > threshold then acc += amount
+      start = end + 1
+    acc
+
   // ---- PROJECTION query: filter(amount > t).map(category) ----
 
   @Benchmark def cat_fused(): Int =
@@ -125,6 +138,25 @@ end JsonProjectionBenchmark
 object JsonProjectionBenchmark:
   /** the narrow projection record jsoniter parses (everything else is skipped). */
   final case class Narrow(amount: Double, category: String)
+
+  /** Hand-written jsoniter JsonReader projection: decode ONLY `amount`, skip the rest, return the primitive
+   *  (no object). The strongest jsoniter contender — the same shape as our fused scanner, on jsoniter's reader. */
+  val amountCodec: JsonValueCodec[Double] = new JsonValueCodec[Double]:
+    def decodeValue(in: JsonReader, default: Double): Double =
+      var amount = default
+      if !in.isNextToken('{') then in.decodeError("expected {")
+      if !in.isNextToken('}') then
+        in.rollbackToken()
+        var continue = true
+        while continue do
+          val len = in.readKeyAsCharBuf()
+          if in.isCharBufEqualsTo(len, "amount") then amount = in.readDouble()
+          else in.skip()
+          continue = in.isNextToken(',')
+        if !in.isCurrentToken('}') then in.objectEndOrCommaError()
+      amount
+    def encodeValue(x: Double, out: JsonWriter): Unit = out.writeVal(x)
+    def nullValue: Double = 0.0
   /** fat-numeric narrow schemas — jsoniter DECODES exactly these numeric fields. */
   final case class FatN2(m0: Double, m5: Double)
   final case class FatN4(m0: Double, m1: Double, m2: Double, m3: Double)
