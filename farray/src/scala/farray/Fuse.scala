@@ -25,6 +25,8 @@ final class Fuse[+A](private[farray] val base: FBase):
   def filterNot(p: A => Boolean): Fuse[A] = this
   def take(n: Int): Fuse[A] = this
   def drop(n: Int): Fuse[A] = this
+  /** pair each element with its position in the stream at this point (post-upstream-filtering). */
+  def zipWithIndex: Fuse[(A, Int)] = this.asInstanceOf[Fuse[(A, Int)]]
 
   // ---- terminals (macros: rewrite the whole chain into one fused loop) ----
   inline def toFArray: FArray[A] = ${ FuseMacro.toFArrayImpl[A]('this) }

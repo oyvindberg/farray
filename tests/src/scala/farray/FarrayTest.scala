@@ -812,6 +812,28 @@ class FListTest:
     org.junit.Assert.assertEquals(false, e.fuse.exists(_ > 0))
     org.junit.Assert.assertEquals(List(), e.fuse.flatMap(x => FArray(x, x)).toFArray.toList)
 
+  // ---- zipWithIndex ----
+  @Test def test_fuse_zipWithIndex: Unit =
+    org.junit.Assert.assertEquals(l10.zipWithIndex, r10.fuse.zipWithIndex.toFArray.toList)
+  @Test def test_fuse_zipWithIndex_destructure: Unit = // tuple built then destructured (scalar-replaced)
+    org.junit.Assert.assertEquals(l10.zipWithIndex.map((x, i) => x + i * 100),
+      r10.fuse.zipWithIndex.map((x, i) => x + i * 100).toFArray.toList)
+  @Test def test_fuse_filter_then_zipWithIndex: Unit = // index is the POST-filter position
+    org.junit.Assert.assertEquals(l10.filter(_ % 2 == 0).zipWithIndex,
+      r10.fuse.filter(_ % 2 == 0).zipWithIndex.toFArray.toList)
+  @Test def test_fuse_zipWithIndex_then_filter: Unit = // index-only predicate
+    org.junit.Assert.assertEquals(l10.zipWithIndex.filter(_._2 % 3 == 0).map(_._1),
+      r10.fuse.zipWithIndex.filter(_._2 % 3 == 0).map(_._1).toFArray.toList)
+  @Test def test_fuse_zipWithIndex_take: Unit =
+    org.junit.Assert.assertEquals(l10.zipWithIndex.take(3),
+      r10.fuse.zipWithIndex.take(3).toFArray.toList)
+  @Test def test_fuse_zipWithIndex_ref: Unit =
+    org.junit.Assert.assertEquals(List(("a", 0), ("b", 1), ("c", 2)),
+      FArray("a", "b", "c").fuse.zipWithIndex.toFArray.toList)
+  @Test def test_fuse_zipWithIndex_long: Unit =
+    org.junit.Assert.assertEquals(List((10L, 0), (20L, 1)),
+      FArray(10L, 20L).fuse.zipWithIndex.toFArray.toList)
+
   // ---- specialize-or-fail: a primitive-backed FArray widened to a non-specializable type must be rejected
   //      at compile time (not miscompiled into null reads) — mirrors the eager API's Repr evidence. ----
   @Test def test_fuse_rejects_unspecializable: Unit =
@@ -856,6 +878,8 @@ class FListTest:
       FuseDebug.show(ints.fuse.flatMap(x => FArray(x, x * 10)).map(_ + 1).toFArray))
     scenario("ints.fuse.map(_+1).find(_%3==0)  [short-circuit via done]",
       FuseDebug.show(ints.fuse.map(_ + 1).find(_ % 3 == 0)))
+    scenario("ints.fuse.zipWithIndex.filter(_._2%2==0).map(_._1).toFArray  [specialized tuple, idx counter]",
+      FuseDebug.show(ints.fuse.zipWithIndex.filter(_._2 % 2 == 0).map(_._1).toFArray))
     Snapshots.check("fused-pipeline.snap", sb.toString)
 
   @Test def test_hashCode_matchesList(): Unit =

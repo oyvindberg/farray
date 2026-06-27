@@ -539,3 +539,56 @@
     (res: Option[Any])
   }.asInstanceOf[Option[Int]]: Option[Int])
 }
+
+====================================================================================================
+// ints.fuse.zipWithIndex.filter(_._2%2==0).map(_._1).toFArray  [specialized tuple, idx counter]
+====================================================================================================
+{
+  val $proxy: FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  } = FArray$package.$asInstanceOf$[FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  }]
+  val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
+  val Fuse_this: Fuse[Int] = (new Fuse[Int](xs$proxy): Fuse[Int]).zipWithIndex.filter(((_$: Tuple2[Int, Int]) => _$._2.%(2).==(0))).map[Int](((_$: Tuple2[Int, Int]) => _$._1))
+
+  ({
+    val src0: FBase = ints.$asInstanceOf$[ints & FArray[Int]].asInstanceOf[FBase]
+    val n0: Int = src0.length
+    var c: Int = 0
+    val cap: Int = n0
+    val out: Array[Int] = new Array[Int](cap)
+    var o: Int = 0
+    val s: FBase = src0
+    val len: Int = s.length
+    if (s.isInstanceOf[IntArr]) {
+      val a: Array[Int] = s.asInstanceOf[IntArr].arr
+      var i: Int = 0
+      while (i.<(len)) {
+        val v: Int = a.apply(i)
+        val `v₂`: Tuple2[Int, Int] = new Tuple2$mcII$sp(v, c).asInstanceOf[Tuple2[Int, Int]]
+        c = c.+(1)
+        if (`v₂`._2.%(2).==(0)) {
+          val `v₃`: Int = `v₂`._1
+          out.update(o, `v₃`)
+          o = o.+(1)
+        } else ()
+        i = i.+(1)
+      }
+    } else {
+      var `i₂`: Int = 0
+      while (`i₂`.<(len)) {
+        val `v₄`: Int = FArrayOps.intAt(s, `i₂`)
+        val `v₅`: Tuple2[Int, Int] = new Tuple2$mcII$sp(`v₄`, c).asInstanceOf[Tuple2[Int, Int]]
+        c = c.+(1)
+        if (`v₅`._2.%(2).==(0)) {
+          val `v₆`: Int = `v₅`._1
+          out.update(o, `v₆`)
+          o = o.+(1)
+        } else ()
+        `i₂` = `i₂`.+(1)
+      }
+    }
+    if (o.==(0)) (IntArr.EMPTY: FBase) else if (o.==(cap)) new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o)
+  }.asInstanceOf[FArray[Int]]: FArray[Int])
+}

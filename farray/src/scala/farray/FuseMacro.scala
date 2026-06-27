@@ -65,6 +65,7 @@ object FuseMacro:
     final case class TakeS(n: Term) extends Stage
     final case class DropS(n: Term) extends Stage
     final case class FlatMapS(f: Term, bTpe: TypeRepr) extends Stage
+    case object ZipWithIndexS extends Stage
 
     enum Kind:
       case KInt, KLong, KDouble, KRef
@@ -84,7 +85,8 @@ object FuseMacro:
 
     // --- loop-state handles (Exprs that read/mutate vars declared above the loop) ---
     final case class Done(set: Expr[Unit], read: Expr[Boolean])
-    final case class Slot(read: Expr[Int], inc: Expr[Unit], lim: Expr[Int])
+    // an above-loop counter; `lim` is present for take/drop (their clamped limit), absent for zipWithIndex.
+    final case class Slot(read: Expr[Int], inc: Expr[Unit], lim: Option[Expr[Int]])
     final case class Ctx(consume: Term => Term, done: Option[Done], counters: Map[Int, Slot])
 
     val unit: Term = '{ () }.asTerm
@@ -108,6 +110,7 @@ object FuseMacro:
         case Apply(Select(prev, "filterNot"), List(p))                    => parse(prev, FilterS(unwrap(p), true) :: acc)
         case Apply(Select(prev, "take"), List(n))                         => parse(prev, TakeS(unwrap(n)) :: acc)
         case Apply(Select(prev, "drop"), List(n))                         => parse(prev, DropS(unwrap(n)) :: acc)
+        case Select(prev, "zipWithIndex")                                 => parse(prev, ZipWithIndexS :: acc)
         case base @ Apply(Select(New(_), "<init>"), List(src))               => (src, fuseElem(base.tpe), acc)
         case base @ Apply(TypeApply(Select(New(_), "<init>"), _), List(src)) => (src, fuseElem(base.tpe), acc)
         case other =>
@@ -124,6 +127,19 @@ object FuseMacro:
       value.tpe.widen.asType match
         case '[t] => '{ val v: t = ${ value.asExprOf[t] }; ${ cont('v.asTerm).asExprOf[Unit] } }.asTerm
 
+    /** the `(value, index)` pair for zipWithIndex; use the stdlib @specialized Tuple2 for a primitive element
+     *  (Int/Long/Double) so it isn't boxed — exactly like the eager zipWithIndex. Everything else boxes via a
+     *  plain Tuple2 (correct for references and the rarer primitive kinds). */
+    def tupleWithIndex(value: Term, idx: Expr[Int]): Term =
+      val t = value.tpe.widen
+      // The @specialized subclass stores its fields unboxed but isn't a static subtype of `(K, Int)` (it's a
+      // bincompat synthetic); cast it (a runtime no-op — it really IS a Tuple2) so downstream `._1`/`._2`
+      // project cleanly and stay unboxed.
+      if t =:= TypeRepr.of[Int] then '{ new scala.Tuple2$mcII$sp(${ value.asExprOf[Int] }, $idx).asInstanceOf[(Int, Int)] }.asTerm
+      else if t =:= TypeRepr.of[Long] then '{ new scala.Tuple2$mcJI$sp(${ value.asExprOf[Long] }, $idx).asInstanceOf[(Long, Int)] }.asTerm
+      else if t =:= TypeRepr.of[Double] then '{ new scala.Tuple2$mcDI$sp(${ value.asExprOf[Double] }, $idx).asInstanceOf[(Double, Int)] }.asTerm
+      else '{ scala.Tuple2(${ value.asExpr }, $idx) }.asTerm
+
     // --- parse ---
     val selfTerm = self.asTerm
     val aType = TypeRepr.of[A]
@@ -139,7 +155,12 @@ object FuseMacro:
     val srcBase: Expr[FBase] = '{ ${ srcTerm.asExpr }.asInstanceOf[FBase] }
 
     val indexed: List[(Stage, Int)] = stages.zipWithIndex
-    val slots: List[(Int, Term)] = indexed.collect { case (TakeS(n), i) => (i, n); case (DropS(n), i) => (i, n) }
+    // stages needing an above-loop counter; take/drop carry a clamped limit arg, zipWithIndex doesn't (None).
+    val counterStages: List[(Int, Option[Term])] = indexed.collect {
+      case (TakeS(n), i)     => (i, Some(n))
+      case (DropS(n), i)     => (i, Some(n))
+      case (ZipWithIndexS, i) => (i, None)
+    }
     val takesPresent: Boolean = stages.exists(_.isInstanceOf[TakeS])
     val hasFlatMap: Boolean = stages.exists(_.isInstanceOf[FlatMapS])
     val shortCircuit: Boolean = tag match
@@ -160,14 +181,20 @@ object FuseMacro:
         val inner: Expr[FBase] = '{ ${ applyLambda(f, cur).asExpr }.asInstanceOf[FBase] }
         loopOver(inner, kindOf(bTpe), bTpe, rest, ctx).asTerm
       case (TakeS(_), i) :: rest =>
-        val sl = ctx.counters(i); val d = ctx.done.get
+        val sl = ctx.counters(i); val lim = sl.lim.get; val d = ctx.done.get
         '{ val cv = ${ sl.read }
-           if cv >= ${ sl.lim } then ${ d.set }
-           else { ${ buildBody(rest, cur, ctx).asExprOf[Unit] }; ${ sl.inc }; if cv + 1 >= ${ sl.lim } then ${ d.set } } }.asTerm
+           if cv >= ${ lim } then ${ d.set }
+           else { ${ buildBody(rest, cur, ctx).asExprOf[Unit] }; ${ sl.inc }; if cv + 1 >= ${ lim } then ${ d.set } } }.asTerm
       case (DropS(_), i) :: rest =>
         val sl = ctx.counters(i)
-        '{ if ${ sl.read } < ${ sl.lim } then ${ sl.inc }
+        '{ if ${ sl.read } < ${ sl.lim.get } then ${ sl.inc }
            else ${ buildBody(rest, cur, ctx).asExprOf[Unit] } }.asTerm
+      case (ZipWithIndexS, i) :: rest =>
+        // pair the element with the current index, then advance the index (once per element reaching here).
+        val sl = ctx.counters(i)
+        letBind(tupleWithIndex(cur, sl.read)) { t =>
+          '{ ${ sl.inc }; ${ buildBody(rest, t, ctx).asExprOf[Unit] } }.asTerm
+        }
 
     // --- traverse one level (source OR a flatMap inner): leaf fast-path + `<kind>At` fallback, `done` break ---
     def loopOver(src: Expr[FBase], k: Kind, elemTpe: TypeRepr, ss: List[(Stage, Int)], ctx: Ctx): Expr[Unit] =
@@ -220,17 +247,20 @@ object FuseMacro:
       if needsDone then '{ var done: Boolean = false; ${ k(Some(Done('{ done = true }, '{ done }))).asExpr } }.asTerm
       else k(None)
 
-    def declareSlots(rem: List[(Int, Term)], acc: Map[Int, Slot])(k: Map[Int, Slot] => Term): Term =
+    def declareSlots(rem: List[(Int, Option[Term])], acc: Map[Int, Slot])(k: Map[Int, Slot] => Term): Term =
       rem match
         case Nil => k(acc)
-        case (idx, argT) :: rest =>
+        case (idx, Some(argT)) :: rest => // take/drop: a clamped limit val + a counter
           '{ val lim: Int = { val t = ${ argT.asExprOf[Int] }; if t < 0 then 0 else t }
              var c: Int = 0
-             ${ declareSlots(rest, acc + (idx -> Slot('{ c }, '{ c += 1 }, '{ lim })))(k).asExpr } }.asTerm
+             ${ declareSlots(rest, acc + (idx -> Slot('{ c }, '{ c += 1 }, Some('{ lim }))))(k).asExpr } }.asTerm
+        case (idx, None) :: rest =>      // zipWithIndex: a counter only
+          '{ var c: Int = 0
+             ${ declareSlots(rest, acc + (idx -> Slot('{ c }, '{ c += 1 }, None)))(k).asExpr } }.asTerm
 
     /** static upper bound on output length = min(source length, every `take` limit). */
     def capExpr(n0: Expr[Int], counters: Map[Int, Slot]): Expr[Int] =
-      indexed.collect { case (TakeS(_), i) => counters(i).lim }.foldLeft(n0)((a, l) => '{ java.lang.Math.min($a, $l) })
+      indexed.collect { case (TakeS(_), i) => counters(i).lim.get }.foldLeft(n0)((a, l) => '{ java.lang.Math.min($a, $l) })
 
     def assemble(src0: Expr[FBase], n0: Expr[Int], done: Option[Done], counters: Map[Int, Slot]): Term =
       def ctx(consume: Term => Term) = Ctx(consume, done, counters)
@@ -320,4 +350,4 @@ object FuseMacro:
 
     // --- final assembly: bind source + length once, then state vars, then the loop nest ---
     '{ val src0: FBase = $srcBase; val n0: Int = src0.length
-       ${ withDone(done => declareSlots(slots, Map.empty)(counters => assemble('src0, 'n0, done, counters))).asExpr } }
+       ${ withDone(done => declareSlots(counterStages, Map.empty)(counters => assemble('src0, 'n0, done, counters))).asExpr } }
