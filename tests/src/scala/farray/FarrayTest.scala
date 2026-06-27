@@ -956,6 +956,11 @@ class FListTest:
     check("forall")(_.fuse.filter(_ > -10).forall(_ < 100))(_.filter(_ > -10).forall(_ < 100))
     check("headOption")(_.fuse.filter(_ % 2 == 0).map(_ * 3).headOption)(_.filter(_ % 2 == 0).map(_ * 3).headOption)
     check("flatMap.zipWithIndex")(_.fuse.flatMap(x => FArray(x, x)).zipWithIndex.take(6).toFArray.toList)(_.flatMap(x => List(x, x)).zipWithIndex.take(6))
+    // case classes / nested products
+    check("cc.sink")(_.fuse.map(x => P2(x, x * x)).filter(_.a % 2 == 0).map(_.b).toFArray.toList)(_.filter(_ % 2 == 0).map(x => x * x))
+    check("cc.dce")(_.fuse.map(x => P2(x, x * x)).filter(_.a > 0).map(_.a).toFArray.toList)(_.filter(_ > 0))
+    check("cc.nested")(_.fuse.map(x => Outer(Inner(x, x + 1), x * 2)).filter(_.inner.x % 2 == 0).map(o => o.inner.y + o.z).toFArray.toList)(_.filter(_ % 2 == 0).map(x => (x + 1) + (x * 2)))
+    check("cc.materialize")(_.fuse.map(x => P2(x, x * 10)).filter(_.a > 0).toFArray.toList)(_.filter(_ > 0).map(x => P2(x, x * 10)))
     // Long / Double / Ref element kinds
     var t2 = 0
     while t2 < 200 do
