@@ -59,3 +59,24 @@ class FusionBench extends IntInputs:
     farrayInput.map(x => (x, expensive(x))).filter(_._1 % 8 == 0).map(_._2)
   @Benchmark def survivorFused(): FArray[Int] =
     farrayInput.fuse.map(x => (x, expensive(x))).filter(_._1 % 8 == 0).map(_._2).toFArray
+
+  // ---- DEAD column: a tuple component that is never used downstream. Eager computes expensive(x) for every
+  //      element (and allocates the tuple); the fused macro never computes it at all (DCE). ----
+  @Benchmark def deadColEager(): FArray[Int] =
+    farrayInput.map(x => (x + 1, expensive(x))).map(_._1)
+  @Benchmark def deadColFused(): FArray[Int] =
+    farrayInput.fuse.map(x => (x + 1, expensive(x))).map(_._1).toFArray
+
+  // ---- DEAD zipped side: zip with another source but discard it. Eager reads the operand and builds pairs;
+  //      the fused macro never reads the zipped source at all (lazy that(pos)). ----
+  @Benchmark def deadZipEager(): FArray[Int] =
+    farrayInput.zip(farrayInput).map(_._1)
+  @Benchmark def deadZipFused(): FArray[Int] =
+    farrayInput.fuse.zip(farrayInput).map(_._1).toFArray
+
+  // ---- COMBINED: zip, build a tuple whose 2nd column is expensive(zippedValue), filter on the 1st, keep the
+  //      1st. In fused, the 2nd column is dead → neither expensive(b) NOR the zipped read ever happen. ----
+  @Benchmark def deadZipColEager(): FArray[Int] =
+    farrayInput.zip(farrayInput).map((a, b) => (a, expensive(b))).filter(_._1 % 4 == 0).map(_._1)
+  @Benchmark def deadZipColFused(): FArray[Int] =
+    farrayInput.fuse.zip(farrayInput).map((a, b) => (a, expensive(b))).filter(_._1 % 4 == 0).map(_._1).toFArray
