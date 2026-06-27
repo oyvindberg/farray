@@ -744,6 +744,13 @@ class FListTest:
     // Ref + Long kinds
     org.junit.Assert.assertEquals(List("a", "bb", "ccc").filter(_.length <= 2).mkString(","), FArray("a", "bb", "ccc").fuse.filter(_.length <= 2).mkString(","))
     org.junit.Assert.assertEquals(List(1L, 2L, 3L).sum, FArray(1L, 2L, 3L).fuse.sum)
+    // generic `to`, Option reductions, groupBy
+    org.junit.Assert.assertEquals(l.filter(_ % 2 == 0).map(_ * 10), r.fuse.filter(_ % 2 == 0).map(_ * 10).to(List))
+    org.junit.Assert.assertEquals(l.map(_ + 1).to(Vector), r.fuse.map(_ + 1).to(Vector))
+    org.junit.Assert.assertEquals(l.map(_ * 2).minOption, r.fuse.map(_ * 2).minOption)
+    org.junit.Assert.assertEquals(l.filter(_ > 100).maxOption, r.fuse.filter(_ > 100).maxOption)
+    org.junit.Assert.assertEquals(l.filter(_ > 100).reduceOption(_ + _), r.fuse.filter(_ > 100).reduceOption(_ + _))
+    org.junit.Assert.assertEquals(l.groupBy(_ % 3), r.fuse.groupBy(_ % 3))
 
   // ---- kind coverage for take/drop/terminals (Long / Double / Ref) ----
   @Test def test_fuse_long_take_fold: Unit =

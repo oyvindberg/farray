@@ -100,3 +100,22 @@ final class Fuse[+A](private[farray] val base: FBase):
   inline def indexWhere(inline p: A => Boolean): Int = zipWithIndex.find(t => p(t._1)).map(_._2).getOrElse(-1)
   inline def indexOf[B >: A](elem: B): Int = indexWhere(_ == elem)
   inline def collectFirst[B](pf: PartialFunction[A, B]): Option[B] = find(pf.isDefinedAt).map(pf)
+
+  // ---- generic conversion: build any collection from a std Factory in one fused pass ----
+  inline def to[C1](factory: scala.collection.Factory[A, C1]): C1 =
+    val b = factory.newBuilder; foreach(b += _); b.result()
+
+  // ---- Option-returning reductions (empty → None instead of throwing) ----
+  inline def reduceOption[B >: A](inline op: (B, A) => B): Option[B] =
+    foldLeft[Option[B]](None)((acc, a) => Some(if acc.isEmpty then a else op(acc.get, a)))
+  inline def reduceLeftOption[B >: A](inline op: (B, A) => B): Option[B] = reduceOption[B](op)
+  inline def minOption[B >: A](using ord: Ordering[B]): Option[A] =
+    reduceOption[B]((acc, a) => if ord.lteq(acc, a) then acc else a).asInstanceOf[Option[A]]
+  inline def maxOption[B >: A](using ord: Ordering[B]): Option[A] =
+    reduceOption[B]((acc, a) => if ord.gteq(acc, a) then acc else a).asInstanceOf[Option[A]]
+
+  // ---- groupBy: one fused pass into per-key builders ----
+  inline def groupBy[K](inline f: A => K): Map[K, List[A]] =
+    val m = scala.collection.mutable.LinkedHashMap.empty[K, scala.collection.mutable.Builder[A, List[A]]]
+    foreach(a => m.getOrElseUpdate(f(a), List.newBuilder[A]) += a)
+    m.view.mapValues(_.result()).toMap
