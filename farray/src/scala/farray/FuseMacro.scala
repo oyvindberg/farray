@@ -100,7 +100,10 @@ object FuseMacro:
     // ref — so a column read only inside a guard binds there, i.e. computes only for survivors (the sink).
     sealed trait Shape
     final case class Sc(read: (Term => Term) => Term) extends Shape
-    final case class Tup(parts: List[Shape]) extends Shape
+    // a decomposed PRODUCT (tuple / case class / named tuple): independent column shapes + how to rebuild the
+    // whole value from them (only used if the product is ever materialized — used whole or emitted).
+    final case class Tup(parts: List[Shape], rebuild: List[Term] => Term) extends Shape
+    type Path = List[(Int, String)] // a field path into a product: (column index, accessor name) per hop
 
     val unit: Term = '{ () }.asTerm
 
@@ -204,45 +207,75 @@ object FuseMacro:
 
     def srcShape(cur: Term): Shape = Sc(k => k(cur)) // already bound by the loop / an upstream stage
 
-    /** materialize a shape to a single Term (binding columns as needed); tuples re-tuple (boxes, like eager). */
+    /** materialize a shape to a single Term (binding columns as needed); a decomposed product is rebuilt. */
     def readShape(shape: Shape)(k: Term => Term): Term = shape match
-      case Sc(read)   => read(k)
-      case Tup(parts) => readAll(parts, Nil)(ts => k(mkTuple(ts)))
+      case Sc(read)            => read(k)
+      case Tup(parts, rebuild) => readAll(parts, Nil)(ts => k(rebuild(ts)))
     def readAll(parts: List[Shape], acc: List[Term])(k: List[Term] => Term): Term = parts match
       case Nil       => k(acc.reverse)
       case p :: rest => readShape(p)(t => readAll(rest, t :: acc)(k))
     def mkTuple(ts: List[Term]): Term = ts match
       case List(a, b)    => '{ scala.Tuple2(${ a.asExpr }, ${ b.asExpr }) }.asTerm
       case List(a, b, c) => '{ scala.Tuple3(${ a.asExpr }, ${ b.asExpr }, ${ c.asExpr }) }.asTerm
-      case _             => report.errorAndAbort("fuse: only tuple arities 2 and 3 are supported in fused projections")
+      case _             => report.errorAndAbort("fuse: only tuple arities 2 and 3 are supported here")
+
+    /** the (label, type) of each field of a product type (case class / tuple / named tuple), else None. This is
+     *  reflect's view of `Mirror.ProductOf` — `caseFields` are the product's accessors in declaration order. */
+    def productFields(tpe: TypeRepr): Option[List[(String, TypeRepr)]] =
+      val sym = tpe.typeSymbol
+      if sym.flags.is(Flags.Case) && sym.caseFields.nonEmpty then Some(sym.caseFields.map(f => (f.name, tpe.memberType(f))))
+      else None
+    /** reconstruct a product value of `tpe` from its field values (companion `apply`, e.g. `C(...)` / tuple). */
+    def mkProduct(tpe: TypeRepr, vs: List[Term]): Term =
+      val comp = tpe.typeSymbol.companionModule
+      comp.methodMember("apply").find(_.paramSymss.flatMap(_.filter(_.isTerm)).length == vs.length) match
+        case Some(m) =>
+          val base = Ref(comp).select(m)
+          (if tpe.typeArgs.nonEmpty then base.appliedToTypes(tpe.typeArgs) else base).appliedToArgs(vs)
+        case None => Apply(Select(New(Inferred(tpe)), tpe.typeSymbol.primaryConstructor), vs)
 
     // --- AST shape detection / substitution ---
     def decomposeLambda(t: Term): Option[(Symbol, Term)] = unwrap(t) match
       case Lambda(List(vd), body) => Some((vd.symbol, body))
       case _                      => None
-    def isProj(name: String): Boolean = name.length > 1 && name(0) == '_' && name.drop(1).forall(_.isDigit)
-    def isProjection(t: Term): Option[(Term, Int)] = t match
-      case Select(inner, name) if isProj(name) => Some((inner, name.drop(1).toInt - 1))
-      case _                                    => None
-    def isTupleLiteral(t: Term): Option[List[Term]] =
-      def ok(obj: Term, args: List[Term]) =
-        if (args.length == 2 || args.length == 3) && obj.symbol.fullName.startsWith("scala.Tuple") then Some(args) else None
-      t match
-        case Apply(TypeApply(Select(obj, "apply"), _), args) => ok(obj, args)
-        case Apply(Select(obj, "apply"), args)               => ok(obj, args)
-        case _                                               => None
-    // a maximal projection PATH rooted at a symbol: `p._1._2` -> (p, List(0,1)); a bare `p` -> (p, Nil).
-    def projPath(t: Term): Option[(Symbol, List[Int])] = t match
-      case id: Ident                            => Some((id.symbol, Nil))
-      case Select(inner, name) if isProj(name)  => projPath(inner).map((s, p) => (s, p :+ (name.drop(1).toInt - 1)))
-      case _                                    => None
-    /** every maximal projection path from `param` in `body` (Nil path = param used whole). */
-    def collectPaths(body: Term, param: Symbol): List[List[Int]] =
-      val buf = scala.collection.mutable.LinkedHashSet.empty[List[Int]]
+    /** the index of field `name` in `inner`'s product type, if `inner.name` is a product-field access. */
+    def fieldAccess(inner: Term, name: String): Option[Int] =
+      productFields(inner.tpe.widen).flatMap { fs => val i = fs.indexWhere(_._1 == name); if i >= 0 then Some(i) else None }
+    def isFieldSelect(t: Term): Option[(Term, Int, String)] = t match
+      case Select(inner, name) => fieldAccess(inner, name).map(i => (inner, i, name))
+      case _                    => None
+    /** a CANONICAL product construction `C(a, b, …)` / `(a, b)` / `new C(…)` → (product type, field args). Only the
+     *  product's OWN apply/constructor counts (not an arbitrary factory returning C), so args == fields. */
+    def isProductCtor(t: Term): Option[(TypeRepr, List[Term])] =
+      val rt = t.tpe.widen
+      productFields(rt) match
+        case Some(fields) =>
+          def appliedTo(fn: Term, as: List[Term]): Option[(TypeRepr, List[Term])] =
+            if as.length != fields.length then None
+            else fn match
+              case Select(New(_), "<init>")                                                            => Some((rt, as))
+              case sel @ Select(_, "apply") if sel.symbol.owner == rt.typeSymbol.companionModule.moduleClass => Some((rt, as))
+              case _                                                                                    => None
+          t match
+            case Apply(TypeApply(fn, _), as) => appliedTo(fn, as)
+            case Apply(fn, as)               => appliedTo(fn, as)
+            case _                           => None
+        case None => None
+    // a maximal field PATH rooted at a symbol: `p.a.x` -> (p, List((iₐ,"a"),(iₓ,"x"))); a bare `p` -> (p, Nil).
+    def projPath(t: Term): Option[(Symbol, Path)] = t match
+      case id: Ident => Some((id.symbol, Nil))
+      case Select(inner, name) =>
+        (projPath(inner), fieldAccess(inner, name)) match
+          case (Some((s, p)), Some(idx)) => Some((s, p :+ (idx, name)))
+          case _                         => None
+      case _ => None
+    /** every maximal field path from `param` in `body` (Nil path = param used whole). */
+    def collectPaths(body: Term, param: Symbol): List[Path] =
+      val buf = scala.collection.mutable.LinkedHashSet.empty[Path]
       (new TreeTraverser:
         override def traverseTree(t: Tree)(owner: Symbol): Unit = t match
           case (_: Ident | _: Select) if projPath(t.asInstanceOf[Term]).exists((s, _) => s == param) =>
-            buf += projPath(t.asInstanceOf[Term]).get._2 // maximal: don't descend into inner projections
+            buf += projPath(t.asInstanceOf[Term]).get._2 // maximal: don't descend into inner field reads
           case _ => super.traverseTree(t)(owner)
       ).traverseTree(body)(Symbol.spliceOwner)
       buf.toList
@@ -252,19 +285,21 @@ object FuseMacro:
           case id: Ident if id.symbol == param => repl
           case _                                => super.transformTerm(t)(owner)
       ).transformTerm(body)(Symbol.spliceOwner)
-    /** replace each maximal param-projection path with its resolved column ref. */
-    def substPaths(body: Term, param: Symbol, refs: Map[List[Int], Term]): Term =
+    /** replace each maximal param-field path with its resolved column ref. */
+    def substPaths(body: Term, param: Symbol, refs: Map[Path, Term]): Term =
       (new TreeMap:
         override def transformTerm(t: Term)(owner: Symbol): Term = projPath(t) match
           case Some((s, p)) if s == param && refs.contains(p) => refs(p)
           case _                                              => super.transformTerm(t)(owner)
       ).transformTerm(body)(Symbol.spliceOwner)
-    /** navigate a shape down a projection path to the leaf column (no intermediate tuple is materialized). */
-    def navigate(cur: Shape, path: List[Int]): Shape = path match
-      case Nil     => cur
-      case j :: rest => cur match
-        case Tup(ps) if j >= 0 && j < ps.length => navigate(ps(j), rest)
-        case other                              => navigate(projScalar(other, j), rest)
+    /** navigate a shape down a field path to the leaf column (no intermediate product is materialized). */
+    def navigate(cur: Shape, path: Path): Shape = path match
+      case Nil              => cur
+      case (j, name) :: rest => cur match
+        case Tup(ps, _) if j >= 0 && j < ps.length => navigate(ps(j), rest)
+        case other                                 => navigate(projField(other, name), rest)
+    def projField(sc: Shape, name: String): Shape =
+      memoScalar(k => readShape(sc)(t => k(Select.unique(t, name))))
 
     // --- deep CSE: hash-cons identical sub-expressions into memoized columns (shared across one map's tuple
     //     components / one predicate), so e.g. `(f(x)+1, f(x)+2)` computes f(x) ONCE. Keyed structurally; the
@@ -323,28 +358,26 @@ object FuseMacro:
     // --- interpret a map lambda body symbolically into a Shape (decomposing tuples, resolving projections) ---
     def interp(body0: Term, param: Symbol, cur: Shape, cseT: CseT): Shape =
       val body = flattenBlock(body0)
-      isTupleLiteral(body) match
-        case Some(parts) => Tup(parts.map(interp(_, param, cur, cseT))) // share cseT across components → CSE
-        case None => isProjection(body) match
-          case Some((inner, j)) => interp(inner, param, cur, cseT) match
-            case Tup(ps) if j >= 0 && j < ps.length => ps(j)
-            case sc                                  => projScalar(sc, j)
+      isProductCtor(body) match
+        case Some((rt, parts)) => Tup(parts.map(interp(_, param, cur, cseT)), vs => mkProduct(rt, vs)) // decompose; CSE shared
+        case None => isFieldSelect(body) match
+          case Some((inner, idx, name)) => interp(inner, param, cur, cseT) match
+            case Tup(ps, _) if idx >= 0 && idx < ps.length => ps(idx)
+            case sc                                        => projField(sc, name)
           case None => body match
             case id: Ident if id.symbol == param => cur
             case _ => Sc(k => substColumns(body, param, cur)(subst => readShape(cse(subst, cseT))(k)))
-    def projScalar(sc: Shape, j: Int): Shape =
-      memoScalar(k => readShape(sc)(t => k(Select.unique(t, "_" + (j + 1)))))
     /** substitute param-uses in an atomic body with the columns it reads (binding only those columns). A bare
-     *  param use (Nil path) forces materializing the whole shape; otherwise each path resolves to a leaf column. */
+     *  param use (Nil path) forces materializing the whole product; otherwise each path resolves to a leaf column. */
     def substColumns(body: Term, param: Symbol, cur: Shape)(k: Term => Term): Term =
       val paths = collectPaths(body, param)
-      // whole-param use → substitute the materialized shape for every param mention. A Tup must be re-tupled
-      // (mkTuple) — bind it to ONE val first so it isn't rebuilt per occurrence; a Sc is already a bound ref.
+      // whole-param use → substitute the materialized product for every param mention. A Tup must be rebuilt —
+      // bind it to ONE val first so it isn't rebuilt per occurrence; a Sc is already a bound ref.
       if paths.contains(Nil) then cur match
-        case Tup(_) => readShape(cur)(ct => letBind(ct)(r => k(substParam(body, param, r))))
-        case _      => readShape(cur)(ct => k(substParam(body, param, ct)))
+        case Tup(_, _) => readShape(cur)(ct => letBind(ct)(r => k(substParam(body, param, r))))
+        case _         => readShape(cur)(ct => k(substParam(body, param, ct)))
       else readPaths(cur, paths, Map.empty)(refs => k(substPaths(body, param, refs)))
-    def readPaths(cur: Shape, paths: List[List[Int]], acc: Map[List[Int], Term])(k: Map[List[Int], Term] => Term): Term =
+    def readPaths(cur: Shape, paths: List[Path], acc: Map[Path, Term])(k: Map[Path, Term] => Term): Term =
       paths match
         case Nil       => k(acc)
         case p :: rest => readShape(navigate(cur, p))(ref => readPaths(cur, rest, acc + (p -> ref))(k))
@@ -407,7 +440,7 @@ object FuseMacro:
                   case Some(f) => readShape(lazyB)(b => buildBody(rest, applyN(f, List(cur, b)), ctx))
                   case None =>
                     val (seg, tail) = rest.span { case (MapS(_), _) => true; case (FilterS(_, _), _) => true; case _ => false }
-                    buildSegment(seg.map(_._1), Tup(List(srcShape(cur), lazyB)))(fs => readShape(fs)(t => buildBody(tail, t, ctx)))
+                    buildSegment(seg.map(_._1), Tup(List(srcShape(cur), lazyB), mkTuple))(fs => readShape(fs)(t => buildBody(tail, t, ctx)))
                 continue.asExprOf[Unit] }
            } }.asTerm
 

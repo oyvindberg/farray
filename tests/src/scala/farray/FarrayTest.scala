@@ -4,6 +4,11 @@ import org.junit.Test
 
 import scala.collection.BuildFrom
 
+// products used by the fused case-class decomposition tests
+case class P2(a: Int, b: Int)
+case class Inner(x: Int, y: Int)
+case class Outer(inner: Inner, z: Int)
+
 class FListTest:
   def foo(str: String): Either[String, String] = if (str.length > 2) Left(str) else Right(str)
 
@@ -960,6 +965,35 @@ class FListTest:
       assert(FArray.fromIterable(xs.map(_.toString)).fuse.filter(_.length <= 2).map(s => (s, s.length)).filter(_._2 >= 1).map(_._1).toFArray.toList == xs.map(_.toString).filter(_.length <= 2).map(s => (s, s.length)).filter(_._2 >= 1).map(_._1))
       t2 += 1
 
+  // ---- case-class / nested-product decomposition (same machinery as tuples, via caseFields) ----
+  @Test def test_fuse_caseclass: Unit =
+    org.junit.Assert.assertEquals(List(20, 40),
+      FArray(1, 2, 3, 4).fuse.map(x => P2(x, x * 10)).filter(_.a % 2 == 0).map(_.b).toFArray.toList)
+  @Test def test_fuse_caseclass_dce: Unit = // a discarded case-class field is never computed
+    var e = 0; def exp(x: Int): Int = { e += 1; x * 100 }
+    val r = FArray(1, 2, 3).fuse.map(x => P2(x, exp(x))).map(_.a).toFArray.toList
+    org.junit.Assert.assertEquals(List(1, 2, 3), r)
+    org.junit.Assert.assertEquals("the .b field (exp(x)) is dead → never computed", 0, e)
+  @Test def test_fuse_caseclass_sink: Unit = // an expensive field used only past the filter → survivors only
+    var e = 0; def exp(x: Int): Int = { e += 1; x * 100 }
+    val r = FArray(1, 2, 3, 4).fuse.map(x => P2(x, exp(x))).filter(_.a % 2 == 0).map(_.b).toFArray.toList
+    org.junit.Assert.assertEquals(List(200, 400), r)
+    org.junit.Assert.assertEquals("exp(x) only for survivors", 2, e)
+  @Test def test_fuse_caseclass_materialize: Unit = // FArray[P2] output — the product is rebuilt
+    org.junit.Assert.assertEquals(List(P2(1, 10), P2(2, 20)),
+      FArray(1, 2).fuse.map(x => P2(x, x * 10)).toFArray.toList)
+  @Test def test_fuse_caseclass_nested: Unit = // Outer(Inner(...), ...), nested field access
+    org.junit.Assert.assertEquals(List(4, 8, 12),
+      FArray(1, 2, 3).fuse.map(x => Outer(Inner(x, x * 2), x * 3)).map(o => o.inner.x + o.z).toFArray.toList)
+  @Test def test_fuse_caseclass_nested_dce: Unit = // a dead NESTED field (inner.y) is never computed
+    var e = 0; def exp(x: Int): Int = { e += 1; x * 100 }
+    val r = FArray(1, 2, 3).fuse.map(x => Outer(Inner(x, exp(x)), x * 3)).map(o => o.inner.x + o.z).toFArray.toList
+    org.junit.Assert.assertEquals(List(4, 8, 12), r)
+    org.junit.Assert.assertEquals("inner.y (exp(x)) is dead → never computed, even nested", 0, e)
+  @Test def test_fuse_caseclass_whole: Unit = // case class used whole (rebuilt), then field
+    org.junit.Assert.assertEquals(List(P2(2, 20)),
+      FArray(1, 2, 3).fuse.map(x => P2(x, x * 10)).filter(p => p == P2(2, 20)).toFArray.toList)
+
   // ---- zipWithIndex ----
   @Test def test_fuse_zipWithIndex: Unit =
     org.junit.Assert.assertEquals(l10.zipWithIndex, r10.fuse.zipWithIndex.toFArray.toList)
@@ -1065,6 +1099,8 @@ class FListTest:
       FuseDebug.show(ints.fuse.map(x => (x * x + 1, x * x + 2)).map(t => t._1 + t._2).toFArray))
     scenario("ints.fuse.map(x=>(x+1, x*1000)).filter(_._1%2==0).map(_._2).toFArray  [SINK: 2nd col inside the guard]",
       FuseDebug.show(ints.fuse.map(x => (x + 1, x * 1000)).filter(_._1 % 2 == 0).map(_._2).toFArray))
+    scenario("PRODUCT: map(x => Outer(Inner(x, x*99), x*3)).map(o => o.inner.x + o.z)  [nested case class, Inner.y DEAD]",
+      FuseDebug.show(ints.fuse.map(x => Outer(Inner(x, x * 99), x * 3)).map(o => o.inner.x + o.z).toFArray))
     def expensive(x: Int): Int = { var s = x; var k = 0; while (k < 24) { s = s * 1103515245 + 12345; k += 1 }; s }
     scenario("DCE-1: map(x => (x+1, expensive(x))).map(_._1)  [expensive(x) DEAD]",
       FuseDebug.show(ints.fuse.map(x => (x + 1, expensive(x))).map(_._1).toFArray))

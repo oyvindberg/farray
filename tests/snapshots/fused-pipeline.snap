@@ -836,6 +836,52 @@
 }
 
 ====================================================================================================
+// PRODUCT: map(x => Outer(Inner(x, x*99), x*3)).map(o => o.inner.x + o.z)  [nested case class, Inner.y DEAD]
+====================================================================================================
+{
+  val $proxy: FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  } = FArray$package.$asInstanceOf$[FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  }]
+  val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
+  val Fuse_this: Fuse[Int] = (new Fuse[Int](xs$proxy): Fuse[Int]).map[Outer](((x: Int) => Outer.apply(Inner.apply(x, x.*(99)), x.*(3)))).map[Int](((o: Outer) => o.inner.x.+(o.z)))
+
+  ({
+    val src0: FBase = ints.$asInstanceOf$[ints & FArray[Int]].asInstanceOf[FBase]
+    val n0: Int = src0.length
+    val cap: Int = n0
+    val out: Array[Int] = new Array[Int](cap)
+    var `o₂`: Int = 0
+    val s: FBase = src0
+    val len: Int = s.length
+    if (s.isInstanceOf[IntArr]) {
+      val a: Array[Int] = s.asInstanceOf[IntArr].arr
+      var i: Int = 0
+      while (i.<(len)) {
+        val v: Int = a.apply(i)
+        val `v₂`: Int = v.*(3)
+        val `v₃`: Int = v.+(`v₂`)
+        out.update(`o₂`, `v₃`)
+        `o₂` = `o₂`.+(1)
+        i = i.+(1)
+      }
+    } else {
+      var `i₂`: Int = 0
+      while (`i₂`.<(len)) {
+        val `v₄`: Int = FArrayOps.intAt(s, `i₂`)
+        val `v₅`: Int = `v₄`.*(3)
+        val `v₆`: Int = `v₄`.+(`v₅`)
+        out.update(`o₂`, `v₆`)
+        `o₂` = `o₂`.+(1)
+        `i₂` = `i₂`.+(1)
+      }
+    }
+    if (`o₂`.==(0)) (IntArr.EMPTY: FBase) else if (`o₂`.==(cap)) new IntArr(out, `o₂`) else new IntArr(java.util.Arrays.copyOf(out, `o₂`), `o₂`)
+  }.asInstanceOf[FArray[Int]]: FArray[Int])
+}
+
+====================================================================================================
 // DCE-1: map(x => (x+1, expensive(x))).map(_._1)  [expensive(x) DEAD]
 ====================================================================================================
 {
