@@ -1,0 +1,226 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>The fuse optimizer</title>
+<style>:root{--bg:#0e1016;--fg:#e7eaf0;--mut:#8b95a6;--acc:#7dd3fc;--ok:#86efac;--code:#151925;--bd:#232a38;--win:#16321f}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);
+font:16px/1.65 -apple-system,Segoe UI,Roboto,sans-serif;max-width:1000px;margin:0 auto;padding:1.5rem 1.25rem 4rem}
+.tabs{display:flex;gap:.5rem;margin-bottom:1rem}
+.tabs a{color:var(--mut);text-decoration:none;padding:.35rem .8rem;border:1px solid var(--bd);border-radius:999px;font-size:.85rem}
+.tabs a.on{color:#0e1016;background:var(--acc);border-color:var(--acc);font-weight:600}
+h1{font-size:1.9rem;margin:.3rem 0}.lede{color:var(--mut);font-size:1.08rem}
+h2{font-size:1.12rem;margin:0 0 .5rem;color:var(--acc)}
+section.ex{border:1px solid var(--bd);border-radius:12px;padding:1.1rem 1.25rem;margin:1.25rem 0;background:#11141d}
+section.setup{border:1px solid #2b3a4a;border-radius:12px;padding:1.1rem 1.25rem;margin:1.25rem 0;background:#10161f}
+section.setup b{color:#cfe6ff}pre.sample{color:#bfe8c8;border-color:#234534;background:#10180f;white-space:pre-wrap}
+.method{color:var(--mut);font-size:.9rem;margin-top:.7rem}
+.prose code,.lede code{color:#ffd9a8}
+.cap{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.07em;margin:1rem 0 .25rem}
+.cap.rival{color:#f0a8a8}
+pre{background:var(--code);border:1px solid var(--bd);border-radius:8px;padding:.7rem .9rem;overflow:auto;
+font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;margin:0}
+pre.scala{color:#dbe7ff}pre.gen{color:#c4ccda;max-height:420px}pre.rival{color:#e9c9c9;border-color:#5a2e2e;background:#1b1416}
+.kw{color:#c792ea;font-weight:600}.cm{color:#6b7686;font-style:italic}
+code{background:var(--code);border:1px solid var(--bd);border-radius:4px;padding:.04rem .3rem;font:12.5px ui-monospace,Menlo,monospace;color:#ffd9a8}
+table.bench{width:100%;border-collapse:collapse;margin:.3rem 0;font-size:.92rem}
+table.bench th{color:var(--mut);text-align:right;font-weight:500;font-size:.78rem;padding:.3rem .6rem;border-bottom:1px solid var(--bd)}
+table.bench th:first-child{text-align:left}
+table.bench td{padding:.4rem .6rem;border-bottom:1px solid #1a2030}.bench td.num{text-align:right;font:13px ui-monospace,Menlo,monospace}
+table.bench tr.win{background:var(--win)}table.bench tr.win td{color:var(--ok)}
+.headline{color:var(--ok);font-weight:600;margin:.5rem 0 0}.trophy{color:var(--ok)}
+footer{color:var(--mut);font-size:.85rem;margin-top:2rem;display:flex;justify-content:space-between;gap:1rem;align-items:center}
+footer .nav{color:var(--acc);text-decoration:none;font-weight:600;white-space:nowrap}</style></head><body>
+<header><div class="tabs"><a class="on"" href="fused-optimizer.html">1 · The optimizer</a><a href="fused-json.html">2 · Fused JSON</a></div>
+<h1>The fuse optimizer</h1><p class="lede"><code>xs.fuse.map(f).filter(p).&lt;terminal&gt;</code> is a macro, not a runtime data structure. It reads the WHOLE chain off the typed AST at compile time and emits one specialized <code>while</code> loop with the lambdas inlined into the body — no view nodes, no <code>Function1</code>, no boxing, no megamorphism. Below: the same loop you'd write by hand, produced from the pipeline you'd actually want to write. Every code block is the verbatim post-typer expansion.</p></header>
+
+<section class="ex"><h2>One loop, no closures</h2>
+<p class="prose">Three stages, one <code>int[]</code> scan. <code>_ + 1</code> became the bytecode <code>iadd</code>; no <code>Function1</code> was allocated; the filter is an <code>if</code> that wraps everything downstream of it. A <code>View</code> would store three <code>Function1</code>s and call each through an interface per element.</p>
+<p class="cap">you write</p><pre class="scala">xs.fuse.map(_ + 1).filter(_ % 2 == 0).map(_ * 2).run</pre>
+<p class="cap">the macro emits</p><pre class="gen">    val out: Array[Int] = new Array[Int](cap)
+    var o: Int = 0
+    val s: FBase = src0
+    val len: Int = s.length
+    if (s.isInstanceOf[IntArr]) {
+      val a: Array[Int] = s.asInstanceOf[IntArr].arr
+      var i: Int = 0
+      while (i &lt; (len)) {
+        val v: Int = a(i)
+        val v₂: Int = v + (1)
+        val v₃: Int = v₂ % (2)
+        val v₄: Boolean = v₃ == (0)
+        if (v₄) {
+          val v₅: Int = v₂ * (2)
+          out.set(o, v₅)
+          o = o + (1)
+        } else ()
+        i = i + (1)
+      }
+    } else {
+      var i₂: Int = 0
+      while (i₂ &lt; (len)) {
+        val v₆: Int = FArrayOps.intAt(s, i₂)
+        val v₇: Int = v₆ + (1)
+        val v₈: Int = v₇ % (2)
+        val v₉: Boolean = v₈ == (0)
+        if (v₉) {
+          val v₁₀: Int = v₇ * (2)
+          out.set(o, v₁₀)
+          o = o + (1)
+        } else ()
+        i₂ = i₂ + (1)
+      }
+    }
+    if (o == (0)) (IntArr.EMPTY: FBase) else if (o == (cap)) new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o)
+  }: FArray[Int])
+}</pre>
+
+
+</section>
+<section class="ex"><h2>Dead-column elimination</h2>
+<p class="prose">A tuple/case class is a set of independent COLUMNS. Here <code>map</code> builds three, then the pipeline reads only two of them. The optimizer never builds the tuple: column 2 (<code>x * 13</code>) is read by nobody, so it is DEAD and absent from the output; column 0 (<code>x % 3</code>) is needed by the filter, so it's computed eagerly. A <code>View</code> allocates the 3-tuple (plus 3 boxed Ints) every element and throws most of it away.</p>
+<p class="cap">you write</p><pre class="scala">xs.fuse.map(x =&gt; (x % 3, x * 7, x * 13)).filter(_._1 == 0).map(_._2).run</pre>
+<p class="cap">the macro emits</p><pre class="gen">    val out: Array[Int] = new Array[Int](cap)
+    var o: Int = 0
+    val s: FBase = src0
+    val len: Int = s.length
+    if (s.isInstanceOf[IntArr]) {
+      val a: Array[Int] = s.asInstanceOf[IntArr].arr
+      var i: Int = 0
+      while (i &lt; (len)) {
+        val v: Int = a(i)
+        val v₂: Int = v % (3)
+        val v₃: Boolean = v₂ == (0)
+        if (v₃) {
+          val v₄: Int = v * (7)
+          out.set(o, v₄)
+          o = o + (1)
+        } else ()
+        i = i + (1)
+      }
+    } else {
+      var i₂: Int = 0
+      while (i₂ &lt; (len)) {
+        val v₅: Int = FArrayOps.intAt(s, i₂)
+        val v₆: Int = v₅ % (3)
+        val v₇: Boolean = v₆ == (0)
+        if (v₇) {
+          val v₈: Int = v₅ * (7)
+          out.set(o, v₈)
+          o = o + (1)
+        } else ()
+        i₂ = i₂ + (1)
+      }
+    }
+    if (o == (0)) (IntArr.EMPTY: FBase) else if (o == (cap)) new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o)
+  }: FArray[Int])
+}</pre>
+
+
+</section>
+<section class="ex"><h2>Compute-for-survivors (the sink)</h2>
+<p class="prose">Look at WHERE <code>x * 7</code> lands: INSIDE the <code>if</code>. Column 1 is only needed by the final <code>map</code>, which is downstream of the filter, so it is computed only for elements that SURVIVE. An expensive column behind a selective filter runs a fraction of the time — work the lazy-collection model cannot express, because it has no idea which columns a later stage will read.</p>
+<p class="cap">you write</p><pre class="scala">xs.fuse.map(x =&gt; (x % 2, expensive(x))).filter(_._1 == 0).map(_._2).sum</pre>
+<p class="cap">the macro emits</p><pre class="gen">      val s: FBase = src0
+      val len: Int = s.length
+      if (s.isInstanceOf[IntArr]) {
+        val a: Array[Int] = s.asInstanceOf[IntArr].arr
+        var i: Int = 0
+        while (i &lt; (len)) {
+          val v: Int = a(i)
+          val v₂: Int = v % (2)
+          val v₃: Boolean = v₂ == (0)
+          if (v₃) {
+            val v₄: Int = inline$expensive(v)
+            acc = IntIsIntegral.plus(acc, v₄)
+          } else ()
+          i = i + (1)
+        }
+      } else {
+        var i₂: Int = 0
+        while (i₂ &lt; (len)) {
+          val v₅: Int = FArrayOps.intAt(s, i₂)
+          val v₆: Int = v₅ % (2)
+          val v₇: Boolean = v₆ == (0)
+          if (v₇) {
+            val v₈: Int = inline$expensive(v₅)
+            acc = IntIsIntegral.plus(acc, v₈)
+          } else ()
+          i₂ = i₂ + (1)
+        }
+      }
+      (acc: Int)
+    }.asInstanceOf[Int]: Int)
+  }: Int)
+}</pre>
+
+
+</section>
+<section class="ex"><h2>Common-subexpression elimination</h2>
+<p class="prose"><code>x * x</code> is written twice but computed ONCE — hash-consed across both tuple components, bound to one <code>val</code>, reused. Decomposition + DCE + the sink + CSE all fall out of one idea: model a product as independent lazy columns and bind each at its first use.</p>
+<p class="cap">you write</p><pre class="scala">xs.fuse.map(x =&gt; (x*x + 1, x*x + 2)).map(t =&gt; t._1 + t._2).run</pre>
+<p class="cap">the macro emits</p><pre class="gen">    val out: Array[Int] = new Array[Int](cap)
+    var o: Int = 0
+    val s: FBase = src0
+    val len: Int = s.length
+    if (s.isInstanceOf[IntArr]) {
+      val a: Array[Int] = s.asInstanceOf[IntArr].arr
+      var i: Int = 0
+      while (i &lt; (len)) {
+        val v: Int = a(i)
+        val v₂: Int = v * (v)
+        val v₃: Int = v₂ + (1)
+        val v₄: Int = v₂ + (2)
+        val v₅: Int = v₃ + (v₄)
+        out.set(o, v₅)
+        o = o + (1)
+        i = i + (1)
+      }
+    } else {
+      var i₂: Int = 0
+      while (i₂ &lt; (len)) {
+        val v₆: Int = FArrayOps.intAt(s, i₂)
+        val v₇: Int = v₆ * (v₆)
+        val v₈: Int = v₇ + (1)
+        val v₉: Int = v₇ + (2)
+        val v₁₀: Int = v₈ + (v₉)
+        out.set(o, v₁₀)
+        o = o + (1)
+        i₂ = i₂ + (1)
+      }
+    }
+    if (o == (0)) (IntArr.EMPTY: FBase) else if (o == (cap)) new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o)
+  }: FArray[Int])
+}</pre>
+
+
+</section>
+<section class="ex"><h2>…and the decomposition reaches the terminal's lambda</h2>
+<p class="prose">The same column analysis applies to a <code>foldLeft</code>/<code>reduce</code> lambda. Here the fold reads only <code>s.score</code>, so the optimizer never builds the <code>Stat</code>: <code>s.id</code> and <code>s.weight</code> (and the <code>Stat</code> itself) are DEAD and absent — the loop is just <code>acc = acc + (x * 100)</code>. (A *method* call on <code>s</code> — <code>s.combined</code> — would need the whole object and correctly rebuilds it; only field accessors project to columns.) Before this, the fold rebuilt the entire product per element just to read one field.</p>
+<p class="cap">you write</p><pre class="scala">xs.fuse.map(x =&gt; Stat(x, x * 100, x * 1000)).foldLeft(0)((acc, s) =&gt; acc + s.score)</pre>
+<p class="cap">the macro emits</p><pre class="gen">    var acc: Int = 0
+    val s: FBase = src0
+    val len: Int = s.length
+    if (s.isInstanceOf[IntArr]) {
+      val a: Array[Int] = s.asInstanceOf[IntArr].arr
+      var i: Int = 0
+      while (i &lt; (len)) {
+        val v: Int = a(i)
+        val v₂: Int = v * (100)
+        acc = acc + (v₂)
+        i = i + (1)
+      }
+    } else {
+      var i₂: Int = 0
+      while (i₂ &lt; (len)) {
+        val v₃: Int = FArrayOps.intAt(s, i₂)
+        val v₄: Int = v₃ * (100)
+        acc = acc + (v₄)
+        i₂ = i₂ + (1)
+      }
+    }
+    (acc: Int)
+  }.asInstanceOf[Int]: Int)
+}</pre>
+
+
+</section>
+<footer><a class="nav" href="fused-json.html">The JSON demo →</a><span>Code blocks are the verbatim post-typer expansion (<code>FuseDebug.show</code>), shown, never executed. Generated by <code>farray.json.JsonDemo</code>.</span></footer>
+</body></html>

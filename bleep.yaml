@@ -20,6 +20,8 @@ projects:
     dependencies:
       - junit:junit:4.13.2
       - com.github.sbt:junit-interface:0.13.2
+      - com.github.plokhotnyuk.jsoniter-scala::jsoniter-scala-core:2.31.3
+      - com.github.plokhotnyuk.jsoniter-scala::jsoniter-scala-macros:2.31.3
     dependsOn: farray
     extends: template-common
     isTestProject: true
@@ -27,6 +29,10 @@ projects:
     dependsOn: farray
     extends: template-common
     dependencies:
+      - com.github.plokhotnyuk.jsoniter-scala::jsoniter-scala-core:2.31.3
+      - com.github.plokhotnyuk.jsoniter-scala::jsoniter-scala-macros:2.31.3
+      - org.typelevel::jawn-ast:1.4.0
+      - com.fasterxml.jackson.core:jackson-databind:2.17.2
       - org.openjdk.jmh:jmh-generator-bytecode:1.36
       - build.bleep::bleep-core:${BLEEP_VERSION}
       - co.fs2::fs2-core:3.11.0

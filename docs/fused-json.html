@@ -1,0 +1,414 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Fused JSON: an enormously fast, projection-aware parser</title>
+<style>:root{--bg:#0e1016;--fg:#e7eaf0;--mut:#8b95a6;--acc:#7dd3fc;--ok:#86efac;--code:#151925;--bd:#232a38;--win:#16321f}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);
+font:16px/1.65 -apple-system,Segoe UI,Roboto,sans-serif;max-width:1000px;margin:0 auto;padding:1.5rem 1.25rem 4rem}
+.tabs{display:flex;gap:.5rem;margin-bottom:1rem}
+.tabs a{color:var(--mut);text-decoration:none;padding:.35rem .8rem;border:1px solid var(--bd);border-radius:999px;font-size:.85rem}
+.tabs a.on{color:#0e1016;background:var(--acc);border-color:var(--acc);font-weight:600}
+h1{font-size:1.9rem;margin:.3rem 0}.lede{color:var(--mut);font-size:1.08rem}
+h2{font-size:1.12rem;margin:0 0 .5rem;color:var(--acc)}
+section.ex{border:1px solid var(--bd);border-radius:12px;padding:1.1rem 1.25rem;margin:1.25rem 0;background:#11141d}
+section.setup{border:1px solid #2b3a4a;border-radius:12px;padding:1.1rem 1.25rem;margin:1.25rem 0;background:#10161f}
+section.setup b{color:#cfe6ff}pre.sample{color:#bfe8c8;border-color:#234534;background:#10180f;white-space:pre-wrap}
+.method{color:var(--mut);font-size:.9rem;margin-top:.7rem}
+.prose code,.lede code{color:#ffd9a8}
+.cap{color:var(--mut);font-size:.74rem;text-transform:uppercase;letter-spacing:.07em;margin:1rem 0 .25rem}
+.cap.rival{color:#f0a8a8}
+pre{background:var(--code);border:1px solid var(--bd);border-radius:8px;padding:.7rem .9rem;overflow:auto;
+font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;margin:0}
+pre.scala{color:#dbe7ff}pre.gen{color:#c4ccda;max-height:420px}pre.rival{color:#e9c9c9;border-color:#5a2e2e;background:#1b1416}
+.kw{color:#c792ea;font-weight:600}.cm{color:#6b7686;font-style:italic}
+code{background:var(--code);border:1px solid var(--bd);border-radius:4px;padding:.04rem .3rem;font:12.5px ui-monospace,Menlo,monospace;color:#ffd9a8}
+table.bench{width:100%;border-collapse:collapse;margin:.3rem 0;font-size:.92rem}
+table.bench th{color:var(--mut);text-align:right;font-weight:500;font-size:.78rem;padding:.3rem .6rem;border-bottom:1px solid var(--bd)}
+table.bench th:first-child{text-align:left}
+table.bench td{padding:.4rem .6rem;border-bottom:1px solid #1a2030}.bench td.num{text-align:right;font:13px ui-monospace,Menlo,monospace}
+table.bench tr.win{background:var(--win)}table.bench tr.win td{color:var(--ok)}
+.headline{color:var(--ok);font-weight:600;margin:.5rem 0 0}.trophy{color:var(--ok)}
+footer{color:var(--mut);font-size:.85rem;margin-top:2rem;display:flex;justify-content:space-between;gap:1rem;align-items:center}
+footer .nav{color:var(--acc);text-decoration:none;font-weight:600;white-space:nowrap}</style></head><body>
+<header><div class="tabs"><a href="fused-optimizer.html">1 · The optimizer</a><a class="on"" href="fused-json.html">2 · Fused JSON</a></div>
+<h1>Fused JSON: an enormously fast, projection-aware parser</h1><p class="lede">Now turn the optimizer loose on JSON. The insight that makes it work: a JSON object is a PRODUCT whose fields are COLUMNS, sourced from byte ranges. So the SAME optimizer — unchanged — becomes an enormously fast, projection-aware JSON parser. You wrap a byte buffer as a source and start a pipeline with <code>.stream</code> (<code>Json.ndjson[Event](src).stream.filter(…).map(…)</code> — the <code>.stream</code> signals it's a record SOURCE consumed byte-by-byte, not an in-memory <code>FArray</code>, which uses <code>.fuse</code>). The macro reads your <code>.filter(…).map(…)</code> chain, works out which fields it actually touches, and emits ONE specialized per-record scanner that reads straight off the <code>byte[]</code>: dead fields are skipped at the byte level, a projected string is decoded only for survivors, a record whose filter fails is abandoned mid-scan, and no per-record object is ever allocated. The result beats the JVM's best hand-tuned parser on a projection query — and laps the popular AST parsers.</p></header>
+<section class="setup"><h2>The benchmark</h2>
+<p class="prose">The dataset is NDJSON — one JSON object per line — of <b>10 000 records</b>, <b>3 348 775 bytes (~3.2 MB)</b>, each record a <b>20-field</b> object averaging <b>~334 bytes</b> (a realistic mix of longs, ints, doubles, and strings). Every query below touches just <b>1–2 of those 20 fields</b> — the projection case where pushdown pays. A representative record:</p>
+<pre class="sample">{ "id":7, "ts":1700000000000, "age":34, "amount":250.50, "score":88.0,
+  "name":"Ada", "category":"books", "status":"active", "region":"eu", … 11 more fields … }</pre>
+<p class="prose method">Measured with JMH (5×2s warmup, 5×2s measurement) and <code>-prof gc</code> for allocation. Throughput is ops/s over the whole 10 000-record buffer; allocation (B/op) is bytes per buffer-op, so ÷10 000 ≈ bytes per record. Each parser does the SAME query: filter on one field, project another. The fuse column is the generated scanner; the others are each library's best idiom for "read a couple of fields per line." Run on a warm JVM (GraalVM 25, Apple Silicon); your machine will differ, but the ratios are the story.</p></section>
+<section class="ex"><h2>Projection pushdown — read 1 field of 20</h2>
+<p class="prose">The pipeline reads only <code>amount</code>. Every other field is a dead column with no slot: the generated scanner hands it to <code>skipValue</code>, which advances past its bytes without decoding or allocating. A 20-field record costs one number-parse and 19 byte-skips. No <code>Event</code> is built; the fold runs into a <code>var</code>.</p>
+<p class="cap">you write</p><pre class="scala">Json.ndjson[Event](src).stream.filter(_.amount &gt; 150).map(_.amount).foldLeft(0.0)(_ + _)</pre>
+<p class="cap">the macro emits</p><pre class="gen">    var acc: Double = 0.0
+    val src = source
+    val buf: Array[Byte] = src.buf
+    val until: Int = src.until
+    val keyBytes: Array[Byte] = JsonScanner.internKey("amount")
+    var lineStart: Int = src.from
+    while (lineStart &lt; (until) &amp;&amp; (true)) {
+      var lineEnd: Int = lineStart
+      while (lineEnd &lt; (until) &amp;&amp; (buf(lineEnd) != ('\n'))) lineEnd = lineEnd + (1)
+      var v: Double = 0.0
+      var pNext: Int = 0
+      var seen: Boolean = false
+      var p: Int = lineStart + (1)
+      var open: Boolean = buf(lineStart) == ('{')
+      while (open) if (buf(p) == ('}')) open = false else {
+        val ks: Int = p + (1)
+        val ke: Int = {
+        }
+        p = if (!seen &amp;&amp; (({
+          val len: Int = ke.-(ks)
+          len == (keyBytes.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes, 0, len))
+        }: Boolean))) {
+          v = JsonScanner.readDoubleAt(buf, ke + (2), lineEnd)
+          pNext = (inline$numEndTL.get()(0): Int)
+          seen = true
+          pNext
+        } else JsonScanner.skipValue(buf, ke + (2), lineEnd)
+        if (seen) open = false else if (buf(p) == (',')) p = p + (1) else open = false
+      }
+      val v₂: Boolean = v &gt; (150)
+      if (v₂) acc = acc + (v) else ()
+      lineStart = lineEnd + (1)
+    }
+    (acc: Double)
+  }.asInstanceOf[Double]: Double)
+}</pre>
+<p class="cap rival">what we beat — the field — jsoniter-scala (hand-written reader, no object), jawn, and Jackson all do the same query</p><pre class="rival"><span class="cm">// jsoniter-scala — hand-written reader, the strongest baseline (no object, folds into a <span class="kw">var</span>):</span>
+<span class="kw">val</span> len = in.readKeyAsCharBuf()                 <span class="cm">// still decodes EVERY key into a char[] + hashes it</span>
+<span class="kw">if</span> in.isCharBufEqualsTo(len, "amount") <span class="kw">then</span>     <span class="cm">// …<span class="kw">then</span> compares — even for the 19 fields we skip</span>
+  amount = in.readDouble()
+<span class="kw">else</span> in.skip()                                  <span class="cm">// walks the value's bytes; no predicate early-out</span>
+
+<span class="cm">// jawn — typelevel's well-regarded parser. No projection: it builds the WHOLE AST per record.</span>
+<span class="kw">val</span> j = JParser.parseFromByteBuffer(ByteBuffer.wrap(buf, start, len)).get   <span class="cm">// JObject of all 20 fields,</span>
+<span class="kw">val</span> a = j.get("amount").asDouble                                            <span class="cm">// every value boxed as a JValue</span>
+
+<span class="cm">// Jackson — databind tree model. Same story: a full JsonNode tree per record, <span class="kw">then</span> read one field.</span>
+<span class="kw">val</span> node = mapper.readTree(buf, start, len)     <span class="cm">// builds &amp; boxes all 20 fields,</span>
+<span class="kw">val</span> a = node.get("amount").asDouble             <span class="cm">// to read exactly one</span></pre>
+<p class="cap">measured (JMH, -prof gc)</p>
+<table class="bench"><thead><tr><th></th><th>throughput</th><th>allocation</th></tr></thead><tbody><tr class="r win"><td>fuse (generated scanner)</td><td class="num">395 ops/s</td><td class="num">0.6 B/op</td></tr><tr class="r"><td>jsoniter — hand-written reader, no object</td><td class="num">256 ops/s</td><td class="num">0.8 B/op</td></tr><tr class="r"><td>jsoniter — full codec (parses all 20 fields)</td><td class="num">145 ops/s</td><td class="num">6 464 001 B/op</td></tr><tr class="r"><td>Jackson — tree model (JsonNode)</td><td class="num">87 ops/s</td><td class="num">31 047 490 B/op</td></tr><tr class="r"><td>jawn — AST (JValue)</td><td class="num">46 ops/s</td><td class="num">45 885 204 B/op</td></tr></tbody></table>
+<p class="headline"><span class="trophy">▲</span> fuse beats the JVM's best hand-tuned parser 1.5×, and laps the AST parsers 4–9× — at ~zero allocation</p>
+</section>
+<section class="ex"><h2>Lazy decode — a String built only for survivors</h2>
+<p class="prose"><code>category</code> gets a slot, but a STRING slot is just <code>(start, len)</code> into the buffer — not a decoded String. <code>amount</code> decodes (the filter needs it); <code>category</code> stays a byte slice and becomes a real <code>String</code> only INSIDE the survivor <code>if</code>. Rejected rows never allocate a String. This is the same compute-for-survivors sink from page 1, now over bytes.</p>
+<p class="cap">you write</p><pre class="scala">Json.ndjson[Event](src).stream.filter(_.amount &gt; 150).map(_.category).toList</pre>
+<p class="cap">the macro emits</p><pre class="gen">      val buf: Array[Byte] = src.buf
+      val until: Int = src.until
+      val keyBytes: Array[Byte] = JsonScanner.internKey("amount")
+      val keyBytes₂: Array[Byte] = JsonScanner.internKey("category")
+      var lineStart: Int = src.from
+      while (lineStart &lt; (until) &amp;&amp; (true)) {
+        var lineEnd: Int = lineStart
+        while (lineEnd &lt; (until) &amp;&amp; (buf(lineEnd) != ('\n'))) lineEnd = lineEnd + (1)
+        var v: Double = 0.0
+        var pNext: Int = 0
+        var seen: Boolean = false
+        var st: Int = 0
+        var ln: Int = 0
+        var seen₂: Boolean = false
+        var rejected: Boolean = false
+        var p: Int = lineStart + (1)
+        var open: Boolean = buf(lineStart) == ('{')
+        var predChecked: Boolean = false
+        while (open) if (buf(p) == ('}')) open = false else {
+          val ks: Int = p + (1)
+          val ke: Int = {
+          }
+          p = if (!seen &amp;&amp; (({
+            val len: Int = ke.-(ks)
+            len == (keyBytes.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes, 0, len))
+          }: Boolean))) {
+            v = JsonScanner.readDoubleAt(buf, ke + (2), lineEnd)
+            pNext = (inline$numEndTL.get()(0): Int)
+            seen = true
+            pNext
+          } else if (seen₂.unary_! &amp;&amp; (({
+            val len₂: Int = ke.-(ks)
+            len₂ == (keyBytes₂.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₂, 0, len₂))
+          }: Boolean))) {
+            val vs: Int = ke + (2) + (1)
+            val ve: Int = {
+            }
+            st = vs
+            ln = ve.-(vs)
+            seen₂ = true
+            ve + (1)
+          } else JsonScanner.skipValue(buf, ke + (2), lineEnd)
+          if (!predChecked &amp;&amp; (seen)) {
+            predChecked = true
+            if (v &gt; (150).unary_!) {
+              rejected = true
+              open = false
+            } else ()
+          } else ()
+          if (open) if (seen &amp;&amp; (seen₂)) open = false else if (buf(p) == (',')) p = p + (1) else open = false else ()
+        }
+        if (!rejected) {
+          val v₂: Boolean = v &gt; (150)
+          if (v₂) {
+            val v₃: String = {
+            }
+            b.+=(v₃)
+            ()
+          } else ()
+        } else ()
+        lineStart = lineEnd + (1)
+      }
+      ()
+    }.asInstanceOf[Unit]: Unit)
+    b.result()
+  }: List[String])
+}</pre>
+<p class="cap rival">what we beat — jsoniter-scala, narrow codec (only the read fields; the rest skipped)</p><pre class="rival"><span class="cm">// a case class with ONLY the read fields; the macro-generated codec skips the rest.</span>
+final case class Narrow(amount: Double, category: String)
+<span class="kw">given</span> JsonValueCodec[Narrow] = JsonCodecMaker.make
+<span class="cm">// per line:</span>
+<span class="kw">val</span> r = readFromSubArray[Narrow](buf, start, end)   <span class="cm">// allocates a Narrow object every record,</span>
+<span class="kw">if</span> r.amount &gt; 150 <span class="kw">then</span> r.category                   <span class="cm">// and decodes `category` for ALL survivors</span></pre>
+
+</section>
+<section class="ex"><h2>Discard-DCE — count never decodes the projection</h2>
+<p class="prose"><code>count</code> ignores the element, so <code>map(_.category)</code> is a dead value. The optimizer captures the slice but never turns it into a String — zero String allocations. Same for <code>isEmpty</code>/<code>nonEmpty</code>, and for <code>map(expensive).count</code>, where <code>expensive</code> never runs. Dead-column elimination reaching the terminal.</p>
+<p class="cap">you write</p><pre class="scala">Json.ndjson[Event](src).stream.filter(_.status == "active").map(_.category).count</pre>
+<p class="cap">the macro emits</p><pre class="gen">    val buf: Array[Byte] = src.buf
+    val until: Int = src.until
+    val keyBytes: Array[Byte] = JsonScanner.internKey("category")
+    val keyBytes₂: Array[Byte] = JsonScanner.internKey("status")
+    var lineStart: Int = src.from
+    while (lineStart &lt; (until) &amp;&amp; (true)) {
+      var lineEnd: Int = lineStart
+      while (lineEnd &lt; (until) &amp;&amp; (buf(lineEnd) != ('\n'))) lineEnd = lineEnd + (1)
+      var st: Int = 0
+      var ln: Int = 0
+      var seen: Boolean = false
+      var st₂: Int = 0
+      var ln₂: Int = 0
+      var seen₂: Boolean = false
+      var rejected: Boolean = false
+      var p: Int = lineStart + (1)
+      var open: Boolean = buf(lineStart) == ('{')
+      var predChecked: Boolean = false
+      while (open) if (buf(p) == ('}')) open = false else {
+        val ks: Int = p + (1)
+        val ke: Int = {
+        }
+        p = if (!seen &amp;&amp; (({
+          val len: Int = ke.-(ks)
+          len == (keyBytes.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes, 0, len))
+        }: Boolean))) {
+          val vs: Int = ke + (2) + (1)
+          val ve: Int = {
+          }
+          st = vs
+          ln = ve.-(vs)
+          seen = true
+          ve + (1)
+        } else if (seen₂.unary_! &amp;&amp; (({
+          val len₂: Int = ke.-(ks)
+          len₂ == (keyBytes₂.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₂, 0, len₂))
+        }: Boolean))) {
+          val vs₂: Int = ke + (2) + (1)
+          val ve₂: Int = {
+          }
+          st₂ = vs₂
+          ln₂ = ve₂.-(vs₂)
+          seen₂ = true
+          ve₂ + (1)
+        } else JsonScanner.skipValue(buf, ke + (2), lineEnd)
+        if (!predChecked &amp;&amp; (seen₂)) {
+          predChecked = true
+          if ({
+          } == ("active").unary_!) {
+            rejected = true
+            open = false
+          } else ()
+        } else ()
+        if (open) if (seen &amp;&amp; (seen₂)) open = false else if (buf(p) == (',')) p = p + (1) else open = false else ()
+      }
+      if (!rejected) {
+        val v: String = {
+        }
+        val v₂: Boolean = v == ("active")
+        if (v₂) cnt = cnt + (1) else ()
+      } else ()
+      lineStart = lineEnd + (1)
+    }
+    (cnt: Int)
+  }.asInstanceOf[Int]: Int)
+}</pre>
+
+<p class="cap">measured (JMH, -prof gc)</p>
+<table class="bench"><thead><tr><th></th><th>throughput</th><th>allocation</th></tr></thead><tbody><tr class="r win"><td>fuse (no String decoded at all)</td><td class="num">340 ops/s</td><td class="num">0.6 B/op</td></tr><tr class="r"><td>jsoniter — narrow codec</td><td class="num">231 ops/s</td><td class="num">720 001 B/op</td></tr></tbody></table>
+<p class="headline"><span class="trophy">▲</span> fuse 1.47× faster, and ~zero allocation vs jsoniter's per-record object</p>
+</section>
+<section class="ex"><h2>Predicate-fail early-out — abandon a record mid-scan</h2>
+<p class="prose">The filter field is decoded DURING the scan; the instant it's known the predicate is checked INLINE, and on failure the record is abandoned right there — the scanner never looks for the later projected field. Here <code>key</code> is first, <code>payload</code> (a long string) is last, and 90% of records are rejected: the rejected ones cost only "scan to <code>key</code>, compare, stop". This is the biggest win on fat selective queries.</p>
+<p class="cap">you write</p><pre class="scala">Json.ndjson[Wide](src).stream.filter(_.key &gt; 90).map(_.payload).count</pre>
+<p class="cap">the macro emits</p><pre class="gen">    val buf: Array[Byte] = src.buf
+    val until: Int = src.until
+    val keyBytes: Array[Byte] = JsonScanner.internKey("key")
+    val keyBytes₂: Array[Byte] = JsonScanner.internKey("payload")
+    var lineStart: Int = src.from
+    while (lineStart &lt; (until) &amp;&amp; (true)) {
+      var lineEnd: Int = lineStart
+      while (lineEnd &lt; (until) &amp;&amp; (buf(lineEnd) != ('\n'))) lineEnd = lineEnd + (1)
+      var v: Int = 0
+      var pNext: Int = 0
+      var seen: Boolean = false
+      var st: Int = 0
+      var ln: Int = 0
+      var seen₂: Boolean = false
+      var rejected: Boolean = false
+      var p: Int = lineStart + (1)
+      var open: Boolean = buf(lineStart) == ('{')
+      var predChecked: Boolean = false
+      while (open) if (buf(p) == ('}')) open = false else {
+        val ks: Int = p + (1)
+        val ke: Int = {
+        }
+        p = if (!seen &amp;&amp; (({
+          val len: Int = ke.-(ks)
+          len == (keyBytes.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes, 0, len))
+        }: Boolean))) {
+          v = JsonScanner.readIntAt(buf, ke + (2), lineEnd)
+          pNext = (inline$numEndTL.get()(0): Int)
+          seen = true
+          pNext
+        } else if (seen₂.unary_! &amp;&amp; (({
+          val len₂: Int = ke.-(ks)
+          len₂ == (keyBytes₂.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₂, 0, len₂))
+        }: Boolean))) {
+          val vs: Int = ke + (2) + (1)
+          val ve: Int = {
+          }
+          st = vs
+          ln = ve.-(vs)
+          seen₂ = true
+          ve + (1)
+        } else JsonScanner.skipValue(buf, ke + (2), lineEnd)
+        if (!predChecked &amp;&amp; (seen)) {
+          predChecked = true
+          if (v &gt; (90).unary_!) {
+            rejected = true
+            open = false
+          } else ()
+        } else ()
+        if (open) if (seen &amp;&amp; (seen₂)) open = false else if (buf(p) == (',')) p = p + (1) else open = false else ()
+      }
+      if (!rejected) {
+        val v₂: Boolean = v &gt; (90)
+        if (v₂) cnt = cnt + (1) else ()
+      } else ()
+      lineStart = lineEnd + (1)
+    }
+    (cnt: Int)
+  }.asInstanceOf[Int]: Int)
+}</pre>
+
+<p class="cap">measured (JMH, -prof gc)</p>
+<table class="bench"><thead><tr><th></th><th>throughput</th><th>allocation</th></tr></thead><tbody><tr class="r win"><td>fuse (rejected records stop at `key`)</td><td class="num">1212 ops/s</td><td class="num">0.17 B/op</td></tr><tr class="r"><td>jsoniter — narrow codec {key, payload}</td><td class="num">491 ops/s</td><td class="num">1 432 000 B/op</td></tr></tbody></table>
+<p class="headline"><span class="trophy">▲</span> fuse 2.47× faster, near-zero allocation vs 1.4 MB/op</p>
+</section>
+<section class="ex"><h2>Multi-aggregate — three aggregates, ONE pass, into a case class</h2>
+<p class="prose">Sum the amount, count the rows, and take the peak score of the active events — <code>agg</code> runs all three in a single fused scan, carrying one (UNBOXED) accumulator each. The columns the aggregates read are MERGED automatically: <code>amount</code>, <code>status</code>, and <code>score</code> are scanned (3 of 20 fields), each once; <code>count</code> reads nothing extra. <code>aggTo(Stats.apply)</code> returns a case class, not a tuple. No <code>Event</code> is built; the <code>sum</code>/<code>max</code> use <code>dadd</code>/<code>dcmp</code>, not the boxing <code>Numeric</code>/<code>Ordering</code>.</p>
+<p class="cap">you write</p><pre class="scala">Json.ndjson[Event](src).stream.filter(_.status == "active")
+  .aggTo(Stats.apply)(<span class="kw">Agg</span>.sum(_.amount), <span class="kw">Agg</span>.count, <span class="kw">Agg</span>.max1(_.score))</pre>
+<p class="cap">the macro emits</p><pre class="gen">    var acc: Double = 0.0
+    var c: Int = 0
+    var best: Double = null.asInstanceOf[Double]
+    var seen: Boolean = false
+    val src = source
+    val buf: Array[Byte] = src.buf
+    val until: Int = src.until
+    val keyBytes: Array[Byte] = JsonScanner.internKey("amount")
+    val keyBytes₂: Array[Byte] = JsonScanner.internKey("score")
+    val keyBytes₃: Array[Byte] = JsonScanner.internKey("status")
+    var lineStart: Int = src.from
+    while (lineStart &lt; (until) &amp;&amp; (true)) {
+      var lineEnd: Int = lineStart
+      while (lineEnd &lt; (until) &amp;&amp; (buf(lineEnd) != ('\n'))) lineEnd = lineEnd + (1)
+      var v: Double = 0.0
+      var pNext: Int = 0
+      var seen₂: Boolean = false
+      var v₂: Double = 0.0
+      var pNext₂: Int = 0
+      var seen₃: Boolean = false
+      var st: Int = 0
+      var ln: Int = 0
+      var seen₄: Boolean = false
+      var rejected: Boolean = false
+      var p: Int = lineStart + (1)
+      var open: Boolean = buf(lineStart) == ('{')
+      var predChecked: Boolean = false
+      while (open) if (buf(p) == ('}')) open = false else {
+        val ks: Int = p + (1)
+        val ke: Int = {
+        }
+        p = if (seen₂.unary_! &amp;&amp; (({
+          val len: Int = ke.-(ks)
+          len == (keyBytes.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes, 0, len))
+        }: Boolean))) {
+          v = JsonScanner.readDoubleAt(buf, ke + (2), lineEnd)
+          pNext = (inline$numEndTL.get()(0): Int)
+          seen₂ = true
+          pNext
+        } else if (seen₃.unary_! &amp;&amp; (({
+          val len₂: Int = ke.-(ks)
+          len₂ == (keyBytes₂.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₂, 0, len₂))
+        }: Boolean))) {
+          v₂ = JsonScanner.readDoubleAt(buf, ke + (2), lineEnd)
+          pNext₂ = (inline$numEndTL.get()(0): Int)
+          seen₃ = true
+          pNext₂
+        } else if (seen₄.unary_! &amp;&amp; (({
+          val len₃: Int = ke.-(ks)
+          len₃ == (keyBytes₃.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₃, 0, len₃))
+        }: Boolean))) {
+          val vs: Int = ke + (2) + (1)
+          val ve: Int = {
+          }
+          st = vs
+          ln = ve.-(vs)
+          seen₄ = true
+          ve + (1)
+        } else JsonScanner.skipValue(buf, ke + (2), lineEnd)
+        if (!predChecked &amp;&amp; (seen₄)) {
+          predChecked = true
+          if ({
+          } == ("active").unary_!) {
+            rejected = true
+            open = false
+          } else ()
+        } else ()
+        if (open) if (seen₂ &amp;&amp; (seen₃) &amp;&amp; (seen₄)) open = false else if (buf(p) == (',')) p = p + (1) else open = false else ()
+      }
+      if (!rejected) {
+        val v₃: String = {
+        }
+        val v₄: Boolean = v₃ == ("active")
+        if (v₄) {
+          acc = acc + (v)
+          c = c + (1)
+          val kk: Double = v₂
+          if (!seen || (kk &gt; (best))) {
+            best = kk
+            seen = true
+          } else ()
+          ()
+        } else ()
+      } else ()
+      lineStart = lineEnd + (1)
+    }
+    val revenue: Double = acc
+    val n: Int = c
+    val peak: Double = if (seen) best else throw new NoSuchElementException("min1/max1 of empty fused pipeline")
+    Stats(revenue, n, peak)
+  }.asInstanceOf[Stats]: Stats)
+}</pre>
+
+
+</section>
+<footer><a class="nav" href="fused-optimizer.html">← The optimizer</a><span>Code blocks are the verbatim post-typer expansion (<code>FuseDebug.show</code>), shown, never executed. Generated by <code>farray.json.JsonDemo</code>.</span></footer>
+</body></html>
