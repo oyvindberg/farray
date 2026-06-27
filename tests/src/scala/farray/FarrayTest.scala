@@ -843,6 +843,20 @@ class FListTest:
     val r = FArray(1, 2).fuse.map(x => g(x) + g(x)).toFArray.toList
     org.junit.Assert.assertEquals(List(22, 24), r)
     org.junit.Assert.assertEquals("g(x) CSE'd within one expression", 2, c)
+  @Test def test_fuse_cse_ref: Unit = // shared String sub-expression
+    var c = 0
+    def up(s: String): String = { c += 1; s.toUpperCase }
+    val r = FArray("ab", "cd").fuse.map(s => up(s) + up(s)).toFArray.toList
+    org.junit.Assert.assertEquals(List("ABAB", "CDCD"), r)
+    org.junit.Assert.assertEquals("up(s) CSE'd once per element", 2, c)
+  @Test def test_fuse_cse_nested_calls: Unit = // f(x) and g(f(x)) both shared
+    var fc = 0; var gc = 0
+    def f(x: Int): Int = { fc += 1; x + 1 }
+    def g(y: Int): Int = { gc += 1; y * 2 }
+    val r = FArray(1, 2).fuse.map(x => (g(f(x)), g(f(x)) + f(x))).map(t => t._1 + t._2).toFArray.toList
+    org.junit.Assert.assertEquals(List(10, 15), r) // 2*g(f(x)) + f(x)
+    org.junit.Assert.assertEquals("f(x) shared", 2, fc)
+    org.junit.Assert.assertEquals("g(f(x)) shared", 2, gc)
   @Test def test_fuse_cse_sink: Unit = // a shared expr used only past the filter still sinks (computed for survivors)
     var e = 0
     def exp(x: Int): Int = { e += 1; x * 100 }
