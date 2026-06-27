@@ -202,9 +202,11 @@ object FArray:
       val t = FArrayOps.partitionImpl[A](xs)(p); (t._1.asInstanceOf[FArray[A]], t._2.asInstanceOf[FArray[A]])
     inline def collect[B](pf: PartialFunction[A, B]): FArray[B] = FArrayOps.collectImpl[A, B](xs)(pf).asInstanceOf[FArray[B]]
     inline def distinct: FArray[A] =
-      val seen = scala.collection.mutable.HashSet.empty[Any]; xs.filter(a => seen.add(a))
+      if xs.length <= 1 then xs
+      else { val seen = scala.collection.mutable.HashSet.empty[Any]; xs.filter(a => seen.add(a)) }
     inline def distinctBy[B](inline f: A => B): FArray[A] =
-      val seen = scala.collection.mutable.HashSet.empty[B]; xs.filter(a => seen.add(f(a)))
+      if xs.length <= 1 then xs
+      else { val seen = scala.collection.mutable.HashSet.empty[B]; xs.filter(a => seen.add(f(a))) }
     inline def zip[B](that: FArray[B]): FArray[(A, B)] = FArrayOps.zipImpl[A, B](xs, that)
     inline def zipWithIndex: FArray[(A, Int)] = FArrayOps.zipWithIndexImpl[A](xs)
     inline def sortWith(inline lt: (A, A) => Boolean): FArray[A] = FArrayOps.sortWithImpl[A](xs)(lt)
@@ -231,7 +233,8 @@ object FArray:
     inline def toList: List[A] = { val b = List.newBuilder[A]; xs.foreach(a => b += a); b.result() }
     inline def toVector: Vector[A] = { val b = Vector.newBuilder[A]; xs.foreach(a => b += a); b.result() }
     def toSeq: Seq[A] = new FArraySeq[A](xs)
-    inline def toSet[B >: A]: Set[B] = { val b = Set.newBuilder[B]; xs.foreach(a => b += a); b.result() }
+    inline def toSet[B >: A]: Set[B] =
+      if xs.length == 0 then Set.empty[B] else { val b = Set.newBuilder[B]; xs.foreach(a => b += a); b.result() }
     inline def toMap[K, V](using ev: A <:< (K, V)): Map[K, V] = { val b = Map.newBuilder[K, V]; xs.foreach(a => b += ev(a)); b.result() }
     inline def toArray[B >: A](using ct: ClassTag[B]): Array[B] = FArrayOps.toArrayImpl[A, B](xs)(ct)
     inline def mkString(start: String, sep: String, end: String): String = FArrayOps.mkStringImpl[A](xs, start, sep, end)
@@ -245,13 +248,18 @@ object FArray:
 
     inline def padTo[B >: A](len: Int, elem: B): FArray[B] = FArrayOps.padToImpl[A, B](xs, len, elem)
     inline def diff[B >: A](that: FArray[B]): FArray[A] =
-      val rem = scala.collection.mutable.HashMap.empty[Any, Int]
-      that.foreach(b => rem.update(b, rem.getOrElse(b, 0) + 1))
-      xs.filter { a => rem.getOrElse(a, 0) match { case 0 => true; case c => rem.update(a, c - 1); false } }
+      if xs.length == 0 || that.length == 0 then xs
+      else
+        val rem = scala.collection.mutable.HashMap.empty[Any, Int]
+        that.foreach(b => rem.update(b, rem.getOrElse(b, 0) + 1))
+        xs.filter { a => rem.getOrElse(a, 0) match { case 0 => true; case c => rem.update(a, c - 1); false } }
     inline def intersect[B >: A](that: FArray[B]): FArray[A] =
-      val keep = scala.collection.mutable.HashMap.empty[Any, Int]
-      that.foreach(b => keep.update(b, keep.getOrElse(b, 0) + 1))
-      xs.filter { a => keep.getOrElse(a, 0) match { case 0 => false; case c => keep.update(a, c - 1); true } }
+      if xs.length == 0 then xs
+      else if that.length == 0 then FArray.empty[A]
+      else
+        val keep = scala.collection.mutable.HashMap.empty[Any, Int]
+        that.foreach(b => keep.update(b, keep.getOrElse(b, 0) + 1))
+        xs.filter { a => keep.getOrElse(a, 0) match { case 0 => false; case c => keep.update(a, c - 1); true } }
     inline def lazyZip[B, C](ys: FArray[B], zs: FArray[C]): FArray[(A, B, C)] =
       val n = math.min(xs.length, math.min(ys.length, zs.length))
       FArray.tabulate(n)(i => (FArrayOps.applyAtImpl[A](xs, i), FArrayOps.applyAtImpl[B](ys, i), FArrayOps.applyAtImpl[C](zs, i)))
@@ -293,10 +301,15 @@ object FArray:
     inline def lastIndexOf[B >: A](elem: B): Int = FArrayOps.lastIndexOfImpl[A, B](xs, elem, xs.length - 1)
     inline def lastIndexOf[B >: A](elem: B, end: Int): Int = FArrayOps.lastIndexOfImpl[A, B](xs, elem, end)
     inline def sameElements[B >: A](that: FArray[B]): Boolean =
-      xs.length == that.length && FArrayOps.matchAll2Impl[A, B](xs, 0, that, xs.length)((a, b) => a == b)
+      val n = xs.length
+      if n != that.length then false
+      else if n == 0 then true
+      else if n == 1 then FArrayOps.applyAtImpl[A](xs, 0) == FArrayOps.applyAtImpl[B](that, 0)
+      else FArrayOps.matchAll2Impl[A, B](xs, 0, that, n)((a, b) => a == b)
     inline def indexOfSlice[B >: A](that: FArray[B]): Int =
       val m = that.length; val n = xs.length
       if m == 0 then 0
+      else if m == 1 then xs.indexOf[B](FArrayOps.applyAtImpl[B](that, 0))
       else
         var i = 0; var res = -1
         while i + m <= n && res < 0 do
@@ -305,6 +318,7 @@ object FArray:
     inline def lastIndexOfSlice[B >: A](that: FArray[B]): Int =
       val m = that.length; val n = xs.length
       if m == 0 then n
+      else if m == 1 then xs.lastIndexOf[B](FArrayOps.applyAtImpl[B](that, 0))
       else
         var i = n - m; var res = -1
         while i >= 0 && res < 0 do

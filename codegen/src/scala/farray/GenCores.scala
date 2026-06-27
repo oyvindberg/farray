@@ -1689,8 +1689,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def fromValues32[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A, p18: A, p19: A, p20: A, p21: A, p22: A, p23: A, p24: A, p25: A, p26: A, p27: A, p28: A, p29: A, p30: A, p31: A, p32: A): FBase = $fromValues32
        |  inline def tabulateImpl[A](n: Int)(inline f: Int => A): FBase = $tabulate
        |  inline def fromArrayImpl[A](as: Array[A]): FBase = $fromArr
-       |  inline def mkStringImpl[A](xs: FBase, start: String, sep: String, end: String): String = if (xs.length == 0) start + end else $mkStringV
-       |  inline def toArrayImpl[A, B](xs: FBase)(ct: scala.reflect.ClassTag[B]): Array[B] = $toArrayV
+       |  inline def mkStringImpl[A](xs: FBase, start: String, sep: String, end: String): String = if (xs.length == 0) start + end else if (xs.length == 1) start + String.valueOf(applyAtImpl[A](xs, 0)) + end else $mkStringV
+       |  inline def toArrayImpl[A, B](xs: FBase)(ct: scala.reflect.ClassTag[B]): Array[B] = if (xs.length == 0) ct.newArray(0) else if (xs.length == 1) { val out = ct.newArray(1); out(0) = applyAtImpl[A](xs, 0).asInstanceOf[B]; out } else $toArrayV
        |  inline def copyToArrayImpl[A, B](xs: FBase, dest: Array[B], start: Int, len: Int): Int = $copyToArrayV
        |  inline def foldLeftImpl[A, Z](xs: FBase, z: Z)(inline op: (Z, A) => Z): Z = $foldLeft
        |  inline def foldRightImpl[A, Z](xs: FBase, z: Z)(inline op: (A, Z) => Z): Z = $foldRightV
@@ -1701,17 +1701,17 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def existsImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = { val length = xs.length; $existsV }
        |  inline def forallImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = { val length = xs.length; $forallV }
        |  inline def findImpl[A](xs: FBase)(inline p: A => Boolean): Option[A] = { val length = xs.length; $findV }
-       |  inline def indexWhereImpl[A](xs: FBase, from: Int)(inline p: A => Boolean): Int = { val length = xs.length; $indexWhereV }
-       |  inline def indexOfImpl[A, B](xs: FBase, elem: B, from: Int): Int = { val length = xs.length; $indexOfV }
+       |  inline def indexWhereImpl[A](xs: FBase, from: Int)(inline p: A => Boolean): Int = { val length = xs.length; if (length == 0) -1 else $indexWhereV }
+       |  inline def indexOfImpl[A, B](xs: FBase, elem: B, from: Int): Int = { val length = xs.length; if (length == 0) -1 else $indexOfV }
        |  inline def segmentLengthImpl[A](xs: FBase, from: Int)(inline p: A => Boolean): Int = { val length = xs.length; $segmentLenV }
-       |  inline def lastIndexWhereImpl[A](xs: FBase, end: Int)(inline p: A => Boolean): Int = { val length = xs.length; $lastIndexWhereV }
-       |  inline def lastIndexOfImpl[A, B](xs: FBase, elem: B, end: Int): Int = { val length = xs.length; $lastIndexOfV }
+       |  inline def lastIndexWhereImpl[A](xs: FBase, end: Int)(inline p: A => Boolean): Int = { val length = xs.length; if (length == 0) -1 else $lastIndexWhereV }
+       |  inline def lastIndexOfImpl[A, B](xs: FBase, elem: B, end: Int): Int = { val length = xs.length; if (length == 0) -1 else $lastIndexOfV }
        |  inline def collectFirstImpl[A, B](xs: FBase)(pf: PartialFunction[A, B]): Option[B] = { val length = xs.length; $collectFirstV }
        |  inline def prefixLengthImpl[A](xs: FBase)(inline p: A => Boolean): Int = $prefixLenV
        |  inline def mapImpl[A, B](xs: FBase)(inline f: A => B): FBase = { val n = xs.length; $mapM }
        |  inline def filterImpl[A](xs: FBase)(inline p: A => Boolean): FBase = $filter
        |  inline def filterNotImpl[A](xs: FBase)(inline p: A => Boolean): FBase = ${dispatchA(k => s"filterLeaf${k.name}(xs, ${predSAM(k, s"!p(${wrapV(k)})")})")}
-       |  inline def partitionImpl[A](xs: FBase)(inline p: A => Boolean): scala.Tuple2[FBase, FBase] = $partition
+       |  inline def partitionImpl[A](xs: FBase)(inline p: A => Boolean): scala.Tuple2[FBase, FBase] = if (xs.length == 0) new scala.Tuple2(Empty.INSTANCE, Empty.INSTANCE) else $partition
        |  inline def collectImpl[A, B](xs: FBase)(pf: PartialFunction[A, B]): FBase = $collect
        |  inline def partitionMapImpl[A, A1, A2](xs: FBase)(inline f: A => Either[A1, A2]): scala.Tuple2[FBase, FBase] = $partitionMap
        |  inline def containsImpl[A](xs: FBase, elem: A): Boolean = { val length = xs.length; $contains }
@@ -1727,16 +1727,16 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def appendImpl[A, B](xs: FBase, elem: B): FBase = if (xs.length == 0) fromValues1[B](elem) else $append
        |  inline def prependImpl[A](elem: A, xs: FBase): FBase = if (xs.length == 0) fromValues1[A](elem) else $prepend
        |  inline def padToImpl[A, B](xs: FBase, len: Int, elem: B): FBase = $padTo
-       |  inline def sortWithImpl[A](xs: FBase)(inline lt: (A, A) => Boolean): FBase = $sortWith
-       |  inline def sortedImpl[A, B >: A](xs: FBase)(using ord: Ordering[B]): FBase = $sortedV
-       |  inline def sortByImpl[A, B](xs: FBase)(inline f: A => B)(using ord: Ordering[B]): FBase = $sortByV
-       |  inline def sumImpl[A, B](xs: FBase)(using num: Numeric[B]): B = $sumV
-       |  inline def productImpl[A, B](xs: FBase)(using num: Numeric[B]): B = $productV
-       |  inline def scanLeftImpl[A, B](xs: FBase, z: B)(inline op: (B, A) => B): FBase = { val n = xs.length; $scanLeftV }
-       |  inline def scanRightImpl[A, B](xs: FBase, z: B)(inline op: (A, B) => B): FBase = { val n = xs.length; $scanRightV }
+       |  inline def sortWithImpl[A](xs: FBase)(inline lt: (A, A) => Boolean): FBase = if (xs.length < 2) xs else $sortWith
+       |  inline def sortedImpl[A, B >: A](xs: FBase)(using ord: Ordering[B]): FBase = if (xs.length < 2) xs else $sortedV
+       |  inline def sortByImpl[A, B](xs: FBase)(inline f: A => B)(using ord: Ordering[B]): FBase = if (xs.length < 2) xs else $sortByV
+       |  inline def sumImpl[A, B](xs: FBase)(using num: Numeric[B]): B = if (xs.length == 0) num.zero else $sumV
+       |  inline def productImpl[A, B](xs: FBase)(using num: Numeric[B]): B = if (xs.length == 0) num.one else $productV
+       |  inline def scanLeftImpl[A, B](xs: FBase, z: B)(inline op: (B, A) => B): FBase = { val n = xs.length; if (n == 0) fromValues1[B](z) else if (n == 1) fromValues2[B](z, op(z, applyAtImpl[A](xs, 0))) else $scanLeftV }
+       |  inline def scanRightImpl[A, B](xs: FBase, z: B)(inline op: (A, B) => B): FBase = { val n = xs.length; if (n == 0) fromValues1[B](z) else if (n == 1) fromValues2[B](op(applyAtImpl[A](xs, 0), z), z) else $scanRightV }
        |  inline def combinationsImpl[A](xs: FBase, k: Int): Iterator[FBase] = ($combinationsV).asInstanceOf[Iterator[FBase]]
        |  inline def permutationsImpl[A](xs: FBase): Iterator[FBase] = ($permutationsV).asInstanceOf[Iterator[FBase]]
-       |  inline def groupByImpl[A, K](xs: FBase)(inline f: A => K): Map[K, FBase] = $groupBy
+       |  inline def groupByImpl[A, K](xs: FBase)(inline f: A => K): Map[K, FBase] = if (xs.length == 0) Map.empty[K, FBase] else $groupBy
        |  inline def groupMapAcc[K, B]: GroupMapAcc[K, B] = $groupMapAcc
        |}
        |""".stripMargin
