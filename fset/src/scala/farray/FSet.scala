@@ -89,3 +89,7 @@ object FSet:
     inline def sameElements(that: FSet[A]): Boolean = FSetOps.sameElementsImpl[A](xs, that)
     inline def ===(that: FSet[A]): Boolean = xs.sameElements(that)
     inline def setHashCode: Int = FSetOps.hashCodeImpl[A](xs)
+
+    // ---- ordered extras (the FSortedSet capability) — O(1) on the materialized sorted leaf; prim natural order ----
+    inline def min: A = FSetOps.minImpl[A](xs)
+    inline def max: A = FSetOps.maxImpl[A](xs)

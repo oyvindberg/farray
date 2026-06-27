@@ -167,6 +167,16 @@ class FSetTest:
     assertEquals(a.setHashCode, b.setHashCode)
     assertFalse(a === FSet.from(List("a", "b")))
 
+  @Test def min_max_int(): Unit =
+    assertEquals(1, FSet(5, 1, 3).min)
+    assertEquals(5, FSet(5, 1, 3).max)
+    val big = FSet.fromArray((10 until 90).toArray) // Hash leaf, arr sorted
+    assertEquals(10, big.min)
+    assertEquals(89, big.max)
+    var threw = false
+    try FSet.empty[Int].min catch { case _: NoSuchElementException => threw = true }
+    assertTrue("min of empty throws", threw)
+
   @Test def ref_build_dedup_and_subset(): Unit =
     // many duplicates: the build dedups during the hash insert (O(n)), result is correct.
     val data = (0 until 2000).map(i => s"k${i % 100}").toArray // 100 distinct, 2000 with dups

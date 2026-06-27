@@ -686,6 +686,17 @@ object GenSets extends BleepCodegenScript("GenSets") {
       else "{ val acc = scala.collection.mutable.HashSet.empty[Object]; collectElemsRef(a, acc); acc.forall(e => containsLeafRef(b, e)) }"
     )
 
+    // min / max — O(1) on the materialized sorted leaf (prim natural order). Ref needs an Ordering (FSortedSet),
+    // so it throws for now. Empty throws NoSuchElementException. Materialized-ordered (the FSortedSet capability).
+    val minV = dispatchA(k =>
+      if k.isPrim then s"""{ val arr = asArr${k.name}(materialize${k.name}(xs)); if (arr.length == 0) throw new NoSuchElementException("min of empty FSet") else (arr(0)).asInstanceOf[A] }"""
+      else """throw new UnsupportedOperationException("min requires an ordered set (Ordering / FSortedSet)")"""
+    )
+    val maxV = dispatchA(k =>
+      if k.isPrim then s"""{ val arr = asArr${k.name}(materialize${k.name}(xs)); if (arr.length == 0) throw new NoSuchElementException("max of empty FSet") else (arr(arr.length - 1)).asInstanceOf[A] }"""
+      else """throw new UnsupportedOperationException("max requires an ordered set (Ordering / FSortedSet)")"""
+    )
+
     // ---- size / isEmpty helpers (non-inline; M1 boxed-HashSet element walk; NEXT-STEP: unboxed merge) ----
     val sizeHelpers = {
       val ee = new Emit("  ")
@@ -851,6 +862,8 @@ object GenSets extends BleepCodegenScript("GenSets") {
        |  inline def sameElementsImpl[A](a: SBase, b: SBase): Boolean = $sameElementsV
        |  inline def hashCodeImpl[A](xs: SBase): Int = $hashV
        |  inline def subsetOfImpl[A](a: SBase, b: SBase): Boolean = $subsetOfV
+       |  inline def minImpl[A](xs: SBase): A = $minV
+       |  inline def maxImpl[A](xs: SBase): A = $maxV
        |  inline def inclImpl[A, B](xs: SBase, elem: B): SBase = $inclV
        |  inline def exclImpl[A, B](xs: SBase, elem: B): SBase = $exclV
        |}
