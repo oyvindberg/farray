@@ -167,6 +167,24 @@ class FSetTest:
     assertEquals(a.setHashCode, b.setHashCode)
     assertFalse(a === FSet.from(List("a", "b")))
 
+  @Test def ref_build_dedup_and_subset(): Unit =
+    // many duplicates: the build dedups during the hash insert (O(n)), result is correct.
+    val data = (0 until 2000).map(i => s"k${i % 100}").toArray // 100 distinct, 2000 with dups
+    val fs = FSet.fromArray(data)
+    assertEquals(100, fs.size)
+    for i <- 0 until 100 do assertTrue(fs.contains(s"k$i"))
+    assertFalse(fs.contains("k100"))
+
+  @Test def subset_of_int(): Unit =
+    val a = FSet(1, 2, 3); val b = FSet(0, 1, 2, 3, 4)
+    assertTrue(a.subsetOf(b))
+    assertFalse(b.subsetOf(a))
+    assertTrue(FSet.empty[Int].subsetOf(a))
+    assertTrue(a.subsetOf(a))
+    // subsetOf works against a LAZY rhs (contains distributes)
+    assertTrue(a.subsetOf(FSet(1, 2) ++ FSet(3, 4)))
+    assertFalse(FSet(1, 5).subsetOf(FSet(1, 2) ++ FSet(3, 4)))
+
   @Test def hash_leaf_int(): Unit =
     // > 16 distinct ⇒ frozen open-addressing Hash leaf (O(1) probe). Parity with Set; merges over a Hash
     // operand still fold (asArr extracts the leaf's sorted arr).

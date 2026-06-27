@@ -51,6 +51,8 @@ object FSet:
     inline def size: Int = FSetOps.sizeImpl[A](xs)
     inline def isEmpty: Boolean = FSetOps.isEmptyImpl[A](xs)
     inline def nonEmpty: Boolean = !FSetOps.isEmptyImpl[A](xs)
+    // subsetOf: streams this set's elements against `that`'s membership (works for a lazy `that`).
+    inline def subsetOf(that: FSet[A]): Boolean = FSetOps.subsetOfImpl[A](xs, that)
 
     // ---- algebra (lazy, O(1) construct) — the green slice ships single-element incl/excl ----
     // `incl(elem)` = SUnion(this, SOne(elem)); `excl(elem)` = SDiff(this, SOne(elem)) — both O(1), share the

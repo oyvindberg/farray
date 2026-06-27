@@ -429,29 +429,37 @@ object GenSets extends BleepCodegenScript("GenSets") {
           // small → Sorted (cache-local binary search, no table); large → frozen Hash (O(1) probe). §2.2/§2.3.
           ee.line(s"else { val trimmed = java.util.Arrays.copyOf(raw, w); if (w <= 16) new S${K}Sorted(trimmed) else buildHash$K(trimmed) }")
         } else {
-          // Ref M1: linear equals-dedup (no Ordering required); preserves first-seen order in the array, which
-          // is fine for membership but NOT a sorted guarantee (NEXT-STEP: sort with the Ordering when present).
-          ee.line("val out = new Array[Object](len)")
+          // Ref: dedup DURING an open-addressing insert (O(n) expected) — replaces the old O(n²) equals scan.
+          // Build the index + parallel hashes inline; trim arr/hashes to the distinct count w. The index is
+          // sized for `len` (slightly over for heavy-dup inputs) but only references positions 0..w-1.
+          ee.line("var cap = 8")
+          ee.line("while (cap < len * 2) cap <<= 1")
+          ee.line("val index = new Array[Int](cap)")
+          ee.line("java.util.Arrays.fill(index, -1)")
+          ee.line("val arr = new Array[Object](len)")
+          ee.line("val hashes = new Array[Int](len)")
           ee.line("var w = 0")
           ee.line("var i = 0")
           ee.open("while (i < len)")
           ee.line("val v = raw(i)")
+          ee.line("val hc = v.hashCode()")
+          ee.line("var slot = mixInt(hc) & (cap - 1)")
           ee.line("var dup = false")
-          ee.line("var j = 0")
-          ee.open("while (j < w && !dup)")
-          ee.line("if (out(j) == v) dup = true")
-          ee.line("j += 1")
+          ee.open("while (index(slot) != -1 && !dup)")
+          ee.line("val p = index(slot)")
+          ee.line("if (hashes(p) == hc && arr(p).equals(v)) dup = true")
+          ee.line("else slot = (slot + 1) & (cap - 1)")
           ee.close()
           ee.open("if (!dup)")
-          ee.line("out(w) = v")
-          ee.line("w += 1")
+          ee.line("arr(w) = v; hashes(w) = hc; index(slot) = w; w += 1")
           ee.close()
           ee.line("i += 1")
           ee.close()
           ee.line("if (w == 0) SEmpty.INSTANCE")
-          ee.line(s"else if (w == 1) new S${K}One(out(0))")
-          // large Ref → frozen RefHash (O(1) contains, fixes the O(n) linear scan); small → linear leaf.
-          ee.line(s"else { val trimmed = java.util.Arrays.copyOf(out, w); if (w <= 16) new S${K}Sorted(trimmed) else buildHash$K(trimmed) }")
+          ee.line(s"else if (w == 1) new S${K}One(arr(0))")
+          // small → linear leaf; large → keep the frozen RefHash we just built (O(1) contains).
+          ee.line(s"else if (w <= 16) new S${K}Sorted(java.util.Arrays.copyOf(arr, w))")
+          ee.line(s"else new S${K}Hash(java.util.Arrays.copyOf(arr, w), java.util.Arrays.copyOf(hashes, w), index)")
         }
         ee.close()
       }
@@ -671,6 +679,13 @@ object GenSets extends BleepCodegenScript("GenSets") {
     )
     val hashV = dispatchA(k => s"setHash${k.name}(xs)")
 
+    // subsetOf(b): every element of `a` is in `b`. Materializes `a` (the receiver) and streams it against
+    // `b`'s membership (contains distributes over a lazy `b`, no materialize). A query op (no materialized guard).
+    val subsetOfV = dispatchA(k =>
+      if k.isPrim then s"{ val arr = asArr${k.name}(materialize${k.name}(a)); var i = 0; var ok = true; while (i < arr.length && ok) { if (!containsLeaf${k.name}(b, arr(i))) ok = false; i += 1 }; ok }"
+      else "{ val acc = scala.collection.mutable.HashSet.empty[Object]; collectElemsRef(a, acc); acc.forall(e => containsLeafRef(b, e)) }"
+    )
+
     // ---- size / isEmpty helpers (non-inline; M1 boxed-HashSet element walk; NEXT-STEP: unboxed merge) ----
     val sizeHelpers = {
       val ee = new Emit("  ")
@@ -835,6 +850,7 @@ object GenSets extends BleepCodegenScript("GenSets") {
        |  inline def materializeImpl[A](xs: SBase): SBase = ${dispatchA(k => if k.isPrim then s"materialize${k.name}(xs)" else "xs")}
        |  inline def sameElementsImpl[A](a: SBase, b: SBase): Boolean = $sameElementsV
        |  inline def hashCodeImpl[A](xs: SBase): Int = $hashV
+       |  inline def subsetOfImpl[A](a: SBase, b: SBase): Boolean = $subsetOfV
        |  inline def inclImpl[A, B](xs: SBase, elem: B): SBase = $inclV
        |  inline def exclImpl[A, B](xs: SBase, elem: B): SBase = $exclV
        |}
