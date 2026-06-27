@@ -16,12 +16,13 @@ class FSetTest:
   // ---- helpers: drive an FSet and the reference Set through the SAME op sequence, assert agreement. ----
 
   /** assert membership agreement on a probe domain + the structural size/isEmpty agreement. */
-  private def checkInt(fs: FSet[Int], ref: Set[Int], probes: Iterable[Int]): Unit =
+  private def checkInt(fs0: FSet[Int], ref: Set[Int], probes: Iterable[Int]): Unit =
+    val fs = fs0.materialize // enumeration ops are FSetMaterialized-only; contains stays on the (FSet) original
     assertEquals("size", ref.size, fs.size)
     assertEquals("isEmpty", ref.isEmpty, fs.isEmpty)
     assertEquals("nonEmpty", ref.nonEmpty, fs.nonEmpty)
-    probes.foreach(p => assertEquals(s"contains($p)", ref.contains(p), fs.contains(p)))
-    probes.foreach(p => assertEquals(s"apply($p)", ref(p), fs(p)))
+    probes.foreach(p => assertEquals(s"contains($p)", ref.contains(p), fs0.contains(p)))
+    probes.foreach(p => assertEquals(s"apply($p)", ref(p), fs0(p)))
 
   @Test def empty_int(): Unit =
     checkInt(FSet.empty[Int], Set.empty[Int], -3 to 3)
@@ -79,7 +80,7 @@ class FSetTest:
     for p <- 0L to 12L do assertEquals(s"contains($p)", ref.contains(p), fs.contains(p))
     val fs2 = fs + 99L - 5L
     val ref2 = ref + 99L - 5L
-    assertEquals(ref2.size, fs2.size)
+    assertEquals(ref2.size, fs2.materialize.size)
     for p <- List(99L, 5L, 10L, 7L) do assertEquals(s"contains($p)", ref2.contains(p), fs2.contains(p))
 
   @Test def double_kind(): Unit =
@@ -106,7 +107,7 @@ class FSetTest:
     val a = FSet(1, 2, 3, 4); val b = FSet(3, 4, 5, 6)
     val ra = Set(1, 2, 3, 4); val rb = Set(3, 4, 5, 6)
     def chk(fs: FSet[Int], ref: Set[Int]): Unit =
-      assertEquals("size", ref.size, fs.size)
+      assertEquals("size", ref.size, fs.materialize.size)
       for p <- -1 to 8 do assertEquals(s"contains($p)", ref.contains(p), fs.contains(p))
     chk(a ++ b, ra union rb)
     chk(a & b, ra intersect rb)
@@ -119,21 +120,21 @@ class FSetTest:
     // the §3.2 unboxed merge: materialize folds the lazy tree to ONE sorted leaf; iteration is ordered+distinct.
     val a = FSet(5, 1, 3, 1); val b = FSet(3, 4, 2)
     val ra = Set(5, 1, 3); val rb = Set(3, 4, 2)
-    assertEquals("union",     (ra union rb).toList.sorted,                              (a ++ b).toList)
-    assertEquals("intersect", (ra intersect rb).toList.sorted,                          (a & b).toList)
-    assertEquals("diff",      (ra diff rb).toList.sorted,                               (a &~ b).toList)
-    assertEquals("xor",       ((ra union rb) diff (ra intersect rb)).toList.sorted,     (a ^ b).toList)
+    assertEquals("union",     (ra union rb).toList.sorted,                              (a ++ b).materialize.toList)
+    assertEquals("intersect", (ra intersect rb).toList.sorted,                          (a & b).materialize.toList)
+    assertEquals("diff",      (ra diff rb).toList.sorted,                               (a &~ b).materialize.toList)
+    assertEquals("xor",       ((ra union rb) diff (ra intersect rb)).toList.sorted,     (a ^ b).materialize.toList)
     // size now flows through the unboxed merge (not the boxed walk) for a lazy node
-    assertEquals((ra union rb).size, (a ++ b).size)
+    assertEquals((ra union rb).size, (a ++ b).materialize.size)
     // nested + memoized: materialize twice is stable
-    val u = a ++ b
+    val u = (a ++ b).materialize
     assertEquals(u.toList, u.toList)
-    assertEquals((ra union rb).toList.sorted, u.materialize.toList)
+    assertEquals((ra union rb).toList.sorted, u.toList)
 
   @Test def merge_materialize_long(): Unit =
     val a = FSet(10L, 5L, 7L); val b = FSet(7L, 1L)
-    assertEquals(List(1L, 5L, 7L, 10L), (a ++ b).toList)
-    assertEquals(List(7L), (a & b).toList)
+    assertEquals(List(1L, 5L, 7L, 10L), (a ++ b).materialize.toList)
+    assertEquals(List(7L), (a & b).materialize.toList)
 
   @Test def value_equals_hash_int(): Unit =
     // shape- and order-independent value equality + commutative hash, on MATERIALIZED sets.
@@ -151,15 +152,8 @@ class FSetTest:
     assertTrue(big === bigAlgebra)
     assertEquals(big.setHashCode, bigAlgebra.setHashCode)
 
-  @Test def value_equals_throws_on_lazy(): Unit =
-    // equals/hashCode are FSetMaterialized-only: a still-lazy algebra node throws (call .materialize first).
-    val lazyU = FSet(1, 2) ++ FSet(2, 3)
-    var threw = false
-    try lazyU.setHashCode catch { case _: UnsupportedOperationException => threw = true }
-    assertTrue("setHashCode on a lazy set must throw", threw)
-    threw = false
-    try { FSet(1) === lazyU; () } catch { case _: UnsupportedOperationException => threw = true }
-    assertTrue("=== with a lazy operand must throw", threw)
+  // (the old `value_equals_throws_on_lazy` runtime test is gone — under Option C, `lazyFSet.setHashCode` /
+  //  `=== lazyFSet` simply DON'T COMPILE: equals/hashCode live on FSetMaterialized, not on a lazy FSet.)
 
   @Test def value_equals_ref(): Unit =
     val a = FSet.from(List("b", "a", "c")); val b = FSet.from(List("c", "b", "a"))
@@ -177,8 +171,8 @@ class FSetTest:
     assertFalse(fs.forall(_ > 2))
     assertTrue(fs.exists(_ == 9))
     assertFalse(fs.exists(_ == 100))
-    // over a lazy algebra result (auto-materialized), still each element once
-    val u = FSet(1, 2, 3) ++ FSet(3, 4, 5)
+    // over a materialized algebra result, still each element once
+    val u = (FSet(1, 2, 3) ++ FSet(3, 4, 5)).materialize
     var c = 0; u.foreach(_ => c += 1)
     assertEquals(5, c)
     assertTrue(u.forall(_ < 6))
@@ -194,7 +188,7 @@ class FSetTest:
     assertEquals(50, big.filter(_ % 2 == 0).size)
     val f = big.filter(_ >= 50)
     assertTrue(f.contains(75)); assertFalse(f.contains(25))
-    assertEquals(40, (FSet(1, 2, 3) ++ big).count(_ >= 60))
+    assertEquals(40, (FSet(1, 2, 3) ++ big).materialize.count(_ >= 60))
 
   @Test def range_and_predicate_membership(): Unit =
     // the headline: union two HUGE ranges, query membership — O(1), nothing materialized.
@@ -209,15 +203,14 @@ class FSetTest:
     assertTrue(FSet.universalInt.contains(Int.MinValue))
     assertTrue(FSet.universalInt.contains(0))
     // complement distributes
-    val notEvens = FSet(2, 4, 6, 8).complement
+    val evens = FSet(2, 4, 6, 8)
+    val notEvens = evens.complement
     assertTrue(notEvens.contains(3)); assertFalse(notEvens.contains(4))
     // predicate ∩ finite is queryable; finite stays the materializable side
     val evensInRange = FSet(1, 2, 3, 4, 5, 6) & FSet.above(3)
     assertTrue(evensInRange.contains(4)); assertFalse(evensInRange.contains(2))
-    // enumerating an infinite set throws (membership-only)
-    var threw = false
-    try u.size catch { case _: UnsupportedOperationException => threw = true }
-    assertTrue("size of an infinite set throws", threw)
+    // NOTE: `u.size` does NOT COMPILE — an infinite (range) set is an FSetInfinite/FSet with no enumeration
+    // ops. The "can't enumerate an infinite set" guarantee is now a TYPE error, not a runtime throw.
 
   @Test def map_nxn(): Unit =
     // read kind × write kind, with dedup-on-build (map can collapse).
@@ -279,10 +272,10 @@ class FSetTest:
     assertEquals("size", ref.size, fs.size)
     for p <- -2 to 205 do assertEquals(s"contains($p)", ref.contains(p), fs.contains(p))
     val odds = FSet.fromArray((1 until 200 by 2).toArray)
-    val all = fs ++ odds
+    val all = (fs ++ odds).materialize
     assertEquals("union of two hash leaves", (0 until 200).toList, all.toList)
     assertEquals(200, all.size)
-    assertTrue((fs & odds).toList.isEmpty) // evens ∩ odds = ∅
+    assertTrue((fs & odds).materialize.toList.isEmpty) // evens ∩ odds = ∅
 
   @Test def hash_leaf_ref(): Unit =
     // large reference set ⇒ frozen RefHash (O(1) contains via the cached-hash probe), not the O(n) linear scan.
@@ -319,7 +312,7 @@ class FSetTest:
     for p <- List("a", "b", "c", "d", "e", "z") do assertEquals(s"contains($p)", ref.contains(p), fs.contains(p))
     val fs2 = fs + "z" - "a"
     val ref2 = ref + "z" - "a"
-    assertEquals(ref2.size, fs2.size)
+    assertEquals(ref2.size, fs2.materialize.size)
     for p <- List("a", "z", "b", "x") do assertEquals(s"contains($p)", ref2.contains(p), fs2.contains(p))
 
   @Test def ref_empty_and_singleton(): Unit =
@@ -342,6 +335,7 @@ class FSetTest:
         val x = rng.nextInt(20)
         if rng.nextBoolean() then { fs = fs.incl(x); ref = ref + x }
         else { fs = fs.excl(x); ref = ref - x }
-      assertEquals(ref.size, fs.size)
-      assertEquals(ref.isEmpty, fs.isEmpty)
+      val m = fs.materialize
+      assertEquals(ref.size, m.size)
+      assertEquals(ref.isEmpty, m.isEmpty)
       for p <- 0 until 20 do assertEquals(ref.contains(p), fs.contains(p))
