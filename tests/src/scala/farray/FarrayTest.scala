@@ -1265,12 +1265,12 @@ class FListTest:
     // groupMapReduce
     aeq(l.groupMapReduce(_ % 3)(_ => 1)(_ + _), r.fuse.groupMapReduce(_ % 3)(_ => 1)(_ + _))
     aeq(l.groupMapReduce(_ % 2)(identity)(_ + _), r.fuse.groupMapReduce(_ % 2)(identity)(_ + _))
-    // grouped / sliding (vs List), incl. the partial-tail and shorter-than-n edges
-    aeq(l.grouped(2).map(_.toList).toList, r.fuse.grouped(2).map(_.toList).toList)
-    aeq(l.grouped(4).map(_.toList).toList, r.fuse.grouped(4).map(_.toList).toList) // last group partial
+    // grouped (now a composable STAGE → run, then inspect) / sliding (still a terminal), incl. partial-tail edges
+    aeq(l.grouped(2).map(_.toList).toList, r.fuse.grouped(2).run.toList.map(_.toList))
+    aeq(l.grouped(4).map(_.toList).toList, r.fuse.grouped(4).run.toList.map(_.toList)) // last group partial
     aeq(l.sliding(3).map(_.toList).toList, r.fuse.sliding(3).map(_.toList).toList)
     aeq(List(1, 2).sliding(5).map(_.toList).toList, FArray(1, 2).fuse.sliding(5).map(_.toList).toList) // shorter than n
-    aeq(List.empty[Int].grouped(3).toList, FArray.empty[Int].fuse.grouped(3).toList.map(_.toList))
+    aeq(List.empty[Int].grouped(3).toList, FArray.empty[Int].fuse.grouped(3).run.toList.map(_.toList))
 
   // ---- for-comprehensions (withFilter) + count(p) ----
   @Test def test_fuse_forcomp_and_count: Unit =

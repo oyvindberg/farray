@@ -165,4 +165,34 @@ class FoldAdjacentTest:
     val got = FArray.fromIterable(xs).fuse.groupAdjacentBy(_.head).run.toList.map(_.toList)
     assertEquals(refGroup(xs)(_.head), got)
 
+  // ── grouped(n) as a composable stage: fixed-size chunks (last may be shorter) ────────────────────────────
+  @Test def grouped_parity(): Unit =
+    val xs = (0 until 17).toList
+    assertEquals(xs.grouped(5).map(_.toList).toList, FArray.fromIterable(xs).fuse.grouped(5).run.toList.map(_.toList))
+
+  @Test def grouped_exactMultiple(): Unit =
+    val xs = (0 until 12).toList // 3 full chunks of 4, no partial → epilogue must NOT emit an empty chunk
+    val got = FArray.fromIterable(xs).fuse.grouped(4).run.toList.map(_.toList)
+    assertEquals(xs.grouped(4).map(_.toList).toList, got)
+    assertEquals(3, got.length)
+
+  @Test def grouped_empty(): Unit =
+    assertEquals(Nil, FArray.empty[Int].fuse.grouped(3).run.toList)
+
+  @Test def grouped_partialTailViaEpilogue(): Unit =
+    val xs = (0 until 7).toList // 3 full chunks of 2 + partial [6] (the last via epilogue)
+    assertEquals(List(List(0, 1), List(2, 3), List(4, 5), List(6)), FArray.fromIterable(xs).fuse.grouped(2).run.toList.map(_.toList))
+
+  @Test def grouped_take(): Unit =
+    val xs = (0 until 20).toList
+    val got = FArray.fromIterable(xs).fuse.grouped(3).take(2).run.toList.map(_.toList)
+    assertEquals(List(List(0, 1, 2), List(3, 4, 5)), got)
+
+  @Test def grouped_streaming_chunksAcrossSourceChunks(): Unit =
+    // grouped(4) over a source whose chunks are size 3 → grouping boundary != source-chunk boundary.
+    val srcChunks = List(List(0, 1, 2), List(3, 4, 5), List(6, 7, 8), List(9, 10))
+    val flat = srcChunks.flatten
+    val src = new CountingSource(srcChunks.map(FArray.fromIterable))
+    assertEquals(flat.grouped(4).map(_.toList).toList, src.fuse.grouped(4).run.toList.map(_.toList))
+
 end FoldAdjacentTest

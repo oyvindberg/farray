@@ -283,14 +283,12 @@ final class Fuse[+A](private[farray] val base: AnyRef):
     }
     (FArray.from(l.result()), FArray.from(r.result()))
 
-  // ---- windowing terminals (one fused pass; sub-arrays materialize) ----
-  /** fixed-size chunks; the last may be shorter. */
-  inline def grouped(n: Int): FArray[FArray[A]] =
-    require(n > 0, "grouped size must be > 0")
-    val out = List.newBuilder[FArray[A]]; var buf = List.newBuilder[A]; var c = 0
-    foreach { a => buf += a; c += 1; if c == n then { out += FArray.from(buf.result()); buf = List.newBuilder[A]; c = 0 } }
-    if c > 0 then out += FArray.from(buf.result())
-    FArray.from(out.result())
+  // ---- windowing ----
+  /** Fixed-size chunks (the last may be shorter) — a composable STAGE: `grouped(n)` emits an `FArray[A]` every `n` elements, so it fuses into the one pass AND
+    * short-circuits under a downstream `take`. `xs.fuse.grouped(n).run` gives the same `FArray[FArray[A]]` the old terminal did, but you can now keep
+    * transforming the chunks. O(n) memory.
+    */
+  def grouped(n: Int): Fuse[FArray[A]] = this.asInstanceOf[Fuse[FArray[A]]]
 
   /** overlapping windows of size `n` stepping by 1; a shorter-than-`n` stream yields one partial window. */
   inline def sliding(n: Int): FArray[FArray[A]] =
