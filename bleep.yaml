@@ -16,6 +16,23 @@ projects:
     extends: template-common
     dependencies:
       - build.bleep::bleep-core:${BLEEP_VERSION}
+  gensets:
+    extends: template-common
+    dependencies:
+      - build.bleep::bleep-core:${BLEEP_VERSION}
+  fset:
+    extends: template-common
+    dependsOn: farray
+    sourcegen:
+      project: gensets
+      main: farray.GenSets
+  fset-tests:
+    dependencies:
+      - junit:junit:4.13.2
+      - com.github.sbt:junit-interface:0.13.2
+    dependsOn: fset
+    extends: template-common
+    isTestProject: true
   tests:
     dependencies:
       - junit:junit:4.13.2
