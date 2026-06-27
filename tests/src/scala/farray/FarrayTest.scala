@@ -1244,6 +1244,27 @@ class FListTest:
       FuseDebug.show(ints.fuse.zip(FArray(7, 8, 9, 10, 11)).map((a, b) => (a, expensive(b))).filter(_._1 % 4 == 0).map(_._1).toFArray))
     scenario("DCE-4: collect { case x if x>2 => (x, expensive(x)) }.map(_._1)  [collect body decomposes: expensive DEAD]",
       FuseDebug.show(ints.fuse.collect { case x if x > 2 => (x, expensive(x)) }.map(_._1).toFArray))
+
+    // ===== examples for the blog post =====
+    val k = 3 // a runtime limit (not a literal), to show dynamic clamping
+    scenario("BLOG-HYGIENE-1: map(x => x+1).filter(x => x>2).map(x => x*x)  [same param name `x` in 3 lambdas]",
+      FuseDebug.show(ints.fuse.map(x => x + 1).filter(x => x > 2).map(x => x * x).toFArray))
+    scenario("BLOG-HYGIENE-2: flatMap(x => FArray(x, x*10)).map(x => x+1)  [`x` reused across the nesting boundary]",
+      FuseDebug.show(ints.fuse.flatMap(x => FArray(x, x * 10)).map(x => x + 1).toFArray))
+    scenario("BLOG-NESTED-FLATMAP: flatMap(x => FArray(x, x+1)).flatMap(y => FArray(y*100))  [loop nest]",
+      FuseDebug.show(ints.fuse.flatMap(x => FArray(x, x + 1)).flatMap(y => FArray(y * 100)).toFArray))
+    scenario("BLOG-NESTED-TUPLE: map(x => ((x, x+1), (x+2, x+3))).map(t => t._1._1 + t._2._2)  [2 of 4 leaves live]",
+      FuseDebug.show(ints.fuse.map(x => ((x, x + 1), (x + 2, x + 3))).map(t => t._1._1 + t._2._2).toFArray))
+    scenario("BLOG-PREDICATE-LEVELS: filter(_>0).flatMap(x => FArray(x, -x)).filter(_%2==0).map(_+1)  [outer + inner guards]",
+      FuseDebug.show(ints.fuse.filter(_ > 0).flatMap(x => FArray(x, -x)).filter(_ % 2 == 0).map(_ + 1).toFArray))
+    scenario("BLOG-MULTIFILTER: filter(_>1).filter(_<7).filter(_%2==0)  [three guards, one pass]",
+      FuseDebug.show(ints.fuse.filter(_ > 1).filter(_ < 7).filter(_ % 2 == 0).toFArray))
+    scenario("BLOG-SINK-DCE: map(x => (x%3, x*7, x*13)).filter(_._1==0).map(_._2)  [col0 eager, col1 sunk, col2 dead]",
+      FuseDebug.show(ints.fuse.map(x => (x % 3, x * 7, x * 13)).filter(_._1 == 0).map(_._2).toFArray))
+    scenario("BLOG-DYNAMIC-TAKE: filter(_%2==0).take(k)  [k is a runtime val: clamp + counter + done]",
+      FuseDebug.show(ints.fuse.filter(_ % 2 == 0).take(k).toFArray))
+    scenario("BLOG-DONE-NESTING: flatMap(x => FArray(x, x, x)).take(5)  [done breaks inner AND outer loop]",
+      FuseDebug.show(ints.fuse.flatMap(x => FArray(x, x, x)).take(5).toFArray))
     Snapshots.check("fused-pipeline.snap", sb.toString)
 
   @Test def test_hashCode_matchesList(): Unit =
