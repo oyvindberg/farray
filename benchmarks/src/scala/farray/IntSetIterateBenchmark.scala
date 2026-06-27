@@ -16,9 +16,9 @@ class IntSetIterateBenchmark extends IntSetInputs {
 
 /** FSet's headline: build a union as an O(1) LAZY node and answer `contains` over it without ever merging —
   * vs every competitor which must build the whole union first. The build-an-algebra-and-query pattern. */
-class IntSetLazyAlgebraBenchmark extends IntSetInputs {
-  @Benchmark def fset_lazy_union_contains(): Boolean = (fsetA ++ fsetB).contains(hit)
-  @Benchmark def scalaset_eager_union_contains(): Boolean = (sSetA union sSetB).contains(hit)
-  @Benchmark def immbitset_eager_union_contains(): Boolean = (immBitA | immBitB).contains(hit)
-  @Benchmark def roaring_eager_union_contains(): Boolean = org.roaringbitmap.RoaringBitmap.or(roarA, roarB).contains(hit)
+class IntSetLazyUnionContainsBenchmark extends IntSetInputs {
+  @Benchmark def fset(): Boolean = (fsetA ++ fsetB).contains(hit) // O(1) lazy node — never merges
+  @Benchmark def scalaset(): Boolean = (sSetA union sSetB).contains(hit) // must build the whole union first
+  @Benchmark def immbitset(): Boolean = (immBitA | immBitB).contains(hit)
+  @Benchmark def roaring(): Boolean = org.roaringbitmap.RoaringBitmap.or(roarA, roarB).contains(hit)
 }

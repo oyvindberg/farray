@@ -9,7 +9,9 @@ import org.eclipse.collections.impl.set.mutable.UnifiedSet
 /** Bulk String-set algebra. Mutable sets clone the LHS (the realistic immutable-result cost); immutable peers
   * (FSet/scala/Guava/Eclipse) produce a fresh result. Guava ∪∩∖ are lazy SetViews → `.immutableCopy()`. */
 class StrSetUnionBenchmark extends StrSetInputs {
-  @Benchmark def fset(): Any = (fsetA ++ fsetB).materialize
+  // Ref has no unboxed merge yet, so `.materialize` is a no-op (the union stays a lazy node). Force the real
+  // dedup work via `.size` (the boxed collectElems path) so this is a FAIR "produce a usable union" measurement.
+  @Benchmark def fset(): Any = (fsetA ++ fsetB).materialize.size
   @Benchmark def scalaset(): Any = sSetA union sSetB
   @Benchmark def juhashset(): Any = { val c = new java.util.HashSet[String](juA); c.addAll(juB); c }
   @Benchmark def guava(): Any = Sets.union(guavaA, guavaB).immutableCopy()
@@ -19,7 +21,7 @@ class StrSetUnionBenchmark extends StrSetInputs {
 }
 
 class StrSetIntersectBenchmark extends StrSetInputs {
-  @Benchmark def fset(): Any = (fsetA & fsetB).materialize
+  @Benchmark def fset(): Any = (fsetA & fsetB).materialize.size
   @Benchmark def scalaset(): Any = sSetA intersect sSetB
   @Benchmark def juhashset(): Any = { val c = new java.util.HashSet[String](juA); c.retainAll(juB); c }
   @Benchmark def guava(): Any = Sets.intersection(guavaA, guavaB).immutableCopy()
@@ -29,7 +31,7 @@ class StrSetIntersectBenchmark extends StrSetInputs {
 }
 
 class StrSetDiffBenchmark extends StrSetInputs {
-  @Benchmark def fset(): Any = (fsetA &~ fsetB).materialize
+  @Benchmark def fset(): Any = (fsetA &~ fsetB).materialize.size
   @Benchmark def scalaset(): Any = sSetA diff sSetB
   @Benchmark def juhashset(): Any = { val c = new java.util.HashSet[String](juA); c.removeAll(juB); c }
   @Benchmark def guava(): Any = Sets.difference(guavaA, guavaB).immutableCopy()
