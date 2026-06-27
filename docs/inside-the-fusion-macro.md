@@ -76,20 +76,20 @@ xs.fuse.map(x => x + 1).filter(x => x > 2).map(x => x * x).toFArray
 
 ```scala
 while (i < len) {
-  val v  = a(i)
-  val v₂ = v + 1                 // first  x  ⇒ v₂
-  val v₃ = v₂ > 2               // second x  ⇒ reads v₂, not v
+  val v  = a(i)                  // the element — the macro's binding, not your `x`
+  val v₂ = v + 1                 // map(x => x+1):    here `x` IS `v`,  result bound as `v₂`
+  val v₃ = v₂ > 2               // filter(x => x>2): here `x` IS `v₂`, result bound as `v₃`
   if (v₃) {
-    val v₄ = v₂ * v₂            // third  x  ⇒ reads v₂, squares it
+    val v₄ = v₂ * v₂            // map(x => x*x):    `x` is `v₂` again (filter passed the value through)
     out(o) = v₄; o += 1
   }
   i += 1
 }
 ```
 
-There are three `x`s in the source and zero `x`s in the output. Each one became a distinct, freshly-named binding. The subscripts (`v₂`, `v₃`, `v₄`) are not something the macro invents — they are `quotes.reflect`'s pretty-printer disambiguating several distinct *symbols* that happen to share the human name `v`. The macro never builds names by string-concatenation; it asks the quotation machinery for fresh symbols, and binds every intermediate it materializes (`letBind`) so that a value computed once is a `val`, referenced by symbol identity, not recomputed and not shadowed.
+Three `x`s in the source, zero in the output — because **`x` is never a binding at all**. Beta-reduction *substitutes* each lambda's parameter with whatever `Term` represents the current element value at that point, so `x` dissolves into the expression that used it. Crucially, "the current element value" changes as you move down the pipeline: at the first stage it's the array read; after `map(x => x+1)` it's that map's result; `filter` passes the value through unchanged. So the three `x`s stand for three *different* values — `v`, then `v₂`, then `v₂` again — and the macro tracks that "current value" as a `Term` threaded through the lowering. Stage boundaries are just function composition on `Term`s.
 
-The subtle part is that the second `x` resolves to `v₂` (the result of `map(x => x + 1)`), *not* the original element `v`. The macro tracks "what is the current element value at this point in the pipeline" as a `Term`, threaded through the lowering; when it reduces `filter`'s `x => x > 2`, the `x` is substituted with that `Term`. Stage boundaries are just function composition on `Term`s, and `Term`s carry their binding structure with them.
+The names you actually see — `v`, `v₂`, `v₃`, `v₄` — are the macro's *own* fresh bindings: one for the element read, one for each intermediate it materializes (`letBind`). They render as `v` with subscripts only because `quotes.reflect`'s pretty-printer disambiguates distinct *symbols* that share a base name. The macro never builds names by string-concatenation and never reuses one; a value computed once is a `val`, referenced by symbol identity — never shadowed, never recomputed. Your parameter names are irrelevant to it; call all three `x` or all three `q`, the output is identical.
 
 It gets more interesting across a `flatMap`, where the same name lives at two different loop depths:
 
@@ -99,15 +99,15 @@ xs.fuse.flatMap(x => FArray(x, x * 10)).map(x => x + 1).toFArray
 
 ```scala
 while (i < len) {
-  val v  = a(i)                       // outer x
+  val v  = a(i)                       // outer element = the flatMap's `x`
   val s₂ = /* FArray(v, v * 10) built inline */
   val len₂ = s₂.length
   if (s₂.isInstanceOf[IntArr]) {
     val a₂ = s₂.asInstanceOf[IntArr].arr
     var i₂ = 0
     while (i₂ < len₂) {
-      val v₂ = a₂(i₂)                  // inner element
-      val v₃ = v₂ + 1                  // the *map*'s x ⇒ binds the INNER value
+      val v₂ = a₂(i₂)                  // inner element = the map's `x`
+      val v₃ = v₂ + 1                  // map(x => x+1), so `x` here is the INNER value `v₂`
       if (o >= out₂.length) out₂ = ensureCapInt(out₂, o + 1)
       out₂(o) = v₃; o += 1
       i₂ += 1
@@ -117,7 +117,7 @@ while (i < len) {
 }
 ```
 
-The outer `x` is `v`; the `flatMap` opens a nested loop; the downstream `map`'s `x` correctly binds `v₂`, the *inner* element, at the inner depth. Two `x`s, two loop levels, two symbols (`v` and `v₂`), and the loop counters `i`/`i₂`, source handles `s`/`s₂`, lengths `len`/`len₂` are all independently fresh. There is no scope in which two of these collide, because none of them were ever named by hand.
+The `flatMap`'s `x` is the outer element `v`; the `map`'s `x` is the *inner* element `v₂`, one loop deeper. Same source name, two different values at two different depths — two distinct symbols. And it's not just the elements: the loop counters `i`/`i₂`, source handles `s`/`s₂`, and lengths `len`/`len₂` are all independently fresh too. There is no scope in which two of these collide, because none of them were ever named by hand.
 
 ---
 
