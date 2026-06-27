@@ -102,50 +102,12 @@ object JsonScanner:
     out.value = if neg then x else -x
     pos
 
-  /** decode a JSON long at `pos`. */
-  def readLong(buf: Array[Byte], pos0: Int, end: Int, out: LongResult): Int =
-    var pos = skipWs(buf, pos0, end)
-    var neg = false
-    if pos < end && buf(pos) == '-' then { neg = true; pos += 1 }
-    var x = 0L
-    var any = false
-    while pos < end && { val b = buf(pos); b >= '0' && b <= '9' } do
-      x = x * 10 - (buf(pos) - '0')
-      any = true
-      pos += 1
-    if !any then throw JsonParseException(s"expected long at $pos0")
-    out.value = if neg then x else -x
-    pos
-
   /** decode a JSON double via the allocation-free Java byte-level parser (tiers 1-2 allocate nothing;
    *  only genuinely-long/out-of-window inputs fall back to Double.parseDouble). Returns the position past it. */
   def readDouble(buf: Array[Byte], pos0: Int, end: Int, out: JsonNum.D): Int =
     val start = skipWs(buf, pos0, end)
     JsonNum.parseDouble(buf, start, end, out)
     out.pos
-
-  // ---- macro-facing 2-arity decoders: return (value, newPos) via @specialized unboxed tuples (no holder,
-  //      no boxing). The fused JSON scanner generates calls to these; `_._1`/`_._2` project unboxed. ----
-  def readInt2(buf: Array[Byte], pos0: Int, end: Int): (Int, Int) =
-    var pos = pos0
-    var neg = false
-    if pos < end && buf(pos) == '-' then { neg = true; pos += 1 }
-    var x = 0
-    while pos < end && { val b = buf(pos); b >= '0' && b <= '9' } do { x = x * 10 - (buf(pos) - '0'); pos += 1 }
-    ((if neg then x else -x), pos)
-
-  def readLong2(buf: Array[Byte], pos0: Int, end: Int): (Long, Int) =
-    var pos = pos0
-    var neg = false
-    if pos < end && buf(pos) == '-' then { neg = true; pos += 1 }
-    var x = 0L
-    while pos < end && { val b = buf(pos); b >= '0' && b <= '9' } do { x = x * 10 - (buf(pos) - '0'); pos += 1 }
-    ((if neg then x else -x), pos)
-
-  def readDouble2(buf: Array[Byte], pos0: Int, end: Int): (Double, Int) =
-    val d = JsonNumLocal.d.get()
-    JsonNum.parseDouble(buf, pos0, end, d)
-    (d.value, d.pos)
 
   // ---- macro-facing decoders that return the PRIMITIVE value (no tuple, no boxing) and stash the new
   //      position in a thread-local `numEnd`. The generated scanner reads numEnd right after. ----

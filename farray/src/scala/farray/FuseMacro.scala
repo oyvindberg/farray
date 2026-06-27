@@ -257,6 +257,10 @@ object FuseMacro:
       case TTag.Find | TTag.Exists | TTag.Forall | TTag.HeadOption | TTag.Head | TTag.IndexWhere => true
       case _                                                                                     => false
     val needsDone: Boolean = takesPresent || shortCircuit || hasZip || hasTakeWhile // any stage that can stop the stream
+    // a terminal that IGNORES the element value entirely (count survivors). A trailing pure `map` then produces a
+    // DEAD value — nothing reads it — so its final shape must NOT be materialized (e.g. `map(_.category).count`
+    // must not decode the strings, and `map(expensive).count` must not run `expensive`). The filters still run.
+    val discardsElem: Boolean = tag == TTag.Count
 
     // ===== Layer B: pure map/filter segment optimizer (compute-for-survivors via memoized lazy columns) =====
 
@@ -504,7 +508,12 @@ object FuseMacro:
      *  / zip so a produced value stays decomposed through the following segment. */
     def continueShape(shape: Shape, rest: List[(Stage, Int)], ctx: Ctx): Term =
       val (seg, tail) = rest.span { case (MapS(_), _) => true; case (FilterS(_, _), _) => true; case _ => false }
-      buildSegment(seg.map(_._1), shape)(fs => readShape(fs)(t => buildBody(tail, t, ctx)))
+      // DCE to the terminal: if this is the last segment and the terminal discards the element (count), don't
+      // materialize the final shape — its value is dead (e.g. `map(_.category).count` must not decode the string).
+      if tail.isEmpty && discardsElem then
+        buildSegment(seg.map(_._1), shape)(_ => ctx.consume(unit))
+      else
+        buildSegment(seg.map(_._1), shape)(fs => readShape(fs)(t => buildBody(tail, t, ctx)))
 
     /** lower `collect(pf)` by inlining the PartialFunction literal's match into the loop. Scala 3 encodes a
      *  `{ case … }` literal as `new PartialFunction { def applyOrElse(x, default) = x match { <cases>; case _ =>
@@ -550,7 +559,14 @@ object FuseMacro:
       case Nil => ctx.consume(cur)
       case (MapS(_) | FilterS(_, _), _) :: _ =>
         val (seg, rest) = ss.span { case (MapS(_), _) => true; case (FilterS(_, _), _) => true; case _ => false }
-        buildSegment(seg.map(_._1), srcShape(cur))(finalShape => readShape(finalShape)(t => buildBody(rest, t, ctx)))
+        // when this is the last segment AND the terminal discards the element (count), DON'T materialize the
+        // final shape — the value is dead, so its columns (e.g. a lazy string decode, an expensive map) never
+        // fire. The filters in `seg` still run (predShape emits the guarding `If`s); only the trailing map's
+        // value isn't forced. DCE/compute-for-survivors extended to the terminal.
+        if rest.isEmpty && discardsElem then
+          buildSegment(seg.map(_._1), srcShape(cur))(_ => ctx.consume(unit))
+        else
+          buildSegment(seg.map(_._1), srcShape(cur))(finalShape => readShape(finalShape)(t => buildBody(rest, t, ctx)))
       case (FlatMapS(f, bTpe), _) :: rest =>
         // open a nested loop over f(cur): everything downstream runs inside it.
         val inner: Expr[FBase] = '{ ${ applyLambda(f, cur).asExpr }.asInstanceOf[FBase] }

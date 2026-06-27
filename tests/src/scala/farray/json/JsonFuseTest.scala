@@ -53,4 +53,19 @@ class JsonFuseTest:
     val got = Json.ndjson[Rec](buf).fuse.filter(_.status == "active").map(_.amount).sum
     assertEquals(ref, got, 1e-6)
 
+  /** DCE-to-terminal: `map(_.category).count` must NOT decode the category strings (the mapped value is dead
+   *  for count). Correctness: the count must still match; the no-decode is verified by the benchmark's 0 B/op. */
+  @Test def fused_mapCount_dce_correct(): Unit =
+    val ref = jsoniterRecs.count(_.amount > threshold)
+    val got = Json.ndjson[Rec](buf).fuse.filter(_.amount > threshold).map(_.category).count
+    assertEquals(ref, got)
+
+  /** the general (in-memory) form: `map(expensive).count` must not call `expensive` — DCE to the count
+   *  terminal. A call-count proves the mapped function never runs. */
+  @Test def inMemory_mapCount_skips_map(): Unit =
+    var calls = 0
+    val n = farray.FArray(1, 2, 3, 4, 5, 6).fuse.filter(_ % 2 == 0).map(x => { calls += 1; x * 1000 }).count
+    assertEquals(3, n)       // 3 even numbers survive
+    assertEquals(0, calls)   // but the map function was never invoked — its result is dead for count
+
 end JsonFuseTest
