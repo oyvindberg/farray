@@ -195,4 +195,41 @@ class FoldAdjacentTest:
     val src = new CountingSource(srcChunks.map(FArray.fromIterable))
     assertEquals(flat.grouped(4).map(_.toList).toList, src.fuse.grouped(4).run.toList.map(_.toList))
 
+  // ── takeRight(n): the last n elements via a ring buffer (O(n)) ──────────────────────────────────────────
+  @Test def takeRight_parity(): Unit =
+    val xs = (0 until 20).toList
+    assertEquals(xs.takeRight(5), FArray.fromIterable(xs).fuse.takeRight(5).run.toList)
+
+  @Test def takeRight_fewerThanN(): Unit =
+    val xs = List(1, 2, 3)
+    assertEquals(xs.takeRight(10), FArray.fromIterable(xs).fuse.takeRight(10).run.toList) // n > size → all, in order
+
+  @Test def takeRight_empty(): Unit =
+    assertEquals(Nil, FArray.empty[Int].fuse.takeRight(5).run.toList)
+
+  @Test def takeRight_one(): Unit =
+    assertEquals(List(9), FArray.fromIterable((0 to 9).toList).fuse.takeRight(1).run.toList)
+
+  @Test def takeRight_afterFilterMap(): Unit =
+    val xs = (0 until 30).toList
+    assertEquals(
+      xs.filter(_ % 2 == 0).map(_ * 3).takeRight(4),
+      FArray.fromIterable(xs).fuse.filter(_ % 2 == 0).map(_ * 3).takeRight(4).run.toList
+    )
+
+  @Test def takeRight_thenTake(): Unit =
+    // takeRight(5).take(2) = the first 2 of the last 5 → done stops the ring replay mid-way.
+    val xs = (0 until 20).toList
+    assertEquals(xs.takeRight(5).take(2), FArray.fromIterable(xs).fuse.takeRight(5).take(2).run.toList)
+
+  @Test def takeRight_streaming(): Unit =
+    val srcChunks = List(List(0, 1, 2), List(3, 4, 5), List(6, 7, 8, 9))
+    val flat = srcChunks.flatten
+    val src = new CountingSource(srcChunks.map(FArray.fromIterable))
+    assertEquals(flat.takeRight(3), src.fuse.takeRight(3).run.toList) // last 3 span the final chunk's tail
+
+  @Test def takeRight_strings(): Unit =
+    val xs = List("a", "bb", "ccc", "dddd", "eeeee")
+    assertEquals(xs.takeRight(2), FArray.fromIterable(xs).fuse.takeRight(2).run.toList)
+
 end FoldAdjacentTest

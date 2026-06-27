@@ -105,6 +105,8 @@ object FuseMacro:
     final case class GroupAdjacentByS(key: Term, kTpe: TypeRepr, aTpe: TypeRepr) extends Stage
     // fixed-size chunks: emit an `FArray[A]` of `n` rows (the last may be shorter). A bounded-buffer stage.
     final case class GroupedS(n: Term, aTpe: TypeRepr) extends Stage
+    // keep only the LAST n elements (a ring buffer): nothing emitted mid-loop, the ring replayed in order at the end.
+    final case class TakeRightS(n: Term, aTpe: TypeRepr) extends Stage
 
     enum Kind:
       case KInt, KLong, KDouble, KFloat, KShort, KByte, KChar, KBoolean, KRef
@@ -143,10 +145,14 @@ object FuseMacro:
         acc: Option[(Term, Term => Term)] = None, // scanLeft: (read accumulator, assign accumulator)
         foldAdj: Option[FoldAdjState] = None, // foldAdjacentBy: curKey/acc/started handles + the seed
         groupAdj: Option[GroupAdjState] = None, // groupAdjacentBy: per-run row buffer + curKey/started
-        grouped: Option[GroupedState] = None // grouped(n): fixed-size row buffer + a fill count
+        grouped: Option[GroupedState] = None, // grouped(n): fixed-size row buffer + a fill count
+        takeRight: Option[TakeRightState] = None // takeRight(n): a ring buffer; `replay` emits its contents in order
     )
     // grouped(n)'s above-loop state: append a row, the current fill count, the window-size n, build/reset the buffer.
     final case class GroupedState(append: Term => Expr[Unit], sizeRead: Expr[Int], n: Expr[Int], emitRun: Term, reset: Expr[Unit])
+    // takeRight(n)'s above-loop state: `store` writes the element into the ring; the read primitives let the
+    // epilogue build a `done`-aware replay loop (count to emit, oldest index, ring size, read-at-ring-index).
+    final case class TakeRightState(store: Term => Expr[Unit], count: Expr[Int], oldest: Expr[Int], size: Expr[Int], readAt: Expr[Int] => Term)
     // foldAdjacentBy's above-loop state: the run key, the run accumulator, the started flag, and the (once-bound) seed.
     final case class FoldAdjState(
         curKeyRead: Term,
@@ -179,6 +185,7 @@ object FuseMacro:
     final case class FoldAdjSpec(seed: Term, kTpe: TypeRepr, bTpe: TypeRepr) extends CSpec // foldAdjacentBy: curKey/acc/started/seed
     final case class GroupAdjSpec(kTpe: TypeRepr, aTpe: TypeRepr) extends CSpec // groupAdjacentBy: buffer + curKey/started
     final case class GroupedSpec(n: Term, aTpe: TypeRepr) extends CSpec // grouped(n): row buffer + a count + started
+    final case class TakeRightSpec(n: Term, aTpe: TypeRepr) extends CSpec // takeRight(n): a ring buffer + pos + cnt
     // `consume` takes a MATERIALIZED element. `consumeShape`, when present, takes the element's decomposed Shape
     // instead — so a terminal whose lambda projects fields (e.g. `foldLeft((acc, r) => acc + r.amount)`) reads
     // only the columns it touches and never rebuilds the whole product (DCE/sink reaching the terminal's lambda).
@@ -232,6 +239,9 @@ object FuseMacro:
         // grouped(n): no type/lambda args — the element type A comes from the receiver's `Fuse[A]`.
         case Apply(Select(prev, "grouped"), List(n)) =>
           parse(prev, GroupedS(unwrap(n), fuseElem(prev.tpe)) :: acc)
+        // takeRight(n): the last n elements — element type A from the receiver's `Fuse[A]`.
+        case Apply(Select(prev, "takeRight"), List(n)) =>
+          parse(prev, TakeRightS(unwrap(n), fuseElem(prev.tpe)) :: acc)
         case Apply(Select(prev, "tapEach"), List(f))                                        => parse(prev, TapEachS(unwrap(f)) :: acc)
         case Select(prev, "zipWithIndex")                                                   => parse(prev, ZipWithIndexS :: acc)
         case Apply(TypeApply(Select(prev, "zip"), List(b)), List(that))                     => parse(prev, ZipS(unwrap(that), b.tpe, None) :: acc)
@@ -547,6 +557,7 @@ object FuseMacro:
       case (FoldAdjacentByS(_, seed, _, kt, bt), i) => (i, FoldAdjSpec(seed, kt, bt))
       case (GroupAdjacentByS(_, kt, at), i)         => (i, GroupAdjSpec(kt, at))
       case (GroupedS(n, at), i)                     => (i, GroupedSpec(n, at))
+      case (TakeRightS(n, at), i)                   => (i, TakeRightSpec(n, at))
     }
     val takesPresent: Boolean = stages.exists(_.isInstanceOf[TakeS])
     val hasZip: Boolean = stages.exists(_.isInstanceOf[ZipS])
@@ -555,15 +566,16 @@ object FuseMacro:
     val scanCount: Int = stages.count(_.isInstanceOf[ScanLeftS])
     if scanCount > 1 then report.errorAndAbort("fuse: at most one scanLeft per pipeline")
     val hasScan: Boolean = scanCount == 1
-    // foldAdjacentBy / groupAdjacentBy / grouped all hold a pending run/window and use the single prologue/epilogue
-    // weave point (the epilogue flushes the final partial run) — at most ONE per pipeline, and not with scanLeft (v1).
+    // foldAdjacentBy / groupAdjacentBy / grouped / takeRight all hold a pending run/window/ring and use the single
+    // prologue/epilogue weave point (the epilogue flushes the final run / replays the ring) — at most ONE per
+    // pipeline, and not with scanLeft (v1).
     def isBufferStage(s: Stage): Boolean = s match
-      case _: FoldAdjacentByS | _: GroupAdjacentByS | _: GroupedS => true
-      case _                                                      => false
+      case _: FoldAdjacentByS | _: GroupAdjacentByS | _: GroupedS | _: TakeRightS => true
+      case _                                                                      => false
     val adjCount: Int = stages.count(isBufferStage)
-    if adjCount > 1 then report.errorAndAbort("fuse: at most one foldAdjacentBy/groupAdjacentBy/grouped per pipeline (v1)")
+    if adjCount > 1 then report.errorAndAbort("fuse: at most one foldAdjacentBy/groupAdjacentBy/grouped/takeRight per pipeline (v1)")
     if adjCount == 1 && hasScan then
-      report.errorAndAbort("fuse: a buffering stage (foldAdjacentBy/groupAdjacentBy/grouped) cannot be combined with scanLeft (v1)")
+      report.errorAndAbort("fuse: a buffering stage (foldAdjacentBy/groupAdjacentBy/grouped/takeRight) cannot be combined with scanLeft (v1)")
     // the buffering stage's index + the stages downstream of it — the epilogue flushes its pending final run/window.
     val adjInfo: Option[(Int, List[(Stage, Int)])] =
       indexed.collectFirst { case (s, i) if isBufferStage(s) => i }.map(i => (i, indexed.drop(i + 1)))
@@ -1104,6 +1116,9 @@ object FuseMacro:
             ${ st.reset }
           }
         }.asTerm
+      case (TakeRightS(_, _), i) :: rest =>
+        // ring-buffer the LAST n elements; nothing is emitted here — the epilogue replays the ring in order. O(n).
+        ctx.counters(i).takeRight.get.store(cur).asTerm
       case (TapEachS(f), _) :: rest =>
         // run the side effect eagerly for every element reaching here, then pass the element through unchanged.
         '{ ${ applyLambda(f, cur).asExprOf[Unit] }; ${ buildBody(rest, cur, ctx).asExprOf[Unit] } }.asTerm
@@ -1780,6 +1795,25 @@ object FuseMacro:
                   declareSlots(rest, acc + (idx -> Slot('{ 0 }, '{ () }, None, grouped = Some(st))))(k).asExpr
                 }
               }.asTerm
+        case (idx, TakeRightSpec(nT, at)) :: rest => // takeRight(n): a ring buffer (Object[n]) + write pos + total cnt
+          at.asType match
+            case '[aa] =>
+              '{
+                val rn: Int = { val t = ${ nT.asExprOf[Int] }; if t < 1 then 1 else t }
+                val ring: Array[Object] = new Array[Object](rn)
+                var rpos: Int = 0
+                var rcnt: Int = 0
+                ${
+                  val st = TakeRightState(
+                    (v: Term) => '{ ring(rpos) = ${ v.asExpr }.asInstanceOf[Object]; rpos = (rpos + 1) % rn; rcnt += 1 },
+                    '{ if rcnt < rn then rcnt else rn }, // count to emit = min(seen, n)
+                    '{ if rcnt < rn then 0 else rpos }, // oldest element's ring index (0 if not yet wrapped)
+                    '{ rn },
+                    (j: Expr[Int]) => '{ ring($j % rn).asInstanceOf[aa] }.asTerm
+                  )
+                  declareSlots(rest, acc + (idx -> Slot('{ 0 }, '{ () }, None, takeRight = Some(st))))(k).asExpr
+                }
+              }.asTerm
 
     /** static upper bound on output length = min(source length, every `take` limit and zip `that` length). */
     def capExpr(n0: Expr[Int], counters: Map[Int, Slot]): Expr[Int] =
@@ -1808,9 +1842,23 @@ object FuseMacro:
           else if slot.groupAdj.isDefined then
             val gst = slot.groupAdj.get
             '{ if ${ gst.started } then ${ continueShape(srcShape(gst.emitRun), post, c).asExprOf[Unit] } }
-          else
+          else if slot.grouped.isDefined then
             val gst = slot.grouped.get
             '{ if ${ gst.sizeRead } > 0 then ${ continueShape(srcShape(gst.emitRun), post, c).asExprOf[Unit] } }
+          else
+            // takeRight: replay the ring oldest→newest, each element through the downstream — `done`-aware so a
+            // downstream `take` (e.g. `takeRight(5).take(2)`) stops mid-replay.
+            val tr = slot.takeRight.get
+            val notDone: Expr[Boolean] = c.done match { case Some(d) => '{ ! ${ d.read } }; case None => '{ true } }
+            '{
+              val m: Int = ${ tr.count }
+              val startIdx: Int = ${ tr.oldest }
+              var j: Int = 0
+              while j < m && $notDone do {
+                ${ continueShape(srcShape(tr.readAt('{ startIdx + j })), post, c).asExprOf[Unit] }
+                j += 1
+              }
+            }
         c.done match
           case Some(d) => '{ $body; if ! ${ d.read } then $flush }
           case None    => '{ $body; $flush }

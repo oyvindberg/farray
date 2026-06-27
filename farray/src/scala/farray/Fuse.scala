@@ -35,6 +35,11 @@ final class Fuse[+A](private[farray] val base: AnyRef):
   def take(n: Int): Fuse[A] = this
   def drop(n: Int): Fuse[A] = this
 
+  /** the LAST `n` elements, in order — a ring buffer (O(n) memory), one pass, no `reverse`. Nothing is emitted until the stream ends, so unlike `take` this
+    * doesn't short-circuit the source; a downstream `take` does.
+    */
+  def takeRight(n: Int): Fuse[A] = this
+
   /** emit elements until `p` first fails, then stop the whole traversal (short-circuits like `take`). */
   def takeWhile(p: A => Boolean): Fuse[A] = this
 
