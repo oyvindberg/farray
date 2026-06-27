@@ -2086,9 +2086,10 @@ object GenCores extends BleepCodegenScript("GenCores") {
   /** The per-traverser pieces the ITERATIVE MAIN WALK needs — the single-source spec for the un-windowed,
     * explicit-stack lowering (the mirror of `WinSpec`, which single-sources the recursive windowed lowering).
     * The main walk is the node-arm ORDER (leaf / One / Prepend / Append / Concat / Reverse / Slice / Pad /
-    * Updated / Range) over one lazy `FBase[] stack` with `tail[]`/`isTail[]` deferred single elements; ONLY
-    * ReverseNode recurses (into the opposite-direction method). Per-shape knobs are callbacks (`act`, `runLeaf`,
-    * `run`, `winCall`, the ReverseNode recursion, the tail-pop action). The HOOKS the OTHER shapes will need are
+    * Updated / Range) over one lazy `FBase[] stack`; a deferred Append/Prepend element rides as a `${K}One`
+    * pushed on that same stack (no separate tail array). ONLY ReverseNode recurses (into the opposite-direction
+    * method). Per-shape knobs are callbacks (`act`, `runLeaf`, `run`, `winCall`, the ReverseNode recursion). The
+    * HOOKS the OTHER shapes will need are
     * designed in now (Reduce uses the no-op versions):
     *   - `cursorDecl`/`cursorArgs` — an OPTIONAL output-cursor threaded BESIDE the state (Build/Partition write an
     *     out[] and return the bumped cursor `o`; Reduce has none, both empty).
@@ -2096,12 +2097,10 @@ object GenCores extends BleepCodegenScript("GenCores") {
     *     out of the walk; Reduce no-ops).
     *   - the WRITE direction is intentionally NOT baked into `backward`: a shape whose write-cursor advances
     *     opposite the visit direction (Scan) supplies its own `runLeaf`/`run`/`act` that write in the write frame
-    *     while the walk visits in `backward`. Reduce's write dir == visit dir, so its callbacks just use `backward`.
-    * `tailElemT` is the deferred-element array element type ($je); `stackTailType` the `new $je[…]` for `tail`. */
+    *     while the walk visits in `backward`. Reduce's write dir == visit dir, so its callbacks just use `backward`. */
   private final case class WalkSpec(
       sig: String,             // the method signature (e.g. "static <Z> Z reduceFwdRefRef(FBase root, Z acc, …f)")
       K: String,               // input kind name (node-class prefix: ${K}Arr / ${K}One / …)
-      tailElemT: String,       // the deferred-element ($je) type for `tail[]`
       isInt: Boolean,          // emit the RangeNode arm (Int input only)
       retState: String,        // the value to `return` at the end (e.g. "acc" / "o"); "" for a void walk
       recurReverse: String => Unit, // the ReverseNode arm: given "rev.base", emit the opposite-direction call
@@ -2109,7 +2108,6 @@ object GenCores extends BleepCodegenScript("GenCores") {
       runLeaf: String => Unit, // a WHOLE-leaf run over the named array (HotSpot drops the bounds check)
       run: (String, String, String) => Unit, // a leaf window run over arr[start, start±count) (Slice/Pad/Updated)
       winCall: (String, String, String) => Unit, // deep-base window hand-off: node[lo, lo+len) in THIS direction
-      popTail: String => Unit, // the stack pop-loop action for a deferred tail element expr (mirror of `act`)
       cursorDecl: String = "",  // OPTIONAL output-cursor decl, threaded beside the state (Build/Partition); "" here
       cursorArgs: String = "",  // OPTIONAL output-cursor arg(s) on a recursive call; "" here
       earlyStopAfterAct: () => Unit = () => (), // OPTIONAL early-stop hook after a per-element act (ShortCircuit); no-op here
@@ -2123,38 +2121,29 @@ object GenCores extends BleepCodegenScript("GenCores") {
     * emits the method from its `sig` through its closing brace; the caller emits any trailing windowed traverser. */
   private def emitMainWalk(e: Emit, spec: WalkSpec, backward: Boolean): Unit = {
     val K = spec.K
-    val je = spec.tailElemT
-    // grow the FBase[] child stack; tail/isTail (deferred single elements) are grown in lockstep, lazily.
+    // the Java element type for this input kind (Pad filler / Updated leaf-array element type).
+    val je = K match {
+      case "Int"    => "int"
+      case "Long"   => "long"
+      case "Double" => "double"
+      case _        => "Object"
+    }
+    // grow the single FBase[] child stack; a deferred Append/Prepend element rides as a ${K}One node.
     def ensureStack(): Unit = {
       e.open("if (stack == null)")
       e.line("stack = new FBase[16];")
       e.closeOpen("else if (sp == stack.length)")
       e.line("int nl = sp * 2;")
       e.line("stack = java.util.Arrays.copyOf(stack, nl);")
-      e.open("if (isTail != null)")
-      e.line("tail = java.util.Arrays.copyOf(tail, nl);")
-      e.line("isTail = java.util.Arrays.copyOf(isTail, nl);")
-      e.close()
       e.close()
     }
-    def ensureTail(): Unit = {
-      e.open("if (isTail == null)")
-      e.line(s"tail = new $je[stack.length];")
-      e.line("isTail = new boolean[stack.length];")
-      e.close()
-    }
-    def pushTail(elem: String): Unit = {
+    def pushOne(elem: String): Unit = {
       ensureStack()
-      ensureTail()
-      e.line(s"tail[sp] = $elem;")
-      e.line("isTail[sp] = true;")
+      e.line(s"stack[sp] = new ${K}One($elem);")
       e.line("sp += 1;")
     }
     def pushChild(child: String): Unit = {
       ensureStack()
-      e.open("if (isTail != null)")
-      e.line("isTail[sp] = false;")
-      e.close()
       e.line(s"stack[sp] = $child;")
       e.line("sp += 1;")
     }
@@ -2162,8 +2151,6 @@ object GenCores extends BleepCodegenScript("GenCores") {
     e.open(spec.sig)
     e.line("FBase cur = root;")
     e.line("FBase[] stack = null;")
-    e.line(s"$je[] tail = null;")
-    e.line("boolean[] isTail = null;")
     e.line("int sp = 0;")
     spec.prelude()
     e.open("while (cur != null)")
@@ -2181,13 +2168,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
       spec.act(s"$pv.elem")
       e.line(s"next = $pv.base;")
     } else {
-      pushTail(s"$pv.elem")
+      pushOne(s"$pv.elem")
       e.line(s"next = $pv.base;")
     }
     // append: fwd defer elem, descend base first; bwd elem-then-base
     e.closeOpen(s"else if (cur instanceof ${K}Append ap)")
     if !backward then {
-      pushTail("ap.elem")
+      pushOne("ap.elem")
       e.line("next = ap.base;")
     } else {
       spec.act("ap.elem")
@@ -2288,18 +2275,14 @@ object GenCores extends BleepCodegenScript("GenCores") {
       }
     }
     e.close()
-    // advance: descend into `next`, else pop the explicit stack (a tail slot applies the deferred element).
+    // advance: descend into `next`, else pop the explicit stack (a popped ${K}One acts as an ordinary node).
     e.open("if (next != null)")
     e.line("cur = next;")
     e.closeOpen("else")
     e.line("cur = null;")
     e.open("while (sp > 0 && cur == null)")
     e.line("sp -= 1;")
-    e.open("if (isTail != null && isTail[sp])")
-    spec.popTail("tail[sp]")
-    e.closeOpen("else")
     e.line("cur = stack[sp];")
-    e.close()
     e.close()
     e.close()
     e.close() // while (cur != null)
@@ -2411,16 +2394,16 @@ object GenCores extends BleepCodegenScript("GenCores") {
 
     // Build a Reduce WalkSpec and emit the iterative main walk from it (the single-sourced emitter). Reduce's
     // per-element action is `acc = f.apply(acc, e)`; state is `acc`; the ReverseNode arm recurses into the
-    // opposite-direction reduce method; the deferred-tail pop applies the same fold step. No output-cursor, no
-    // early-stop, and write dir == visit dir (the run/runLeaf/act callbacks all use `backward` directly).
+    // opposite-direction reduce method; a deferred Append/Prepend element rides as a ${K}One on the stack and is
+    // acted by the One arm. No output-cursor, no early-stop, and write dir == visit dir (the run/runLeaf/act
+    // callbacks all use `backward` directly).
     val spec = WalkSpec(
-      sig = sig, K = K, tailElemT = je, isInt = K == "Int", retState = "acc",
+      sig = sig, K = K, isInt = K == "Int", retState = "acc",
       recurReverse = base => e.line(s"acc = $recur($base, acc, f);"),
       act = el => e.line(s"acc = f.apply(acc, $el);"),
       runLeaf = arr => runLeaf(arr),
       run = (arr, start, count) => run(arr, start, count),
-      winCall = (node, lo, len) => winCall(node, lo, len),
-      popTail = el => e.line(s"acc = f.apply(acc, $el);")
+      winCall = (node, lo, len) => winCall(node, lo, len)
     )
     emitMainWalk(e, spec, backward)
     e.blank()
@@ -2501,25 +2484,6 @@ object GenCores extends BleepCodegenScript("GenCores") {
         e.close()
       }
     }
-    // deep (non-leaf) base read, per element, via applyBoxed.
-    def runBoxed(base: String, start: String, count: String): Unit = e.scope {
-      if !backward then {
-        e.line(s"int bi = $start;")
-        e.line(s"int bend = bi + ($count);")
-        e.open("while (bi < bend)")
-        writeElem(fromBoxed(s"$base.applyBoxed(bi)"))
-        e.line("bi += 1;")
-        e.close()
-      } else {
-        e.line(s"int bi = $start;")
-        e.line(s"int bend = bi - ($count);")
-        e.open("while (bi > bend)")
-        writeElem(fromBoxed(s"$base.applyBoxed(bi)"))
-        e.line("bi -= 1;")
-        e.close()
-      }
-    }
-
     // --- the (skip,take)-windowed sub-traverser for deep Slice/Pad/Updated bases (replaces runBoxed). ---
     val winName = s"buildWindow${dir}${KI}${ko.name}"
     val winOther = s"buildWindow${other}${KI}${ko.name}"
@@ -2535,53 +2499,18 @@ object GenCores extends BleepCodegenScript("GenCores") {
       if !backward then e.line(win.capture(win.recurExpr(node, lo, len, ", out, o")))
       else e.line(win.capture(win.recurExpr(node, s"$node.length - ($lo) - ($len)", len, ", out, o")))
 
-    // the deferred-element stack mirrors reduceTraverser (Prepend fwd-defer / Append bwd-defer).
-    def ensureStack(): Unit = {
-      e.open("if (stack == null)")
-      e.line("stack = new FBase[16];")
-      e.closeOpen("else if (sp == stack.length)")
-      e.line("int nl = sp * 2;")
-      e.line("stack = java.util.Arrays.copyOf(stack, nl);")
-      e.open("if (isTail != null)")
-      e.line("tail = java.util.Arrays.copyOf(tail, nl);")
-      e.line("isTail = java.util.Arrays.copyOf(isTail, nl);")
-      e.close()
-      e.close()
-    }
-    def ensureTail(): Unit = {
-      e.open("if (isTail == null)")
-      e.line(s"tail = new $jiE[stack.length];")
-      e.line("isTail = new boolean[stack.length];")
-      e.close()
-    }
-    def pushTail(elem: String): Unit = {
-      ensureStack()
-      ensureTail()
-      e.line(s"tail[sp] = $elem;")
-      e.line("isTail[sp] = true;")
-      e.line("sp += 1;")
-    }
-    def pushChild(child: String): Unit = {
-      ensureStack()
-      e.open("if (isTail != null)")
-      e.line("isTail[sp] = false;")
-      e.close()
-      e.line(s"stack[sp] = $child;")
-      e.line("sp += 1;")
-    }
-
     // Build a Build WalkSpec and emit the iterative main walk from it (the shared emitter). Per-element action is
     // `out[o] = f.apply(e); o += 1`; state returned is the cursor `o`; the ReverseNode arm recurses into the
-    // opposite-direction build threading `o`; the deferred-tail pop writes the deferred element. Write dir == visit
-    // dir (the run/runLeaf/writeElem callbacks all use `backward` directly).
+    // opposite-direction build threading `o`; a deferred Append/Prepend element rides as a ${KI}One on the stack
+    // and is written by the One arm. Write dir == visit dir (the run/runLeaf/writeElem callbacks all use `backward`
+    // directly).
     val spec = WalkSpec(
-      sig = sig, K = KI, tailElemT = jiE, isInt = KI == "Int", retState = "o",
+      sig = sig, K = KI, isInt = KI == "Int", retState = "o",
       recurReverse = base => e.line(s"o = $recur($base, out, o, f);"),
       act = el => writeElem(el),
       runLeaf = arr => runLeaf(arr),
       run = (arr, start, count) => run(arr, start, count),
-      winCall = (node, lo, len) => winCall(node, lo, len),
-      popTail = el => writeElem(el)
+      winCall = (node, lo, len) => winCall(node, lo, len)
     )
     emitMainWalk(e, spec, backward)
     e.blank()
@@ -2655,25 +2584,6 @@ object GenCores extends BleepCodegenScript("GenCores") {
         e.close()
       }
     }
-    // deep (non-leaf) base read, per element, via applyBoxed.
-    def runBoxed(base: String, start: String, count: String): Unit = e.scope {
-      if !backward then {
-        e.line(s"int bi = $start;")
-        e.line(s"int bend = bi + ($count);")
-        e.open("while (bi < bend)")
-        writeElem(fromBoxed(s"$base.applyBoxed(bi)"))
-        e.line("bi += 1;")
-        e.close()
-      } else {
-        e.line(s"int bi = $start;")
-        e.line(s"int bend = bi - ($count);")
-        e.open("while (bi > bend)")
-        writeElem(fromBoxed(s"$base.applyBoxed(bi)"))
-        e.line("bi -= 1;")
-        e.close()
-      }
-    }
-
     // --- the (skip,take)-windowed sub-traverser for deep Slice/Pad/Updated bases (replaces runBoxed). ---
     val winName = if backward then s"buildFilteredWindowBwd${K}" else s"buildFilteredWindow${K}"
     val winOther = if backward then s"buildFilteredWindow${K}" else s"buildFilteredWindowBwd${K}"
@@ -2689,53 +2599,18 @@ object GenCores extends BleepCodegenScript("GenCores") {
       if !backward then e.line(win.capture(win.recurExpr(node, lo, len, ", out, o")))
       else e.line(win.capture(win.recurExpr(node, s"$node.length - ($lo) - ($len)", len, ", out, o")))
 
-    // the deferred-element stack mirrors buildTraverser (Prepend fwd-defer / Append bwd-defer).
-    def ensureStack(): Unit = {
-      e.open("if (stack == null)")
-      e.line("stack = new FBase[16];")
-      e.closeOpen("else if (sp == stack.length)")
-      e.line("int nl = sp * 2;")
-      e.line("stack = java.util.Arrays.copyOf(stack, nl);")
-      e.open("if (isTail != null)")
-      e.line("tail = java.util.Arrays.copyOf(tail, nl);")
-      e.line("isTail = java.util.Arrays.copyOf(isTail, nl);")
-      e.close()
-      e.close()
-    }
-    def ensureTail(): Unit = {
-      e.open("if (isTail == null)")
-      e.line(s"tail = new $je[stack.length];")
-      e.line("isTail = new boolean[stack.length];")
-      e.close()
-    }
-    def pushTail(elem: String): Unit = {
-      ensureStack()
-      ensureTail()
-      e.line(s"tail[sp] = $elem;")
-      e.line("isTail[sp] = true;")
-      e.line("sp += 1;")
-    }
-    def pushChild(child: String): Unit = {
-      ensureStack()
-      e.open("if (isTail != null)")
-      e.line("isTail[sp] = false;")
-      e.close()
-      e.line(s"stack[sp] = $child;")
-      e.line("sp += 1;")
-    }
-
     // Build a BuildFiltered WalkSpec and emit the iterative main walk from it (the shared emitter). Per-element
     // action is the predicate-guarded keep `if (p.apply(e)) { out[o] = e; o += 1; }`; state returned is the kept
-    // cursor `o`; the ReverseNode arm recurses into the opposite-direction filter threading `o` and `p`; the
-    // deferred-tail pop re-runs the guarded keep. Write dir == visit dir.
+    // cursor `o`; the ReverseNode arm recurses into the opposite-direction filter threading `o` and `p`; a
+    // deferred Append/Prepend element rides as a ${K}One on the stack and is written (guarded) by the One arm.
+    // Write dir == visit dir.
     val spec = WalkSpec(
-      sig = sig, K = K, tailElemT = je, isInt = K == "Int", retState = "o",
+      sig = sig, K = K, isInt = K == "Int", retState = "o",
       recurReverse = base => e.line(s"o = $recur($base, out, o, p);"),
       act = el => writeElem(el),
       runLeaf = arr => runLeaf(arr),
       run = (arr, start, count) => run(arr, start, count),
       winCall = (node, lo, len) => winCall(node, lo, len),
-      popTail = el => writeElem(el),
       prependVar = "pr" // the fn param is named `p` (the predicate), so the Prepend binding is `pr` to avoid shadowing
     )
     emitMainWalk(e, spec, backward)
@@ -2809,24 +2684,6 @@ object GenCores extends BleepCodegenScript("GenCores") {
         e.close()
       }
     }
-    def runBoxed(base: String, start: String, count: String): Unit = e.scope {
-      if !backward then {
-        e.line(s"int bi = $start;")
-        e.line(s"int bend = bi + ($count);")
-        e.open("while (bi < bend)")
-        writeElem(fromBoxed(s"$base.applyBoxed(bi)"))
-        e.line("bi += 1;")
-        e.close()
-      } else {
-        e.line(s"int bi = $start;")
-        e.line(s"int bend = bi - ($count);")
-        e.open("while (bi > bend)")
-        writeElem(fromBoxed(s"$base.applyBoxed(bi)"))
-        e.line("bi -= 1;")
-        e.close()
-      }
-    }
-
     // --- the (skip,take)-windowed sub-traverser for deep Slice/Pad/Updated bases (replaces runBoxed). ---
     val packedRet = "(((long) ob) << 32) | (((long) oa) & 0xffffffffL)"
     val winName = if backward then s"partitionWindowBwd${K}" else s"partitionWindowFwd${K}"
@@ -2847,47 +2704,14 @@ object GenCores extends BleepCodegenScript("GenCores") {
       if !backward then e.line(win.capture(win.recurExpr(node, lo, len, ", outA, outB, (long) oa, (long) ob")))
       else e.line(win.capture(win.recurExpr(node, s"$node.length - ($lo) - ($len)", len, ", outA, outB, (long) oa, (long) ob")))
 
-    def ensureStack(): Unit = {
-      e.open("if (stack == null)")
-      e.line("stack = new FBase[16];")
-      e.closeOpen("else if (sp == stack.length)")
-      e.line("int nl = sp * 2;")
-      e.line("stack = java.util.Arrays.copyOf(stack, nl);")
-      e.open("if (isTail != null)")
-      e.line("tail = java.util.Arrays.copyOf(tail, nl);")
-      e.line("isTail = java.util.Arrays.copyOf(isTail, nl);")
-      e.close()
-      e.close()
-    }
-    def ensureTail(): Unit = {
-      e.open("if (isTail == null)")
-      e.line(s"tail = new $je[stack.length];")
-      e.line("isTail = new boolean[stack.length];")
-      e.close()
-    }
-    def pushTail(elem: String): Unit = {
-      ensureStack()
-      ensureTail()
-      e.line(s"tail[sp] = $elem;")
-      e.line("isTail[sp] = true;")
-      e.line("sp += 1;")
-    }
-    def pushChild(child: String): Unit = {
-      ensureStack()
-      e.open("if (isTail != null)")
-      e.line("isTail[sp] = false;")
-      e.close()
-      e.line(s"stack[sp] = $child;")
-      e.line("sp += 1;")
-    }
-
     // Build a Partition WalkSpec and emit the iterative main walk from it (the shared emitter). The prelude declares
     // the two int cursors `oa`/`ob` (from the packed long params) BESIDE the stack; per-element action routes the
     // element to outA/outB (the dual-write writeElem); state returned is the repacked (oa, ob) long; the ReverseNode
-    // arm recurses into the opposite-direction partition threading BOTH cursors via the packed long; the deferred-tail
-    // pop re-runs the dual write. The fn param is named `p` so the Prepend binding is `pr`. Write dir == visit dir.
+    // arm recurses into the opposite-direction partition threading BOTH cursors via the packed long; a deferred
+    // Append/Prepend element rides as a ${K}One on the stack and is dual-written by the One arm. The fn param is
+    // named `p` so the Prepend binding is `pr`. Write dir == visit dir.
     val spec = WalkSpec(
-      sig = sig, K = K, tailElemT = je, isInt = K == "Int", retState = packedRet,
+      sig = sig, K = K, isInt = K == "Int", retState = packedRet,
       recurReverse = base => {
         e.line(s"long _pk = $recur($base, outA, outB, (long) oa, (long) ob, p);")
         e.line("oa = (int) (_pk & 0xffffffffL);")
@@ -2897,7 +2721,6 @@ object GenCores extends BleepCodegenScript("GenCores") {
       runLeaf = arr => runLeaf(arr),
       run = (arr, start, count) => run(arr, start, count),
       winCall = (node, lo, len) => winCall(node, lo, len),
-      popTail = el => writeElem(el),
       prelude = () => { e.line("int oa = (int) oa0;"); e.line("int ob = (int) ob0;") },
       prependVar = "pr"
     )
@@ -2962,25 +2785,6 @@ object GenCores extends BleepCodegenScript("GenCores") {
         e.close()
       }
     }
-    // deep (non-leaf) base read, per element, via applyBoxed.
-    def runBoxed(base: String, start: String, count: String): Unit = e.scope {
-      if !backward then {
-        e.line(s"int bi = $start;")
-        e.line(s"int bend = bi + ($count);")
-        e.open("while (bi < bend)")
-        e.line(s"f.apply(${fromBoxed(s"$base.applyBoxed(bi)")});")
-        e.line("bi += 1;")
-        e.close()
-      } else {
-        e.line(s"int bi = $start;")
-        e.line(s"int bend = bi - ($count);")
-        e.open("while (bi > bend)")
-        e.line(s"f.apply(${fromBoxed(s"$base.applyBoxed(bi)")});")
-        e.line("bi -= 1;")
-        e.close()
-      }
-    }
-
     // --- the (skip,take)-windowed sub-traverser for deep Slice/Pad/Updated bases (replaces runBoxed). ---
     val winName = s"foreachWindow${dir}${K}"
     val winOther = s"foreachWindow${other}${K}"
@@ -2996,51 +2800,17 @@ object GenCores extends BleepCodegenScript("GenCores") {
       if !backward then e.line(win.capture(win.recurExpr(node, lo, len, "")))
       else e.line(win.capture(win.recurExpr(node, s"$node.length - ($lo) - ($len)", len, "")))
 
-    def ensureStack(): Unit = {
-      e.open("if (stack == null)")
-      e.line("stack = new FBase[16];")
-      e.closeOpen("else if (sp == stack.length)")
-      e.line("int nl = sp * 2;")
-      e.line("stack = java.util.Arrays.copyOf(stack, nl);")
-      e.open("if (isTail != null)")
-      e.line("tail = java.util.Arrays.copyOf(tail, nl);")
-      e.line("isTail = java.util.Arrays.copyOf(isTail, nl);")
-      e.close()
-      e.close()
-    }
-    def ensureTail(): Unit = {
-      e.open("if (isTail == null)")
-      e.line(s"tail = new $je[stack.length];")
-      e.line("isTail = new boolean[stack.length];")
-      e.close()
-    }
-    def pushTail(elem: String): Unit = {
-      ensureStack()
-      ensureTail()
-      e.line(s"tail[sp] = $elem;")
-      e.line("isTail[sp] = true;")
-      e.line("sp += 1;")
-    }
-    def pushChild(child: String): Unit = {
-      ensureStack()
-      e.open("if (isTail != null)")
-      e.line("isTail[sp] = false;")
-      e.close()
-      e.line(s"stack[sp] = $child;")
-      e.line("sp += 1;")
-    }
-
     // Build a Foreach WalkSpec and emit the iterative main walk from it (the shared emitter). Per-element action is
     // `f.apply(e)` (no accumulator, no output); the walk is VOID (retState ""); the ReverseNode arm recurses into the
-    // opposite-direction foreach; the deferred-tail pop applies `f` to the deferred element.
+    // opposite-direction foreach; a deferred Append/Prepend element rides as a ${K}One on the stack and is applied
+    // by the One arm.
     val spec = WalkSpec(
-      sig = sig, K = K, tailElemT = je, isInt = K == "Int", retState = "",
+      sig = sig, K = K, isInt = K == "Int", retState = "",
       recurReverse = base => e.line(s"$recur($base, f);"),
       act = el => e.line(s"f.apply($el);"),
       runLeaf = arr => runLeaf(arr),
       run = (arr, start, count) => run(arr, start, count),
-      winCall = (node, lo, len) => winCall(node, lo, len),
-      popTail = el => e.line(s"f.apply($el);")
+      winCall = (node, lo, len) => winCall(node, lo, len)
     )
     emitMainWalk(e, spec, backward)
     e.blank()
@@ -3131,24 +2901,6 @@ object GenCores extends BleepCodegenScript("GenCores") {
         e.close()
       }
     }
-    def runBoxed(base: String, start: String, count: String): Unit = e.scope {
-      if !backward then {
-        e.line(s"int bi = $start;")
-        e.line(s"int bend = bi + ($count);")
-        e.open("while (bi < bend)")
-        writeElem(fromBoxed(s"$base.applyBoxed(bi)"))
-        e.line("bi += 1;")
-        e.close()
-      } else {
-        e.line(s"int bi = $start;")
-        e.line(s"int bend = bi - ($count);")
-        e.open("while (bi > bend)")
-        writeElem(fromBoxed(s"$base.applyBoxed(bi)"))
-        e.line("bi -= 1;")
-        e.close()
-      }
-    }
-
     // --- the (skip,take)-windowed sub-traverser for deep Slice/Pad/Updated bases (replaces runBoxed). The window
     // VISIT direction = visitBackward (s.backward); the WRITE convention (o advance) stays writeBackward, exactly
     // as the main scan — emitWindow's leaf/run loops visit per s.backward while writeElem advances o per write dir.
@@ -3168,54 +2920,19 @@ object GenCores extends BleepCodegenScript("GenCores") {
       if !backward then e.line(win.capture(win.recurExpr(node, lo, len, ", out, o")))
       else e.line(win.capture(win.recurExpr(node, s"$node.length - ($lo) - ($len)", len, ", out, o")))
 
-    def ensureStack(): Unit = {
-      e.open("if (stack == null)")
-      e.line("stack = new FBase[16];")
-      e.closeOpen("else if (sp == stack.length)")
-      e.line("int nl = sp * 2;")
-      e.line("stack = java.util.Arrays.copyOf(stack, nl);")
-      e.open("if (isTail != null)")
-      e.line("tail = java.util.Arrays.copyOf(tail, nl);")
-      e.line("isTail = java.util.Arrays.copyOf(isTail, nl);")
-      e.close()
-      e.close()
-    }
-    def ensureTail(): Unit = {
-      e.open("if (isTail == null)")
-      e.line(s"tail = new $je[stack.length];")
-      e.line("isTail = new boolean[stack.length];")
-      e.close()
-    }
-    def pushTail(elem: String): Unit = {
-      ensureStack()
-      ensureTail()
-      e.line(s"tail[sp] = $elem;")
-      e.line("isTail[sp] = true;")
-      e.line("sp += 1;")
-    }
-    def pushChild(child: String): Unit = {
-      ensureStack()
-      e.open("if (isTail != null)")
-      e.line("isTail[sp] = false;")
-      e.close()
-      e.line(s"stack[sp] = $child;")
-      e.line("sp += 1;")
-    }
-
     // Build a Scan WalkSpec and emit the iterative main walk from it (the shared emitter). KEY: emitMainWalk is
     // driven by the VISIT direction (`backward` == visitBackward) — leaf loops + Concat/Append/Prepend descent
     // order — while writeElem advances `o` per the WRITE convention (writeBackward), decoupled inside the callbacks.
     // Per-element action is `out[o] = f.apply(prevAcc, e)` then o±1; state returned is the cursor `o`; the
     // ReverseNode arm recurses into the SAME write dir with the OPPOSITE visit dir (the `Rev` mutual mirror),
-    // threading `o`; the deferred-tail pop re-runs writeElem.
+    // threading `o`; a deferred Append/Prepend element rides as a ${K}One on the stack and is written by the One arm.
     val spec = WalkSpec(
-      sig = sig, K = K, tailElemT = je, isInt = K == "Int", retState = "o",
+      sig = sig, K = K, isInt = K == "Int", retState = "o",
       recurReverse = base => e.line(s"o = $recur($base, out, o, f);"),
       act = el => writeElem(el),
       runLeaf = arr => runLeaf(arr),
       run = (arr, start, count) => run(arr, start, count),
-      winCall = (node, lo, len) => winCall(node, lo, len),
-      popTail = el => writeElem(el)
+      winCall = (node, lo, len) => winCall(node, lo, len)
     )
     emitMainWalk(e, spec, backward)
     e.blank()
@@ -3347,30 +3064,15 @@ object GenCores extends BleepCodegenScript("GenCores") {
       e.closeOpen("else if (sp == stack.length)")
       e.line("int nl = sp * 2;")
       e.line("stack = java.util.Arrays.copyOf(stack, nl);")
-      e.open("if (isTail != null)")
-      e.line("tail = java.util.Arrays.copyOf(tail, nl);")
-      e.line("isTail = java.util.Arrays.copyOf(isTail, nl);")
-      e.close()
       e.close()
     }
-    def ensureTail(): Unit = {
-      e.open("if (isTail == null)")
-      e.line(s"tail = new $je[stack.length];")
-      e.line("isTail = new boolean[stack.length];")
-      e.close()
-    }
-    def pushTail(elem: String): Unit = {
+    def pushOne(elem: String): Unit = {
       ensureStack()
-      ensureTail()
-      e.line(s"tail[sp] = $elem;")
-      e.line("isTail[sp] = true;")
+      e.line(s"stack[sp] = new ${K}One($elem);")
       e.line("sp += 1;")
     }
     def pushChild(child: String): Unit = {
       ensureStack()
-      e.open("if (isTail != null)")
-      e.line("isTail[sp] = false;")
-      e.close()
       e.line(s"stack[sp] = $child;")
       e.line("sp += 1;")
     }
@@ -3378,8 +3080,6 @@ object GenCores extends BleepCodegenScript("GenCores") {
     e.open(sig)
     e.line("FBase cur = root;")
     e.line("FBase[] stack = null;")
-    e.line(s"$je[] tail = null;")
-    e.line("boolean[] isTail = null;")
     e.line("int sp = 0;")
     e.open("while (cur != null)")
     e.line("FBase next = null;")
@@ -3395,13 +3095,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
       oneScan("p2.elem")
       e.line("next = p2.base;")
     } else {
-      pushTail("p2.elem")
+      pushOne("p2.elem")
       e.line("next = p2.base;")
     }
     // append: fwd defer elem, descend base first; bwd elem-then-base
     e.closeOpen(s"else if (cur instanceof ${K}Append ap)")
     if !backward then {
-      pushTail("ap.elem")
+      pushOne("ap.elem")
       e.line("next = ap.base;")
     } else {
       oneScan("ap.elem")
@@ -3516,18 +3216,14 @@ object GenCores extends BleepCodegenScript("GenCores") {
       }
     }
     e.close()
-    // advance: descend into `next`, else pop the explicit stack (a tail slot tests the deferred element).
+    // advance: descend into `next`, else pop the explicit stack (a popped ${K}One tests the deferred element).
     e.open("if (next != null)")
     e.line("cur = next;")
     e.closeOpen("else")
     e.line("cur = null;")
     e.open("while (sp > 0 && cur == null)")
     e.line("sp -= 1;")
-    e.open("if (isTail != null && isTail[sp])")
-    oneScan("tail[sp]")
-    e.closeOpen("else")
     e.line("cur = stack[sp];")
-    e.close()
     e.close()
     e.close()
     e.close() // while (cur != null)
