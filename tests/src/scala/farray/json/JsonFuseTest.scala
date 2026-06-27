@@ -97,4 +97,23 @@ class JsonFuseTest:
     val got = Json.ndjson[Rec](buf).fuse.filter(_.amount > threshold).map(_.category).nonEmpty
     assertEquals(ref, got)
 
+  /** predicate-fail early-out correctness: a selective filter then a projection of a different field. The
+   *  early-out must abandon rejected records without affecting the result (boundary cases: all-reject, all-pass).
+   *  Cross-checked vs jsoniter. */
+  @Test def fused_predicateEarlyOut_correct(): Unit =
+    val ref = jsoniterRecs.filter(_.age > 80).map(_.name).toList
+    val got = Json.ndjson[Rec](buf).fuse.filter(_.age > 80).map(_.name).toList
+    assertEquals(ref, got)
+    val none = Json.ndjson[Rec](buf).fuse.filter(_.age > 100000).map(_.name).toList
+    assertEquals(Nil, none) // all rejected → empty, must not crash on the skipped projection
+    val allRef = jsoniterRecs.map(_.name).toList
+    val all = Json.ndjson[Rec](buf).fuse.filter(_.age > -1).map(_.name).toList
+    assertEquals(allRef, all) // all pass → project everything
+
+  /** string predicate early-out (the inline check decodes the predicate string): filter(status==..).map(name). */
+  @Test def fused_stringPredicateEarlyOut_correct(): Unit =
+    val ref = jsoniterRecs.filter(_.status == "active").map(_.name).toList
+    val got = Json.ndjson[Rec](buf).fuse.filter(_.status == "active").map(_.name).toList
+    assertEquals(ref, got)
+
 end JsonFuseTest

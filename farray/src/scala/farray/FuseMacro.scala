@@ -764,8 +764,10 @@ object FuseMacro:
 
     // a live field's mutable scan slots: the value column (reads the slot lazily), a `seen` flag ref, and a
     // `fill(buf, valuePos, end): newPos` quote that the scan-pass runs when this field's key matches.
+    // `rawRead` is the direct value term (the `v` var, or `decodeLatin1(...)` for a String) used to evaluate a
+    // predicate inline — it does NOT go through `letBind` (which is Unit-only), unlike the lazy `col`.
     final case class JSlot(idx: Int, name: String, jk: JKind, col: Shape, seen: Expr[Boolean],
-                           fill: (Expr[Int], Expr[Int]) => Expr[Int])
+                           fill: (Expr[Int], Expr[Int]) => Expr[Int], rawRead: Term)
 
     // one record: declare slots (nested quotes, like declareSlots), run the scan-pass, build the Tup, continue.
     def jsonRecord(buf: Expr[Array[Byte]], lineStart: Expr[Int], lineEnd: Expr[Int],
@@ -781,17 +783,17 @@ object FuseMacro:
               case JKind.JInt =>
                 '{ var v: Int = 0; var pNext: Int = 0; var seen: Boolean = false
                    ${ val s = JSlot(idx, name, JKind.JInt, Sc(kk => kk('{ v }.asTerm)), '{ seen },
-                        (p, end) => '{ v = JsonScanner.readIntAt($buf, $p, $end); pNext = JsonScanner.numEnd; seen = true; pNext })
+                        (p, end) => '{ v = JsonScanner.readIntAt($buf, $p, $end); pNext = JsonScanner.numEnd; seen = true; pNext }, '{ v }.asTerm)
                       withSlots(rest, s :: acc)(k).asExpr } }.asTerm
               case JKind.JLong =>
                 '{ var v: Long = 0L; var pNext: Int = 0; var seen: Boolean = false
                    ${ val s = JSlot(idx, name, JKind.JLong, Sc(kk => kk('{ v }.asTerm)), '{ seen },
-                        (p, end) => '{ v = JsonScanner.readLongAt($buf, $p, $end); pNext = JsonScanner.numEnd; seen = true; pNext })
+                        (p, end) => '{ v = JsonScanner.readLongAt($buf, $p, $end); pNext = JsonScanner.numEnd; seen = true; pNext }, '{ v }.asTerm)
                       withSlots(rest, s :: acc)(k).asExpr } }.asTerm
               case JKind.JDouble =>
                 '{ var v: Double = 0.0; var pNext: Int = 0; var seen: Boolean = false
                    ${ val s = JSlot(idx, name, JKind.JDouble, Sc(kk => kk('{ v }.asTerm)), '{ seen },
-                        (p, end) => '{ v = JsonScanner.readDoubleAt($buf, $p, $end); pNext = JsonScanner.numEnd; seen = true; pNext })
+                        (p, end) => '{ v = JsonScanner.readDoubleAt($buf, $p, $end); pNext = JsonScanner.numEnd; seen = true; pNext }, '{ v }.asTerm)
                       withSlots(rest, s :: acc)(k).asExpr } }.asTerm
               case JKind.JString =>
                 // lazy slice: slots are (start, len); the column decodes to String ON READ (memoized), so the
@@ -799,50 +801,130 @@ object FuseMacro:
                 '{ var st: Int = 0; var ln: Int = 0; var seen: Boolean = false
                    ${ val col = memoScalar(kk => kk('{ JsonScanner.decodeLatin1($buf, st, ln) }.asTerm))
                       val s = JSlot(idx, name, JKind.JString, col, '{ seen },
-                        (p, end) => '{ val vs = $p + 1; val ve = JsonScanner.scanStringEnd($buf, vs, $end); st = vs; ln = ve - vs; seen = true; ve + 1 })
+                        (p, end) => '{ val vs = $p + 1; val ve = JsonScanner.scanStringEnd($buf, vs, $end); st = vs; ln = ve - vs; seen = true; ve + 1 },
+                        '{ JsonScanner.decodeLatin1($buf, st, ln) }.asTerm)
                       withSlots(rest, s :: acc)(k).asExpr } }.asTerm
 
       withSlots(liveFields, Nil) { slots =>
-        // the scan-pass: walk the record's keys, dispatch by raw-byte key compare to a live slot's fill, else skip.
-        val scanPass = jsonScanPass(buf, lineStart, lineEnd, slots, keyRefs)
-        // build the Tup: parts indexed like ALL fields (dead fields get a placeholder column that's never read).
         val byIdx = slots.map(s => s.idx -> s).toMap
-        val parts = fields.zipWithIndex.map { case ((fname, ftpe), i) =>
+        // build the Tup: parts indexed like ALL fields (dead fields get a placeholder column that's never read).
+        def colFor(i: Int, ftpe: TypeRepr): Shape =
           // a dead field's column yields a typed default — only ever forced if the WHOLE record is materialized
           // (rebuild), which the live-set marks all-fields-live for, so in practice this is never read; it exists
           // so a value-ignoring terminal (e.g. count) that still rebuilds the Tup typechecks.
           byIdx.get(i).map(_.col).getOrElse(Sc(k => k(defaultOf(ftpe))))
-        }
+        val parts = fields.zipWithIndex.map { case ((_, ftpe), i) => colFor(i, ftpe) }
         val recordTup: Shape = Tup(parts, vs => mkProduct(srcElem, vs))
-        '{ $scanPass; ${ continueShape(recordTup, ss, ctx).asExprOf[Unit] } }.asTerm
+
+        // ---- PREDICATE-FAIL EARLY-OUT ----
+        // The LEADING run of filters (filters before any map) can be evaluated DURING the scan, the moment all
+        // their fields are captured. If a filter fails, abandon the record immediately — never scanning the
+        // projection-only fields that come later. This is the strong early-out (vs `allSeen`, which waits for
+        // ALL live fields). We keep the filters downstream too (a cheap re-check on survivors over already-
+        // decoded values), so correctness doesn't depend on stripping them.
+        // only POSITIVE filters (not `filterNot`) are taken for the inline early-out — negation would need a
+        // wrapped lambda; `filterNot` falls back to downstream-only filtering (still correct, just no early-out).
+        val leadingFilters: List[Term] = ss.takeWhile {
+          case (FilterS(_, false), _) => true
+          case _                      => false
+        }.collect { case (FilterS(p, false), _) => p }
+        // the fields those leading filters read (their slots must be seen before we can evaluate them).
+        val predFieldIdxs: Set[Int] =
+          leadingFilters.flatMap(p => decomposeLambda(p).toList.flatMap((param, b) =>
+            collectPaths(b, param).flatMap(_.headOption.map(_._1)))).toSet
+        val predSlots = slots.filter(s => predFieldIdxs.contains(s.idx))
+        // a predicate-fail early-out is only worthwhile when there ARE projection-only fields to skip AND the
+        // predicate's fields are a proper subset of live (otherwise `allSeen` already covers it).
+        val projOnly = slots.exists(s => !predFieldIdxs.contains(s.idx))
+        val earlyPred: Option[(Expr[Boolean], Expr[Boolean])] =
+          if leadingFilters.isEmpty || predSlots.isEmpty || !projOnly then None
+          else
+            // allPredSeen = conjunction of the predicate slots' seen flags
+            val allPredSeen = predSlots.map(_.seen).reduce((a, b) => '{ $a && $b })
+            // predHolds = conjunction of each leading filter evaluated inline. Each predicate's field accesses
+            // (`_.amount`) are substituted DIRECTLY with the slot's read term (the decoded `v` var / a decoded
+            // String) — no `letBind` (which is Unit-only, for loop bodies); the slots are already bound, so a
+            // field read is just the var. We only handle predicates whose every path resolves to a known slot.
+            val byField: Map[Int, JSlot] = byIdx
+            def predBool(p: Term): Option[Expr[Boolean]] = decomposeLambda(p) match
+              case Some((param, body)) =>
+                val paths = collectPaths(body, param)
+                // each path is a single-hop field read into a slot; map it to the slot's raw value term (the
+                // decoded `v` var / `decodeLatin1(...)` — NOT through `letBind`).
+                val refs: Map[Path, Term] = paths.flatMap { path =>
+                  path.headOption.flatMap { case (i, _) => byField.get(i).map(s => path -> s.rawRead) }
+                }.toMap
+                if refs.size == paths.size then Some(substPaths(body, param, refs).asExprOf[Boolean])
+                else None // a path didn't resolve to a slot → skip inline check (downstream handles it)
+              case None => None
+            val predBools = leadingFilters.map(predBool)
+            val predHolds: Option[Expr[Boolean]] =
+              if predBools.contains(None) then None
+              else Some(predBools.flatten.reduce((a, b) => '{ $a && $b }))
+            predHolds.map(ph => (allPredSeen, ph)) // None if any predicate couldn't be lowered inline
+
+        if earlyPred.isEmpty then
+          // no inline predicate early-out — just scan (with allSeen) and run downstream.
+          '{ ${ jsonScanPass(buf, lineStart, lineEnd, slots, keyRefs, None, '{ () }) }
+             ${ continueShape(recordTup, ss, ctx).asExprOf[Unit] } }.asTerm
+        else
+          '{
+            var rejected: Boolean = false
+            ${ jsonScanPass(buf, lineStart, lineEnd, slots, keyRefs, earlyPred, '{ rejected = true }) }
+            if !rejected then ${ continueShape(recordTup, ss, ctx).asExprOf[Unit] }
+          }.asTerm
       }
 
     // emit the one-pass key-dispatch scan over a record's fields (compact NDJSON fast path).
+    // earlyPred = Some((allPredSeen, predHolds)): evaluate the leading filters the moment their fields are all
+    //   captured; if they fail, run `reject` and stop the scan (predicate-fail early-out — skips projection fields).
     def jsonScanPass(buf: Expr[Array[Byte]], lineStart: Expr[Int], lineEnd: Expr[Int], slots: List[JSlot],
-                     keyRefs: Map[String, Expr[Array[Byte]]]): Expr[Unit] =
+                     keyRefs: Map[String, Expr[Array[Byte]]],
+                     earlyPred: Option[(Expr[Boolean], Expr[Boolean])], reject: Expr[Unit]): Expr[Unit] =
       // generate the per-key dispatch chain: if keyEquals(name0) fill0 else if … else skipValue.
       def dispatch(ks: Expr[Int], ke: Expr[Int], p: Expr[Int]): Expr[Int] =
         slots.foldRight[Expr[Int]]('{ JsonScanner.skipValue($buf, $p, $lineEnd) }) { (s, elseB) =>
           '{ if !${ s.seen } && JsonScanner.keyEquals($buf, $ks, $ke, ${ keyRefs(s.name) }) then ${ s.fill(p, lineEnd) } else $elseB }
         }
-      // predicate/projection EARLY-OUT: once every live field is captured, abandon the rest of the record's
-      // bytes (no point scanning fields nothing reads). `allSeen` = conjunction of the slots' `seen` flags.
+      // projection EARLY-OUT: once every live field is captured, abandon the rest (nothing else is read).
       def allSeen: Expr[Boolean] =
         slots match
           case Nil          => '{ false } // no live fields → never early-out (scan to '}' normally)
           case first :: more => more.foldLeft(first.seen)((acc, s) => '{ $acc && ${ s.seen } })
-      '{
-        var p: Int = $lineStart + 1 // past '{'
-        var open: Boolean = $buf($lineStart) == '{'
-        while open do
-          if $buf(p) == '}' then open = false
-          else
-            val ks = p + 1
-            val ke = JsonScanner.scanStringEnd($buf, ks, $lineEnd)
-            p = ${ dispatch('ks, 'ke, '{ ke + 2 }) } // ke+2: past closing key quote and ':'
-            if $allSeen then open = false                 // all wanted fields captured → stop scanning
-            else if $buf(p) == ',' then p += 1 else open = false
-      }
+      // the per-key step, with the predicate-fail check (if any) folded in: after capturing a field, if all
+      // predicate fields are now seen, evaluate the leading filters; on failure reject + stop.
+      earlyPred match
+        case None =>
+          '{
+            var p: Int = $lineStart + 1
+            var open: Boolean = $buf($lineStart) == '{'
+            while open do
+              if $buf(p) == '}' then open = false
+              else
+                val ks = p + 1
+                val ke = JsonScanner.scanStringEnd($buf, ks, $lineEnd)
+                p = ${ dispatch('ks, 'ke, '{ ke + 2 }) }
+                if $allSeen then open = false
+                else if $buf(p) == ',' then p += 1 else open = false
+          }
+        case Some((allPredSeen, predHolds)) =>
+          '{
+            var p: Int = $lineStart + 1
+            var open: Boolean = $buf($lineStart) == '{'
+            var predChecked: Boolean = false
+            while open do
+              if $buf(p) == '}' then open = false
+              else
+                val ks = p + 1
+                val ke = JsonScanner.scanStringEnd($buf, ks, $lineEnd)
+                p = ${ dispatch('ks, 'ke, '{ ke + 2 }) }
+                if !predChecked && $allPredSeen then
+                  predChecked = true
+                  if !$predHolds then { $reject; open = false } // PREDICATE FAILED → abandon the record now
+                if open then
+                  if $allSeen then open = false
+                  else if $buf(p) == ',' then p += 1 else open = false
+          }
 
     // --- declare loop-state vars (above the loop), then assemble the terminal body ---
     def withDone(k: Option[Done] => Term): Term =

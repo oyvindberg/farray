@@ -40,6 +40,7 @@ class JsonProjectionBenchmark:
 
   var buf: Array[Byte] = null
   var fatBuf: Array[Byte] = null
+  var wideBuf: Array[Byte] = null
 
   given recCodec: JsonValueCodec[Rec] = JsonCodecMaker.make
   // narrow record: ONLY the fields the query reads; jsoniter skips the other 18.
@@ -47,11 +48,33 @@ class JsonProjectionBenchmark:
   // fat-numeric narrow schemas: jsoniter must DECODE every numeric field it declares.
   given fatN2Codec: JsonValueCodec[JsonProjectionBenchmark.FatN2] = JsonCodecMaker.make
   given fatN4Codec: JsonValueCodec[JsonProjectionBenchmark.FatN4] = JsonCodecMaker.make
+  given wideCodec: JsonValueCodec[JsonProjectionBenchmark.Wide] = JsonCodecMaker.make
+  given wideNarrowCodec: JsonValueCodec[JsonProjectionBenchmark.WideNarrow] = JsonCodecMaker.make
 
   @Setup(Level.Trial)
   def setup(): Unit =
     buf = JsonProjectionBenchmark.ndjson(n)
     fatBuf = JsonProjectionBenchmark.fatNdjson(n)
+    wideBuf = JsonProjectionBenchmark.wideNdjson(n)
+
+  // ---- PREDICATE-FAIL EARLY-OUT showcase: `key` (predicate Int) is the FIRST field; `payload` (a long
+  //      projected string) is the LAST; 10% selectivity. Rejected records (90%) abandon the scan right after
+  //      `key` and never touch the ~10 middle fields or the long payload string. ----
+  val wideKeyThreshold = 90 // key in [0,100); keep > 90 → 10% pass
+
+  @Benchmark def wide_fuseMacro(): Int =
+    Json.ndjson[JsonProjectionBenchmark.Wide](wideBuf).fuse
+      .filter(_.key > wideKeyThreshold).map(_.payload).count
+
+  /** jsoniter-narrow {key, payload}: must still byte-walk to find both, and decodes payload for survivors. */
+  @Benchmark def wide_jsoniterNarrow(): Int =
+    var c = 0; var start = 0
+    while start < wideBuf.length do
+      var end = start; while end < wideBuf.length && wideBuf(end) != '\n' do end += 1
+      val r = readFromSubArray[JsonProjectionBenchmark.WideNarrow](wideBuf, start, end)
+      if r.key > wideKeyThreshold then c += 1
+      start = end + 1
+    c
 
   // ---- AGGREGATE query: filter(amount > t).map(amount).sum ----
 
@@ -151,6 +174,24 @@ end JsonProjectionBenchmark
 object JsonProjectionBenchmark:
   /** the narrow projection record jsoniter parses (everything else is skipped). */
   final case class Narrow(amount: Double, category: String)
+
+  /** Wide record for the predicate-fail early-out showcase: `key` FIRST, 10 filler fields, `payload` LAST.
+   *  Field declaration order matches the JSON write order (the generator emits them in this order). */
+  final case class Wide(
+      key: Int, f1: Int, f2: Int, f3: Int, f4: Double, f5: Double,
+      f6: String, f7: String, f8: String, f9: String, f10: String, payload: String)
+  final case class WideNarrow(key: Int, payload: String)
+
+  def wideRecord(i: Int): String =
+    val key = i % 100
+    val payload = s"payload_${i}_" + ("x" * 60) // a long string (~70 chars) — expensive to decode
+    s"""{"key":$key,"f1":${i % 7},"f2":${i % 13},"f3":${i % 5},"f4":${(i % 100) / 3.0},"f5":${(i % 50) / 7.0},""" +
+      s""""f6":"a$i","f7":"b$i","f8":"c$i","f9":"d$i","f10":"e$i","payload":"$payload"}"""
+
+  def wideNdjson(n: Int): Array[Byte] =
+    val sb = new java.lang.StringBuilder(n * 200); var i = 0
+    while i < n do { sb.append(wideRecord(i)).append('\n'); i += 1 }
+    sb.toString.getBytes(UTF_8)
 
   /** Hand-written jsoniter JsonReader projection: decode ONLY `amount`, skip the rest, return the primitive
    *  (no object). The strongest jsoniter contender — the same shape as our fused scanner, on jsoniter's reader. */
