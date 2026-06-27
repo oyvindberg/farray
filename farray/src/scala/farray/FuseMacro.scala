@@ -81,6 +81,7 @@ object FuseMacro:
     final case class DropWhileS(p: Term) extends Stage                 // skip the leading run matching p
     final case class DistinctS(key: Option[Term]) extends Stage        // distinct (None) / distinctBy (Some f)
     final case class ScanLeftS(z: Term, op: Term, zTpe: TypeRepr) extends Stage // running fold (emits z then each op)
+    final case class TapEachS(f: Term) extends Stage                  // run f for side effect, pass element through
     case object ZipWithIndexS extends Stage
     final case class ZipS(that: Term, bTpe: TypeRepr, combine: Option[Term]) extends Stage // zip (None) / map2 (Some f)
 
@@ -155,6 +156,7 @@ object FuseMacro:
         case Select(prev, "distinct")                                     => parse(prev, DistinctS(None) :: acc)
         case Apply(TypeApply(Select(prev, "distinctBy"), _), List(f))     => parse(prev, DistinctS(Some(unwrap(f))) :: acc)
         case Apply(Apply(TypeApply(Select(prev, "scanLeft"), List(b)), List(z)), List(op)) => parse(prev, ScanLeftS(unwrap(z), unwrap(op), b.tpe) :: acc)
+        case Apply(Select(prev, "tapEach"), List(f))                      => parse(prev, TapEachS(unwrap(f)) :: acc)
         case Select(prev, "zipWithIndex")                                 => parse(prev, ZipWithIndexS :: acc)
         case Apply(TypeApply(Select(prev, "zip"), List(b)), List(that))    => parse(prev, ZipS(unwrap(that), b.tpe, None) :: acc)
         case Apply(Apply(TypeApply(Select(prev, "map2"), List(b, _)), List(that)), List(f)) => parse(prev, ZipS(unwrap(that), b.tpe, Some(unwrap(f))) :: acc)
@@ -557,6 +559,9 @@ object FuseMacro:
         val (accRead, setAcc) = ctx.counters(i).acc.get
         '{ ${ setAcc(applyN(op, List(accRead, cur))).asExprOf[Unit] }
            ${ letBind(accRead)(a => buildBody(rest, a, ctx)).asExprOf[Unit] } }.asTerm
+      case (TapEachS(f), _) :: rest =>
+        // run the side effect eagerly for every element reaching here, then pass the element through unchanged.
+        '{ ${ applyLambda(f, cur).asExprOf[Unit] }; ${ buildBody(rest, cur, ctx).asExprOf[Unit] } }.asTerm
       case (TakeS(_), i) :: rest =>
         val sl = ctx.counters(i); val lim = sl.lim.get; val d = ctx.done.get
         '{ val cv = ${ sl.read }

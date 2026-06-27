@@ -45,6 +45,8 @@ final class Fuse[+A](private[farray] val base: FBase):
   def distinctBy[K](f: A => K): Fuse[A] = this
   /** running fold: emit `z`, then each successive `op(acc, a)` — yields one more element than the input. */
   def scanLeft[B](z: B)(op: (B, A) => B): Fuse[B] = this.asInstanceOf[Fuse[B]]
+  /** run `f` for its side effect on each surviving element, passing the element through unchanged. */
+  def tapEach(f: A => Unit): Fuse[A] = this
   /** pair each element with its position in the stream at this point (post-upstream-filtering). */
   def zipWithIndex: Fuse[(A, Int)] = this.asInstanceOf[Fuse[(A, Int)]]
   /** lock-step with another source: pair element k of this pipeline with `that(k)`; stops at the shorter. */
@@ -147,3 +149,40 @@ final class Fuse[+A](private[farray] val base: FBase):
     val m = scala.collection.mutable.LinkedHashMap.empty[K, scala.collection.mutable.Builder[A, List[A]]]
     foreach(a => m.getOrElseUpdate(f(a), List.newBuilder[A]) += a)
     m.view.mapValues(_.result()).toMap
+  inline def groupMapReduce[K, B](inline key: A => K)(inline f: A => B)(inline reduce: (B, B) => B): Map[K, B] =
+    val m = scala.collection.mutable.LinkedHashMap.empty[K, B]
+    foreach { a => val k = key(a); val b = f(a); m.updateWith(k) { case Some(o) => Some(reduce(o, b)); case None => Some(b) } }
+    m.toMap
+
+  // ---- multi-output terminals: one fused pass into two builders ----
+  inline def partition(inline p: A => Boolean): (FArray[A], FArray[A]) =
+    val y = List.newBuilder[A]; val n = List.newBuilder[A]
+    foreach(a => if p(a) then y += a else n += a)
+    (FArray.from(y.result()), FArray.from(n.result()))
+  inline def span(inline p: A => Boolean): (FArray[A], FArray[A]) =
+    val pre = List.newBuilder[A]; val post = List.newBuilder[A]; var go = true
+    foreach(a => if go && p(a) then pre += a else { go = false; post += a })
+    (FArray.from(pre.result()), FArray.from(post.result()))
+  inline def unzip[A1, A2](using ev: A <:< (A1, A2)): (FArray[A1], FArray[A2]) =
+    val l = List.newBuilder[A1]; val r = List.newBuilder[A2]
+    foreach { a => val t = ev(a); l += t._1; r += t._2 }
+    (FArray.from(l.result()), FArray.from(r.result()))
+
+  // ---- windowing terminals (one fused pass; sub-arrays materialize) ----
+  /** fixed-size chunks; the last may be shorter. */
+  inline def grouped(n: Int): FArray[FArray[A]] =
+    require(n > 0, "grouped size must be > 0")
+    val out = List.newBuilder[FArray[A]]; var buf = List.newBuilder[A]; var c = 0
+    foreach { a => buf += a; c += 1; if c == n then { out += FArray.from(buf.result()); buf = List.newBuilder[A]; c = 0 } }
+    if c > 0 then out += FArray.from(buf.result())
+    FArray.from(out.result())
+  /** overlapping windows of size `n` stepping by 1; a shorter-than-`n` stream yields one partial window. */
+  inline def sliding(n: Int): FArray[FArray[A]] =
+    require(n > 0, "sliding size must be > 0")
+    val out = List.newBuilder[FArray[A]]; val window = scala.collection.mutable.ArrayDeque.empty[A]; var emitted = false
+    foreach { a =>
+      window += a; if window.length > n then window.removeHead()
+      if window.length == n then { out += FArray.from(window.toList); emitted = true }
+    }
+    if !emitted && window.nonEmpty then out += FArray.from(window.toList)
+    FArray.from(out.result())

@@ -1141,6 +1141,31 @@ class FListTest:
     aeq(l.map { x => def f(y: Int) = y + 1; val a = f(x); class K(val p: Int) { def q = p * p }; val k = new K(a); k.p + k.q },
         r.fuse.map { x => def f(y: Int) = y + 1; val a = f(x); class K(val p: Int) { def q = p * p }; val k = new K(a); k.p + k.q }.run.toList)
 
+  // ---- tapEach + multi-output terminals (partition / span / unzip / groupMapReduce) ----
+  @Test def test_fuse_more_ops: Unit =
+    import org.junit.Assert.{assertEquals => aeq}
+    val r = FArray(1, 2, 3, 4, 5, 6); val l = List(1, 2, 3, 4, 5, 6)
+    // tapEach runs f for each surviving element (eagerly), passing it through
+    val seen = scala.collection.mutable.ListBuffer[Int]()
+    aeq(List(20, 40, 60), r.fuse.filter(_ % 2 == 0).tapEach(x => { seen += x; () }).map(_ * 10).run.toList)
+    aeq(List(2, 4, 6), seen.toList)
+    // partition / span / unzip
+    val (y, n) = r.fuse.partition(_ % 2 == 0)
+    aeq(l.partition(_ % 2 == 0)._1, y.toList); aeq(l.partition(_ % 2 == 0)._2, n.toList)
+    val (pre, post) = r.fuse.span(_ < 4)
+    aeq(l.span(_ < 4)._1, pre.toList); aeq(l.span(_ < 4)._2, post.toList)
+    val (as, bs) = r.fuse.map(x => (x, x * 10)).unzip
+    aeq(l.map(x => (x, x * 10)).unzip._1, as.toList); aeq(l.map(x => (x, x * 10)).unzip._2, bs.toList)
+    // groupMapReduce
+    aeq(l.groupMapReduce(_ % 3)(_ => 1)(_ + _), r.fuse.groupMapReduce(_ % 3)(_ => 1)(_ + _))
+    aeq(l.groupMapReduce(_ % 2)(identity)(_ + _), r.fuse.groupMapReduce(_ % 2)(identity)(_ + _))
+    // grouped / sliding (vs List), incl. the partial-tail and shorter-than-n edges
+    aeq(l.grouped(2).map(_.toList).toList, r.fuse.grouped(2).map(_.toList).toList)
+    aeq(l.grouped(4).map(_.toList).toList, r.fuse.grouped(4).map(_.toList).toList) // last group partial
+    aeq(l.sliding(3).map(_.toList).toList, r.fuse.sliding(3).map(_.toList).toList)
+    aeq(List(1, 2).sliding(5).map(_.toList).toList, FArray(1, 2).fuse.sliding(5).map(_.toList).toList) // shorter than n
+    aeq(List.empty[Int].grouped(3).toList, FArray.empty[Int].fuse.grouped(3).toList.map(_.toList))
+
   // ---- for-comprehensions (withFilter) + count(p) ----
   @Test def test_fuse_forcomp_and_count: Unit =
     import org.junit.Assert.{assertEquals => aeq}
