@@ -836,6 +836,169 @@
 }
 
 ====================================================================================================
+// INDEXWHERE: ints.fuse.map(x => x*x).indexWhere(_ > 9)  [bare var idx + counter — NO pair allocated]
+====================================================================================================
+{
+  val $proxy: FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  } = FArray$package.$asInstanceOf$[FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  }]
+  val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
+  val Fuse_this: Fuse[Int] = (new Fuse[Int](xs$proxy): Fuse[Int]).map[Int](((x: Int) => x.*(x)))
+
+  ({
+    val src0: FBase = ints.$asInstanceOf$[ints & FArray[Int]].asInstanceOf[FBase]
+    val n0: Int = src0.length
+    var done: Boolean = false
+    var idx: Int = -1
+    var c: Int = 0
+    val s: FBase = src0
+    val len: Int = s.length
+    if (s.isInstanceOf[IntArr]) {
+      val a: Array[Int] = s.asInstanceOf[IntArr].arr
+      var i: Int = 0
+      while (i.<(len).&&(done.unary_!)) {
+        val v: Int = a.apply(i)
+        val `v₂`: Int = v.*(v)
+        if (`v₂`.>(9)) {
+          idx = c
+          done = true
+        } else ()
+        c = c.+(1)
+        i = i.+(1)
+      }
+    } else {
+      var `i₂`: Int = 0
+      while (`i₂`.<(len).&&(done.unary_!)) {
+        val `v₃`: Int = FArrayOps.intAt(s, `i₂`)
+        val `v₄`: Int = `v₃`.*(`v₃`)
+        if (`v₄`.>(9)) {
+          idx = c
+          done = true
+        } else ()
+        c = c.+(1)
+        `i₂` = `i₂`.+(1)
+      }
+    }
+
+    (idx: Int)
+  }.asInstanceOf[Int]: Int)
+}
+
+====================================================================================================
+// MIN: ints.fuse.filter(_%2==0).min  [seeded var acc — NO per-element Option]
+====================================================================================================
+{
+  val $proxy: FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  } = FArray$package.$asInstanceOf$[FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  }]
+  val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
+  val Fuse_this: Fuse[Int] = (new Fuse[Int](xs$proxy): Fuse[Int]).filter(((_$: Int) => _$.%(2).==(0)))
+
+  (({
+    val src0: FBase = ints.$asInstanceOf$[ints & FArray[Int]].asInstanceOf[FBase]
+    val n0: Int = src0.length
+    var seeded: Boolean = false
+    var acc: Int = null.asInstanceOf[Int]
+    val s: FBase = src0
+    val len: Int = s.length
+    if (s.isInstanceOf[IntArr]) {
+      val a: Array[Int] = s.asInstanceOf[IntArr].arr
+      var i: Int = 0
+      while (i.<(len)) {
+        val v: Int = a.apply(i)
+        val `v₂`: Int = v.%(2)
+        val `v₃`: Boolean = `v₂`.==(0)
+        if (`v₃`) if (seeded.unary_!) {
+          acc = v
+          seeded = true
+        } else acc = {
+          val `acc₂`: Int = acc
+
+          (if (Int.lteq(`acc₂`, v)) `acc₂` else v: Int)
+        } else ()
+        i = i.+(1)
+      }
+    } else {
+      var `i₂`: Int = 0
+      while (`i₂`.<(len)) {
+        val `v₄`: Int = FArrayOps.intAt(s, `i₂`)
+        val `v₅`: Int = `v₄`.%(2)
+        val `v₆`: Boolean = `v₅`.==(0)
+        if (`v₆`) if (seeded.unary_!) {
+          acc = `v₄`
+          seeded = true
+        } else acc = {
+          val `acc₃`: Int = acc
+
+          (if (Int.lteq(`acc₃`, `v₄`)) `acc₃` else `v₄`: Int)
+        } else ()
+        `i₂` = `i₂`.+(1)
+      }
+    }
+    if (seeded) Some.apply[Int](acc) else None
+  }.asInstanceOf[Option[Int]]: Option[Int]).getOrElse[Int](throw new UnsupportedOperationException("min of an empty fused pipeline")).asInstanceOf[Int]: Int)
+}
+
+====================================================================================================
+// MINBY: ints.fuse.minBy(x => -x)  [best + bestKey in two vars — NO tuple, NO per-element Option]
+====================================================================================================
+{
+  val $proxy: FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  } = FArray$package.$asInstanceOf$[FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  }]
+  val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
+
+  (({
+    val src0: FBase = ints.$asInstanceOf$[ints & FArray[Int]].asInstanceOf[FBase]
+    val n0: Int = src0.length
+    var seeded: Boolean = false
+    var best: Any = null
+    var bestK: Int = null.asInstanceOf[Int]
+    val s: FBase = src0
+    val len: Int = s.length
+    if (s.isInstanceOf[IntArr]) {
+      val a: Array[Int] = s.asInstanceOf[IntArr].arr
+      var i: Int = 0
+      while (i.<(len)) {
+        val v: Int = a.apply(i)
+        val k: Int = v.unary_-
+        if (seeded.unary_!.||({
+          val k2: Int = bestK
+          Int.lt(k, k2)
+        })) {
+          best = v
+          bestK = k
+          seeded = true
+        } else ()
+        i = i.+(1)
+      }
+    } else {
+      var `i₂`: Int = 0
+      while (`i₂`.<(len)) {
+        val `v₂`: Int = FArrayOps.intAt(s, `i₂`)
+        val `k₂`: Int = `v₂`.unary_-
+        if (seeded.unary_!.||({
+          val `k2₂`: Int = bestK
+          Int.lt(`k₂`, `k2₂`)
+        })) {
+          best = `v₂`
+          bestK = `k₂`
+          seeded = true
+        } else ()
+        `i₂` = `i₂`.+(1)
+      }
+    }
+    if (seeded) Some.apply[Any](best) else None
+  }.asInstanceOf[Option[Int]]: Option[Int]).getOrElse[Int](throw new UnsupportedOperationException("minBy on an empty fused pipeline")): Int)
+}
+
+====================================================================================================
 // PRODUCT: map(x => Outer(Inner(x, x*99), x*3)).map(o => o.inner.x + o.z)  [nested case class, Inner.y DEAD]
 ====================================================================================================
 {

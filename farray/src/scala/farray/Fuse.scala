@@ -72,22 +72,24 @@ final class Fuse[+A](private[farray] val base: FBase):
   inline def fold[B >: A](z: B)(inline op: (B, B) => B): B = foldLeft[B](z)((acc, a) => op(acc, a))
   inline def sum[B >: A](using num: Numeric[B]): B = foldLeft[B](num.zero)((acc, a) => num.plus(acc, a))
   inline def product[B >: A](using num: Numeric[B]): B = foldLeft[B](num.one)((acc, a) => num.times(acc, a))
+  // reduce/min/max/last all run through the seeded-accumulator ReduceOpt terminal: no per-element Option,
+  // one Some only at the very end. minBy/maxBy run through ExtremumBy: best element + its key in two vars.
   inline def reduceLeft[B >: A](inline op: (B, A) => B): B =
-    foldLeft[Option[B]](None)((acc, a) => Some(if acc.isEmpty then a else op(acc.get, a)))
-      .getOrElse(throw new UnsupportedOperationException("reduceLeft on an empty fused pipeline"))
-  inline def reduce[B >: A](inline op: (B, B) => B): B = reduceLeft[B]((acc, a) => op(acc, a))
-  inline def min[B >: A](using ord: Ordering[B]): A = reduceLeft[B]((acc, a) => if ord.lteq(acc, a) then acc else a).asInstanceOf[A]
-  inline def max[B >: A](using ord: Ordering[B]): A = reduceLeft[B]((acc, a) => if ord.gteq(acc, a) then acc else a).asInstanceOf[A]
+    reduceOption[B](op).getOrElse(throw new UnsupportedOperationException("reduceLeft on an empty fused pipeline"))
+  inline def reduce[B >: A](inline op: (B, B) => B): B =
+    reduceOption[B]((acc, a) => op(acc, a)).getOrElse(throw new UnsupportedOperationException("reduce on an empty fused pipeline"))
+  inline def min[B >: A](using ord: Ordering[B]): A =
+    reduceOption[B]((acc, a) => if ord.lteq(acc, a) then acc else a).getOrElse(throw new UnsupportedOperationException("min of an empty fused pipeline")).asInstanceOf[A]
+  inline def max[B >: A](using ord: Ordering[B]): A =
+    reduceOption[B]((acc, a) => if ord.gteq(acc, a) then acc else a).getOrElse(throw new UnsupportedOperationException("max of an empty fused pipeline")).asInstanceOf[A]
   inline def minBy[B](inline f: A => B)(using ord: Ordering[B]): A =
-    foldLeft[Option[(A, B)]](None)((acc, a) => { val k = f(a); if acc.isEmpty || ord.lt(k, acc.get._2) then Some((a, k)) else acc })
-      .getOrElse(throw new UnsupportedOperationException("minBy on an empty fused pipeline"))._1
+    minByOption[B](f).getOrElse(throw new UnsupportedOperationException("minBy on an empty fused pipeline"))
   inline def maxBy[B](inline f: A => B)(using ord: Ordering[B]): A =
-    foldLeft[Option[(A, B)]](None)((acc, a) => { val k = f(a); if acc.isEmpty || ord.gt(k, acc.get._2) then Some((a, k)) else acc })
-      .getOrElse(throw new UnsupportedOperationException("maxBy on an empty fused pipeline"))._1
+    maxByOption[B](f).getOrElse(throw new UnsupportedOperationException("maxBy on an empty fused pipeline"))
 
   // ---- last (one fused pass — keeps the most recent survivor) ----
-  inline def lastOption: Option[A] = foldLeft[Option[A]](None)((_, a) => Some(a))
-  inline def last: A = lastOption.getOrElse(throw new NoSuchElementException("last of an empty fused pipeline"))
+  inline def lastOption: Option[A] = reduceOption[A]((_, a) => a)
+  inline def last: A = reduceOption[A]((_, a) => a).getOrElse(throw new NoSuchElementException("last of an empty fused pipeline"))
 
   // ---- predicates / counts ----
   inline def contains[B >: A](elem: B): Boolean = exists(_ == elem)
@@ -96,8 +98,9 @@ final class Fuse[+A](private[farray] val base: FBase):
   inline def size: Int = count
   inline def length: Int = count
 
-  // ---- positional / partial (short-circuit, via zipWithIndex.find / find) ----
-  inline def indexWhere(inline p: A => Boolean): Int = zipWithIndex.find(t => p(t._1)).map(_._2).getOrElse(-1)
+  // ---- positional / partial (short-circuit) ----
+  // dedicated IndexWhere terminal: a bare `var idx` + position counter, no (value, index) pair allocated.
+  inline def indexWhere(inline p: A => Boolean): Int = ${ FuseMacro.indexWhereImpl[A]('this, 'p) }
   inline def indexOf[B >: A](elem: B): Int = indexWhere(_ == elem)
   inline def collectFirst[B](pf: PartialFunction[A, B]): Option[B] = find(pf.isDefinedAt).map(pf)
 
@@ -105,14 +108,17 @@ final class Fuse[+A](private[farray] val base: FBase):
   inline def to[C1](factory: scala.collection.Factory[A, C1]): C1 =
     val b = factory.newBuilder; foreach(b += _); b.result()
 
-  // ---- Option-returning reductions (empty → None instead of throwing) ----
-  inline def reduceOption[B >: A](inline op: (B, A) => B): Option[B] =
-    foldLeft[Option[B]](None)((acc, a) => Some(if acc.isEmpty then a else op(acc.get, a)))
+  // ---- Option-returning reductions (empty → None instead of throwing); seeded ReduceOpt / ExtremumBy ----
+  inline def reduceOption[B >: A](inline op: (B, A) => B): Option[B] = ${ FuseMacro.reduceOptImpl[A, B]('this, 'op) }
   inline def reduceLeftOption[B >: A](inline op: (B, A) => B): Option[B] = reduceOption[B](op)
   inline def minOption[B >: A](using ord: Ordering[B]): Option[A] =
     reduceOption[B]((acc, a) => if ord.lteq(acc, a) then acc else a).asInstanceOf[Option[A]]
   inline def maxOption[B >: A](using ord: Ordering[B]): Option[A] =
     reduceOption[B]((acc, a) => if ord.gteq(acc, a) then acc else a).asInstanceOf[Option[A]]
+  inline def minByOption[B](inline f: A => B)(using ord: Ordering[B]): Option[A] =
+    ${ FuseMacro.extremumByImpl[A, B]('this, 'f, '{ (k1: B, k2: B) => ord.lt(k1, k2) }) }
+  inline def maxByOption[B](inline f: A => B)(using ord: Ordering[B]): Option[A] =
+    ${ FuseMacro.extremumByImpl[A, B]('this, 'f, '{ (k1: B, k2: B) => ord.gt(k1, k2) }) }
 
   // ---- groupBy: one fused pass into per-key builders ----
   inline def groupBy[K](inline f: A => K): Map[K, List[A]] =

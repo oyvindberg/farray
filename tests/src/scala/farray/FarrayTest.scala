@@ -1155,6 +1155,12 @@ class FListTest:
       FuseDebug.show(ints.fuse.map(x => (x * x + 1, x * x + 2)).map(t => t._1 + t._2).toFArray))
     scenario("ints.fuse.map(x=>(x+1, x*1000)).filter(_._1%2==0).map(_._2).toFArray  [SINK: 2nd col inside the guard]",
       FuseDebug.show(ints.fuse.map(x => (x + 1, x * 1000)).filter(_._1 % 2 == 0).map(_._2).toFArray))
+    scenario("INDEXWHERE: ints.fuse.map(x => x*x).indexWhere(_ > 9)  [bare var idx + counter — NO pair allocated]",
+      FuseDebug.show(ints.fuse.map(x => x * x).indexWhere(_ > 9)))
+    scenario("MIN: ints.fuse.filter(_%2==0).min  [seeded var acc — NO per-element Option]",
+      FuseDebug.show(ints.fuse.filter(_ % 2 == 0).min))
+    scenario("MINBY: ints.fuse.minBy(x => -x)  [best + bestKey in two vars — NO tuple, NO per-element Option]",
+      FuseDebug.show(ints.fuse.minBy(x => -x)))
     scenario("PRODUCT: map(x => Outer(Inner(x, x*99), x*3)).map(o => o.inner.x + o.z)  [nested case class, Inner.y DEAD]",
       FuseDebug.show(ints.fuse.map(x => Outer(Inner(x, x * 99), x * 3)).map(o => o.inner.x + o.z).toFArray))
     scenario("DERIVED TERMINAL: ints.fuse.filter(_%2==0).map(_*10).sum  [foldLeft fusion: acc updated in one pass]",

@@ -4,7 +4,7 @@ import scala.quoted.*
 
 /** which terminal a fused pipeline ends in (the macro shares one lowering core across all of them). */
 enum TTag:
-  case ToFArray, Foreach, Fold, Count, Find, Exists, Forall, HeadOption, Head
+  case ToFArray, Foreach, Fold, Count, Find, Exists, Forall, HeadOption, Head, IndexWhere, ReduceOpt, ExtremumBy
 
 /**
  * Macro implementation for fused pipelines (see `Fuse` and `docs/fused-pipeline-design.md`).
@@ -53,6 +53,17 @@ object FuseMacro:
 
   def headImpl[A: Type](self: Expr[Fuse[A]])(using Quotes): Expr[A] =
     '{ ${ core[A](self, TTag.Head, Nil) }.asInstanceOf[A] }
+
+  // index of the first survivor satisfying `p` (post-upstream-filtering position), or -1 — short-circuits.
+  def indexWhereImpl[A: Type](self: Expr[Fuse[A]], p: Expr[A => Boolean])(using Quotes): Expr[Int] =
+    '{ ${ core[A](self, TTag.IndexWhere, List(p)) }.asInstanceOf[Int] }
+  // seeded single-accumulator reduce → Some(acc) over survivors, None if empty (one allocation, at the end).
+  def reduceOptImpl[A: Type, B: Type](self: Expr[Fuse[A]], op: Expr[(B, A) => B])(using Quotes): Expr[Option[B]] =
+    '{ ${ core[A](self, TTag.ReduceOpt, List(op)) }.asInstanceOf[Option[B]] }
+  // the survivor minimizing/maximizing key `f` under `better` (true if the new key wins), or None — two vars,
+  // no tuple, `f` computed once per element.
+  def extremumByImpl[A: Type, B: Type](self: Expr[Fuse[A]], f: Expr[A => B], better: Expr[(B, B) => Boolean])(using Quotes): Expr[Option[A]] =
+    '{ ${ core[A](self, TTag.ExtremumBy, List(f, better)) }.asInstanceOf[Option[A]] }
 
   // ---------- shared lowering core (Exprs cross the boundary; Terms are derived inside) ----------
   private def core[A: Type](self: Expr[Fuse[A]], tag: TTag, extraExprs: List[Expr[Any]])(using Quotes): Expr[Any] =
@@ -192,8 +203,8 @@ object FuseMacro:
     val hasZip: Boolean        = stages.exists(_.isInstanceOf[ZipS])
     val hasFlatMap: Boolean = stages.exists(_.isInstanceOf[FlatMapS])
     val shortCircuit: Boolean = tag match
-      case TTag.Find | TTag.Exists | TTag.Forall | TTag.HeadOption | TTag.Head => true
-      case _                                                                   => false
+      case TTag.Find | TTag.Exists | TTag.Forall | TTag.HeadOption | TTag.Head | TTag.IndexWhere => true
+      case _                                                                                     => false
     val needsDone: Boolean = takesPresent || shortCircuit || hasZip // zip breaks when `that` is exhausted
 
     // ===== Layer B: pure map/filter segment optimizer (compute-for-survivors via memoized lazy columns) =====
@@ -564,6 +575,34 @@ object FuseMacro:
           '{ var res: Option[Any] = None
              ${ loop(v => '{ res = Some(${ v.asExpr }); ${ d.set } }.asTerm) }
              res.getOrElse(throw new java.util.NoSuchElementException("head of empty fused pipeline")) }.asTerm
+        case TTag.IndexWhere =>
+          // bare `var idx` + position counter — no (value, index) pair is built; stop at the first match.
+          val p = args(0); val d = done.get
+          '{ var idx: Int = -1; var c: Int = 0
+             ${ loop(v => '{ if ${ applyLambda(p, v).asExprOf[Boolean] } then { idx = c; ${ d.set } }; c = c + 1 }.asTerm) }
+             idx }.asTerm
+        case TTag.ReduceOpt =>
+          // one seeded accumulator (no per-element Option); a single Some(acc) at the end. acc's type = op's
+          // result (op: (B, A) => B). The `seeded` flag means the null/0 initializer is never observed.
+          val op = args(0)
+          val bTpe = op.tpe.widen.dealias match { case AppliedType(_, targs) => targs.last; case _ => srcElem }
+          bTpe.asType match
+            case '[bb] =>
+              '{ var seeded = false; var acc: bb = null.asInstanceOf[bb]
+                 ${ loop(v => '{ if !seeded then { acc = ${ v.asExprOf[bb] }; seeded = true }
+                                 else acc = ${ applyN(op, List('{ acc }.asTerm, v)).asExprOf[bb] } }.asTerm) }
+                 if seeded then Some(acc) else None }.asTerm
+        case TTag.ExtremumBy =>
+          // best element + its key in two vars (no tuple); `f` once per element; `better(newKey, bestKey)` wins.
+          val f = args(0); val better = args(1)
+          val bTpe = f.tpe.widen.dealias match { case AppliedType(_, targs) => targs.last; case _ => srcElem }
+          bTpe.asType match
+            case '[bb] =>
+              '{ var seeded = false; var best: Any = null; var bestK: bb = null.asInstanceOf[bb]
+                 ${ loop(v => '{ val k: bb = ${ applyLambda(f, v).asExprOf[bb] }
+                                 if !seeded || ${ applyN(better, List('{ k }.asTerm, '{ bestK }.asTerm)).asExprOf[Boolean] } then
+                                   { best = ${ v.asExpr }; bestK = k; seeded = true } }.asTerm) }
+                 if seeded then Some(best) else None }.asTerm
         case TTag.ToFArray => assembleOut(src0, n0, counters, ctx)
 
     // output array assembly: grow via ensureCap when a flatMap can expand it, else preallocate the upper bound.
