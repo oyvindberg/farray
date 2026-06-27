@@ -182,3 +182,40 @@ class IntDceBench extends IntInputs:
     vectorInput.map(mkRec).filter(_.key % 5 == 0).map(_.score).sum
   @Benchmark def iarray(): Int =
     iarrayInput.map(mkRec).filter(_.key % 5 == 0).map(_.score).sum
+
+/** STRING dead-code elimination — the reference-element version of the showcase, and it flies here too: a record whose dead fields are EXPENSIVE STRING work.
+  * `digest` (a deliberately costly hash-to-hex string) and `loud` (an upper-cased concat) are never read; the pipeline filters on `len` and projects `head`.
+  *
+  *   - FArray FUSED: `digest` and `loud` are dead columns — those Strings are NEVER built, and no `SRec` is allocated. The loop computes only the `head` char
+  *     (for the filter) and `head.toString` (survivors only).
+  *   - List / Vector / IArray / FArray-EAGER: build the FULL `SRec` for EVERY element, running `digest`'s hashing and allocating `loud`/`digest`/the record on
+  *     all N — then read one field. Fusion deletes all of it.
+  */
+object StrDceBench:
+  final case class SRec(len: Int, head: String, loud: String, digest: String)
+  // a deliberately expensive String "feature": fold the chars into a hash and render 8 hex digits.
+  inline def digest(s: String): String =
+    var h = 0; var k = 0
+    while k < s.length do { h = h * 31 + s.charAt(k).toInt; k += 1 }
+    var r = h; val sb = new java.lang.StringBuilder(8); var j = 0
+    while j < 8 do { sb.append("0123456789abcdef".charAt(r & 0xf)); r >>>= 4; j += 1 }
+    sb.toString
+  inline def mkRec(s: String): SRec =
+    SRec(len = s.length, head = if s.isEmpty then "" else s.substring(0, 1), loud = (s + s).toUpperCase, digest = digest(s))
+
+@State(Scope.Thread)
+@BenchmarkMode(Array(Mode.Throughput))
+@OutputTimeUnit(TimeUnit.SECONDS)
+class StrDceBench extends Inputs:
+  import StrDceBench.*
+  // map -> SRec, filter on len, project head : fused never builds SRec, never computes the dead digest/loud Strings
+  @Benchmark def farrayFused(): Int =
+    farrayInput.fuse.map(mkRec).filter(_.len <= 4).map(_.head).map(_.length).sum
+  @Benchmark def farrayEager(): Int =
+    farrayInput.map(mkRec).filter(_.len <= 4).map(_.head).map(_.length).sum
+  @Benchmark def list(): Int =
+    listInput.map(mkRec).filter(_.len <= 4).map(_.head).map(_.length).sum
+  @Benchmark def vector(): Int =
+    vectorInput.map(mkRec).filter(_.len <= 4).map(_.head).map(_.length).sum
+  @Benchmark def iarray(): Int =
+    iarrayInput.map(mkRec).filter(_.len <= 4).map(_.head).map(_.length).sum
