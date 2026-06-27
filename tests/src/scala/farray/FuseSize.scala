@@ -10,7 +10,7 @@ object FuseSize:
     xs.fuse
       .map(_ + 1).filter(_ % 2 == 0).map(_ * 3).filter(_ > 0).drop(1).map(_ - 1)
       .take(50).filter(_ != 17).map(_ + 100).filter(_ < 1000).map(_ * 2).filter(_ % 4 == 0).map(_ / 2)
-      .toFArray.toList
+      .run.toList
 
   /** the JVM Code-attribute length (bytecode size) of method `name` in this module's class, read straight from
    *  the .class file — used by the no-blowup test to assert a long fused chain stays under HugeMethodLimit. */

@@ -631,60 +631,60 @@ class FListTest:
 
   // ---- fused pipelines (xs.fuse.…) ----
   @Test def test_fuse_identity_int: Unit =
-    org.junit.Assert.assertEquals(FArray(1, 2, 3, 4, 5).toList, FArray(1, 2, 3, 4, 5).fuse.toFArray.toList)
+    org.junit.Assert.assertEquals(FArray(1, 2, 3, 4, 5).toList, FArray(1, 2, 3, 4, 5).fuse.run.toList)
   @Test def test_fuse_identity_empty: Unit =
-    org.junit.Assert.assertEquals(FArray.empty[Int].toList, FArray.empty[Int].fuse.toFArray.toList)
+    org.junit.Assert.assertEquals(FArray.empty[Int].toList, FArray.empty[Int].fuse.run.toList)
   @Test def test_fuse_identity_ref: Unit =
-    org.junit.Assert.assertEquals(FArray("a", "b", "c").toList, FArray("a", "b", "c").fuse.toFArray.toList)
+    org.junit.Assert.assertEquals(FArray("a", "b", "c").toList, FArray("a", "b", "c").fuse.run.toList)
   @Test def test_fuse_map_int: Unit =
-    org.junit.Assert.assertEquals(List(2, 3, 4, 5, 6), FArray(1, 2, 3, 4, 5).fuse.map(_ + 1).toFArray.toList)
+    org.junit.Assert.assertEquals(List(2, 3, 4, 5, 6), FArray(1, 2, 3, 4, 5).fuse.map(_ + 1).run.toList)
   @Test def test_fuse_filter_int: Unit =
-    org.junit.Assert.assertEquals(List(2, 4), FArray(1, 2, 3, 4, 5).fuse.filter(_ % 2 == 0).toFArray.toList)
+    org.junit.Assert.assertEquals(List(2, 4), FArray(1, 2, 3, 4, 5).fuse.filter(_ % 2 == 0).run.toList)
   @Test def test_fuse_map_filter_map_int: Unit =
     org.junit.Assert.assertEquals(
       FArray(1, 2, 3, 4, 5, 6).map(_ + 1).filter(_ % 2 == 0).map(_ * 2).toList,
-      FArray(1, 2, 3, 4, 5, 6).fuse.map(_ + 1).filter(_ % 2 == 0).map(_ * 2).toFArray.toList)
+      FArray(1, 2, 3, 4, 5, 6).fuse.map(_ + 1).filter(_ % 2 == 0).map(_ * 2).run.toList)
   @Test def test_fuse_map_changes_kind: Unit = // Int -> String (Ref output)
-    org.junit.Assert.assertEquals(List("1!", "2!", "3!"), FArray(1, 2, 3).fuse.map(i => s"$i!").toFArray.toList)
+    org.junit.Assert.assertEquals(List("1!", "2!", "3!"), FArray(1, 2, 3).fuse.map(i => s"$i!").run.toList)
   @Test def test_fuse_ref_map_filter: Unit =
     org.junit.Assert.assertEquals(List("AA", "BBBB"),
-      FArray("a", "bb", "b").fuse.filter(_.length <= 2).map(_.toUpperCase).filter(_ != "B").map(s => s + s).toFArray.toList)
+      FArray("a", "bb", "b").fuse.filter(_.length <= 2).map(_.toUpperCase).filter(_ != "B").map(s => s + s).run.toList)
   @Test def test_fuse_filter_all_out: Unit =
-    org.junit.Assert.assertEquals(List(), FArray(1, 2, 3).fuse.filter(_ > 100).toFArray.toList)
+    org.junit.Assert.assertEquals(List(), FArray(1, 2, 3).fuse.filter(_ > 100).run.toList)
   @Test def test_fuse_long_double: Unit =
-    org.junit.Assert.assertEquals(List(4L, 8L), FArray(1L, 2L, 3L, 4L).fuse.filter(_ % 2L == 0L).map(_ * 2L).toFArray.toList)
+    org.junit.Assert.assertEquals(List(4L, 8L), FArray(1L, 2L, 3L, 4L).fuse.filter(_ % 2L == 0L).map(_ * 2L).run.toList)
   @Test def test_fuse_tree_source: Unit = // non-leaf source (Concat) exercises the <kind>At fallback
     org.junit.Assert.assertEquals(List(20, 40, 60),
-      (FArray(1, 2, 3) ++ FArray(4, 5, 6)).fuse.filter(_ % 2 == 0).map(_ * 10).toFArray.toList)
+      (FArray(1, 2, 3) ++ FArray(4, 5, 6)).fuse.filter(_ % 2 == 0).map(_ * 10).run.toList)
 
   // ---- take / drop (positional) ----
   private val r10 = FArray.tabulate(10)(i => i)         // 0..9
   private val l10 = (0 until 10).toList
   @Test def test_fuse_take: Unit =
-    org.junit.Assert.assertEquals(l10.take(3), r10.fuse.take(3).toFArray.toList)
+    org.junit.Assert.assertEquals(l10.take(3), r10.fuse.take(3).run.toList)
   @Test def test_fuse_drop: Unit =
-    org.junit.Assert.assertEquals(l10.drop(3), r10.fuse.drop(3).toFArray.toList)
+    org.junit.Assert.assertEquals(l10.drop(3), r10.fuse.drop(3).run.toList)
   @Test def test_fuse_take0: Unit =
-    org.junit.Assert.assertEquals(l10.take(0), r10.fuse.take(0).toFArray.toList)
+    org.junit.Assert.assertEquals(l10.take(0), r10.fuse.take(0).run.toList)
   @Test def test_fuse_take_over: Unit =
-    org.junit.Assert.assertEquals(l10.take(99), r10.fuse.take(99).toFArray.toList)
+    org.junit.Assert.assertEquals(l10.take(99), r10.fuse.take(99).run.toList)
   @Test def test_fuse_drop_over: Unit =
-    org.junit.Assert.assertEquals(l10.drop(99), r10.fuse.drop(99).toFArray.toList)
+    org.junit.Assert.assertEquals(l10.drop(99), r10.fuse.drop(99).run.toList)
   @Test def test_fuse_take_neg: Unit =
-    org.junit.Assert.assertEquals(l10.take(-1), r10.fuse.take(-1).toFArray.toList)
+    org.junit.Assert.assertEquals(l10.take(-1), r10.fuse.take(-1).run.toList)
   @Test def test_fuse_drop_take: Unit =
-    org.junit.Assert.assertEquals(l10.drop(2).take(3), r10.fuse.drop(2).take(3).toFArray.toList)
+    org.junit.Assert.assertEquals(l10.drop(2).take(3), r10.fuse.drop(2).take(3).run.toList)
   @Test def test_fuse_filter_then_take: Unit = // take bounds the POST-filter stream (real fuse.take)
     org.junit.Assert.assertEquals(l10.filter(_ % 2 == 0).take(2).map(_ * 10),
-      r10.fuse.filter(_ % 2 == 0).take(2).map(_ * 10).toFArray.toList)
+      r10.fuse.filter(_ % 2 == 0).take(2).map(_ * 10).run.toList)
   @Test def test_fuse_take_then_filter: Unit = // take FIRST (first 5), then filter
     org.junit.Assert.assertEquals(l10.take(5).filter(_ % 2 == 0),
-      r10.fuse.take(5).filter(_ % 2 == 0).toFArray.toList)
+      r10.fuse.take(5).filter(_ % 2 == 0).run.toList)
   @Test def test_fuse_map_filter_take_map: Unit =
     org.junit.Assert.assertEquals(l10.map(_ + 1).filter(_ % 2 == 0).take(2).map(_ * 100),
-      r10.fuse.map(_ + 1).filter(_ % 2 == 0).take(2).map(_ * 100).toFArray.toList)
+      r10.fuse.map(_ + 1).filter(_ % 2 == 0).take(2).map(_ * 100).run.toList)
   @Test def test_fuse_take_short_circuits: Unit = // take(3) on a 1e6 range must not read the whole thing
-    org.junit.Assert.assertEquals(List(0, 1, 2), FArray.range(0, 1000000).fuse.take(3).toFArray.toList)
+    org.junit.Assert.assertEquals(List(0, 1, 2), FArray.range(0, 1000000).fuse.take(3).run.toList)
 
   // ---- terminals: foreach / foldLeft / count ----
   @Test def test_fuse_foreach: Unit =
@@ -758,46 +758,46 @@ class FListTest:
       FArray.tabulate(10)(i => i.toLong).fuse.drop(2).take(4).foldLeft(0L)(_ + _))
   @Test def test_fuse_double_pipeline: Unit =
     org.junit.Assert.assertEquals(List(2.0, 4.0),
-      FArray(1.0, 2.0, 3.0, 4.0).fuse.filter(_ % 2.0 == 0.0).map(_ * 1.0).take(2).toFArray.toList)
+      FArray(1.0, 2.0, 3.0, 4.0).fuse.filter(_ % 2.0 == 0.0).map(_ * 1.0).take(2).run.toList)
   @Test def test_fuse_ref_take_drop_count: Unit =
     val ss = FArray("a", "bb", "ccc", "dddd", "e")
-    org.junit.Assert.assertEquals(List("ccc", "dddd"), ss.fuse.drop(2).take(2).toFArray.toList)
+    org.junit.Assert.assertEquals(List("ccc", "dddd"), ss.fuse.drop(2).take(2).run.toList)
     org.junit.Assert.assertEquals(3, ss.fuse.filter(_.length >= 2).count)
   @Test def test_fuse_ref_tree_take: Unit = // Ref non-leaf (Concat) + take short-circuit
     org.junit.Assert.assertEquals(List("A", "B"),
-      (FArray("a", "b") ++ FArray("c", "d")).fuse.map(_.toUpperCase).take(2).toFArray.toList)
+      (FArray("a", "b") ++ FArray("c", "d")).fuse.map(_.toUpperCase).take(2).run.toList)
   @Test def test_fuse_long_chain: Unit = // 8+ stages must stay correct (and one method under the size limit)
     org.junit.Assert.assertEquals(
       l10.map(_ + 1).filter(_ % 2 == 0).map(_ * 3).filter(_ > 5).drop(1).map(_ - 1).take(3).filter(_ != 17).map(_ + 100),
-      r10.fuse.map(_ + 1).filter(_ % 2 == 0).map(_ * 3).filter(_ > 5).drop(1).map(_ - 1).take(3).filter(_ != 17).map(_ + 100).toFArray.toList)
+      r10.fuse.map(_ + 1).filter(_ % 2 == 0).map(_ * 3).filter(_ > 5).drop(1).map(_ - 1).take(3).filter(_ != 17).map(_ + 100).run.toList)
 
   // ---- flatMap (nested loops) ----
   @Test def test_fuse_flatMap: Unit =
     org.junit.Assert.assertEquals(l10.flatMap(x => List(x, x * 10)),
-      r10.fuse.flatMap(x => FArray(x, x * 10)).toFArray.toList)
+      r10.fuse.flatMap(x => FArray(x, x * 10)).run.toList)
   @Test def test_fuse_flatMap_expands: Unit = // output bigger than source -> growable
     org.junit.Assert.assertEquals(l10.flatMap(x => List.fill(x)(x)),
-      r10.fuse.flatMap(x => FArray.tabulate(x)(_ => x)).toFArray.toList)
+      r10.fuse.flatMap(x => FArray.tabulate(x)(_ => x)).run.toList)
   @Test def test_fuse_flatMap_empty_inners: Unit =
     org.junit.Assert.assertEquals(l10.flatMap(x => if x % 2 == 0 then List(x) else Nil),
-      r10.fuse.flatMap(x => if x % 2 == 0 then FArray(x) else FArray.empty[Int]).toFArray.toList)
+      r10.fuse.flatMap(x => if x % 2 == 0 then FArray(x) else FArray.empty[Int]).run.toList)
   @Test def test_fuse_map_flatMap_filter: Unit =
     org.junit.Assert.assertEquals(
       l10.map(_ + 1).flatMap(x => List(x, -x)).filter(_ > 0).map(_ * 2),
-      r10.fuse.map(_ + 1).flatMap(x => FArray(x, -x)).filter(_ > 0).map(_ * 2).toFArray.toList)
+      r10.fuse.map(_ + 1).flatMap(x => FArray(x, -x)).filter(_ > 0).map(_ * 2).run.toList)
   @Test def test_fuse_nested_flatMap: Unit =
     org.junit.Assert.assertEquals(
       List(1, 2, 3).flatMap(x => List(x, x).flatMap(y => List(y, y * 100))),
-      FArray(1, 2, 3).fuse.flatMap(x => FArray(x, x)).flatMap(y => FArray(y, y * 100)).toFArray.toList)
+      FArray(1, 2, 3).fuse.flatMap(x => FArray(x, x)).flatMap(y => FArray(y, y * 100)).run.toList)
   @Test def test_fuse_flatMap_kind_change: Unit = // Int -> String inner
     org.junit.Assert.assertEquals(List("1", "x", "2", "x"),
-      FArray(1, 2).fuse.flatMap(i => FArray(i.toString, "x")).toFArray.toList)
+      FArray(1, 2).fuse.flatMap(i => FArray(i.toString, "x")).run.toList)
   @Test def test_fuse_flatMap_take: Unit = // take bounds the FLATTENED stream, breaks across nesting
     org.junit.Assert.assertEquals(List(0, 0, 1, 10, 2),
-      r10.fuse.flatMap(x => FArray(x, x * 10)).take(5).toFArray.toList)
+      r10.fuse.flatMap(x => FArray(x, x * 10)).take(5).run.toList)
   @Test def test_fuse_flatMap_tree_source: Unit =
     org.junit.Assert.assertEquals(List(1, 1, 2, 2, 3, 3, 4, 4),
-      (FArray(1, 2) ++ FArray(3, 4)).fuse.flatMap(x => FArray(x, x)).toFArray.toList)
+      (FArray(1, 2) ++ FArray(3, 4)).fuse.flatMap(x => FArray(x, x)).run.toList)
 
   // ---- short-circuit terminals: find / exists / forall / headOption / head ----
   @Test def test_fuse_find: Unit =
@@ -828,29 +828,29 @@ class FListTest:
   // ---- adversarial: counters × flatMap nesting, done-break, kinds, short-circuit ----
   @Test def test_fuse_take_then_flatMap: Unit =
     org.junit.Assert.assertEquals(l10.take(2).flatMap(x => List(x, x)),
-      r10.fuse.take(2).flatMap(x => FArray(x, x)).toFArray.toList)
+      r10.fuse.take(2).flatMap(x => FArray(x, x)).run.toList)
   @Test def test_fuse_drop_then_flatMap: Unit =
     org.junit.Assert.assertEquals(l10.drop(8).flatMap(x => List(x, x * 10)),
-      r10.fuse.drop(8).flatMap(x => FArray(x, x * 10)).toFArray.toList)
+      r10.fuse.drop(8).flatMap(x => FArray(x, x * 10)).run.toList)
   @Test def test_fuse_flatMap_drop_take: Unit =
     org.junit.Assert.assertEquals(l10.flatMap(x => List(x, x * 10)).drop(2).take(3),
-      r10.fuse.flatMap(x => FArray(x, x * 10)).drop(2).take(3).toFArray.toList)
+      r10.fuse.flatMap(x => FArray(x, x * 10)).drop(2).take(3).run.toList)
   @Test def test_fuse_nested_flatMap_take: Unit = // done must break BOTH inner loops
     org.junit.Assert.assertEquals(
       List(1, 2, 3).flatMap(x => List(x, x).flatMap(y => List(y, y * 10))).take(3),
-      FArray(1, 2, 3).fuse.flatMap(x => FArray(x, x)).flatMap(y => FArray(y, y * 10)).take(3).toFArray.toList)
+      FArray(1, 2, 3).fuse.flatMap(x => FArray(x, x)).flatMap(y => FArray(y, y * 10)).take(3).run.toList)
   @Test def test_fuse_two_takes: Unit =
     org.junit.Assert.assertEquals(l10.take(5).map(_ + 1).take(2),
-      r10.fuse.take(5).map(_ + 1).take(2).toFArray.toList)
+      r10.fuse.take(5).map(_ + 1).take(2).run.toList)
   @Test def test_fuse_flatMap_take_boundary: Unit = // 4th element is the 2nd inner of the 2nd outer
     org.junit.Assert.assertEquals(List(0, 0, 0, 1).take(4),
-      r10.fuse.flatMap(x => FArray(x, x, x)).take(4).toFArray.toList)
+      r10.fuse.flatMap(x => FArray(x, x, x)).take(4).run.toList)
   @Test def test_fuse_flatMap_long: Unit =
     org.junit.Assert.assertEquals(List(1L, 10L, 2L, 20L),
-      FArray(1, 2).fuse.flatMap(x => FArray(x.toLong, (x * 10).toLong)).toFArray.toList)
+      FArray(1, 2).fuse.flatMap(x => FArray(x.toLong, (x * 10).toLong)).run.toList)
   @Test def test_fuse_flatMap_double_tree_inner: Unit = // inner is a Concat (non-leaf) -> <kind>At fallback
     org.junit.Assert.assertEquals(List(1.0, 2.0, 2.0, 4.0),
-      FArray(1.0, 2.0).fuse.flatMap(x => FArray(x) ++ FArray(x * 2)).toFArray.toList)
+      FArray(1.0, 2.0).fuse.flatMap(x => FArray(x) ++ FArray(x * 2)).run.toList)
   @Test def test_fuse_forall_short_circuits: Unit = // stop at first false
     org.junit.Assert.assertEquals(false, FArray(2, 4, 5, 6).fuse.forall(_ % 2 == 0))
   @Test def test_fuse_exists_first: Unit =
@@ -866,7 +866,7 @@ class FListTest:
     org.junit.Assert.assertEquals(0, e.fuse.count)
     org.junit.Assert.assertEquals(true, e.fuse.forall(_ > 0))
     org.junit.Assert.assertEquals(false, e.fuse.exists(_ > 0))
-    org.junit.Assert.assertEquals(List(), e.fuse.flatMap(x => FArray(x, x)).toFArray.toList)
+    org.junit.Assert.assertEquals(List(), e.fuse.flatMap(x => FArray(x, x)).run.toList)
 
   // ---- Layer B: compute-for-survivors (an expensive independent column computes only past the filter) ----
   @Test def test_fuse_compute_for_survivors: Unit =
@@ -877,88 +877,88 @@ class FListTest:
       .map(x => (cheap(x), expensive(x)))   // two independent columns
       .filter(_._1 % 2 == 0)                // uses only the cheap column; keeps 2,4,6
       .map(_._2)                            // uses only the expensive column
-      .toFArray.toList
+      .run.toList
     org.junit.Assert.assertEquals(List(2000, 4000, 6000), result)
     org.junit.Assert.assertEquals("cheap runs for every element", 6, cheapCalls)
     org.junit.Assert.assertEquals("expensive runs ONLY for survivors (sunk past the filter)", 3, expCalls)
   @Test def test_fuse_no_recompute: Unit = // a column used twice binds once (no recomputation regression)
     var calls = 0
     def f(x: Int): Int = { calls += 1; x * 2 }
-    val r = FArray(1, 2, 3).fuse.map(x => f(x)).map(y => y + y).toFArray.toList
+    val r = FArray(1, 2, 3).fuse.map(x => f(x)).map(y => y + y).run.toList
     org.junit.Assert.assertEquals(List(4, 8, 12), r)
     org.junit.Assert.assertEquals("f bound once per element, not recomputed", 3, calls)
   @Test def test_fuse_cse_across_columns: Unit = // f(x) shared by two tuple components -> computed ONCE (List: twice)
     var fCalls = 0
     def f(x: Int): Int = { fCalls += 1; x * x }
-    val r = FArray(1, 2, 3).fuse.map(x => (f(x) + 1, f(x) + 2)).map(t => t._1 + t._2).toFArray.toList
+    val r = FArray(1, 2, 3).fuse.map(x => (f(x) + 1, f(x) + 2)).map(t => t._1 + t._2).run.toList
     org.junit.Assert.assertEquals(List(5, 11, 21), r) // (f+1)+(f+2) = 2*x*x + 3
     org.junit.Assert.assertEquals("f(x) CSE'd across both columns", 3, fCalls)
   @Test def test_fuse_cse_within_expr: Unit = // f(x) + f(x) within one expression -> computed once
     var c = 0
     def g(x: Int): Int = { c += 1; x + 10 }
-    val r = FArray(1, 2).fuse.map(x => g(x) + g(x)).toFArray.toList
+    val r = FArray(1, 2).fuse.map(x => g(x) + g(x)).run.toList
     org.junit.Assert.assertEquals(List(22, 24), r)
     org.junit.Assert.assertEquals("g(x) CSE'd within one expression", 2, c)
   @Test def test_fuse_cse_ref: Unit = // shared String sub-expression
     var c = 0
     def up(s: String): String = { c += 1; s.toUpperCase }
-    val r = FArray("ab", "cd").fuse.map(s => up(s) + up(s)).toFArray.toList
+    val r = FArray("ab", "cd").fuse.map(s => up(s) + up(s)).run.toList
     org.junit.Assert.assertEquals(List("ABAB", "CDCD"), r)
     org.junit.Assert.assertEquals("up(s) CSE'd once per element", 2, c)
   @Test def test_fuse_cse_nested_calls: Unit = // f(x) and g(f(x)) both shared
     var fc = 0; var gc = 0
     def f(x: Int): Int = { fc += 1; x + 1 }
     def g(y: Int): Int = { gc += 1; y * 2 }
-    val r = FArray(1, 2).fuse.map(x => (g(f(x)), g(f(x)) + f(x))).map(t => t._1 + t._2).toFArray.toList
+    val r = FArray(1, 2).fuse.map(x => (g(f(x)), g(f(x)) + f(x))).map(t => t._1 + t._2).run.toList
     org.junit.Assert.assertEquals(List(10, 15), r) // 2*g(f(x)) + f(x)
     org.junit.Assert.assertEquals("f(x) shared", 2, fc)
     org.junit.Assert.assertEquals("g(f(x)) shared", 2, gc)
   @Test def test_fuse_cse_sink: Unit = // a shared expr used only past the filter still sinks (computed for survivors)
     var e = 0
     def exp(x: Int): Int = { e += 1; x * 100 }
-    val r = FArray(1, 2, 3, 4).fuse.map(x => (x, exp(x) + 1, exp(x) + 2)).filter(_._1 % 2 == 0).map(t => t._2 + t._3).toFArray.toList
+    val r = FArray(1, 2, 3, 4).fuse.map(x => (x, exp(x) + 1, exp(x) + 2)).filter(_._1 % 2 == 0).map(t => t._2 + t._3).run.toList
     org.junit.Assert.assertEquals(List(2 * 200 + 3, 2 * 400 + 3), r) // survivors x=2,4
     org.junit.Assert.assertEquals("exp(x) CSE'd AND sunk: once per survivor", 2, e)
 
   // ---- Layer B adversarial: tuple decomposition / projection / fallback correctness (pure -> == List) ----
   @Test def test_fuse_lb_identity_map: Unit =
-    org.junit.Assert.assertEquals(l10.map(x => x).filter(_ > 2), r10.fuse.map(x => x).filter(_ > 2).toFArray.toList)
+    org.junit.Assert.assertEquals(l10.map(x => x).filter(_ > 2), r10.fuse.map(x => x).filter(_ > 2).run.toList)
   @Test def test_fuse_lb_const_map: Unit =
-    org.junit.Assert.assertEquals(l10.map(_ => 7), r10.fuse.map(_ => 7).toFArray.toList)
+    org.junit.Assert.assertEquals(l10.map(_ => 7), r10.fuse.map(_ => 7).run.toList)
   @Test def test_fuse_lb_filter_const: Unit =
-    org.junit.Assert.assertEquals(l10.filter(_ => true).filter(_ => false), r10.fuse.filter(_ => true).filter(_ => false).toFArray.toList)
+    org.junit.Assert.assertEquals(l10.filter(_ => true).filter(_ => false), r10.fuse.filter(_ => true).filter(_ => false).run.toList)
   @Test def test_fuse_lb_three_tuple: Unit =
     org.junit.Assert.assertEquals(l10.map(x => (x, x + 1, x + 2)).filter(_._2 % 2 == 0).map(t => t._1 + t._3),
-      r10.fuse.map(x => (x, x + 1, x + 2)).filter(_._2 % 2 == 0).map(t => t._1 + t._3).toFArray.toList)
+      r10.fuse.map(x => (x, x + 1, x + 2)).filter(_._2 % 2 == 0).map(t => t._1 + t._3).run.toList)
   @Test def test_fuse_lb_tuple_of_tuple: Unit =
     org.junit.Assert.assertEquals(
       l10.map(x => ((x, x + 1), x + 2)).map(t => t._1._1 + t._1._2 + t._2),
-      r10.fuse.map(x => ((x, x + 1), x + 2)).map(t => t._1._1 + t._1._2 + t._2).toFArray.toList)
+      r10.fuse.map(x => ((x, x + 1), x + 2)).map(t => t._1._1 + t._1._2 + t._2).run.toList)
   @Test def test_fuse_lb_predicate_two_columns: Unit =
     org.junit.Assert.assertEquals(l10.map(x => (x, x * 2)).filter(t => t._1 + t._2 > 5).map(_._1),
-      r10.fuse.map(x => (x, x * 2)).filter(t => t._1 + t._2 > 5).map(_._1).toFArray.toList)
+      r10.fuse.map(x => (x, x * 2)).filter(t => t._1 + t._2 > 5).map(_._1).run.toList)
   @Test def test_fuse_lb_same_proj_twice: Unit =
     org.junit.Assert.assertEquals(l10.map(x => (x, x)).filter(t => t._1 > 2 && t._1 < 8).map(_._2),
-      r10.fuse.map(x => (x, x)).filter(t => t._1 > 2 && t._1 < 8).map(_._2).toFArray.toList)
+      r10.fuse.map(x => (x, x)).filter(t => t._1 > 2 && t._1 < 8).map(_._2).run.toList)
   @Test def test_fuse_lb_swap_columns: Unit =
     org.junit.Assert.assertEquals(l10.map(x => (x, x + 100)).map(t => (t._2, t._1)).map(t => t._1 - t._2),
-      r10.fuse.map(x => (x, x + 100)).map(t => (t._2, t._1)).map(t => t._1 - t._2).toFArray.toList)
+      r10.fuse.map(x => (x, x + 100)).map(t => (t._2, t._1)).map(t => t._1 - t._2).run.toList)
   @Test def test_fuse_lb_whole_param_fallback: Unit = // predicate uses the whole tuple -> materialize fallback
     org.junit.Assert.assertEquals(l10.map(x => (x, x)).filter(t => t == (2, 2)).map(_._1),
-      r10.fuse.map(x => (x, x)).filter(t => t == (2, 2)).map(_._1).toFArray.toList)
+      r10.fuse.map(x => (x, x)).filter(t => t == (2, 2)).map(_._1).run.toList)
   @Test def test_fuse_lb_ref_columns: Unit =
     org.junit.Assert.assertEquals(
       List("a", "bb", "ccc").map(s => (s, s.length)).filter(_._2 >= 2).map(_._1),
-      FArray("a", "bb", "ccc").fuse.map(s => (s, s.length)).filter(_._2 >= 2).map(_._1).toFArray.toList)
+      FArray("a", "bb", "ccc").fuse.map(s => (s, s.length)).filter(_._2 >= 2).map(_._1).run.toList)
   @Test def test_fuse_lb_col_reused_two_maps: Unit =
     org.junit.Assert.assertEquals(l10.map(x => (x, x + 1)).filter(_._1 > 2).map(_._2).map(y => y * y),
-      r10.fuse.map(x => (x, x + 1)).filter(_._1 > 2).map(_._2).map(y => y * y).toFArray.toList)
+      r10.fuse.map(x => (x, x + 1)).filter(_._1 > 2).map(_._2).map(y => y * y).run.toList)
   @Test def test_fuse_lb_segment_into_flatMap: Unit = // tuple materialized at the flatMap boundary
     org.junit.Assert.assertEquals(l10.map(x => (x, x * 10)).filter(_._1 % 2 == 0).flatMap(t => List(t._1, t._2)),
-      r10.fuse.map(x => (x, x * 10)).filter(_._1 % 2 == 0).flatMap(t => FArray(t._1, t._2)).toFArray.toList)
+      r10.fuse.map(x => (x, x * 10)).filter(_._1 % 2 == 0).flatMap(t => FArray(t._1, t._2)).run.toList)
   @Test def test_fuse_lb_segment_into_zip: Unit =
     org.junit.Assert.assertEquals(l10.map(x => x + 1).filter(_ % 2 == 0).zipWithIndex,
-      r10.fuse.map(x => x + 1).filter(_ % 2 == 0).zipWithIndex.toFArray.toList)
+      r10.fuse.map(x => x + 1).filter(_ % 2 == 0).zipWithIndex.run.toList)
 
   // ---- no-blowup: a long fused chain stays correct AND under the JVM HugeMethodLimit (so it JIT-compiles) ----
   @Test def test_fuse_no_blowup: Unit =
@@ -986,87 +986,87 @@ class FListTest:
         val got = fa(mk(xs)); val exp = la(xs)
         assert(got == exp, s"$label on $xs: $got != $exp")
         t += 1
-    check("map.filter.map")(_.fuse.map(_ + 1).filter(_ % 2 == 0).map(_ * 3).toFArray.toList)(_.map(_ + 1).filter(_ % 2 == 0).map(_ * 3))
-    check("filter.take")(_.fuse.filter(_ > 0).take(3).toFArray.toList)(_.filter(_ > 0).take(3))
-    check("drop.take.map")(_.fuse.drop(2).take(4).map(_ * 2).toFArray.toList)(_.drop(2).take(4).map(_ * 2))
-    check("take.filter.drop")(_.fuse.take(8).filter(_ % 2 == 0).drop(1).toFArray.toList)(_.take(8).filter(_ % 2 == 0).drop(1))
-    check("flatMap")(_.fuse.flatMap(x => FArray(x, -x)).toFArray.toList)(_.flatMap(x => List(x, -x)))
-    check("flatMap.filter.take")(_.fuse.flatMap(x => FArray(x, x * 2)).filter(_ > 0).take(5).toFArray.toList)(_.flatMap(x => List(x, x * 2)).filter(_ > 0).take(5))
-    check("map.flatMap.map")(_.fuse.map(_ + 1).flatMap(x => FArray.tabulate(if x > 0 then 2 else 0)(_ => x)).map(_ * 10).toFArray.toList)(_.map(_ + 1).flatMap(x => List.fill(if x > 0 then 2 else 0)(x)).map(_ * 10))
-    check("zipWithIndex.filter.map")(_.fuse.zipWithIndex.filter(_._2 % 2 == 0).map(_._1).toFArray.toList)(_.zipWithIndex.filter(_._2 % 2 == 0).map(_._1))
-    check("filter.zipWithIndex")(_.fuse.filter(_ > 0).zipWithIndex.toFArray.toList)(_.filter(_ > 0).zipWithIndex)
-    check("zip")(_.fuse.zip(zf).toFArray.toList)(_.zip(zl))
-    check("filter.zip.map")(_.fuse.filter(_ % 2 == 0).zip(zf).map((a, b) => a + b).toFArray.toList)(_.filter(_ % 2 == 0).zip(zl).map((a, b) => a + b))
-    check("map2")(_.fuse.map2(zf)((a, b) => a * b).toFArray.toList)(_.zip(zl).map((a, b) => a * b))
-    check("tuple.sink")(_.fuse.map(x => (x, x * x)).filter(_._1 % 2 == 0).map(_._2).toFArray.toList)(_.map(x => (x, x * x)).filter(_._1 % 2 == 0).map(_._2))
-    check("cse")(_.fuse.map(x => (x * x + 1, x * x + 2)).map(t => t._1 + t._2).toFArray.toList)(_.map(x => (x * x + 1, x * x + 2)).map(t => t._1 + t._2))
+    check("map.filter.map")(_.fuse.map(_ + 1).filter(_ % 2 == 0).map(_ * 3).run.toList)(_.map(_ + 1).filter(_ % 2 == 0).map(_ * 3))
+    check("filter.take")(_.fuse.filter(_ > 0).take(3).run.toList)(_.filter(_ > 0).take(3))
+    check("drop.take.map")(_.fuse.drop(2).take(4).map(_ * 2).run.toList)(_.drop(2).take(4).map(_ * 2))
+    check("take.filter.drop")(_.fuse.take(8).filter(_ % 2 == 0).drop(1).run.toList)(_.take(8).filter(_ % 2 == 0).drop(1))
+    check("flatMap")(_.fuse.flatMap(x => FArray(x, -x)).run.toList)(_.flatMap(x => List(x, -x)))
+    check("flatMap.filter.take")(_.fuse.flatMap(x => FArray(x, x * 2)).filter(_ > 0).take(5).run.toList)(_.flatMap(x => List(x, x * 2)).filter(_ > 0).take(5))
+    check("map.flatMap.map")(_.fuse.map(_ + 1).flatMap(x => FArray.tabulate(if x > 0 then 2 else 0)(_ => x)).map(_ * 10).run.toList)(_.map(_ + 1).flatMap(x => List.fill(if x > 0 then 2 else 0)(x)).map(_ * 10))
+    check("zipWithIndex.filter.map")(_.fuse.zipWithIndex.filter(_._2 % 2 == 0).map(_._1).run.toList)(_.zipWithIndex.filter(_._2 % 2 == 0).map(_._1))
+    check("filter.zipWithIndex")(_.fuse.filter(_ > 0).zipWithIndex.run.toList)(_.filter(_ > 0).zipWithIndex)
+    check("zip")(_.fuse.zip(zf).run.toList)(_.zip(zl))
+    check("filter.zip.map")(_.fuse.filter(_ % 2 == 0).zip(zf).map((a, b) => a + b).run.toList)(_.filter(_ % 2 == 0).zip(zl).map((a, b) => a + b))
+    check("map2")(_.fuse.map2(zf)((a, b) => a * b).run.toList)(_.zip(zl).map((a, b) => a * b))
+    check("tuple.sink")(_.fuse.map(x => (x, x * x)).filter(_._1 % 2 == 0).map(_._2).run.toList)(_.map(x => (x, x * x)).filter(_._1 % 2 == 0).map(_._2))
+    check("cse")(_.fuse.map(x => (x * x + 1, x * x + 2)).map(t => t._1 + t._2).run.toList)(_.map(x => (x * x + 1, x * x + 2)).map(t => t._1 + t._2))
     check("foldLeft")(_.fuse.filter(_ > 0).map(_ + 1).foldLeft(0)(_ + _))(_.filter(_ > 0).map(_ + 1).foldLeft(0)(_ + _))
     check("count")(_.fuse.filter(_ % 3 == 0).map(_ * 2).count)(_.filter(_ % 3 == 0).map(_ * 2).size)
     check("find")(_.fuse.map(_ + 1).find(_ % 4 == 0))(_.map(_ + 1).find(_ % 4 == 0))
     check("exists")(_.fuse.map(_ * 2).exists(_ == 8))(_.map(_ * 2).exists(_ == 8))
     check("forall")(_.fuse.filter(_ > -10).forall(_ < 100))(_.filter(_ > -10).forall(_ < 100))
     check("headOption")(_.fuse.filter(_ % 2 == 0).map(_ * 3).headOption)(_.filter(_ % 2 == 0).map(_ * 3).headOption)
-    check("flatMap.zipWithIndex")(_.fuse.flatMap(x => FArray(x, x)).zipWithIndex.take(6).toFArray.toList)(_.flatMap(x => List(x, x)).zipWithIndex.take(6))
+    check("flatMap.zipWithIndex")(_.fuse.flatMap(x => FArray(x, x)).zipWithIndex.take(6).run.toList)(_.flatMap(x => List(x, x)).zipWithIndex.take(6))
     // case classes / nested products
-    check("cc.sink")(_.fuse.map(x => P2(x, x * x)).filter(_.a % 2 == 0).map(_.b).toFArray.toList)(_.filter(_ % 2 == 0).map(x => x * x))
-    check("cc.dce")(_.fuse.map(x => P2(x, x * x)).filter(_.a > 0).map(_.a).toFArray.toList)(_.filter(_ > 0))
-    check("cc.nested")(_.fuse.map(x => Outer(Inner(x, x + 1), x * 2)).filter(_.inner.x % 2 == 0).map(o => o.inner.y + o.z).toFArray.toList)(_.filter(_ % 2 == 0).map(x => (x + 1) + (x * 2)))
-    check("cc.materialize")(_.fuse.map(x => P2(x, x * 10)).filter(_.a > 0).toFArray.toList)(_.filter(_ > 0).map(x => P2(x, x * 10)))
+    check("cc.sink")(_.fuse.map(x => P2(x, x * x)).filter(_.a % 2 == 0).map(_.b).run.toList)(_.filter(_ % 2 == 0).map(x => x * x))
+    check("cc.dce")(_.fuse.map(x => P2(x, x * x)).filter(_.a > 0).map(_.a).run.toList)(_.filter(_ > 0))
+    check("cc.nested")(_.fuse.map(x => Outer(Inner(x, x + 1), x * 2)).filter(_.inner.x % 2 == 0).map(o => o.inner.y + o.z).run.toList)(_.filter(_ % 2 == 0).map(x => (x + 1) + (x * 2)))
+    check("cc.materialize")(_.fuse.map(x => P2(x, x * 10)).filter(_.a > 0).run.toList)(_.filter(_ > 0).map(x => P2(x, x * 10)))
     // new stages
-    check("collect")(_.fuse.collect { case x if x % 2 == 0 => x * 3 }.toFArray.toList)(_.collect { case x if x % 2 == 0 => x * 3 })
-    check("takeWhile")(_.fuse.takeWhile(_ < 5).toFArray.toList)(_.takeWhile(_ < 5))
-    check("dropWhile")(_.fuse.dropWhile(_ < 5).toFArray.toList)(_.dropWhile(_ < 5))
-    check("distinct")(_.fuse.distinct.toFArray.toList)(_.distinct)
-    check("distinctBy")(_.fuse.distinctBy(_ % 4).toFArray.toList)(_.distinctBy(_ % 4))
-    check("slice")(_.fuse.slice(2, 7).toFArray.toList)(_.slice(2, 7))
-    check("collect.takeWhile.filter")(_.fuse.collect { case x if x > 0 => x * 2 }.takeWhile(_ < 16).filter(_ % 3 == 0).toFArray.toList)(_.collect { case x if x > 0 => x * 2 }.takeWhile(_ < 16).filter(_ % 3 == 0))
-    check("dropWhile.distinct")(_.fuse.dropWhile(_ < 0).distinct.toFArray.toList)(_.dropWhile(_ < 0).distinct)
-    check("scanLeft")(_.fuse.scanLeft(0)(_ + _).toFArray.toList)(_.scanLeft(0)(_ + _))
-    check("filter.scanLeft.take")(_.fuse.filter(_ > 0).scanLeft(0)(_ + _).take(5).toFArray.toList)(_.filter(_ > 0).scanLeft(0)(_ + _).take(5))
+    check("collect")(_.fuse.collect { case x if x % 2 == 0 => x * 3 }.run.toList)(_.collect { case x if x % 2 == 0 => x * 3 })
+    check("takeWhile")(_.fuse.takeWhile(_ < 5).run.toList)(_.takeWhile(_ < 5))
+    check("dropWhile")(_.fuse.dropWhile(_ < 5).run.toList)(_.dropWhile(_ < 5))
+    check("distinct")(_.fuse.distinct.run.toList)(_.distinct)
+    check("distinctBy")(_.fuse.distinctBy(_ % 4).run.toList)(_.distinctBy(_ % 4))
+    check("slice")(_.fuse.slice(2, 7).run.toList)(_.slice(2, 7))
+    check("collect.takeWhile.filter")(_.fuse.collect { case x if x > 0 => x * 2 }.takeWhile(_ < 16).filter(_ % 3 == 0).run.toList)(_.collect { case x if x > 0 => x * 2 }.takeWhile(_ < 16).filter(_ % 3 == 0))
+    check("dropWhile.distinct")(_.fuse.dropWhile(_ < 0).distinct.run.toList)(_.dropWhile(_ < 0).distinct)
+    check("scanLeft")(_.fuse.scanLeft(0)(_ + _).run.toList)(_.scanLeft(0)(_ + _))
+    check("filter.scanLeft.take")(_.fuse.filter(_ > 0).scanLeft(0)(_ + _).take(5).run.toList)(_.filter(_ > 0).scanLeft(0)(_ + _).take(5))
     // Long / Double / Ref element kinds
     var t2 = 0
     while t2 < 200 do
       val xs = List.tabulate(rng.nextInt(20))(_ => rng.nextInt(16) - 4)
-      assert(FArray.fromIterable(xs.map(_.toLong)).fuse.filter(_ % 2L == 0L).map(_ * 3L).take(4).toFArray.toList == xs.map(_.toLong).filter(_ % 2 == 0).map(_ * 3).take(4))
-      assert(FArray.fromIterable(xs.map(_.toDouble)).fuse.map(_ + 0.5).filter(_ > 0.0).toFArray.toList == xs.map(_.toDouble).map(_ + 0.5).filter(_ > 0.0))
-      assert(FArray.fromIterable(xs.map(_.toString)).fuse.filter(_.length <= 2).map(s => (s, s.length)).filter(_._2 >= 1).map(_._1).toFArray.toList == xs.map(_.toString).filter(_.length <= 2).map(s => (s, s.length)).filter(_._2 >= 1).map(_._1))
+      assert(FArray.fromIterable(xs.map(_.toLong)).fuse.filter(_ % 2L == 0L).map(_ * 3L).take(4).run.toList == xs.map(_.toLong).filter(_ % 2 == 0).map(_ * 3).take(4))
+      assert(FArray.fromIterable(xs.map(_.toDouble)).fuse.map(_ + 0.5).filter(_ > 0.0).run.toList == xs.map(_.toDouble).map(_ + 0.5).filter(_ > 0.0))
+      assert(FArray.fromIterable(xs.map(_.toString)).fuse.filter(_.length <= 2).map(s => (s, s.length)).filter(_._2 >= 1).map(_._1).run.toList == xs.map(_.toString).filter(_.length <= 2).map(s => (s, s.length)).filter(_._2 >= 1).map(_._1))
       t2 += 1
 
   // ---- case-class / nested-product decomposition (same machinery as tuples, via caseFields) ----
   @Test def test_fuse_caseclass: Unit =
     org.junit.Assert.assertEquals(List(20, 40),
-      FArray(1, 2, 3, 4).fuse.map(x => P2(x, x * 10)).filter(_.a % 2 == 0).map(_.b).toFArray.toList)
+      FArray(1, 2, 3, 4).fuse.map(x => P2(x, x * 10)).filter(_.a % 2 == 0).map(_.b).run.toList)
   @Test def test_fuse_caseclass_dce: Unit = // a discarded case-class field is never computed
     var e = 0; def exp(x: Int): Int = { e += 1; x * 100 }
-    val r = FArray(1, 2, 3).fuse.map(x => P2(x, exp(x))).map(_.a).toFArray.toList
+    val r = FArray(1, 2, 3).fuse.map(x => P2(x, exp(x))).map(_.a).run.toList
     org.junit.Assert.assertEquals(List(1, 2, 3), r)
     org.junit.Assert.assertEquals("the .b field (exp(x)) is dead → never computed", 0, e)
   @Test def test_fuse_caseclass_sink: Unit = // an expensive field used only past the filter → survivors only
     var e = 0; def exp(x: Int): Int = { e += 1; x * 100 }
-    val r = FArray(1, 2, 3, 4).fuse.map(x => P2(x, exp(x))).filter(_.a % 2 == 0).map(_.b).toFArray.toList
+    val r = FArray(1, 2, 3, 4).fuse.map(x => P2(x, exp(x))).filter(_.a % 2 == 0).map(_.b).run.toList
     org.junit.Assert.assertEquals(List(200, 400), r)
     org.junit.Assert.assertEquals("exp(x) only for survivors", 2, e)
   @Test def test_fuse_caseclass_materialize: Unit = // FArray[P2] output — the product is rebuilt
     org.junit.Assert.assertEquals(List(P2(1, 10), P2(2, 20)),
-      FArray(1, 2).fuse.map(x => P2(x, x * 10)).toFArray.toList)
+      FArray(1, 2).fuse.map(x => P2(x, x * 10)).run.toList)
   @Test def test_fuse_caseclass_nested: Unit = // Outer(Inner(...), ...), nested field access
     org.junit.Assert.assertEquals(List(4, 8, 12),
-      FArray(1, 2, 3).fuse.map(x => Outer(Inner(x, x * 2), x * 3)).map(o => o.inner.x + o.z).toFArray.toList)
+      FArray(1, 2, 3).fuse.map(x => Outer(Inner(x, x * 2), x * 3)).map(o => o.inner.x + o.z).run.toList)
   @Test def test_fuse_caseclass_nested_dce: Unit = // a dead NESTED field (inner.y) is never computed
     var e = 0; def exp(x: Int): Int = { e += 1; x * 100 }
-    val r = FArray(1, 2, 3).fuse.map(x => Outer(Inner(x, exp(x)), x * 3)).map(o => o.inner.x + o.z).toFArray.toList
+    val r = FArray(1, 2, 3).fuse.map(x => Outer(Inner(x, exp(x)), x * 3)).map(o => o.inner.x + o.z).run.toList
     org.junit.Assert.assertEquals(List(4, 8, 12), r)
     org.junit.Assert.assertEquals("inner.y (exp(x)) is dead → never computed, even nested", 0, e)
   @Test def test_fuse_caseclass_whole: Unit = // case class used whole (rebuilt), then field
     org.junit.Assert.assertEquals(List(P2(2, 20)),
-      FArray(1, 2, 3).fuse.map(x => P2(x, x * 10)).filter(p => p == P2(2, 20)).toFArray.toList)
+      FArray(1, 2, 3).fuse.map(x => P2(x, x * 10)).filter(p => p == P2(2, 20)).run.toList)
 
   // ---- new stages: collect / takeWhile / dropWhile / distinct / distinctBy / slice / flatten ----
   @Test def test_fuse_stages: Unit =
     import org.junit.Assert.{assertEquals => aeq}
     val r = FArray(1, 2, 3, 4, 5, 6, 7, 8); val l = List(1, 2, 3, 4, 5, 6, 7, 8)
     // collect (inlined PartialFunction match)
-    aeq(l.collect { case x if x % 2 == 0 => x * 10 }, r.fuse.collect { case x if x % 2 == 0 => x * 10 }.toFArray.toList)
+    aeq(l.collect { case x if x % 2 == 0 => x * 10 }, r.fuse.collect { case x if x % 2 == 0 => x * 10 }.run.toList)
     aeq(l.collect { case x if x > 4 => x }, r.fuse.collect { case x if x > 4 => x }.toList)
     aeq(l.collect { case 3 => 30; case 5 => 50 }, r.fuse.collect { case 3 => 30; case 5 => 50 }.toList)
     // collect changing the element type, then a further stage
@@ -1099,98 +1099,98 @@ class FListTest:
   @Test def test_fuse_scanLeft: Unit =
     import org.junit.Assert.{assertEquals => aeq}
     val r = FArray(1, 2, 3, 4); val l = List(1, 2, 3, 4)
-    aeq(l.scanLeft(0)(_ + _), r.fuse.scanLeft(0)(_ + _).toFArray.toList)
-    aeq(l.scanLeft(100)(_ - _), r.fuse.scanLeft(100)(_ - _).toFArray.toList)
-    aeq(List.empty[Int].scanLeft(7)(_ + _), FArray.empty[Int].fuse.scanLeft(7)(_ + _).toFArray.toList) // empty → [z]
-    aeq(l.scanLeft("")(_ + _.toString), r.fuse.scanLeft("")(_ + _.toString).toFArray.toList)            // Int -> String
+    aeq(l.scanLeft(0)(_ + _), r.fuse.scanLeft(0)(_ + _).run.toList)
+    aeq(l.scanLeft(100)(_ - _), r.fuse.scanLeft(100)(_ - _).run.toList)
+    aeq(List.empty[Int].scanLeft(7)(_ + _), FArray.empty[Int].fuse.scanLeft(7)(_ + _).run.toList) // empty → [z]
+    aeq(l.scanLeft("")(_ + _.toString), r.fuse.scanLeft("")(_ + _.toString).run.toList)            // Int -> String
     // upstream / downstream stages compose around the scan
-    aeq(l.map(_ * 2).scanLeft(0)(_ + _), r.fuse.map(_ * 2).scanLeft(0)(_ + _).toFArray.toList)
-    aeq(l.filter(_ % 2 == 0).scanLeft(0)(_ + _), r.fuse.filter(_ % 2 == 0).scanLeft(0)(_ + _).toFArray.toList)
-    aeq(l.scanLeft(0)(_ + _).filter(_ % 2 == 0), r.fuse.scanLeft(0)(_ + _).filter(_ % 2 == 0).toFArray.toList)
-    aeq(l.scanLeft(0)(_ + _).map(_ * 10), r.fuse.scanLeft(0)(_ + _).map(_ * 10).toFArray.toList)
+    aeq(l.map(_ * 2).scanLeft(0)(_ + _), r.fuse.map(_ * 2).scanLeft(0)(_ + _).run.toList)
+    aeq(l.filter(_ % 2 == 0).scanLeft(0)(_ + _), r.fuse.filter(_ % 2 == 0).scanLeft(0)(_ + _).run.toList)
+    aeq(l.scanLeft(0)(_ + _).filter(_ % 2 == 0), r.fuse.scanLeft(0)(_ + _).filter(_ % 2 == 0).run.toList)
+    aeq(l.scanLeft(0)(_ + _).map(_ * 10), r.fuse.scanLeft(0)(_ + _).map(_ * 10).run.toList)
     // scanLeft into other terminals (the prologue counts z too)
     aeq(l.scanLeft(0)(_ + _).sum, r.fuse.scanLeft(0)(_ + _).sum)
     aeq(l.scanLeft(0)(_ + _).length, r.fuse.scanLeft(0)(_ + _).count)
     aeq(l.scanLeft(0)(_ + _).last, r.fuse.scanLeft(0)(_ + _).last)
-    aeq(l.scanLeft(0)(_ + _).take(3), r.fuse.scanLeft(0)(_ + _).take(3).toFArray.toList)
+    aeq(l.scanLeft(0)(_ + _).take(3), r.fuse.scanLeft(0)(_ + _).take(3).run.toList)
 
   // ---- ordering: stages compose in source order; counters advance at their position (post-upstream) ----
   @Test def test_fuse_ordering: Unit =
     import org.junit.Assert.{assertEquals => aeq}
     val r = FArray(0, 1, 2, 3, 4, 5, 6, 7); val l = List(0, 1, 2, 3, 4, 5, 6, 7)
     // filter THEN index: index counts survivors (dense) → [(0,0),(2,1)]
-    aeq(l.filter(_ % 2 == 0).zipWithIndex.take(2), r.fuse.filter(_ % 2 == 0).zipWithIndex.take(2).toFArray.toList)
+    aeq(l.filter(_ % 2 == 0).zipWithIndex.take(2), r.fuse.filter(_ % 2 == 0).zipWithIndex.take(2).run.toList)
     // index THEN filter: index is the original position (gaps) → [(0,0),(2,2)]
-    aeq(l.zipWithIndex.filter(_._1 % 2 == 0).take(2), r.fuse.zipWithIndex.filter(_._1 % 2 == 0).take(2).toFArray.toList)
+    aeq(l.zipWithIndex.filter(_._1 % 2 == 0).take(2), r.fuse.zipWithIndex.filter(_._1 % 2 == 0).take(2).run.toList)
     // take before vs after the index changes both what's kept and the indices
-    aeq(l.zipWithIndex.take(3).filter(_._1 % 2 == 0), r.fuse.zipWithIndex.take(3).filter(_._1 % 2 == 0).toFArray.toList)
-    aeq(l.take(3).zipWithIndex.filter(_._2 > 0), r.fuse.take(3).zipWithIndex.filter(_._2 > 0).toFArray.toList)
+    aeq(l.zipWithIndex.take(3).filter(_._1 % 2 == 0), r.fuse.zipWithIndex.take(3).filter(_._1 % 2 == 0).run.toList)
+    aeq(l.take(3).zipWithIndex.filter(_._2 > 0), r.fuse.take(3).zipWithIndex.filter(_._2 > 0).run.toList)
     // drop interacts with index position too
-    aeq(l.drop(2).zipWithIndex.take(2), r.fuse.drop(2).zipWithIndex.take(2).toFArray.toList)
-    aeq(l.zipWithIndex.drop(2).take(2), r.fuse.zipWithIndex.drop(2).take(2).toFArray.toList)
+    aeq(l.drop(2).zipWithIndex.take(2), r.fuse.drop(2).zipWithIndex.take(2).run.toList)
+    aeq(l.zipWithIndex.drop(2).take(2), r.fuse.zipWithIndex.drop(2).take(2).run.toList)
 
   // ---- zipWithIndex ----
   @Test def test_fuse_zipWithIndex: Unit =
-    org.junit.Assert.assertEquals(l10.zipWithIndex, r10.fuse.zipWithIndex.toFArray.toList)
+    org.junit.Assert.assertEquals(l10.zipWithIndex, r10.fuse.zipWithIndex.run.toList)
   @Test def test_fuse_zipWithIndex_destructure: Unit = // tuple built then destructured (scalar-replaced)
     org.junit.Assert.assertEquals(l10.zipWithIndex.map((x, i) => x + i * 100),
-      r10.fuse.zipWithIndex.map((x, i) => x + i * 100).toFArray.toList)
+      r10.fuse.zipWithIndex.map((x, i) => x + i * 100).run.toList)
   @Test def test_fuse_filter_then_zipWithIndex: Unit = // index is the POST-filter position
     org.junit.Assert.assertEquals(l10.filter(_ % 2 == 0).zipWithIndex,
-      r10.fuse.filter(_ % 2 == 0).zipWithIndex.toFArray.toList)
+      r10.fuse.filter(_ % 2 == 0).zipWithIndex.run.toList)
   @Test def test_fuse_zipWithIndex_then_filter: Unit = // index-only predicate
     org.junit.Assert.assertEquals(l10.zipWithIndex.filter(_._2 % 3 == 0).map(_._1),
-      r10.fuse.zipWithIndex.filter(_._2 % 3 == 0).map(_._1).toFArray.toList)
+      r10.fuse.zipWithIndex.filter(_._2 % 3 == 0).map(_._1).run.toList)
   @Test def test_fuse_zipWithIndex_take: Unit =
     org.junit.Assert.assertEquals(l10.zipWithIndex.take(3),
-      r10.fuse.zipWithIndex.take(3).toFArray.toList)
+      r10.fuse.zipWithIndex.take(3).run.toList)
   @Test def test_fuse_zipWithIndex_ref: Unit =
     org.junit.Assert.assertEquals(List(("a", 0), ("b", 1), ("c", 2)),
-      FArray("a", "b", "c").fuse.zipWithIndex.toFArray.toList)
+      FArray("a", "b", "c").fuse.zipWithIndex.run.toList)
   @Test def test_fuse_zipWithIndex_long: Unit =
     org.junit.Assert.assertEquals(List((10L, 0), (20L, 1)),
-      FArray(10L, 20L).fuse.zipWithIndex.toFArray.toList)
+      FArray(10L, 20L).fuse.zipWithIndex.run.toList)
 
   // ---- zip / map2 (stream-level: lock-step with another source) ----
   private val ys5 = FArray(100, 200, 300, 400, 500)
   private val ly5 = List(100, 200, 300, 400, 500)
   @Test def test_fuse_zip: Unit =
-    org.junit.Assert.assertEquals(l10.zip(ly5), r10.fuse.zip(ys5).toFArray.toList)
+    org.junit.Assert.assertEquals(l10.zip(ly5), r10.fuse.zip(ys5).run.toList)
   @Test def test_fuse_zip_map: Unit = // destructured -> pair never built
     org.junit.Assert.assertEquals(l10.zip(ly5).map((a, b) => a + b),
-      r10.fuse.zip(ys5).map((a, b) => a + b).toFArray.toList)
+      r10.fuse.zip(ys5).map((a, b) => a + b).run.toList)
   @Test def test_fuse_filter_then_zip: Unit = // zip pairs the POST-filter stream with that(0,1,2,…)
     org.junit.Assert.assertEquals(l10.filter(_ % 2 == 0).zip(ly5),
-      r10.fuse.filter(_ % 2 == 0).zip(ys5).toFArray.toList)
+      r10.fuse.filter(_ % 2 == 0).zip(ys5).run.toList)
   @Test def test_fuse_zip_then_filter: Unit =
     org.junit.Assert.assertEquals(l10.zip(ly5).filter(_._1 % 2 == 0).map(_._2),
-      r10.fuse.zip(ys5).filter(_._1 % 2 == 0).map(_._2).toFArray.toList)
+      r10.fuse.zip(ys5).filter(_._1 % 2 == 0).map(_._2).run.toList)
   @Test def test_fuse_zip_shorter: Unit = // that shorter than the pipeline -> stop at that
-    org.junit.Assert.assertEquals(l10.zip(List(1, 2)), r10.fuse.zip(FArray(1, 2)).toFArray.toList)
+    org.junit.Assert.assertEquals(l10.zip(List(1, 2)), r10.fuse.zip(FArray(1, 2)).run.toList)
   @Test def test_fuse_zip_longer: Unit = // pipeline shorter than that -> stop at the pipeline
-    org.junit.Assert.assertEquals(l10.take(3).zip(ly5), r10.fuse.take(3).zip(ys5).toFArray.toList)
+    org.junit.Assert.assertEquals(l10.take(3).zip(ly5), r10.fuse.take(3).zip(ys5).run.toList)
   @Test def test_fuse_zip_empty: Unit =
-    org.junit.Assert.assertEquals(List(), r10.fuse.zip(FArray.empty[Int]).toFArray.toList)
+    org.junit.Assert.assertEquals(List(), r10.fuse.zip(FArray.empty[Int]).run.toList)
   @Test def test_fuse_zip_count: Unit =
     org.junit.Assert.assertEquals(l10.zip(ly5).length, r10.fuse.zip(ys5).count)
   @Test def test_fuse_map2: Unit =
-    org.junit.Assert.assertEquals(l10.zip(ly5).map((a, b) => a * b), r10.fuse.map2(ys5)((a, b) => a * b).toFArray.toList)
+    org.junit.Assert.assertEquals(l10.zip(ly5).map((a, b) => a * b), r10.fuse.map2(ys5)((a, b) => a * b).run.toList)
   @Test def test_fuse_zip_ref: Unit = // String × Int
     org.junit.Assert.assertEquals(List(("a", 1), ("b", 2)),
-      FArray("a", "b", "c").fuse.zip(FArray(1, 2)).toFArray.toList)
+      FArray("a", "b", "c").fuse.zip(FArray(1, 2)).run.toList)
   @Test def test_fuse_zip_long_source: Unit = // Long element × Int that
     org.junit.Assert.assertEquals(List(11L, 22L),
-      FArray(1L, 2L).fuse.map2(FArray(10, 20))((a, b) => a + b).toFArray.toList)
+      FArray(1L, 2L).fuse.map2(FArray(10, 20))((a, b) => a + b).run.toList)
 
   // ---- specialize-or-fail: a primitive-backed FArray widened to a non-specializable type must be rejected
   //      at compile time (not miscompiled into null reads) — mirrors the eager API's Repr evidence. ----
   @Test def test_fuse_rejects_unspecializable: Unit =
     import scala.compiletime.testing.typeChecks
     // concrete kinds compile:
-    assert(typeChecks("""farray.FArray(1, 2, 3).fuse.map(x => x).toFArray"""))
-    assert(typeChecks("""farray.FArray("a", "b").fuse.map(x => x).toFArray"""))
+    assert(typeChecks("""farray.FArray(1, 2, 3).fuse.map(x => x).run"""))
+    assert(typeChecks("""farray.FArray("a", "b").fuse.map(x => x).run"""))
     // FArray[Any] (primitive-backed, covariantly widened) must NOT compile:
-    assert(!typeChecks("""{ val xs: farray.FArray[Any] = farray.FArray(1, 2, 3); xs.fuse.map(x => x).toFArray }"""))
+    assert(!typeChecks("""{ val xs: farray.FArray[Any] = farray.FArray(1, 2, 3); xs.fuse.map(x => x).run }"""))
     assert(!typeChecks("""{ val xs: farray.FArray[AnyVal] = farray.FArray(1, 2, 3); xs.fuse.count }"""))
 
   // ---- snapshot: the EXPANDED generated code (golden file tracked in git) ----
@@ -1208,38 +1208,38 @@ class FListTest:
     def scenario(title: String, code: String): Unit =
       sb.append("=" * 100).append('\n').append("// ").append(title).append('\n')
         .append("=" * 100).append('\n').append(code.strip).append("\n\n")
-    scenario("ints.fuse.map(_+1).filter(_%2==0).map(_*2).toFArray",
-      FuseDebug.show(ints.fuse.map(_ + 1).filter(_ % 2 == 0).map(_ * 2).toFArray))
-    scenario("ints.fuse.filter(_%2==0).take(2).map(_*10).toFArray  [positional break]",
-      FuseDebug.show(ints.fuse.filter(_ % 2 == 0).take(2).map(_ * 10).toFArray))
-    scenario("ints.fuse.drop(2).take(3).toFArray",
-      FuseDebug.show(ints.fuse.drop(2).take(3).toFArray))
+    scenario("ints.fuse.map(_+1).filter(_%2==0).map(_*2).run",
+      FuseDebug.show(ints.fuse.map(_ + 1).filter(_ % 2 == 0).map(_ * 2).run))
+    scenario("ints.fuse.filter(_%2==0).take(2).map(_*10).run  [positional break]",
+      FuseDebug.show(ints.fuse.filter(_ % 2 == 0).take(2).map(_ * 10).run))
+    scenario("ints.fuse.drop(2).take(3).run",
+      FuseDebug.show(ints.fuse.drop(2).take(3).run))
     scenario("ints.fuse.map(_+1).foldLeft(0)(_+_)",
       FuseDebug.show(ints.fuse.map(_ + 1).foldLeft(0)(_ + _)))
     scenario("ints.fuse.filter(_%2==0).count",
       FuseDebug.show(ints.fuse.filter(_ % 2 == 0).count))
-    scenario("strs.fuse.map(_.toUpperCase).toFArray  [Ref]",
-      FuseDebug.show(strs.fuse.map(_.toUpperCase).toFArray))
+    scenario("strs.fuse.map(_.toUpperCase).run  [Ref]",
+      FuseDebug.show(strs.fuse.map(_.toUpperCase).run))
     scenario("strs.fuse.filter(_.nonEmpty).foreach(println)  [Ref, inlined op]",
       FuseDebug.show(strs.fuse.filter(_.nonEmpty).foreach(s => System.out.println(s))))
-    scenario("ints.fuse.flatMap(x => FArray(x, x*10)).map(_+1).toFArray  [nested loop, growable out]",
-      FuseDebug.show(ints.fuse.flatMap(x => FArray(x, x * 10)).map(_ + 1).toFArray))
+    scenario("ints.fuse.flatMap(x => FArray(x, x*10)).map(_+1).run  [nested loop, growable out]",
+      FuseDebug.show(ints.fuse.flatMap(x => FArray(x, x * 10)).map(_ + 1).run))
     scenario("ints.fuse.map(_+1).find(_%3==0)  [short-circuit via done]",
       FuseDebug.show(ints.fuse.map(_ + 1).find(_ % 3 == 0)))
-    scenario("ints.fuse.zipWithIndex.filter(_._2%2==0).map(_._1).toFArray  [(value,index) DECOMPOSED — no pair built]",
-      FuseDebug.show(ints.fuse.zipWithIndex.filter(_._2 % 2 == 0).map(_._1).toFArray))
-    scenario("ints.fuse.zip(ys).map((a,b) => a+b).toFArray  [lock-step; reads that(c); no pair built]",
-      FuseDebug.show(ints.fuse.zip(FArray(10, 20, 30, 40)).map((a, b) => a + b).toFArray))
-    scenario("ints.fuse.map(x => (f(x)+1, f(x)+2)).map(_._1 + _._2).toFArray  [CSE: f(x)=x*x once]",
-      FuseDebug.show(ints.fuse.map(x => (x * x + 1, x * x + 2)).map(t => t._1 + t._2).toFArray))
-    scenario("ints.fuse.map(x=>(x+1, x*1000)).filter(_._1%2==0).map(_._2).toFArray  [SINK: 2nd col inside the guard]",
-      FuseDebug.show(ints.fuse.map(x => (x + 1, x * 1000)).filter(_._1 % 2 == 0).map(_._2).toFArray))
-    scenario("COLLECT: ints.fuse.collect { case x if x%2==0 => x*10 }.toFArray  [PF match INLINED — no PartialFunction object]",
-      FuseDebug.show(ints.fuse.collect { case x if x % 2 == 0 => x * 10 }.toFArray))
-    scenario("TAKEWHILE: ints.fuse.takeWhile(_ < 5).toFArray  [stops the stream via done on first failure]",
-      FuseDebug.show(ints.fuse.takeWhile(_ < 5).toFArray))
-    scenario("SCANLEFT: ints.fuse.scanLeft(0)(_ + _).toFArray  [emit z prologue before the loop, then acc per element]",
-      FuseDebug.show(ints.fuse.scanLeft(0)(_ + _).toFArray))
+    scenario("ints.fuse.zipWithIndex.filter(_._2%2==0).map(_._1).run  [(value,index) DECOMPOSED — no pair built]",
+      FuseDebug.show(ints.fuse.zipWithIndex.filter(_._2 % 2 == 0).map(_._1).run))
+    scenario("ints.fuse.zip(ys).map((a,b) => a+b).run  [lock-step; reads that(c); no pair built]",
+      FuseDebug.show(ints.fuse.zip(FArray(10, 20, 30, 40)).map((a, b) => a + b).run))
+    scenario("ints.fuse.map(x => (f(x)+1, f(x)+2)).map(_._1 + _._2).run  [CSE: f(x)=x*x once]",
+      FuseDebug.show(ints.fuse.map(x => (x * x + 1, x * x + 2)).map(t => t._1 + t._2).run))
+    scenario("ints.fuse.map(x=>(x+1, x*1000)).filter(_._1%2==0).map(_._2).run  [SINK: 2nd col inside the guard]",
+      FuseDebug.show(ints.fuse.map(x => (x + 1, x * 1000)).filter(_._1 % 2 == 0).map(_._2).run))
+    scenario("COLLECT: ints.fuse.collect { case x if x%2==0 => x*10 }.run  [PF match INLINED — no PartialFunction object]",
+      FuseDebug.show(ints.fuse.collect { case x if x % 2 == 0 => x * 10 }.run))
+    scenario("TAKEWHILE: ints.fuse.takeWhile(_ < 5).run  [stops the stream via done on first failure]",
+      FuseDebug.show(ints.fuse.takeWhile(_ < 5).run))
+    scenario("SCANLEFT: ints.fuse.scanLeft(0)(_ + _).run  [emit z prologue before the loop, then acc per element]",
+      FuseDebug.show(ints.fuse.scanLeft(0)(_ + _).run))
     scenario("INDEXWHERE: ints.fuse.map(x => x*x).indexWhere(_ > 9)  [bare var idx + counter — NO pair allocated]",
       FuseDebug.show(ints.fuse.map(x => x * x).indexWhere(_ > 9)))
     scenario("MIN: ints.fuse.filter(_%2==0).min  [seeded var acc — NO per-element Option]",
@@ -1247,43 +1247,43 @@ class FListTest:
     scenario("MINBY: ints.fuse.minBy(x => -x)  [best + bestKey in two vars — NO tuple, NO per-element Option]",
       FuseDebug.show(ints.fuse.minBy(x => -x)))
     scenario("PRODUCT: map(x => Outer(Inner(x, x*99), x*3)).map(o => o.inner.x + o.z)  [nested case class, Inner.y DEAD]",
-      FuseDebug.show(ints.fuse.map(x => Outer(Inner(x, x * 99), x * 3)).map(o => o.inner.x + o.z).toFArray))
+      FuseDebug.show(ints.fuse.map(x => Outer(Inner(x, x * 99), x * 3)).map(o => o.inner.x + o.z).run))
     scenario("DERIVED TERMINAL: ints.fuse.filter(_%2==0).map(_*10).sum  [foldLeft fusion: acc updated in one pass]",
       FuseDebug.show(ints.fuse.filter(_ % 2 == 0).map(_ * 10).sum))
     def expensive(x: Int): Int = { var s = x; var k = 0; while (k < 24) { s = s * 1103515245 + 12345; k += 1 }; s }
     scenario("DCE-1: map(x => (x+1, expensive(x))).map(_._1)  [expensive(x) DEAD]",
-      FuseDebug.show(ints.fuse.map(x => (x + 1, expensive(x))).map(_._1).toFArray))
+      FuseDebug.show(ints.fuse.map(x => (x + 1, expensive(x))).map(_._1).run))
     scenario("DCE-2: zip(ys).map(_._1)  [zipped read DEAD]",
-      FuseDebug.show(ints.fuse.zip(FArray(7, 8, 9, 10, 11)).map(_._1).toFArray))
+      FuseDebug.show(ints.fuse.zip(FArray(7, 8, 9, 10, 11)).map(_._1).run))
     scenario("DCE-3: zip(ys).map((a,b) => (a, expensive(b))).filter(_._1%4==0).map(_._1)  [expensive(b) AND ys DEAD]",
-      FuseDebug.show(ints.fuse.zip(FArray(7, 8, 9, 10, 11)).map((a, b) => (a, expensive(b))).filter(_._1 % 4 == 0).map(_._1).toFArray))
+      FuseDebug.show(ints.fuse.zip(FArray(7, 8, 9, 10, 11)).map((a, b) => (a, expensive(b))).filter(_._1 % 4 == 0).map(_._1).run))
     scenario("DCE-4: collect { case x if x>2 => (x, expensive(x)) }.map(_._1)  [collect body decomposes: expensive DEAD]",
-      FuseDebug.show(ints.fuse.collect { case x if x > 2 => (x, expensive(x)) }.map(_._1).toFArray))
+      FuseDebug.show(ints.fuse.collect { case x if x > 2 => (x, expensive(x)) }.map(_._1).run))
 
     // ===== examples for the blog post =====
     val k = 3 // a runtime limit (not a literal), to show dynamic clamping
     scenario("BLOG-HYGIENE-1: map(x => x+1).filter(x => x>2).map(x => x*x)  [same param name `x` in 3 lambdas]",
-      FuseDebug.show(ints.fuse.map(x => x + 1).filter(x => x > 2).map(x => x * x).toFArray))
+      FuseDebug.show(ints.fuse.map(x => x + 1).filter(x => x > 2).map(x => x * x).run))
     scenario("BLOG-HYGIENE-2: flatMap(x => FArray(x, x*10)).map(x => x+1)  [`x` reused across the nesting boundary]",
-      FuseDebug.show(ints.fuse.flatMap(x => FArray(x, x * 10)).map(x => x + 1).toFArray))
+      FuseDebug.show(ints.fuse.flatMap(x => FArray(x, x * 10)).map(x => x + 1).run))
     scenario("BLOG-NESTED-FLATMAP: flatMap(x => FArray(x, x+1)).flatMap(y => FArray(y*100))  [loop nest]",
-      FuseDebug.show(ints.fuse.flatMap(x => FArray(x, x + 1)).flatMap(y => FArray(y * 100)).toFArray))
+      FuseDebug.show(ints.fuse.flatMap(x => FArray(x, x + 1)).flatMap(y => FArray(y * 100)).run))
     scenario("BLOG-NESTED-TUPLE: map(x => ((x, x+1), (x+2, x+3))).map(t => t._1._1 + t._2._2)  [2 of 4 leaves live]",
-      FuseDebug.show(ints.fuse.map(x => ((x, x + 1), (x + 2, x + 3))).map(t => t._1._1 + t._2._2).toFArray))
+      FuseDebug.show(ints.fuse.map(x => ((x, x + 1), (x + 2, x + 3))).map(t => t._1._1 + t._2._2).run))
     scenario("BLOG-PREDICATE-LEVELS: filter(_>0).flatMap(x => FArray(x, -x)).filter(_%2==0).map(_+1)  [outer + inner guards]",
-      FuseDebug.show(ints.fuse.filter(_ > 0).flatMap(x => FArray(x, -x)).filter(_ % 2 == 0).map(_ + 1).toFArray))
+      FuseDebug.show(ints.fuse.filter(_ > 0).flatMap(x => FArray(x, -x)).filter(_ % 2 == 0).map(_ + 1).run))
     scenario("BLOG-MULTIFILTER: filter(_>1).filter(_<7).filter(_%2==0)  [three guards, one pass]",
-      FuseDebug.show(ints.fuse.filter(_ > 1).filter(_ < 7).filter(_ % 2 == 0).toFArray))
+      FuseDebug.show(ints.fuse.filter(_ > 1).filter(_ < 7).filter(_ % 2 == 0).run))
     scenario("BLOG-SINK-DCE: map(x => (x%3, x*7, x*13)).filter(_._1==0).map(_._2)  [col0 eager, col1 sunk, col2 dead]",
-      FuseDebug.show(ints.fuse.map(x => (x % 3, x * 7, x * 13)).filter(_._1 == 0).map(_._2).toFArray))
+      FuseDebug.show(ints.fuse.map(x => (x % 3, x * 7, x * 13)).filter(_._1 == 0).map(_._2).run))
     scenario("BLOG-DYNAMIC-TAKE: filter(_%2==0).take(k)  [k is a runtime val: clamp + counter + done]",
-      FuseDebug.show(ints.fuse.filter(_ % 2 == 0).take(k).toFArray))
+      FuseDebug.show(ints.fuse.filter(_ % 2 == 0).take(k).run))
     scenario("BLOG-DONE-NESTING: flatMap(x => FArray(x, x, x)).take(5)  [done breaks inner AND outer loop]",
-      FuseDebug.show(ints.fuse.flatMap(x => FArray(x, x, x)).take(5).toFArray))
+      FuseDebug.show(ints.fuse.flatMap(x => FArray(x, x, x)).take(5).run))
     scenario("BLOG-ORDER-A: filter(_%2==0).zipWithIndex.take(2)  [index counter advances INSIDE the filter guard]",
-      FuseDebug.show(ints.fuse.filter(_ % 2 == 0).zipWithIndex.take(2).toFArray))
+      FuseDebug.show(ints.fuse.filter(_ % 2 == 0).zipWithIndex.take(2).run))
     scenario("BLOG-ORDER-B: zipWithIndex.filter(_._1%2==0).take(2)  [index counter advances BEFORE the filter]",
-      FuseDebug.show(ints.fuse.zipWithIndex.filter(_._1 % 2 == 0).take(2).toFArray))
+      FuseDebug.show(ints.fuse.zipWithIndex.filter(_._1 % 2 == 0).take(2).run))
     Snapshots.check("fused-pipeline.snap", sb.toString)
 
   @Test def test_hashCode_matchesList(): Unit =

@@ -4,7 +4,7 @@ import scala.quoted.*
 
 /** which terminal a fused pipeline ends in (the macro shares one lowering core across all of them). */
 enum TTag:
-  case ToFArray, Foreach, Fold, Count, Find, Exists, Forall, HeadOption, Head, IndexWhere, ReduceOpt, ExtremumBy
+  case Run, Foreach, Fold, Count, Find, Exists, Forall, HeadOption, Head, IndexWhere, ReduceOpt, ExtremumBy
 
 /**
  * Macro implementation for fused pipelines (see `Fuse` and `docs/fused-pipeline-design.md`).
@@ -27,8 +27,8 @@ enum TTag:
 object FuseMacro:
 
   // ---------- entry points (one per terminal) ----------
-  def toFArrayImpl[A: Type](self: Expr[Fuse[A]])(using Quotes): Expr[FArray[A]] =
-    '{ ${ core[A](self, TTag.ToFArray, Nil) }.asInstanceOf[FArray[A]] }
+  def runImpl[A: Type](self: Expr[Fuse[A]])(using Quotes): Expr[FArray[A]] =
+    '{ ${ core[A](self, TTag.Run, Nil) }.asInstanceOf[FArray[A]] }
 
   def foreachImpl[A: Type](self: Expr[Fuse[A]], f: Expr[A => Unit])(using Quotes): Expr[Unit] =
     '{ ${ core[A](self, TTag.Foreach, List(f)) }.asInstanceOf[Unit] }
@@ -199,8 +199,8 @@ object FuseMacro:
     val args = extraExprs.map(e => unwrap(e.asTerm))
     val (srcTerm, srcElem, stages) = parse(selfTerm.underlyingArgument, Nil)
 
-    // identity → hand back the source (only meaningful for ToFArray).
-    if stages.isEmpty && tag == TTag.ToFArray then
+    // identity → hand back the source (only meaningful for Run).
+    if stages.isEmpty && tag == TTag.Run then
       return '{ ${ srcTerm.asExpr }.asInstanceOf[FBase] }
 
     val srcK = kindOf(srcElem)
@@ -720,7 +720,7 @@ object FuseMacro:
                                  if !seeded || ${ applyN(better, List('{ k }.asTerm, '{ bestK }.asTerm)).asExprOf[Boolean] } then
                                    { best = ${ v.asExpr }; bestK = k; seeded = true } }.asTerm) }
                  if seeded then Some(best) else None }.asTerm
-        case TTag.ToFArray => assembleOut(src0, n0, counters, ctx)
+        case TTag.Run => assembleOut(src0, n0, counters, ctx)
 
     // output array assembly: grow via ensureCap when a flatMap can expand it, else preallocate the upper bound.
     def assembleOut(src0: Expr[FBase], n0: Expr[Int], counters: Map[Int, Slot], ctx: (Term => Term) => Ctx): Term =
