@@ -3390,7 +3390,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |        if (lo >= hi) return left.take(0);
        |        return drop(lo).take(hi - lo);
        |    }
-       |    @Override public FBase reverse() { return new Concat(right.reverse(), left.reverse()); }
+       |    @Override public FBase reverse() { return new ReverseNode(this); }
        |    @Override public FBase init() { return take(length - 1); }
 
        |
@@ -3771,7 +3771,7 @@ $oneFill
        |        if (lo >= hi) return Empty.INSTANCE;
        |        return drop(lo).take(hi - lo);
        |    }
-       |    @Override public FBase reverse() { return new ${p.name}Prepend(elem, base.reverse()); }
+       |    @Override public FBase reverse() { return new ReverseNode(this); }
        |    @Override public FBase init() { return base; }
        |    @Override public int hashCode() { return Hashing.hashOf(this); }
        |    @Override public boolean equals(Object obj) { return Concat.elementwiseEquals(this, obj); }
@@ -3807,7 +3807,7 @@ $oneFill
        |        if (lo >= hi) return Empty.INSTANCE;
        |        return drop(lo).take(hi - lo);
        |    }
-       |    @Override public FBase reverse() { return new ${p.name}Append(base.reverse(), elem); }
+       |    @Override public FBase reverse() { return new ReverseNode(this); }
        |    @Override public FBase init() { return take(length - 1); }
        |    @Override public int hashCode() { return Hashing.hashOf(this); }
        |    @Override public boolean equals(Object obj) { return Concat.elementwiseEquals(this, obj); }
@@ -3828,7 +3828,7 @@ $oneFill
     else "if (n <= 0) return Empty.INSTANCE; if (n >= length) return this; if (n == 1) return new RefOne(elem); return new RefPrepend(elem, base.take(n - 1));"
     val drop = if isAppend then "if (n <= 0) return this; if (n >= length) return Empty.INSTANCE; if (n == length - 1) return new RefOne(elem); return new RefAppend(base.drop(n), elem);"
     else "if (n <= 0) return this; if (n >= length) return Empty.INSTANCE; return n == 1 ? base : base.drop(n - 1);"
-    val reverse = if isAppend then "return new RefPrepend(elem, base.reverse());" else "return new RefAppend(base.reverse(), elem);"
+    val reverse = "return new ReverseNode(this);"
     val init = if isAppend then "return base;" else "return take(length - 1);"
     s"""package farray;
        |
