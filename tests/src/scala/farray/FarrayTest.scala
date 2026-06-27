@@ -904,6 +904,16 @@ class FListTest:
     org.junit.Assert.assertEquals(l10.map(x => x + 1).filter(_ % 2 == 0).zipWithIndex,
       r10.fuse.map(x => x + 1).filter(_ % 2 == 0).zipWithIndex.toFArray.toList)
 
+  // ---- no-blowup: a long fused chain stays correct AND under the JVM HugeMethodLimit (so it JIT-compiles) ----
+  @Test def test_fuse_no_blowup: Unit =
+    val xs = FArray.tabulate(40)(i => i - 5)
+    val expected = xs.toList.map(_ + 1).filter(_ % 2 == 0).map(_ * 3).filter(_ > 0).drop(1).map(_ - 1)
+      .take(50).filter(_ != 17).map(_ + 100).filter(_ < 1000).map(_ * 2).filter(_ % 4 == 0).map(_ / 2)
+    org.junit.Assert.assertEquals(expected, FuseSize.longChain(xs))
+    val sz = FuseSize.codeSizeOf("longChain")
+    assert(sz > 0, "could not measure longChain bytecode size")
+    assert(sz < 8000, s"longChain is $sz bytecodes — over the HugeMethodLimit (8000); the fused chain would run interpreted")
+
   // ---- fuzz: a matrix of fused pipelines over random leaf AND tree-shaped inputs, all == List ----
   @Test def test_fuse_fuzz: Unit =
     val rng = new java.util.Random(0xFA5EL)
