@@ -4,20 +4,25 @@ import scala.quoted.*
 
 /** which terminal a fused pipeline ends in (the macro shares one lowering core across all of them). */
 enum TTag:
-  case ToFArray, Foreach, Fold, Count
+  case ToFArray, Foreach, Fold, Count, Find, Exists, Forall, HeadOption, Head
 
 /**
  * Macro implementation for fused pipelines (see `Fuse` and `docs/fused-pipeline-design.md`).
  *
- * A terminal receives `'this` = the `Expr` of the whole receiver `xs.fuse.map(f).filter(p).take(k)…`. We peel
- * that AST back to the source `new Fuse(src)`, collect the stage list, and lower it to ONE fused loop:
+ * A terminal receives `'this` = the `Expr` of the whole receiver `xs.fuse.map(f).flatMap(g).take(k)…`. We peel
+ * that AST back to the source `new Fuse(src)`, collect the stage list, and lower it to ONE fused loop nest:
  *
- *  - the source is traversed once (leaf fast-path + `<kind>At` fallback), all four op-kinds (Int/Long/Double/Ref);
- *  - `map`/`filter`/`filterNot`/`take`/`drop` become straight-line binds, guards and counters in the loop body;
+ *  - every source / flatMap-inner level is traversed once (leaf fast-path + `<kind>At` fallback), specialized
+ *    over the four op-kinds (Int/Long/Double/Ref);
+ *  - `map`/`filter`/`take`/`drop` are straight-line binds, guards and counters; `flatMap` opens a nested loop,
+ *    so everything downstream of it runs inside that inner loop;
  *  - lambdas are beta-reduced into the body, so no `Function1` is allocated or called per element;
- *  - `take` threads a `done` flag onto the loop condition, so positional pipelines stop early (read no more than
- *    they must), and a single output array (sized to the static upper bound) is filled and trimmed — no
- *    intermediate `FArray` per stage.
+ *  - a single `done` flag (needed by `take` and by the short-circuit terminals `find`/`exists`/`forall`/`head`)
+ *    is threaded onto every loop condition, so a match escapes all nesting levels and the source is read no
+ *    further than necessary;
+ *  - output goes straight into one array — preallocated to `min(srcLen, take-limits)` when the pipeline can
+ *    only shrink, or grown via `ensureCap` when a `flatMap` can expand it — then trimmed. No intermediate
+ *    `FArray` per stage.
  */
 object FuseMacro:
 
@@ -34,6 +39,21 @@ object FuseMacro:
   def countImpl[A: Type](self: Expr[Fuse[A]])(using Quotes): Expr[Int] =
     '{ ${ core[A](self, TTag.Count, Nil) }.asInstanceOf[Int] }
 
+  def findImpl[A: Type](self: Expr[Fuse[A]], p: Expr[A => Boolean])(using Quotes): Expr[Option[A]] =
+    '{ ${ core[A](self, TTag.Find, List(p)) }.asInstanceOf[Option[A]] }
+
+  def existsImpl[A: Type](self: Expr[Fuse[A]], p: Expr[A => Boolean])(using Quotes): Expr[Boolean] =
+    '{ ${ core[A](self, TTag.Exists, List(p)) }.asInstanceOf[Boolean] }
+
+  def forallImpl[A: Type](self: Expr[Fuse[A]], p: Expr[A => Boolean])(using Quotes): Expr[Boolean] =
+    '{ ${ core[A](self, TTag.Forall, List(p)) }.asInstanceOf[Boolean] }
+
+  def headOptionImpl[A: Type](self: Expr[Fuse[A]])(using Quotes): Expr[Option[A]] =
+    '{ ${ core[A](self, TTag.HeadOption, Nil) }.asInstanceOf[Option[A]] }
+
+  def headImpl[A: Type](self: Expr[Fuse[A]])(using Quotes): Expr[A] =
+    '{ ${ core[A](self, TTag.Head, Nil) }.asInstanceOf[A] }
+
   // ---------- shared lowering core (Exprs cross the boundary; Terms are derived inside) ----------
   private def core[A: Type](self: Expr[Fuse[A]], tag: TTag, extraExprs: List[Expr[Any]])(using Quotes): Expr[Any] =
     import quotes.reflect.*
@@ -44,14 +64,23 @@ object FuseMacro:
     final case class FilterS(p: Term, negate: Boolean) extends Stage
     final case class TakeS(n: Term) extends Stage
     final case class DropS(n: Term) extends Stage
+    final case class FlatMapS(f: Term, bTpe: TypeRepr) extends Stage
 
     enum Kind:
       case KInt, KLong, KDouble, KRef
+    // Specialize-or-fail, mirroring the eager API's `Repr` evidence (RefRepr requires A <: AnyRef): a primitive
+    // kind needs the EXACT type; a reference kind needs `<: AnyRef`. Anything else (Any/AnyVal/Matchable, an
+    // unbounded type param) can't be read unboxed — a primitive-backed FArray covariantly widened to such a
+    // type would `isInstanceOf[RefArr]`-miss and read nulls — so reject it at compile time rather than miscompile.
     def kindOf(t: TypeRepr): Kind =
       if t =:= TypeRepr.of[Int] then Kind.KInt
       else if t =:= TypeRepr.of[Long] then Kind.KLong
       else if t =:= TypeRepr.of[Double] then Kind.KDouble
-      else Kind.KRef
+      else if t <:< TypeRepr.of[AnyRef] then Kind.KRef
+      else report.errorAndAbort(
+        s"fuse: cannot specialize element type `${t.show}` — fused pipelines support Int, Long, Double, or a " +
+        s"reference type (`<: AnyRef`). A primitive-backed FArray widened to Any/AnyVal can't be read unboxed; " +
+        s"use a concrete element type.")
 
     // --- loop-state handles (Exprs that read/mutate vars declared above the loop) ---
     final case class Done(set: Expr[Unit], read: Expr[Boolean])
@@ -73,11 +102,12 @@ object FuseMacro:
 
     def parse(t0: Term, acc: List[Stage]): (Term, TypeRepr, List[Stage]) =
       unwrap(t0) match
-        case Apply(TypeApply(Select(prev, "map"), _), List(f)) => parse(prev, MapS(unwrap(f)) :: acc)
-        case Apply(Select(prev, "filter"), List(p))            => parse(prev, FilterS(unwrap(p), false) :: acc)
-        case Apply(Select(prev, "filterNot"), List(p))         => parse(prev, FilterS(unwrap(p), true) :: acc)
-        case Apply(Select(prev, "take"), List(n))              => parse(prev, TakeS(unwrap(n)) :: acc)
-        case Apply(Select(prev, "drop"), List(n))              => parse(prev, DropS(unwrap(n)) :: acc)
+        case Apply(TypeApply(Select(prev, "map"), _), List(f))            => parse(prev, MapS(unwrap(f)) :: acc)
+        case Apply(TypeApply(Select(prev, "flatMap"), List(b)), List(f))  => parse(prev, FlatMapS(unwrap(f), b.tpe) :: acc)
+        case Apply(Select(prev, "filter"), List(p))                       => parse(prev, FilterS(unwrap(p), false) :: acc)
+        case Apply(Select(prev, "filterNot"), List(p))                    => parse(prev, FilterS(unwrap(p), true) :: acc)
+        case Apply(Select(prev, "take"), List(n))                         => parse(prev, TakeS(unwrap(n)) :: acc)
+        case Apply(Select(prev, "drop"), List(n))                         => parse(prev, DropS(unwrap(n)) :: acc)
         case base @ Apply(Select(New(_), "<init>"), List(src))               => (src, fuseElem(base.tpe), acc)
         case base @ Apply(TypeApply(Select(New(_), "<init>"), _), List(src)) => (src, fuseElem(base.tpe), acc)
         case other =>
@@ -111,8 +141,13 @@ object FuseMacro:
     val indexed: List[(Stage, Int)] = stages.zipWithIndex
     val slots: List[(Int, Term)] = indexed.collect { case (TakeS(n), i) => (i, n); case (DropS(n), i) => (i, n) }
     val takesPresent: Boolean = stages.exists(_.isInstanceOf[TakeS])
+    val hasFlatMap: Boolean = stages.exists(_.isInstanceOf[FlatMapS])
+    val shortCircuit: Boolean = tag match
+      case TTag.Find | TTag.Exists | TTag.Forall | TTag.HeadOption | TTag.Head => true
+      case _                                                                   => false
+    val needsDone: Boolean = takesPresent || shortCircuit
 
-    // --- per-element body: map/filter/take/drop chain, ending in `ctx.consume` ---
+    // --- per-element body: map/filter/take/drop/flatMap chain, ending in `ctx.consume` ---
     def buildBody(ss: List[(Stage, Int)], cur: Term, ctx: Ctx): Term = ss match
       case Nil => ctx.consume(cur)
       case (MapS(f), _) :: rest => letBind(applyLambda(f, cur))(v => buildBody(rest, v, ctx))
@@ -120,6 +155,10 @@ object FuseMacro:
         val raw  = applyLambda(p, cur)
         val cond = if neg then '{ !${ raw.asExprOf[Boolean] } }.asTerm else raw
         If(cond, buildBody(rest, cur, ctx), unit)
+      case (FlatMapS(f, bTpe), _) :: rest =>
+        // open a nested loop over f(cur): everything downstream runs inside it.
+        val inner: Expr[FBase] = '{ ${ applyLambda(f, cur).asExpr }.asInstanceOf[FBase] }
+        loopOver(inner, kindOf(bTpe), bTpe, rest, ctx).asTerm
       case (TakeS(_), i) :: rest =>
         val sl = ctx.counters(i); val d = ctx.done.get
         '{ val cv = ${ sl.read }
@@ -130,51 +169,55 @@ object FuseMacro:
         '{ if ${ sl.read } < ${ sl.lim } then ${ sl.inc }
            else ${ buildBody(rest, cur, ctx).asExprOf[Unit] } }.asTerm
 
-    // --- source traversal: leaf fast-path (unboxed array) + `<kind>At` fallback, with the `done` break ---
-    def fillLoop(src0: Expr[FBase], n0: Expr[Int], ctx: Ctx): Expr[Unit] =
-      def cond(i: Expr[Int]): Expr[Boolean] = ctx.done match
-        case Some(d) => '{ $i < $n0 && !${ d.read } }
-        case None    => '{ $i < $n0 }
+    // --- traverse one level (source OR a flatMap inner): leaf fast-path + `<kind>At` fallback, `done` break ---
+    def loopOver(src: Expr[FBase], k: Kind, elemTpe: TypeRepr, ss: List[(Stage, Int)], ctx: Ctx): Expr[Unit] =
+      def cond(len: Expr[Int], i: Expr[Int]): Expr[Boolean] = ctx.done match
+        case Some(d) => '{ $i < $len && !${ d.read } }
+        case None    => '{ $i < $len }
       def perElem(read: Term): Expr[Unit] =
-        letBind(read)(x => buildBody(indexed, x, ctx)).asExprOf[Unit]
-      srcElem.asType match
-        case '[se] => srcK match
+        letBind(read)(x => buildBody(ss, x, ctx)).asExprOf[Unit]
+      elemTpe.asType match
+        case '[se] => k match
           case Kind.KInt =>
-            '{ if $src0.isInstanceOf[IntArr] then {
-                 val a = $src0.asInstanceOf[IntArr].arr; var i = 0
-                 while ${ cond('i) } do { ${ perElem('{ a(i) }.asTerm) }; i += 1 }
+            '{ val s = $src; val len = s.length
+               if s.isInstanceOf[IntArr] then {
+                 val a = s.asInstanceOf[IntArr].arr; var i = 0
+                 while ${ cond('len, 'i) } do { ${ perElem('{ a(i) }.asTerm) }; i += 1 }
                } else {
                  var i = 0
-                 while ${ cond('i) } do { ${ perElem('{ FArrayOps.intAt($src0, i) }.asTerm) }; i += 1 }
+                 while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.intAt(s, i) }.asTerm) }; i += 1 }
                } }
           case Kind.KLong =>
-            '{ if $src0.isInstanceOf[LongArr] then {
-                 val a = $src0.asInstanceOf[LongArr].arr; var i = 0
-                 while ${ cond('i) } do { ${ perElem('{ a(i) }.asTerm) }; i += 1 }
+            '{ val s = $src; val len = s.length
+               if s.isInstanceOf[LongArr] then {
+                 val a = s.asInstanceOf[LongArr].arr; var i = 0
+                 while ${ cond('len, 'i) } do { ${ perElem('{ a(i) }.asTerm) }; i += 1 }
                } else {
                  var i = 0
-                 while ${ cond('i) } do { ${ perElem('{ FArrayOps.longAt($src0, i) }.asTerm) }; i += 1 }
+                 while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.longAt(s, i) }.asTerm) }; i += 1 }
                } }
           case Kind.KDouble =>
-            '{ if $src0.isInstanceOf[DoubleArr] then {
-                 val a = $src0.asInstanceOf[DoubleArr].arr; var i = 0
-                 while ${ cond('i) } do { ${ perElem('{ a(i) }.asTerm) }; i += 1 }
+            '{ val s = $src; val len = s.length
+               if s.isInstanceOf[DoubleArr] then {
+                 val a = s.asInstanceOf[DoubleArr].arr; var i = 0
+                 while ${ cond('len, 'i) } do { ${ perElem('{ a(i) }.asTerm) }; i += 1 }
                } else {
                  var i = 0
-                 while ${ cond('i) } do { ${ perElem('{ FArrayOps.doubleAt($src0, i) }.asTerm) }; i += 1 }
+                 while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.doubleAt(s, i) }.asTerm) }; i += 1 }
                } }
           case Kind.KRef =>
-            '{ if $src0.isInstanceOf[RefArr] then {
-                 val a = $src0.asInstanceOf[RefArr].arr; var i = 0
-                 while ${ cond('i) } do { ${ perElem('{ a(i).asInstanceOf[se] }.asTerm) }; i += 1 }
+            '{ val s = $src; val len = s.length
+               if s.isInstanceOf[RefArr] then {
+                 val a = s.asInstanceOf[RefArr].arr; var i = 0
+                 while ${ cond('len, 'i) } do { ${ perElem('{ a(i).asInstanceOf[se] }.asTerm) }; i += 1 }
                } else {
                  var i = 0
-                 while ${ cond('i) } do { ${ perElem('{ FArrayOps.refAt($src0, i).asInstanceOf[se] }.asTerm) }; i += 1 }
+                 while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.refAt(s, i).asInstanceOf[se] }.asTerm) }; i += 1 }
                } }
 
     // --- declare loop-state vars (above the loop), then assemble the terminal body ---
     def withDone(k: Option[Done] => Term): Term =
-      if takesPresent then '{ var done: Boolean = false; ${ k(Some(Done('{ done = true }, '{ done }))).asExpr } }.asTerm
+      if needsDone then '{ var done: Boolean = false; ${ k(Some(Done('{ done = true }, '{ done }))).asExpr } }.asTerm
       else k(None)
 
     def declareSlots(rem: List[(Int, Term)], acc: Map[Int, Slot])(k: Map[Int, Slot] => Term): Term =
@@ -191,37 +234,90 @@ object FuseMacro:
 
     def assemble(src0: Expr[FBase], n0: Expr[Int], done: Option[Done], counters: Map[Int, Slot]): Term =
       def ctx(consume: Term => Term) = Ctx(consume, done, counters)
+      def loop(consume: Term => Term): Expr[Unit] = loopOver(src0, srcK, srcElem, indexed, ctx(consume))
       tag match
         case TTag.Count =>
-          '{ var cnt = 0; ${ fillLoop(src0, n0, ctx(_ => '{ cnt += 1 }.asTerm)) }; cnt }.asTerm
+          '{ var cnt = 0; ${ loop(_ => '{ cnt += 1 }.asTerm) }; cnt }.asTerm
         case TTag.Foreach =>
           val f = args(0)
-          '{ ${ fillLoop(src0, n0, ctx(v => applyLambda(f, v))) }; () }.asTerm
+          '{ ${ loop(v => applyLambda(f, v)) }; () }.asTerm
         case TTag.Fold =>
           val z = args(0); val op = args(1)
           z.tpe.widen.asType match
             case '[zz] =>
               '{ var acc: zz = ${ z.asExprOf[zz] }
-                 ${ fillLoop(src0, n0, ctx(v => '{ acc = ${ applyN(op, List('{ acc }.asTerm, v)).asExprOf[zz] } }.asTerm)) }
+                 ${ loop(v => '{ acc = ${ applyN(op, List('{ acc }.asTerm, v)).asExprOf[zz] } }.asTerm) }
                  acc }.asTerm
-        case TTag.ToFArray => outK match
-          case Kind.KInt =>
+        case TTag.Find =>
+          // build with Option[Any] (no `A` inside the deep nested quote — keeps Type[A] evidence from leaking);
+          // the entry method casts back to Option[A].
+          val p = args(0); val d = done.get
+          '{ var res: Option[Any] = None
+             ${ loop(v => '{ if ${ applyLambda(p, v).asExprOf[Boolean] } then { res = Some(${ v.asExpr }); ${ d.set } } }.asTerm) }
+             res }.asTerm
+        case TTag.Exists =>
+          val p = args(0); val d = done.get
+          '{ var res = false
+             ${ loop(v => '{ if ${ applyLambda(p, v).asExprOf[Boolean] } then { res = true; ${ d.set } } }.asTerm) }
+             res }.asTerm
+        case TTag.Forall =>
+          val p = args(0); val d = done.get
+          '{ var res = true
+             ${ loop(v => '{ if !${ applyLambda(p, v).asExprOf[Boolean] } then { res = false; ${ d.set } } }.asTerm) }
+             res }.asTerm
+        case TTag.HeadOption =>
+          val d = done.get
+          '{ var res: Option[Any] = None
+             ${ loop(v => '{ res = Some(${ v.asExpr }); ${ d.set } }.asTerm) }
+             res }.asTerm
+        case TTag.Head =>
+          val d = done.get
+          '{ var res: Option[Any] = None
+             ${ loop(v => '{ res = Some(${ v.asExpr }); ${ d.set } }.asTerm) }
+             res.getOrElse(throw new java.util.NoSuchElementException("head of empty fused pipeline")) }.asTerm
+        case TTag.ToFArray => assembleOut(src0, n0, counters, ctx)
+
+    // output array assembly: grow via ensureCap when a flatMap can expand it, else preallocate the upper bound.
+    def assembleOut(src0: Expr[FBase], n0: Expr[Int], counters: Map[Int, Slot], ctx: (Term => Term) => Ctx): Term =
+      def loop(consume: Term => Term): Expr[Unit] = loopOver(src0, srcK, srcElem, indexed, ctx(consume))
+      outK match
+        case Kind.KInt =>
+          if hasFlatMap then
+            '{ var out = new Array[Int](java.lang.Math.max(8, $n0)); var o = 0
+               ${ loop(v => '{ if o >= out.length then out = FArrayOps.ensureCapInt(out, o + 1); out(o) = ${ v.asExprOf[Int] }; o += 1 }.asTerm) }
+               if o == 0 then (IntArr.EMPTY: FBase) else if o == out.length then new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o) }.asTerm
+          else
             '{ val cap = ${ capExpr(n0, counters) }; val out = new Array[Int](cap); var o = 0
-               ${ fillLoop(src0, n0, ctx(v => '{ out(o) = ${ v.asExprOf[Int] }; o += 1 }.asTerm)) }
+               ${ loop(v => '{ out(o) = ${ v.asExprOf[Int] }; o += 1 }.asTerm) }
                if o == 0 then (IntArr.EMPTY: FBase) else if o == cap then new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o) }.asTerm
-          case Kind.KLong =>
+        case Kind.KLong =>
+          if hasFlatMap then
+            '{ var out = new Array[Long](java.lang.Math.max(8, $n0)); var o = 0
+               ${ loop(v => '{ if o >= out.length then out = FArrayOps.ensureCapLong(out, o + 1); out(o) = ${ v.asExprOf[Long] }; o += 1 }.asTerm) }
+               if o == 0 then (LongArr.EMPTY: FBase) else if o == out.length then new LongArr(out, o) else new LongArr(java.util.Arrays.copyOf(out, o), o) }.asTerm
+          else
             '{ val cap = ${ capExpr(n0, counters) }; val out = new Array[Long](cap); var o = 0
-               ${ fillLoop(src0, n0, ctx(v => '{ out(o) = ${ v.asExprOf[Long] }; o += 1 }.asTerm)) }
+               ${ loop(v => '{ out(o) = ${ v.asExprOf[Long] }; o += 1 }.asTerm) }
                if o == 0 then (LongArr.EMPTY: FBase) else if o == cap then new LongArr(out, o) else new LongArr(java.util.Arrays.copyOf(out, o), o) }.asTerm
-          case Kind.KDouble =>
+        case Kind.KDouble =>
+          if hasFlatMap then
+            '{ var out = new Array[Double](java.lang.Math.max(8, $n0)); var o = 0
+               ${ loop(v => '{ if o >= out.length then out = FArrayOps.ensureCapDouble(out, o + 1); out(o) = ${ v.asExprOf[Double] }; o += 1 }.asTerm) }
+               if o == 0 then (DoubleArr.EMPTY: FBase) else if o == out.length then new DoubleArr(out, o) else new DoubleArr(java.util.Arrays.copyOf(out, o), o) }.asTerm
+          else
             '{ val cap = ${ capExpr(n0, counters) }; val out = new Array[Double](cap); var o = 0
-               ${ fillLoop(src0, n0, ctx(v => '{ out(o) = ${ v.asExprOf[Double] }; o += 1 }.asTerm)) }
+               ${ loop(v => '{ out(o) = ${ v.asExprOf[Double] }; o += 1 }.asTerm) }
                if o == 0 then (DoubleArr.EMPTY: FBase) else if o == cap then new DoubleArr(out, o) else new DoubleArr(java.util.Arrays.copyOf(out, o), o) }.asTerm
-          case Kind.KRef =>
+        case Kind.KRef =>
+          if hasFlatMap then
+            '{ var out = new Array[Object](java.lang.Math.max(8, $n0)); var o = 0
+               ${ loop(v => '{ if o >= out.length then out = FArrayOps.ensureCapRef(out, o + 1); out(o) = ${ v.asExpr }.asInstanceOf[Object]; o += 1 }.asTerm) }
+               if o == 0 then (RefArr.EMPTY: FBase) else if o == out.length then new RefArr(out, o) else new RefArr(java.util.Arrays.copyOf(out, o), o) }.asTerm
+          else
             '{ val cap = ${ capExpr(n0, counters) }; val out = new Array[Object](cap); var o = 0
-               ${ fillLoop(src0, n0, ctx(v => '{ out(o) = ${ v.asExpr }.asInstanceOf[Object]; o += 1 }.asTerm)) }
+               ${ loop(v => '{ out(o) = ${ v.asExpr }.asInstanceOf[Object]; o += 1 }.asTerm) }
                if o == 0 then (RefArr.EMPTY: FBase) else if o == cap then new RefArr(out, o) else new RefArr(java.util.Arrays.copyOf(out, o), o) }.asTerm
 
-    // --- final assembly: bind source + length once, then state vars, then the loop ---
+    // --- final assembly: bind source + length once, then state vars, then the loop nest ---
     '{ val src0: FBase = $srcBase; val n0: Int = src0.length
        ${ withDone(done => declareSlots(slots, Map.empty)(counters => assemble('src0, 'n0, done, counters))).asExpr } }

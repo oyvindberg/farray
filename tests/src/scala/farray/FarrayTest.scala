@@ -715,6 +715,114 @@ class FListTest:
       l10.map(_ + 1).filter(_ % 2 == 0).map(_ * 3).filter(_ > 5).drop(1).map(_ - 1).take(3).filter(_ != 17).map(_ + 100),
       r10.fuse.map(_ + 1).filter(_ % 2 == 0).map(_ * 3).filter(_ > 5).drop(1).map(_ - 1).take(3).filter(_ != 17).map(_ + 100).toFArray.toList)
 
+  // ---- flatMap (nested loops) ----
+  @Test def test_fuse_flatMap: Unit =
+    org.junit.Assert.assertEquals(l10.flatMap(x => List(x, x * 10)),
+      r10.fuse.flatMap(x => FArray(x, x * 10)).toFArray.toList)
+  @Test def test_fuse_flatMap_expands: Unit = // output bigger than source -> growable
+    org.junit.Assert.assertEquals(l10.flatMap(x => List.fill(x)(x)),
+      r10.fuse.flatMap(x => FArray.tabulate(x)(_ => x)).toFArray.toList)
+  @Test def test_fuse_flatMap_empty_inners: Unit =
+    org.junit.Assert.assertEquals(l10.flatMap(x => if x % 2 == 0 then List(x) else Nil),
+      r10.fuse.flatMap(x => if x % 2 == 0 then FArray(x) else FArray.empty[Int]).toFArray.toList)
+  @Test def test_fuse_map_flatMap_filter: Unit =
+    org.junit.Assert.assertEquals(
+      l10.map(_ + 1).flatMap(x => List(x, -x)).filter(_ > 0).map(_ * 2),
+      r10.fuse.map(_ + 1).flatMap(x => FArray(x, -x)).filter(_ > 0).map(_ * 2).toFArray.toList)
+  @Test def test_fuse_nested_flatMap: Unit =
+    org.junit.Assert.assertEquals(
+      List(1, 2, 3).flatMap(x => List(x, x).flatMap(y => List(y, y * 100))),
+      FArray(1, 2, 3).fuse.flatMap(x => FArray(x, x)).flatMap(y => FArray(y, y * 100)).toFArray.toList)
+  @Test def test_fuse_flatMap_kind_change: Unit = // Int -> String inner
+    org.junit.Assert.assertEquals(List("1", "x", "2", "x"),
+      FArray(1, 2).fuse.flatMap(i => FArray(i.toString, "x")).toFArray.toList)
+  @Test def test_fuse_flatMap_take: Unit = // take bounds the FLATTENED stream, breaks across nesting
+    org.junit.Assert.assertEquals(List(0, 0, 1, 10, 2),
+      r10.fuse.flatMap(x => FArray(x, x * 10)).take(5).toFArray.toList)
+  @Test def test_fuse_flatMap_tree_source: Unit =
+    org.junit.Assert.assertEquals(List(1, 1, 2, 2, 3, 3, 4, 4),
+      (FArray(1, 2) ++ FArray(3, 4)).fuse.flatMap(x => FArray(x, x)).toFArray.toList)
+
+  // ---- short-circuit terminals: find / exists / forall / headOption / head ----
+  @Test def test_fuse_find: Unit =
+    org.junit.Assert.assertEquals(l10.map(_ + 1).find(_ % 3 == 0),
+      r10.fuse.map(_ + 1).find(_ % 3 == 0))
+  @Test def test_fuse_find_none: Unit =
+    org.junit.Assert.assertEquals(None, r10.fuse.find(_ > 100))
+  @Test def test_fuse_exists: Unit =
+    org.junit.Assert.assertEquals(l10.exists(_ == 7), r10.fuse.exists(_ == 7))
+  @Test def test_fuse_forall: Unit =
+    org.junit.Assert.assertEquals(l10.forall(_ < 100) && !l10.forall(_ < 5),
+      r10.fuse.forall(_ < 100) && !r10.fuse.forall(_ < 5))
+  @Test def test_fuse_headOption: Unit =
+    org.junit.Assert.assertEquals(l10.filter(_ > 5).headOption, r10.fuse.filter(_ > 5).headOption)
+  @Test def test_fuse_headOption_empty: Unit =
+    org.junit.Assert.assertEquals(None, r10.fuse.filter(_ > 100).headOption)
+  @Test def test_fuse_head: Unit =
+    org.junit.Assert.assertEquals(l10.filter(_ > 5).head, r10.fuse.filter(_ > 5).head)
+  @Test def test_fuse_head_empty_throws: Unit =
+    org.junit.Assert.assertThrows(classOf[java.util.NoSuchElementException], () => r10.fuse.filter(_ > 100).head)
+  @Test def test_fuse_find_across_flatMap: Unit = // short-circuit must escape the inner loop
+    org.junit.Assert.assertEquals(Some(30),
+      r10.fuse.flatMap(x => FArray(x * 10, x * 100)).find(_ == 30))
+  @Test def test_fuse_find_ref: Unit =
+    org.junit.Assert.assertEquals(Some("CC"),
+      FArray("a", "bb", "ccc").fuse.map(_.toUpperCase).filter(_.length >= 2).find(_.startsWith("CC")).map(_.take(2)))
+
+  // ---- adversarial: counters × flatMap nesting, done-break, kinds, short-circuit ----
+  @Test def test_fuse_take_then_flatMap: Unit =
+    org.junit.Assert.assertEquals(l10.take(2).flatMap(x => List(x, x)),
+      r10.fuse.take(2).flatMap(x => FArray(x, x)).toFArray.toList)
+  @Test def test_fuse_drop_then_flatMap: Unit =
+    org.junit.Assert.assertEquals(l10.drop(8).flatMap(x => List(x, x * 10)),
+      r10.fuse.drop(8).flatMap(x => FArray(x, x * 10)).toFArray.toList)
+  @Test def test_fuse_flatMap_drop_take: Unit =
+    org.junit.Assert.assertEquals(l10.flatMap(x => List(x, x * 10)).drop(2).take(3),
+      r10.fuse.flatMap(x => FArray(x, x * 10)).drop(2).take(3).toFArray.toList)
+  @Test def test_fuse_nested_flatMap_take: Unit = // done must break BOTH inner loops
+    org.junit.Assert.assertEquals(
+      List(1, 2, 3).flatMap(x => List(x, x).flatMap(y => List(y, y * 10))).take(3),
+      FArray(1, 2, 3).fuse.flatMap(x => FArray(x, x)).flatMap(y => FArray(y, y * 10)).take(3).toFArray.toList)
+  @Test def test_fuse_two_takes: Unit =
+    org.junit.Assert.assertEquals(l10.take(5).map(_ + 1).take(2),
+      r10.fuse.take(5).map(_ + 1).take(2).toFArray.toList)
+  @Test def test_fuse_flatMap_take_boundary: Unit = // 4th element is the 2nd inner of the 2nd outer
+    org.junit.Assert.assertEquals(List(0, 0, 0, 1).take(4),
+      r10.fuse.flatMap(x => FArray(x, x, x)).take(4).toFArray.toList)
+  @Test def test_fuse_flatMap_long: Unit =
+    org.junit.Assert.assertEquals(List(1L, 10L, 2L, 20L),
+      FArray(1, 2).fuse.flatMap(x => FArray(x.toLong, (x * 10).toLong)).toFArray.toList)
+  @Test def test_fuse_flatMap_double_tree_inner: Unit = // inner is a Concat (non-leaf) -> <kind>At fallback
+    org.junit.Assert.assertEquals(List(1.0, 2.0, 2.0, 4.0),
+      FArray(1.0, 2.0).fuse.flatMap(x => FArray(x) ++ FArray(x * 2)).toFArray.toList)
+  @Test def test_fuse_forall_short_circuits: Unit = // stop at first false
+    org.junit.Assert.assertEquals(false, FArray(2, 4, 5, 6).fuse.forall(_ % 2 == 0))
+  @Test def test_fuse_exists_first: Unit =
+    org.junit.Assert.assertEquals(true, r10.fuse.map(_ * 2).exists(_ == 0)) // first element matches
+  @Test def test_fuse_head_after_drop: Unit =
+    org.junit.Assert.assertEquals(l10.drop(3).head, r10.fuse.drop(3).head)
+  @Test def test_fuse_find_flatMap_empty_inners: Unit =
+    org.junit.Assert.assertEquals(Some(99),
+      r10.fuse.flatMap(x => if x == 3 then FArray(99) else FArray.empty[Int]).find(_ == 99))
+  @Test def test_fuse_empty_source_terminals: Unit =
+    val e = FArray.empty[Int]
+    org.junit.Assert.assertEquals(None, e.fuse.headOption)
+    org.junit.Assert.assertEquals(0, e.fuse.count)
+    org.junit.Assert.assertEquals(true, e.fuse.forall(_ > 0))
+    org.junit.Assert.assertEquals(false, e.fuse.exists(_ > 0))
+    org.junit.Assert.assertEquals(List(), e.fuse.flatMap(x => FArray(x, x)).toFArray.toList)
+
+  // ---- specialize-or-fail: a primitive-backed FArray widened to a non-specializable type must be rejected
+  //      at compile time (not miscompiled into null reads) — mirrors the eager API's Repr evidence. ----
+  @Test def test_fuse_rejects_unspecializable: Unit =
+    import scala.compiletime.testing.typeChecks
+    // concrete kinds compile:
+    assert(typeChecks("""farray.FArray(1, 2, 3).fuse.map(x => x).toFArray"""))
+    assert(typeChecks("""farray.FArray("a", "b").fuse.map(x => x).toFArray"""))
+    // FArray[Any] (primitive-backed, covariantly widened) must NOT compile:
+    assert(!typeChecks("""{ val xs: farray.FArray[Any] = farray.FArray(1, 2, 3); xs.fuse.map(x => x).toFArray }"""))
+    assert(!typeChecks("""{ val xs: farray.FArray[AnyVal] = farray.FArray(1, 2, 3); xs.fuse.count }"""))
+
   // ---- snapshot: the EXPANDED generated code (golden file tracked in git) ----
   @Test def test_fuse_snapshots: Unit =
     val ints = FArray.tabulate(8)(i => i)
@@ -744,6 +852,10 @@ class FListTest:
       FuseDebug.show(strs.fuse.map(_.toUpperCase).toFArray))
     scenario("strs.fuse.filter(_.nonEmpty).foreach(println)  [Ref, inlined op]",
       FuseDebug.show(strs.fuse.filter(_.nonEmpty).foreach(s => System.out.println(s))))
+    scenario("ints.fuse.flatMap(x => FArray(x, x*10)).map(_+1).toFArray  [nested loop, growable out]",
+      FuseDebug.show(ints.fuse.flatMap(x => FArray(x, x * 10)).map(_ + 1).toFArray))
+    scenario("ints.fuse.map(_+1).find(_%3==0)  [short-circuit via done]",
+      FuseDebug.show(ints.fuse.map(_ + 1).find(_ % 3 == 0)))
     Snapshots.check("fused-pipeline.snap", sb.toString)
 
   @Test def test_hashCode_matchesList(): Unit =
