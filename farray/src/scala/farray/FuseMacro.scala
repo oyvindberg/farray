@@ -305,8 +305,24 @@ object FuseMacro:
       else memoScalar(k => readAll(children.map(c => cse(c, cseT)), Nil)(refs =>
         k(replaceChildren(t, children.zip(refs).toMap))))
 
+    /** inline a `{ val a = …; val b = …; expr }` block (e.g. the desugaring of an untupled `(a, b) => …` lambda)
+     *  into `expr`, so the result expression's tuple/projection structure becomes visible to `interp`. Inlining
+     *  may duplicate a binding's rhs, but CSE re-shares it. Last-binding-first so earlier vals rewrite later ones. */
+    def flattenBlock(t: Term): Term = unwrap(t) match
+      case Block(stats, expr) if stats.nonEmpty && stats.forall { case vd: ValDef => vd.rhs.isDefined; case _ => false } =>
+        var e = expr
+        stats.reverse.foreach { case vd: ValDef =>
+          e = (new TreeMap:
+                override def transformTerm(x: Term)(owner: Symbol): Term =
+                  x match { case id: Ident if id.symbol == vd.symbol => vd.rhs.get; case _ => super.transformTerm(x)(owner) }
+              ).transformTerm(e)(Symbol.spliceOwner)
+        }
+        flattenBlock(e)
+      case other => other
+
     // --- interpret a map lambda body symbolically into a Shape (decomposing tuples, resolving projections) ---
-    def interp(body: Term, param: Symbol, cur: Shape, cseT: CseT): Shape =
+    def interp(body0: Term, param: Symbol, cur: Shape, cseT: CseT): Shape =
+      val body = flattenBlock(body0)
       isTupleLiteral(body) match
         case Some(parts) => Tup(parts.map(interp(_, param, cur, cseT))) // share cseT across components → CSE
         case None => isProjection(body) match

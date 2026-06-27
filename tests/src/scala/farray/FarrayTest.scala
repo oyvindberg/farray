@@ -1065,6 +1065,13 @@ class FListTest:
       FuseDebug.show(ints.fuse.map(x => (x * x + 1, x * x + 2)).map(t => t._1 + t._2).toFArray))
     scenario("ints.fuse.map(x=>(x+1, x*1000)).filter(_._1%2==0).map(_._2).toFArray  [SINK: 2nd col inside the guard]",
       FuseDebug.show(ints.fuse.map(x => (x + 1, x * 1000)).filter(_._1 % 2 == 0).map(_._2).toFArray))
+    def expensive(x: Int): Int = { var s = x; var k = 0; while (k < 24) { s = s * 1103515245 + 12345; k += 1 }; s }
+    scenario("DCE-1: map(x => (x+1, expensive(x))).map(_._1)  [expensive(x) DEAD]",
+      FuseDebug.show(ints.fuse.map(x => (x + 1, expensive(x))).map(_._1).toFArray))
+    scenario("DCE-2: zip(ys).map(_._1)  [zipped read DEAD]",
+      FuseDebug.show(ints.fuse.zip(FArray(7, 8, 9, 10, 11)).map(_._1).toFArray))
+    scenario("DCE-3: zip(ys).map((a,b) => (a, expensive(b))).filter(_._1%4==0).map(_._1)  [expensive(b) AND ys DEAD]",
+      FuseDebug.show(ints.fuse.zip(FArray(7, 8, 9, 10, 11)).map((a, b) => (a, expensive(b))).filter(_._1 % 4 == 0).map(_._1).toFArray))
     Snapshots.check("fused-pipeline.snap", sb.toString)
 
   @Test def test_hashCode_matchesList(): Unit =
