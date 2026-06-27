@@ -7,14 +7,13 @@ import scala.collection.mutable
 
 /** EXHAUSTIVE small-scope correctness harness for FArray's traversal interpreter.
   *
-  * Strategy: a recipe ADT enumerates EVERY FArray shape reachable from the constructors up to a bounded depth, each
-  * paired with its `scala.collection.immutable.List` oracle (the identical sequence of constructor ops applied to a
-  * List). For each (FArray, List) pair we assert `farray.<op> == list.<op>` across a broad op set. Every per-case
-  * evaluation runs inside a bounded-time worker thread (interrupt + join(timeoutMs)) so a non-terminating /
-  * pathologically slow shape is RECORDED as a HANG and the sweep CONTINUES rather than wedging the whole build.
+  * Strategy: a recipe ADT enumerates EVERY FArray shape reachable from the constructors up to a bounded depth, each paired with its
+  * `scala.collection.immutable.List` oracle (the identical sequence of constructor ops applied to a List). For each (FArray, List) pair we assert
+  * `farray.<op> == list.<op>` across a broad op set. Every per-case evaluation runs inside a bounded-time worker thread (interrupt + join(timeoutMs)) so a
+  * non-terminating / pathologically slow shape is RECORDED as a HANG and the sweep CONTINUES rather than wedging the whole build.
   *
-  * The harness is generic over the element kind `E` so the same recipe tree is replayed once for Int leaves
-  * (primitive `int[]` cores) and once for String leaves (`Object[]` cores).
+  * The harness is generic over the element kind `E` so the same recipe tree is replayed once for Int leaves (primitive `int[]` cores) and once for String
+  * leaves (`Object[]` cores).
   */
 object FExhaustive:
 
@@ -53,7 +52,7 @@ object FExhaustive:
   // ---------------------------------------------------------------------------
   trait Kind[E]:
     def name: String
-    def elem(i: Int): E            // map the small int alphabet 0..3 to a concrete element
+    def elem(i: Int): E // map the small int alphabet 0..3 to a concrete element
     def leaf(ints: List[Int]): FArray[E]
     def empty: FArray[E]
     def concat(a: FArray[E], b: FArray[E]): FArray[E]
@@ -91,31 +90,31 @@ object FExhaustive:
   // we guard anyway. List.padTo never truncates; List.slice/take/drop clamp.
   // ---------------------------------------------------------------------------
   def buildList(r: Recipe, K: Kind[?]): List[Int] = r match
-    case Empty           => Nil
-    case Leaf(es)        => es
-    case Concat(a, b)    => buildList(a, K) ++ buildList(b, K)
-    case Append(a, e)    => buildList(a, K) :+ e
-    case Prepend(e, a)   => e :: buildList(a, K)
-    case Take(a, k)      => buildList(a, K).take(k)
-    case Drop(a, k)      => buildList(a, K).drop(k)
-    case Slice(a, i, j)  => buildList(a, K).slice(i, j)
-    case Reverse(a)      => buildList(a, K).reverse
-    case PadTo(a, n, f)  => buildList(a, K).padTo(n, f)
+    case Empty            => Nil
+    case Leaf(es)         => es
+    case Concat(a, b)     => buildList(a, K) ++ buildList(b, K)
+    case Append(a, e)     => buildList(a, K) :+ e
+    case Prepend(e, a)    => e :: buildList(a, K)
+    case Take(a, k)       => buildList(a, K).take(k)
+    case Drop(a, k)       => buildList(a, K).drop(k)
+    case Slice(a, i, j)   => buildList(a, K).slice(i, j)
+    case Reverse(a)       => buildList(a, K).reverse
+    case PadTo(a, n, f)   => buildList(a, K).padTo(n, f)
     case Updated(a, i, e) =>
       val l = buildList(a, K)
       if i >= 0 && i < l.length then l.updated(i, e) else l // mirror FArray's valid-range only
 
   def buildF[E](r: Recipe)(using K: Kind[E]): FArray[E] = r match
-    case Empty           => K.empty
-    case Leaf(es)        => K.leaf(es)
-    case Concat(a, b)    => K.concat(buildF[E](a), buildF[E](b))
-    case Append(a, e)    => K.append(buildF[E](a), e)
-    case Prepend(e, a)   => K.prepend(e, buildF[E](a))
-    case Take(a, k)      => buildF[E](a).take(k)
-    case Drop(a, k)      => buildF[E](a).drop(k)
-    case Slice(a, i, j)  => buildF[E](a).slice(i, j)
-    case Reverse(a)      => buildF[E](a).reverse
-    case PadTo(a, n, f)  => K.padTo(buildF[E](a), n, f)
+    case Empty            => K.empty
+    case Leaf(es)         => K.leaf(es)
+    case Concat(a, b)     => K.concat(buildF[E](a), buildF[E](b))
+    case Append(a, e)     => K.append(buildF[E](a), e)
+    case Prepend(e, a)    => K.prepend(e, buildF[E](a))
+    case Take(a, k)       => buildF[E](a).take(k)
+    case Drop(a, k)       => buildF[E](a).drop(k)
+    case Slice(a, i, j)   => buildF[E](a).slice(i, j)
+    case Reverse(a)       => buildF[E](a).reverse
+    case PadTo(a, n, f)   => K.padTo(buildF[E](a), n, f)
     case Updated(a, i, e) => K.updated(buildF[E](a), i, e)
 
   // ---------------------------------------------------------------------------
@@ -125,8 +124,8 @@ object FExhaustive:
   // one level shallower. The structural ks/indices are swept over the small valid
   // range derived from the sub-shape's KNOWN length.
   // ---------------------------------------------------------------------------
-  val Alphabet: List[Int]   = List(0, 1, 2, 3)
-  val LeafElem: List[Int]   = List(0, 1, 2) // smaller per-leaf alphabet keeps leaf count sane
+  val Alphabet: List[Int] = List(0, 1, 2, 3)
+  val LeafElem: List[Int] = List(0, 1, 2) // smaller per-leaf alphabet keeps leaf count sane
 
   // a representative, deduped set of small leaves of sizes 0..4
   val leaves: List[Recipe] =
@@ -136,9 +135,9 @@ object FExhaustive:
         else
           // a handful of distinct contents per size, not the full cartesian product (3^4 = 81 is too many at depth)
           val plain = List.tabulate(n)(i => LeafElem(i % LeafElem.length))
-          val rev   = plain.reverse
+          val rev = plain.reverse
           val const = List.fill(n)(1)
-          val asc   = List.tabulate(n)(i => i % 4)
+          val asc = List.tabulate(n)(i => i % 4)
           List(plain, rev, const, asc).distinct
       }
     Empty :: sized.distinct.map(Leaf.apply)
@@ -154,7 +153,7 @@ object FExhaustive:
       val subForBinary = sub.take(18)
       for a <- sub do
         val la = buildList(a, summon[Kind[Int]])
-        val n  = la.length
+        val n = la.length
         // ++ : concat with a representative set of sub-shapes
         for b <- subForBinary do buf += Concat(a, b)
         // :+ / +: over the small alphabet
@@ -186,10 +185,10 @@ object FExhaustive:
     // keep one representative per (signature, top-constructor) so we still exercise every node SHAPE even when two
     // shapes flatten to the same list (a Concat-of-leaves vs a plain leaf both flatten the same yet are worth testing).
     val seen = mutable.HashSet.empty[(String, List[Int])]
-    val out  = mutable.ListBuffer.empty[Recipe]
+    val out = mutable.ListBuffer.empty[Recipe]
     val Kint = summon[Kind[Int]]
     for layer <- perDepth; r <- layer do
-      val sig     = buildList(r, Kint)
+      val sig = buildList(r, Kint)
       val ctorTag = r.getClass.getSimpleName
       if seen.add((ctorTag, sig)) then out += r
     out.toList
@@ -218,12 +217,13 @@ class FExhaustiveTest:
   // (not one thread per op — that was millions of spawns and blew the suite timeout). `currentOp` is updated by
   // the worker before each op so that, if the shape hangs, the main thread can name the exact op in flight.
   // ---------------------------------------------------------------------------
-  private val currentOp     = new AtomicReference[String]("") // op the worker is currently evaluating (for HANG attribution)
+  private val currentOp = new AtomicReference[String]("") // op the worker is currently evaluating (for HANG attribution)
   private val currentRecipe = new AtomicReference[String]("")
-  private val opCount        = new java.util.concurrent.atomic.AtomicLong(0L) // total op-comparisons performed
+  private val opCount = new java.util.concurrent.atomic.AtomicLong(0L) // total op-comparisons performed
 
-  /** Compare one op's farray result vs its List oracle; record a Wrong on mismatch. Runs ON THE WORKER THREAD.
-    * Sets `currentOp` first so a hang inside `far` is attributable. The List oracle (`lst`) never hangs. */
+  /** Compare one op's farray result vs its List oracle; record a Wrong on mismatch. Runs ON THE WORKER THREAD. Sets `currentOp` first so a hang inside `far` is
+    * attributable. The List oracle (`lst`) never hangs.
+    */
   private def cmp[R](op: String, sink: mutable.Buffer[Finding], far: => R, lst: => R): Unit =
     currentOp.set(op)
     opCount.incrementAndGet()
@@ -231,16 +231,17 @@ class FExhaustiveTest:
     val lr = lst
     if fv != lr then synchronized { sink += Wrong(currentRecipe.get(), op, String.valueOf(fv), String.valueOf(lr)); () }
 
-  /** Run the whole op battery for one shape on a worker thread; if it does not finish within `timeoutMs`, record a
-    * HANG naming the op in flight and CONTINUE (the worker is a daemon and is abandoned, so a true infinite loop
-    * never wedges the sweep). Exceptions thrown by the battery are rethrown on the main thread. */
+  /** Run the whole op battery for one shape on a worker thread; if it does not finish within `timeoutMs`, record a HANG naming the op in flight and CONTINUE
+    * (the worker is a daemon and is abandoned, so a true infinite loop never wedges the sweep). Exceptions thrown by the battery are rethrown on the main
+    * thread.
+    */
   private def runShape(recipe: String, sink: mutable.Buffer[Finding])(battery: => Unit): Unit =
     // backstop per the brief: print+flush each shape's recipe before testing it (only the FIRST few + periodic, to
     // avoid drowning the log) — the per-op `currentOp` volatile is the precise attribution.
     currentRecipe.set(recipe)
     currentOp.set("build")
     val errRef = new AtomicReference[Throwable](null)
-    val done   = new java.util.concurrent.CountDownLatch(1)
+    val done = new java.util.concurrent.CountDownLatch(1)
     val t = new Thread(() =>
       try battery
       catch case e: Throwable => errRef.set(e)
@@ -331,8 +332,7 @@ class FExhaustiveTest:
       for k <- List(0, 1, n / 2, n - 1, n, n + 1) do
         cmp(s"take($k)", sink, fa.take(k).toList.map(toInt), la.take(k))
         cmp(s"drop($k)", sink, fa.drop(k).toList.map(toInt), la.drop(k))
-      for i <- List(0, 1, n / 2); j <- List(i, i + 1, n, n + 1) do
-        cmp(s"slice($i,$j)", sink, fa.slice(i, j).toList.map(toInt), la.slice(i, j))
+      for i <- List(0, 1, n / 2); j <- List(i, i + 1, n, n + 1) do cmp(s"slice($i,$j)", sink, fa.slice(i, j).toList.map(toInt), la.slice(i, j))
       if n > 0 then cmp("updated(mid)", sink, K.updated(fa, n / 2, 5).toList.map(toInt), la.updated(n / 2, 5))
 
       // --- apply(i) for every i, plus head/last/tail/init where defined ---
@@ -382,7 +382,7 @@ class FExhaustiveTest:
   @Test def exhaustive_interpreter_parity(): Unit =
     val (covered, total, findings) = runSweep()
     val wrongs = findings.filter(_.isInstanceOf[Wrong])
-    val hangs  = findings.filter(_.isInstanceOf[Hang])
+    val hangs = findings.filter(_.isInstanceOf[Hang])
     val report = new StringBuilder
     def out(s: String): Unit = { report.append(s).append('\n'); System.out.println(s) }
     out("=" * 80)
@@ -401,4 +401,7 @@ class FExhaustiveTest:
     // JUnit swallows a passing test's stdout, so also persist the summary to a file that survives a green run.
     try java.nio.file.Files.writeString(java.nio.file.Path.of(System.getProperty("java.io.tmpdir"), "fexhaustive-report.txt"), report.toString)
     catch case _: Throwable => ()
-    assert(findings.isEmpty, s"FExhaustive found ${wrongs.length} wrong-answer and ${hangs.length} hang cases (see stdout / ${System.getProperty("java.io.tmpdir")}/fexhaustive-report.txt)")
+    assert(
+      findings.isEmpty,
+      s"FExhaustive found ${wrongs.length} wrong-answer and ${hangs.length} hang cases (see stdout / ${System.getProperty("java.io.tmpdir")}/fexhaustive-report.txt)"
+    )

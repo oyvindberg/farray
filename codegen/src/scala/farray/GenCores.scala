@@ -132,19 +132,24 @@ object GenCores extends BleepCodegenScript("GenCores") {
     private var level = 0
     private def pad: String = indentStr * level
     def line(s: String): Emit = { sb.append(pad).append(s).append('\n'); this }
-    /** Append a pre-rendered (possibly multi-line) block, re-indenting EVERY line to the current level so an
-      * already-Emit-formatted sub-expression keeps one-statement-per-line at the right depth. */
+
+    /** Append a pre-rendered (possibly multi-line) block, re-indenting EVERY line to the current level so an already-Emit-formatted sub-expression keeps
+      * one-statement-per-line at the right depth.
+      */
     def lines(s: String): Emit = {
       s.stripLineEnd.split("\n", -1).foreach(l => if l.isEmpty then sb.append('\n') else sb.append(pad).append(l).append('\n'))
       this
     }
     def blank(): Emit = { sb.append('\n'); this }
+
     /** emit `head {`, indent the body, then emit `}` at the original level. */
     def open(head: String): Emit = { line(head + " {"); level += 1; this }
     def close(): Emit = { level -= 1; line("}"); this }
     def closeWith(suffix: String): Emit = { level -= 1; line("}" + suffix); this }
+
     /** close the current block and open a chained one on the same line: `} <head> {` (net indent 0). */
     def closeOpen(head: String): Emit = { level -= 1; line("} " + head + " {"); level += 1; this }
+
     /** emit `body` inside a fresh anonymous `{ ... }` block (its own variable scope). */
     def scope(body: => Unit): Emit = { line("{"); level += 1; body; level -= 1; line("}"); this }
     def result: String = sb.toString
@@ -157,24 +162,25 @@ object GenCores extends BleepCodegenScript("GenCores") {
 
   enum Dir { case Fwd, Bwd }
 
-  /** The per-element work, expressed ONCE as a code template. `perElem(e)` reads the current element via the
-    * code fragment `e` (already wrapped through `read(k)` unless `rawArray`), and reads/writes the accumulator
-    * locals directly. `rawArray = true` reads `a(i)` unwrapped (sum/product). */
+  /** The per-element work, expressed ONCE as a code template. `perElem(e)` reads the current element via the code fragment `e` (already wrapped through
+    * `read(k)` unless `rawArray`), and reads/writes the accumulator locals directly. `rawArray = true` reads `a(i)` unwrapped (sum/product).
+    */
   final case class Body(perElem: String => String, rawArray: Boolean = false)
 
   /** An accumulator threaded as a plain `var` LOCAL (a JVM register), not a heap field. */
   final case class Acc(name: String, tpe: String, init: String)
 
-  /** The early-exit shape, which also selects the leaf run-loop shape (design §A.2):
-    *   Never        -> the runMethods full-run loop (process every element)
-    *   OnPredInCond -> the scanB empty-body predicate-in-condition loop (Wave 2; structured here, unused now) */
+  /** The early-exit shape, which also selects the leaf run-loop shape (design §A.2): Never -> the runMethods full-run loop (process every element) OnPredInCond
+    * -> the scanB empty-body predicate-in-condition loop (Wave 2; structured here, unused now)
+    */
   enum Exit {
     case Never
     case OnPredInCond(cont: String => String, onStop: String, onOne: String)
   }
 
-  /** Output construction (design §A). Wave 1 needs NoOut (foreach) and Scalar (fold/sum/product/count).
-    * PrimArray / ResultFArray are reserved for Wave 3 (map/filter/scanLeft) and are not consumed by `lower` yet. */
+  /** Output construction (design §A). Wave 1 needs NoOut (foreach) and Scalar (fold/sum/product/count). PrimArray / ResultFArray are reserved for Wave 3
+    * (map/filter/scanLeft) and are not consumed by `lower` yet.
+    */
   enum Out {
     case NoOut
     case Scalar(read: String)
@@ -563,8 +569,10 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // fullRun: process EVERY element (no early stop). rawA=true reads a(i) directly (sum/product), else read(k).
     def runMethods(k: Kind, body: String => String, rawA: Boolean = false): String = {
       val rd = if rawA then "a(i)" else read(k)
-      val fwd = s"def onRunF(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val e = start + count; while (i < e) { ${body(rd)}; i += 1 } }"
-      val bwd = s"def onRunB(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val e = start - count; while (i > e) { ${body(rd)}; i -= 1 } }"
+      val fwd =
+        s"def onRunF(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val e = start + count; while (i < e) { ${body(rd)}; i += 1 } }"
+      val bwd =
+        s"def onRunB(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val e = start - count; while (i > e) { ${body(rd)}; i -= 1 } }"
       s"$fwd; $bwd"
     }
     def dispatchA(body: Kind => String): String =
@@ -633,15 +641,15 @@ object GenCores extends BleepCodegenScript("GenCores") {
           // The epilogue: scalar -> return the acc expr; ResultFArray -> canonicalize the built `out` via the
           // EXISTING leaf() builder (LeafExact: length == n) / the filter identity-then-leaf form (FilterIdentity).
           val epilogue = spec.out match {
-            case Out.Scalar(res) => s"; $res"
-            case Out.NoOut       => ""
-            case Out.PrimArray(_, _) => "; out"
+            case Out.Scalar(res)                 => s"; $res"
+            case Out.NoOut                       => ""
+            case Out.PrimArray(_, _)             => "; out"
             case Out.ResultFArray(ek, _, _, fin) =>
               fin match {
                 // LeafExact (map): output length is exactly `oc` (== n); route through the canonicalizer so a
                 // length-0 walk yields Empty and length-1 yields ${K}One — upholding the size-0/1 invariant.
                 case Finalize.LeafExact => s"\n${leaf(ek, "out", "oc")}"
-                case Finalize.LeafTrim =>
+                case Finalize.LeafTrim  =>
                   s"\nif (oc == out.length) ${leaf(ek, "out", "oc")} else ${leaf(ek, s"java.util.Arrays.copyOf(out, oc)", "oc")}"
                 // FilterIdentity: keep the `if (oc == n) xs` reference-identity shortcut, then leaf-canonicalize a
                 // trimmed copy (oc == 0 -> Empty, oc == 1 -> ${K}One, else a copyOf-trimmed leaf).
@@ -656,8 +664,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
           // (IntMap stuck at 0.90x); lifted out, it is byte-identical to iarray's loop. Tree-internal leaves
           // still flow through the walk's own leaf arm, so trees stay correct + consumer-free.
           val leafFast =
-            if !backward then s"case leaf: ${k.name}Arr => { val a = leaf.arr; var i = 0; val e = leaf.length; while (i < e) { ${spec.body.perElem(rd)}; i += 1 } }"
-            else            s"case leaf: ${k.name}Arr => { val a = leaf.arr; var i = leaf.length - 1; while (i >= 0) { ${spec.body.perElem(rd)}; i -= 1 } }"
+            if !backward then
+              s"case leaf: ${k.name}Arr => { val a = leaf.arr; var i = 0; val e = leaf.length; while (i < e) { ${spec.body.perElem(rd)}; i += 1 } }"
+            else s"case leaf: ${k.name}Arr => { val a = leaf.arr; var i = leaf.length - 1; while (i >= 0) { ${spec.body.perElem(rd)}; i -= 1 } }"
           s"{ $outDecl$accPart" + s"xs match { $leafFast; case _ => { val root: FBase = xs\n$walk } }" + s"$epilogue }"
         case other => sys.error(s"lower: Wave 1 does not support Exit $other")
       }
@@ -678,13 +687,27 @@ object GenCores extends BleepCodegenScript("GenCores") {
       if k.prim.isDefined then
         Trav(k, Dir.Fwd, Body(e => s"acc += $e", rawArray = true), List(Acc("acc", k.arr, k.dflt)), Exit.Never, Out.Scalar("acc.asInstanceOf[B]"))
       else
-        Trav(k, Dir.Fwd, Body(e => s"acc = num.plus(acc, ($e).asInstanceOf[B])", rawArray = true), List(Acc("acc", "B", "num.zero")), Exit.Never, Out.Scalar("acc"))
+        Trav(
+          k,
+          Dir.Fwd,
+          Body(e => s"acc = num.plus(acc, ($e).asInstanceOf[B])", rawArray = true),
+          List(Acc("acc", "B", "num.zero")),
+          Exit.Never,
+          Out.Scalar("acc")
+        )
     def productSpec(k: Kind): Trav = {
       val one = k.name match { case "Long" => "1L"; case "Double" => "1.0"; case _ => "1" }
       if k.prim.isDefined then
         Trav(k, Dir.Fwd, Body(e => s"acc *= $e", rawArray = true), List(Acc("acc", k.arr, one)), Exit.Never, Out.Scalar("acc.asInstanceOf[B]"))
       else
-        Trav(k, Dir.Fwd, Body(e => s"acc = num.times(acc, ($e).asInstanceOf[B])", rawArray = true), List(Acc("acc", "B", "num.one")), Exit.Never, Out.Scalar("acc"))
+        Trav(
+          k,
+          Dir.Fwd,
+          Body(e => s"acc = num.times(acc, ($e).asInstanceOf[B])", rawArray = true),
+          List(Acc("acc", "B", "num.one")),
+          Exit.Never,
+          Out.Scalar("acc")
+        )
     }
 
     // Wave 3 (design §B.2/§B.3): array-building ops. `ka` drives the walk (dispatchA); `kb` (the result element
@@ -694,7 +717,6 @@ object GenCores extends BleepCodegenScript("GenCores") {
     //  mapLeaf${I}${O} leaf methods + the Java build${I}${O} traversers instead. filter/filterNot's OLD inlined-walk
     //  filterSpec lived here too — the Build-filtered shape now routes them through the shared filterLeaf${I} leaf
     //  methods + the Java buildFiltered${I} traversers.)
-
 
     // ===== HYBRID TRAVERSAL — foldLeft over ALL input kinds (design §5) =====
     // The surface peels the hot shapes inline (the user's `inline op` splices unboxed — the optimal small
@@ -814,8 +836,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
         List(false, true).foreach { backward =>
           val dir = if backward then "Bwd" else "Fwd"
           // prim self-kind unboxed acc (only for primitive input kinds).
-          if k.isPrim then
-            emit(s"reduceLeaf${dir}${K}${K}", k, "", k.arr, s"Traversers.${K}To${K}Fold", s"Traversers.reduce${dir}${K}${K}(xs, z, f)", backward)
+          if k.isPrim then emit(s"reduceLeaf${dir}${K}${K}", k, "", k.arr, s"Traversers.${K}To${K}Fold", s"Traversers.reduce${dir}${K}${K}(xs, z, f)", backward)
           // generic ref acc (every input kind).
           emit(s"reduceLeaf${dir}${K}Ref", k, "[Z <: AnyRef]", "Z", s"Traversers.${K}ToRefFold[Z]", s"Traversers.reduce${dir}${K}Ref[Z](xs, z, f)", backward)
         }
@@ -913,7 +934,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line("val n = xs.length")
         ee.line(s"val out = new Array[${k.arr}](n)")
         ee.line(s"val o = Traversers.buildFiltered${K}(xs, out, 0, p)")
-        ee.line(s"if (o == 0) Empty.INSTANCE else if (o == 1) new ${K}One(out(0)) else if (o == n) new ${K}Arr(out, n) else new ${K}Arr(java.util.Arrays.copyOf(out, o), o)")
+        ee.line(
+          s"if (o == 0) Empty.INSTANCE else if (o == 1) new ${K}One(out(0)) else if (o == n) new ${K}Arr(out, n) else new ${K}Arr(java.util.Arrays.copyOf(out, o), o)"
+        )
         ee.close()
         ee.close() // xs match
         ee.close() // def
@@ -1144,11 +1167,18 @@ object GenCores extends BleepCodegenScript("GenCores") {
     def predSAM(k: Kind, cond: String): String = s"(v) => $cond"
     val existsV = dispatchA(k => s"scFwdLeaf${k.name}(xs, 0, ${predSAM(k, s"p(${wrapV(k)})")}) < length")
     val forallV = dispatchA(k => s"scFwdLeaf${k.name}(xs, 0, ${predSAM(k, s"!p(${wrapV(k)})")}) == length")
-    val findV = dispatchA(k => s"{ val i = scFwdLeaf${k.name}(xs, 0, ${predSAM(k, s"p(${wrapV(k)})")}); if (i < length) Some(applyAtImpl[A](xs, i)) else None }")
-    val indexWhereV = dispatchA(k => s"{ val i = scFwdLeaf${k.name}(xs, if (from < 0) 0 else from, ${predSAM(k, s"p(${wrapV(k)})")}); if (i < length) i else -1 }")
-    val indexOfV = dispatchA(k => s"{ val i = scFwdLeaf${k.name}(xs, if (from < 0) 0 else from, ${predSAM(k, s"${wrapV(k)} == elem")}); if (i < length) i else -1 }")
-    val collectFirstV = dispatchA(k => s"{ val i = scFwdLeaf${k.name}(xs, 0, ${predSAM(k, s"pf.isDefinedAt(${wrapV(k)})")}); if (i < length) Some(pf(applyAtImpl[A](xs, i))) else None }")
-    val segmentLenV = dispatchA(k => s"{ val f0 = if (from < 0) 0 else if (from > length) length else from; scFwdLeaf${k.name}(xs, f0, ${predSAM(k, s"!p(${wrapV(k)})")}) - f0 }")
+    val findV =
+      dispatchA(k => s"{ val i = scFwdLeaf${k.name}(xs, 0, ${predSAM(k, s"p(${wrapV(k)})")}); if (i < length) Some(applyAtImpl[A](xs, i)) else None }")
+    val indexWhereV =
+      dispatchA(k => s"{ val i = scFwdLeaf${k.name}(xs, if (from < 0) 0 else from, ${predSAM(k, s"p(${wrapV(k)})")}); if (i < length) i else -1 }")
+    val indexOfV =
+      dispatchA(k => s"{ val i = scFwdLeaf${k.name}(xs, if (from < 0) 0 else from, ${predSAM(k, s"${wrapV(k)} == elem")}); if (i < length) i else -1 }")
+    val collectFirstV = dispatchA(k =>
+      s"{ val i = scFwdLeaf${k.name}(xs, 0, ${predSAM(k, s"pf.isDefinedAt(${wrapV(k)})")}); if (i < length) Some(pf(applyAtImpl[A](xs, i))) else None }"
+    )
+    val segmentLenV = dispatchA(k =>
+      s"{ val f0 = if (from < 0) 0 else if (from > length) length else from; scFwdLeaf${k.name}(xs, f0, ${predSAM(k, s"!p(${wrapV(k)})")}) - f0 }"
+    )
     val prefixLenV = dispatchA(k => s"scFwdLeaf${k.name}(xs, 0, ${predSAM(k, s"!p(${wrapV(k)})")})")
     val lastIndexWhereV = dispatchA(k => s"scBwdLeaf${k.name}(xs, if (end > length - 1) length - 1 else end, ${predSAM(k, s"p(${wrapV(k)})")})")
     val lastIndexOfV = dispatchA(k => s"scBwdLeaf${k.name}(xs, if (end > length - 1) length - 1 else end, ${predSAM(k, s"${wrapV(k)} == elem")})")
@@ -1229,13 +1259,17 @@ object GenCores extends BleepCodegenScript("GenCores") {
         s"scan${side}Leaf${K}Ref[B & AnyRef](xs, z.asInstanceOf[B & AnyRef], (acc, v) => ${scanComb(ka, backward, "acc.asInstanceOf[B]", wrapV(ka))}.asInstanceOf[B & AnyRef])"
     }
     def scanSurface(backward: Boolean): String =
-      "summonFrom {\n" + opKinds.map { ka =>
-        val inner = "summonFrom {\n" + opKinds.map { kb =>
-          val body = if scanCovered((ka.name, kb.name)) then scanLeafCall(ka, kb, backward) else scanGeneric(kb, backward)
-          s"          case rb: ${kb.name}Repr[B] => $body"
-        }.mkString("\n") + "\n        }"
-        s"      case r: ${ka.name}Repr[A] => $inner"
-      }.mkString("\n") + "\n    }"
+      "summonFrom {\n" + opKinds
+        .map { ka =>
+          val inner = "summonFrom {\n" + opKinds
+            .map { kb =>
+              val body = if scanCovered((ka.name, kb.name)) then scanLeafCall(ka, kb, backward) else scanGeneric(kb, backward)
+              s"          case rb: ${kb.name}Repr[B] => $body"
+            }
+            .mkString("\n") + "\n        }"
+          s"      case r: ${ka.name}Repr[A] => $inner"
+        }
+        .mkString("\n") + "\n    }"
     val scanLeftV = scanSurface(backward = false)
     val scanRightV = scanSurface(backward = true)
     val iteratorV = dispatchA(k =>
@@ -1289,7 +1323,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // to a DIFFERENT prim kind is rare). Output canonicalised via leaf().
     def mapGeneric(kb: Kind): String = {
       val alloc = if kb.name == "Ref" then "new Array[Object](n)" else s"new Array[${kb.arr}](n)"
-      val write = if kb.name == "Ref" then "out(i) = f(applyAtImpl[A](xs, i)).asInstanceOf[Object]" else s"out(i) = ${wr(kb, "rb.unwrap(f(applyAtImpl[A](xs, i)))")}"
+      val write =
+        if kb.name == "Ref" then "out(i) = f(applyAtImpl[A](xs, i)).asInstanceOf[Object]" else s"out(i) = ${wr(kb, "rb.unwrap(f(applyAtImpl[A](xs, i)))")}"
       s"{ val out = $alloc; var i = 0; while (i < n) { $write; i += 1 }; ${leaf(kb, "out", "n")} }"
     }
     val mapM = "summonFrom {\n" + opKinds
@@ -1318,30 +1353,40 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // not viable here: a primitive B forces applyOrElse's B result to UNBOX the AnyRef sentinel -> CCE). Each kept B
     // unwraps into a growable, unboxed ${O}Group buffer (dispatch on O), so the OUTPUT stays unboxed even though the
     // per-element A/B handoff boxes. buf.toLeaf canonicalises (Empty/One/Arr).
-    val collect = "summonFrom {\n" + opKinds.map { ka =>
-      val inner = "summonFrom {\n" + opKinds.map { kb =>
-        val add = s"buf.add(${wr(kb, "rb.unwrap(pf(a))")})"
-        s"          case rb: ${kb.name}Repr[B] => { val buf = new ${kb.name}Group(); foreachLeaf${ka.name}(xs, (v) => { val a = ${wrapV(ka)}; if (pf.isDefinedAt(a)) $add }); buf.toLeaf }"
-      }.mkString("\n") + "\n        }"
-      s"      case r: ${ka.name}Repr[A] => $inner"
-    }.mkString("\n") + "\n    }"
+    val collect = "summonFrom {\n" + opKinds
+      .map { ka =>
+        val inner = "summonFrom {\n" + opKinds
+          .map { kb =>
+            val add = s"buf.add(${wr(kb, "rb.unwrap(pf(a))")})"
+            s"          case rb: ${kb.name}Repr[B] => { val buf = new ${kb.name}Group(); foreachLeaf${ka.name}(xs, (v) => { val a = ${wrapV(ka)}; if (pf.isDefinedAt(a)) $add }); buf.toLeaf }"
+          }
+          .mkString("\n") + "\n        }"
+        s"      case r: ${ka.name}Repr[A] => $inner"
+      }
+      .mkString("\n") + "\n    }"
     // partitionMap: ONE pass, TWO outputs of (possibly) DIFFERENT kinds — Lefts of B's kind to _1, Rights of C's
     // kind to _2. Like collect this is a BOXED-but-SHARED path (NOTED): f returns Either[A1, A2] (an allocated
     // Either, the values boxed), so the per-element handoff boxes regardless of the output kinds; we keep the
     // OUTPUTS unboxed via two growable ${B}Group / ${C}Group buffers and reuse the EXISTING shared foreachLeaf${I}
     // traverser (no surface inline leaf loop). Each f(a) is matched Left/Right ONCE; the value unwraps into its
     // buffer. Both buffers canonicalise via toLeaf.
-    val partitionMap = "summonFrom {\n" + opKinds.map { ka =>
-      val m2 = "summonFrom {\n" + opKinds.map { kb =>
-        val m3 = "summonFrom {\n" + opKinds.map { kc =>
-          val addL = s"bl.add(${wr(kb, "rb.unwrap(l)")})"
-          val addR = s"br.add(${wr(kc, "rc.unwrap(r)")})"
-          s"              case rc: ${kc.name}Repr[A2] => { val bl = new ${kb.name}Group(); val br = new ${kc.name}Group(); foreachLeaf${ka.name}(xs, (v) => { f(${wrapV(ka)}) match { case scala.util.Left(l) => $addL; case scala.util.Right(r) => $addR } }); new scala.Tuple2(bl.toLeaf, br.toLeaf) }"
-        }.mkString("\n") + "\n            }"
-        s"          case rb: ${kb.name}Repr[A1] => $m3"
-      }.mkString("\n") + "\n        }"
-      s"      case r: ${ka.name}Repr[A] => $m2"
-    }.mkString("\n") + "\n    }"
+    val partitionMap = "summonFrom {\n" + opKinds
+      .map { ka =>
+        val m2 = "summonFrom {\n" + opKinds
+          .map { kb =>
+            val m3 = "summonFrom {\n" + opKinds
+              .map { kc =>
+                val addL = s"bl.add(${wr(kb, "rb.unwrap(l)")})"
+                val addR = s"br.add(${wr(kc, "rc.unwrap(r)")})"
+                s"              case rc: ${kc.name}Repr[A2] => { val bl = new ${kb.name}Group(); val br = new ${kc.name}Group(); foreachLeaf${ka.name}(xs, (v) => { f(${wrapV(ka)}) match { case scala.util.Left(l) => $addL; case scala.util.Right(r) => $addR } }); new scala.Tuple2(bl.toLeaf, br.toLeaf) }"
+              }
+              .mkString("\n") + "\n            }"
+            s"          case rb: ${kb.name}Repr[A1] => $m3"
+          }
+          .mkString("\n") + "\n        }"
+        s"      case r: ${ka.name}Repr[A] => $m2"
+      }
+      .mkString("\n") + "\n    }"
     // fused short-circuiting contains (prim compares unboxed against the unwrapped elem). Empty-body scan.
     // contains: a short-circuit forward scan for the first element == elem (the ${I}Pred wraps the raw element to
     // A and compares to elem). One leaf-method call; hit -> index < length.
@@ -1357,8 +1402,10 @@ object GenCores extends BleepCodegenScript("GenCores") {
       val readEl = if k.name == "Ref" then "sa(i).asInstanceOf[A]" else "sa(i)"
       val readElNode = if k.name == "Ref" then s"${k.lc}At(xs, i).asInstanceOf[A]" else s"${k.lc}At(xs, i)"
       val build = mapLeafCall(k, k, "A", "r")
-      val scanLeaf = s"{ val sa = leaf.arr; val n = leaf.length; var i = 0; var changed = false; while (i < n && !changed) { val a = ${readVal(k, readEl)}; if (!(f(a).asInstanceOf[AnyRef] eq a.asInstanceOf[AnyRef])) changed = true; i += 1 }; if (!changed) xs else $build }"
-      val scanNode = s"{ val n = xs.length; var i = 0; var changed = false; while (i < n && !changed) { val a = ${readVal(k, readElNode)}; if (!(f(a).asInstanceOf[AnyRef] eq a.asInstanceOf[AnyRef])) changed = true; i += 1 }; if (!changed) xs else $build }"
+      val scanLeaf =
+        s"{ val sa = leaf.arr; val n = leaf.length; var i = 0; var changed = false; while (i < n && !changed) { val a = ${readVal(k, readEl)}; if (!(f(a).asInstanceOf[AnyRef] eq a.asInstanceOf[AnyRef])) changed = true; i += 1 }; if (!changed) xs else $build }"
+      val scanNode =
+        s"{ val n = xs.length; var i = 0; var changed = false; while (i < n && !changed) { val a = ${readVal(k, readElNode)}; if (!(f(a).asInstanceOf[AnyRef] eq a.asInstanceOf[AnyRef])) changed = true; i += 1 }; if (!changed) xs else $build }"
       s"xs match { case leaf: ${k.name}Arr => $scanLeaf; case _ => $scanNode }"
     }
     // ONE pass, no inner buffer: dfs the source, and for each element append f(x)'s elements straight into a
@@ -1469,9 +1516,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val prepend = dispatchA(k => s"new ${k.name}Prepend(r.unwrap(elem), xs)")
     // padTo: len <= length -> xs (canonical). Else a Pad of length len (>= 2, since len > length >= 0 and the
     // only way len == 1 is len > length == 0, i.e. padding empty to 1 -> a single filler One).
-    val padTo = dispatchB(k =>
-      s"if (len <= xs.length) xs else if (len == 1) new ${k.name}One(r.unwrap(elem)) else new ${k.name}Pad(xs, len, ${wr(k, "r.unwrap(elem)")})"
-    )
+    val padTo =
+      dispatchB(k => s"if (len <= xs.length) xs else if (len == 1) new ${k.name}One(r.unwrap(elem)) else new ${k.name}Pad(xs, len, ${wr(k, "r.unwrap(elem)")})")
     // Sort on FArray's own representation: materialize the kind array ONCE, stable-sort an int[] index
     // array (no Vector, no boxed indices), then permute into a fresh leaf. sortWith's comparator is inline
     // (fully unboxed); sorted/sortBy box only per ord comparison.
@@ -1523,9 +1569,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // combinations / permutations: materialize the input ONCE to the kind's primitive array, then drive the
     // per-kind unboxed iterator (init groups equal elements; next writes a fresh primitive leaf — no boxing).
     // n < 0 || n > length -> empty (matches Scala). The result iterator is asInstanceOf'd to Iterator[FBase].
-    val combinationsV = dispatchA(k =>
-      s"{ if (k < 0 || k > xs.length) Iterator.empty else ${k.name}CombPerm.combinations(materialize${k.name}(xs), k) }"
-    )
+    val combinationsV = dispatchA(k => s"{ if (k < 0 || k > xs.length) Iterator.empty else ${k.name}CombPerm.combinations(materialize${k.name}(xs), k) }")
     val permutationsV = dispatchA(k => s"${k.name}CombPerm.permutations(materialize${k.name}(xs))")
     val emptyB = dispatchA(k => s"Empty.INSTANCE")
     val tabulate = dispatchA(k =>
@@ -1564,20 +1608,333 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val fromValues16 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16"))
     val fromValues17 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17"))
     val fromValues18 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18"))
-    val fromValues19 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19"))
-    val fromValues20 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19", "p20"))
-    val fromValues21 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19", "p20", "p21"))
-    val fromValues22 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19", "p20", "p21", "p22"))
-    val fromValues23 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19", "p20", "p21", "p22", "p23"))
-    val fromValues24 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19", "p20", "p21", "p22", "p23", "p24"))
-    val fromValues25 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19", "p20", "p21", "p22", "p23", "p24", "p25"))
-    val fromValues26 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19", "p20", "p21", "p22", "p23", "p24", "p25", "p26"))
-    val fromValues27 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19", "p20", "p21", "p22", "p23", "p24", "p25", "p26", "p27"))
-    val fromValues28 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19", "p20", "p21", "p22", "p23", "p24", "p25", "p26", "p27", "p28"))
-    val fromValues29 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19", "p20", "p21", "p22", "p23", "p24", "p25", "p26", "p27", "p28", "p29"))
-    val fromValues30 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19", "p20", "p21", "p22", "p23", "p24", "p25", "p26", "p27", "p28", "p29", "p30"))
-    val fromValues31 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19", "p20", "p21", "p22", "p23", "p24", "p25", "p26", "p27", "p28", "p29", "p30", "p31"))
-    val fromValues32 = fromValuesN(Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19", "p20", "p21", "p22", "p23", "p24", "p25", "p26", "p27", "p28", "p29", "p30", "p31", "p32"))
+    val fromValues19 = fromValuesN(
+      Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19")
+    )
+    val fromValues20 = fromValuesN(
+      Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19", "p20")
+    )
+    val fromValues21 = fromValuesN(
+      Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19", "p20", "p21")
+    )
+    val fromValues22 = fromValuesN(
+      Seq("p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13", "p14", "p15", "p16", "p17", "p18", "p19", "p20", "p21", "p22")
+    )
+    val fromValues23 = fromValuesN(
+      Seq(
+        "p1",
+        "p2",
+        "p3",
+        "p4",
+        "p5",
+        "p6",
+        "p7",
+        "p8",
+        "p9",
+        "p10",
+        "p11",
+        "p12",
+        "p13",
+        "p14",
+        "p15",
+        "p16",
+        "p17",
+        "p18",
+        "p19",
+        "p20",
+        "p21",
+        "p22",
+        "p23"
+      )
+    )
+    val fromValues24 = fromValuesN(
+      Seq(
+        "p1",
+        "p2",
+        "p3",
+        "p4",
+        "p5",
+        "p6",
+        "p7",
+        "p8",
+        "p9",
+        "p10",
+        "p11",
+        "p12",
+        "p13",
+        "p14",
+        "p15",
+        "p16",
+        "p17",
+        "p18",
+        "p19",
+        "p20",
+        "p21",
+        "p22",
+        "p23",
+        "p24"
+      )
+    )
+    val fromValues25 = fromValuesN(
+      Seq(
+        "p1",
+        "p2",
+        "p3",
+        "p4",
+        "p5",
+        "p6",
+        "p7",
+        "p8",
+        "p9",
+        "p10",
+        "p11",
+        "p12",
+        "p13",
+        "p14",
+        "p15",
+        "p16",
+        "p17",
+        "p18",
+        "p19",
+        "p20",
+        "p21",
+        "p22",
+        "p23",
+        "p24",
+        "p25"
+      )
+    )
+    val fromValues26 = fromValuesN(
+      Seq(
+        "p1",
+        "p2",
+        "p3",
+        "p4",
+        "p5",
+        "p6",
+        "p7",
+        "p8",
+        "p9",
+        "p10",
+        "p11",
+        "p12",
+        "p13",
+        "p14",
+        "p15",
+        "p16",
+        "p17",
+        "p18",
+        "p19",
+        "p20",
+        "p21",
+        "p22",
+        "p23",
+        "p24",
+        "p25",
+        "p26"
+      )
+    )
+    val fromValues27 = fromValuesN(
+      Seq(
+        "p1",
+        "p2",
+        "p3",
+        "p4",
+        "p5",
+        "p6",
+        "p7",
+        "p8",
+        "p9",
+        "p10",
+        "p11",
+        "p12",
+        "p13",
+        "p14",
+        "p15",
+        "p16",
+        "p17",
+        "p18",
+        "p19",
+        "p20",
+        "p21",
+        "p22",
+        "p23",
+        "p24",
+        "p25",
+        "p26",
+        "p27"
+      )
+    )
+    val fromValues28 = fromValuesN(
+      Seq(
+        "p1",
+        "p2",
+        "p3",
+        "p4",
+        "p5",
+        "p6",
+        "p7",
+        "p8",
+        "p9",
+        "p10",
+        "p11",
+        "p12",
+        "p13",
+        "p14",
+        "p15",
+        "p16",
+        "p17",
+        "p18",
+        "p19",
+        "p20",
+        "p21",
+        "p22",
+        "p23",
+        "p24",
+        "p25",
+        "p26",
+        "p27",
+        "p28"
+      )
+    )
+    val fromValues29 = fromValuesN(
+      Seq(
+        "p1",
+        "p2",
+        "p3",
+        "p4",
+        "p5",
+        "p6",
+        "p7",
+        "p8",
+        "p9",
+        "p10",
+        "p11",
+        "p12",
+        "p13",
+        "p14",
+        "p15",
+        "p16",
+        "p17",
+        "p18",
+        "p19",
+        "p20",
+        "p21",
+        "p22",
+        "p23",
+        "p24",
+        "p25",
+        "p26",
+        "p27",
+        "p28",
+        "p29"
+      )
+    )
+    val fromValues30 = fromValuesN(
+      Seq(
+        "p1",
+        "p2",
+        "p3",
+        "p4",
+        "p5",
+        "p6",
+        "p7",
+        "p8",
+        "p9",
+        "p10",
+        "p11",
+        "p12",
+        "p13",
+        "p14",
+        "p15",
+        "p16",
+        "p17",
+        "p18",
+        "p19",
+        "p20",
+        "p21",
+        "p22",
+        "p23",
+        "p24",
+        "p25",
+        "p26",
+        "p27",
+        "p28",
+        "p29",
+        "p30"
+      )
+    )
+    val fromValues31 = fromValuesN(
+      Seq(
+        "p1",
+        "p2",
+        "p3",
+        "p4",
+        "p5",
+        "p6",
+        "p7",
+        "p8",
+        "p9",
+        "p10",
+        "p11",
+        "p12",
+        "p13",
+        "p14",
+        "p15",
+        "p16",
+        "p17",
+        "p18",
+        "p19",
+        "p20",
+        "p21",
+        "p22",
+        "p23",
+        "p24",
+        "p25",
+        "p26",
+        "p27",
+        "p28",
+        "p29",
+        "p30",
+        "p31"
+      )
+    )
+    val fromValues32 = fromValuesN(
+      Seq(
+        "p1",
+        "p2",
+        "p3",
+        "p4",
+        "p5",
+        "p6",
+        "p7",
+        "p8",
+        "p9",
+        "p10",
+        "p11",
+        "p12",
+        "p13",
+        "p14",
+        "p15",
+        "p16",
+        "p17",
+        "p18",
+        "p19",
+        "p20",
+        "p21",
+        "p22",
+        "p23",
+        "p24",
+        "p25",
+        "p26",
+        "p27",
+        "p28",
+        "p29",
+        "p30",
+        "p31",
+        "p32"
+      )
+    )
     // mkString: a hybrid Reduce into a StringBuilder (Z = StringBuilder, a Ref acc) over the shared leaf
     // method (reduceLeafFwd${K}Ref) — the SAME machinery as foldLeft; the leaf method peels Empty/One/leaf and
     // routes genuine TREES through Traversers. The surface realizes ONE RefToRefFold<StringBuilder> SAM (no
@@ -1595,7 +1952,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
       val ee = new Emit("  ")
       ee.line("val sb0 = new java.lang.StringBuilder(start)")
       ee.line("val base = sb0.length")
-      ee.line(s"val sb = reduceLeafFwd${K}Ref[java.lang.StringBuilder](xs, sb0, (acc, v) => { if (acc.length != base) acc.append(sep); acc.append(${app("v")}) })")
+      ee.line(
+        s"val sb = reduceLeafFwd${K}Ref[java.lang.StringBuilder](xs, sb0, (acc, v) => { if (acc.length != base) acc.append(sep); acc.append(${app("v")}) })"
+      )
       ee.line("sb.append(end).toString")
       ee.result
     }
@@ -1710,7 +2069,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def prefixLengthImpl[A](xs: FBase)(inline p: A => Boolean): Int = $prefixLenV
        |  inline def mapImpl[A, B](xs: FBase)(inline f: A => B): FBase = { val n = xs.length; $mapM }
        |  inline def filterImpl[A](xs: FBase)(inline p: A => Boolean): FBase = $filter
-       |  inline def filterNotImpl[A](xs: FBase)(inline p: A => Boolean): FBase = ${dispatchA(k => s"filterLeaf${k.name}(xs, ${predSAM(k, s"!p(${wrapV(k)})")})")}
+       |  inline def filterNotImpl[A](xs: FBase)(inline p: A => Boolean): FBase = ${dispatchA(k =>
+        s"filterLeaf${k.name}(xs, ${predSAM(k, s"!p(${wrapV(k)})")})"
+      )}
        |  inline def partitionImpl[A](xs: FBase)(inline p: A => Boolean): scala.Tuple2[FBase, FBase] = if (xs.length == 0) new scala.Tuple2(Empty.INSTANCE, Empty.INSTANCE) else $partition
        |  inline def collectImpl[A, B](xs: FBase)(pf: PartialFunction[A, B]): FBase = $collect
        |  inline def partitionMapImpl[A, A1, A2](xs: FBase)(inline f: A => Either[A1, A2]): scala.Tuple2[FBase, FBase] = $partitionMap
@@ -1759,9 +2120,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
     case _        => "Object"
   }
 
-  /** All reduce traversers (input-kind × Z-acc × direction) plus the fold function types. The prim self-kind
-    * unboxed fold (`${I}To${I}Fold`) is emitted only for primitive input kinds; every input kind gets the
-    * generic ref-acc fold (`${I}ToRefFold<Z>`). */
+  /** All reduce traversers (input-kind × Z-acc × direction) plus the fold function types. The prim self-kind unboxed fold (`${I}To${I}Fold`) is emitted only
+    * for primitive input kinds; every input kind gets the generic ref-acc fold (`${I}ToRefFold<Z>`).
+    */
   private def traversersJava: String = {
     val e = new Emit()
     e.line("package farray;")
@@ -1923,10 +2284,10 @@ object GenCores extends BleepCodegenScript("GenCores") {
     e.result
   }
 
-  /** The COVERED (input I, output O) pairs for the Build shape (map/mapConserve): primitive self-kind
-    * (Int->Int, Long->Long, Double->Double) plus every kind paired with Ref (prim->Ref, Ref->prim, Ref->Ref).
-    * Cross-prim pairs (e.g. Int->Long) are NOT here — the surface routes them through a generic per-element
-    * boxed `applyAtImpl` path that preserves the output kind O. */
+  /** The COVERED (input I, output O) pairs for the Build shape (map/mapConserve): primitive self-kind (Int->Int, Long->Long, Double->Double) plus every kind
+    * paired with Ref (prim->Ref, Ref->prim, Ref->Ref). Cross-prim pairs (e.g. Int->Long) are NOT here — the surface routes them through a generic per-element
+    * boxed `applyAtImpl` path that preserves the output kind O.
+    */
   private def buildPairs: List[(Kind, Kind)] = {
     val refK = opKinds.find(_.name == "Ref").get
     val primSelf = opKinds.filter(_.isPrim).map(k => (k, k))
@@ -1935,9 +2296,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
     primSelf ++ toRef ++ fromRef ++ List((refK, refK))
   }
 
-  /** The Java type name of the Build SAM for (I, O): prim-self `${I}To${O}Fn`, prim->Ref `${I}ToRefFn<RO>`,
-    * Ref->prim `RefTo${O}Fn`, Ref->Ref `RefToRefFn<RO>`. A Ref INPUT element is plain Object (no tparam); only
-    * a Ref OUTPUT carries the `roArg` type param (e.g. "B & AnyRef" Scala-side, erased Java-side). */
+  /** The Java type name of the Build SAM for (I, O): prim-self `${I}To${O}Fn`, prim->Ref `${I}ToRefFn<RO>`, Ref->prim `RefTo${O}Fn`, Ref->Ref `RefToRefFn<RO>`.
+    * A Ref INPUT element is plain Object (no tparam); only a Ref OUTPUT carries the `roArg` type param (e.g. "B & AnyRef" Scala-side, erased Java-side).
+    */
   private def buildFnType(ki: Kind, ko: Kind, roArg: String): String =
     (ki.isPrim, ko.isPrim) match {
       case (true, true)   => s"${ki.name}To${ko.name}Fn"
@@ -1946,30 +2307,30 @@ object GenCores extends BleepCodegenScript("GenCores") {
       case (false, false) => s"RefToRefFn<$roArg>"
     }
 
-  /** The per-traverser pieces a WINDOWED sub-traverse needs. The windowed method `<name>(node, skip, take, …)`
-    * walks `node` but APPLIES the per-element action ONLY to the elements in the window [skip, skip+take) (in
-    * THIS direction's frame — a Bwd window counts skip from the END), early-returning the instant `take` hits 0.
-    * It is RECURSIVE (one call per structural child, with a child-local sub-window computed from the child's
-    * KNOWN length) rather than stack-iterative, so skip/take never need threading back across a call boundary —
-    * each parent recomputes its own skip/take from `child.length`. A ReverseNode recurses into the OPPOSITE
-    * direction windowed method with the SAME skip/take (the window then lands in the reversed frame). This is the
-    * (skip,take)-windowed replacement for the deep-base applyBoxed loops in every traverser shape. */
+  /** The per-traverser pieces a WINDOWED sub-traverse needs. The windowed method `<name>(node, skip, take, …)` walks `node` but APPLIES the per-element action
+    * ONLY to the elements in the window [skip, skip+take) (in THIS direction's frame — a Bwd window counts skip from the END), early-returning the instant
+    * `take` hits 0. It is RECURSIVE (one call per structural child, with a child-local sub-window computed from the child's KNOWN length) rather than
+    * stack-iterative, so skip/take never need threading back across a call boundary — each parent recomputes its own skip/take from `child.length`. A
+    * ReverseNode recurses into the OPPOSITE direction windowed method with the SAME skip/take (the window then lands in the reversed frame). This is the
+    * (skip,take)-windowed replacement for the deep-base applyBoxed loops in every traverser shape.
+    */
   private final case class WinSpec(
-      name: String,            // this method's name (e.g. reduceWindowFwdIntInt)
-      other: String,           // opposite-direction windowed method (for the ReverseNode arm)
-      tparam: String,          // "<Z> " / "<RO> " / ""
-      retT: String,            // return type (Z / int / long / void / je)
-      retState: String,        // the value to `return` (e.g. "acc" / "o" / "(((long)ob)<<32)|…" / "" for void)
-      stateDecl: String,       // state+fn params AFTER "FBase node, int skip, int take" (e.g. ", Z acc, …Fold f")
-      stateArgs: String,       // the state arg(s) passed on a recursive call BETWEEN skip/take and the fn (", acc")
-      fnArgs: String,          // the fn arg(s) to pass on a recursive call (e.g. ", f")  (state captured separately)
+      name: String, // this method's name (e.g. reduceWindowFwdIntInt)
+      other: String, // opposite-direction windowed method (for the ReverseNode arm)
+      tparam: String, // "<Z> " / "<RO> " / ""
+      retT: String, // return type (Z / int / long / void / je)
+      retState: String, // the value to `return` (e.g. "acc" / "o" / "(((long)ob)<<32)|…" / "" for void)
+      stateDecl: String, // state+fn params AFTER "FBase node, int skip, int take" (e.g. ", Z acc, …Fold f")
+      stateArgs: String, // the state arg(s) passed on a recursive call BETWEEN skip/take and the fn (", acc")
+      fnArgs: String, // the fn arg(s) to pass on a recursive call (e.g. ", f")  (state captured separately)
       backward: Boolean,
       capture: (String) => String, // wrap a recursive sub-call returning the new state, e.g. v => s"acc = $v;"
-      act: String => Unit,     // per-element action on an element expr (mutates the state locals)
+      act: String => Unit, // per-element action on an element expr (mutates the state locals)
       actRun: (String, String, String) => Unit, // leaf sub-run over arr[start, start±count) in THIS direction
-      isInt: Boolean,          // emit the RangeNode arm (Int input only)
+      isInt: Boolean, // emit the RangeNode arm (Int input only)
       prelude: () => Unit = () => () // method-body lines BEFORE the take<=0 guard (e.g. unpack packed cursors)
   ) {
+
     /** the recursive-call expression into THIS direction's windowed method (state captured by `capture`). */
     def recurExpr(child: String, cskip: String, ctake: String, stateArgs: String): String =
       s"$name($child, $cskip, $ctake$stateArgs$fnArgs)"
@@ -1977,16 +2338,15 @@ object GenCores extends BleepCodegenScript("GenCores") {
       s"$other($child, $cskip, $ctake$stateArgs$fnArgs)"
   }
 
-  /** Emit ONE windowed sub-traverser from a WinSpec — the (skip,take)-windowed replacement for the deep-base
-    * applyBoxed loops. `<ret> name(FBase node, int skip, int take <state>)` walks `node` but APPLIES the
-    * per-element action ONLY to the elements in [skip, skip+take) in THIS direction's frame (a Bwd window counts
-    * `skip` from the END), early-RETURNING the instant `take` hits 0. It is RECURSIVE: each composite node is
-    * decomposed into ordered SEGMENTS (visit order: fwd left→right / base→fillers / prefix→elem→suffix; bwd
-    * mirrors), each segment being a recursion (known child length), a single element, or a filler run; a shared
-    * per-segment routine consumes `skip`/`take` so children get child-local sub-windows and `skip` collapses to 0
-    * after the first partially-covered segment. ReverseNode recurses into the OPPOSITE-direction window with the
-    * SAME skip/take (the window then lands in the reversed frame). Slice/Updated express their base as a SLICE of
-    * the base (base position `off+p` fwd / `baseLen-off-sn+p` bwd) so the one composition rule covers them. */
+  /** Emit ONE windowed sub-traverser from a WinSpec — the (skip,take)-windowed replacement for the deep-base applyBoxed loops.
+    * `<ret> name(FBase node, int skip, int take <state>)` walks `node` but APPLIES the per-element action ONLY to the elements in [skip, skip+take) in THIS
+    * direction's frame (a Bwd window counts `skip` from the END), early-RETURNING the instant `take` hits 0. It is RECURSIVE: each composite node is decomposed
+    * into ordered SEGMENTS (visit order: fwd left→right / base→fillers / prefix→elem→suffix; bwd mirrors), each segment being a recursion (known child length),
+    * a single element, or a filler run; a shared per-segment routine consumes `skip`/`take` so children get child-local sub-windows and `skip` collapses to 0
+    * after the first partially-covered segment. ReverseNode recurses into the OPPOSITE-direction window with the SAME skip/take (the window then lands in the
+    * reversed frame). Slice/Updated express their base as a SLICE of the base (base position `off+p` fwd / `baseLen-off-sn+p` bwd) so the one composition rule
+    * covers them.
+    */
   private def emitWindow(e: Emit, k: Kind, s: WinSpec): Unit = {
     val K = k.name
     val je = jelem(k)
@@ -2166,18 +2526,17 @@ object GenCores extends BleepCodegenScript("GenCores") {
     e.close() // method
   }
 
-  /** Emit a windowed sub-traverse of `base` RESTRICTED to base[off, off+len) — i.e. a deep SliceNode base or an
-    * Updated prefix/suffix. Composes a base this-direction window: fwd base-position `off+skip`; bwd base
-    * reversed-position `(baseLen-off-len)+skip`. `skip`/`take` are this-segment-local on entry; on exit they are
-    * decremented by the consumed amounts (so a following segment continues correctly). */
+  /** Emit a windowed sub-traverse of `base` RESTRICTED to base[off, off+len) — i.e. a deep SliceNode base or an Updated prefix/suffix. Composes a base
+    * this-direction window: fwd base-position `off+skip`; bwd base reversed-position `(baseLen-off-len)+skip`. `skip`/`take` are this-segment-local on entry;
+    * on exit they are decremented by the consumed amounts (so a following segment continues correctly).
+    */
   private def sliceDeep(e: Emit, s: WinSpec, base: String, off: String, len: String): Unit = e.scope {
     e.line(s"int _so = $off;")
     e.line(s"int _sn = $len;")
     e.line("int _ss = skip < _sn ? skip : _sn;")
     e.line("int _st = _sn - _ss; if (_st > take) _st = take;")
     e.open("if (_st > 0)")
-    if !s.backward then
-      e.line(s"${s.capture(s.recurExpr(base, "_so + _ss", "_st", s.stateArgs))}")
+    if !s.backward then e.line(s"${s.capture(s.recurExpr(base, "_so + _ss", "_st", s.stateArgs))}")
     else {
       e.line(s"int _bl = $base.length;")
       e.line(s"${s.capture(s.recurExpr(base, "_bl - _so - _sn + _ss", "_st", s.stateArgs))}")
@@ -2186,8 +2545,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
     e.line("skip -= _ss; take -= _st;")
   }
 
-  /** Emit a leaf-array run for an Updated prefix/suffix (base IS a leaf): act on arr[start, start+len) clipped to
-    * the window, consuming skip/take. Direction-aware (fwd ascending / bwd descending mirror). */
+  /** Emit a leaf-array run for an Updated prefix/suffix (base IS a leaf): act on arr[start, start+len) clipped to the window, consuming skip/take.
+    * Direction-aware (fwd ascending / bwd descending mirror).
+    */
   private def updLeafRun(e: Emit, s: WinSpec, arr: String, start: String, len: String): Unit = e.scope {
     e.line(s"int _rs = $start;")
     e.line(s"int _rn = $len;")
@@ -2200,42 +2560,39 @@ object GenCores extends BleepCodegenScript("GenCores") {
     e.line("skip -= _ss; take -= _st;")
   }
 
-  /** The per-traverser pieces the ITERATIVE MAIN WALK needs — the single-source spec for the un-windowed,
-    * explicit-stack lowering (the mirror of `WinSpec`, which single-sources the recursive windowed lowering).
-    * The main walk is the node-arm ORDER (leaf / One / Prepend / Append / Concat / Reverse / Slice / Pad /
-    * Updated / Range) over one lazy `FBase[] stack`; a deferred Append/Prepend element rides as a `${K}One`
-    * pushed on that same stack (no separate tail array). ONLY ReverseNode recurses (into the opposite-direction
-    * method). Per-shape knobs are callbacks (`act`, `runLeaf`, `run`, `winCall`, the ReverseNode recursion). The
-    * HOOKS the OTHER shapes will need are
-    * designed in now (Reduce uses the no-op versions):
-    *   - `cursorDecl`/`cursorArgs` — an OPTIONAL output-cursor threaded BESIDE the state (Build/Partition write an
-    *     out[] and return the bumped cursor `o`; Reduce has none, both empty).
-    *   - `earlyStopAfterAct` — an OPTIONAL early-stop hook emitted after a per-element action (ShortCircuit breaks
-    *     out of the walk; Reduce no-ops).
-    *   - the WRITE direction is intentionally NOT baked into `backward`: a shape whose write-cursor advances
-    *     opposite the visit direction (Scan) supplies its own `runLeaf`/`run`/`act` that write in the write frame
-    *     while the walk visits in `backward`. Reduce's write dir == visit dir, so its callbacks just use `backward`. */
+  /** The per-traverser pieces the ITERATIVE MAIN WALK needs — the single-source spec for the un-windowed, explicit-stack lowering (the mirror of `WinSpec`,
+    * which single-sources the recursive windowed lowering). The main walk is the node-arm ORDER (leaf / One / Prepend / Append / Concat / Reverse / Slice / Pad
+    * / Updated / Range) over one lazy `FBase[] stack`; a deferred Append/Prepend element rides as a `${K}One` pushed on that same stack (no separate tail
+    * array). ONLY ReverseNode recurses (into the opposite-direction method). Per-shape knobs are callbacks (`act`, `runLeaf`, `run`, `winCall`, the ReverseNode
+    * recursion). The HOOKS the OTHER shapes will need are designed in now (Reduce uses the no-op versions):
+    *   - `cursorDecl`/`cursorArgs` — an OPTIONAL output-cursor threaded BESIDE the state (Build/Partition write an out[] and return the bumped cursor `o`;
+    *     Reduce has none, both empty).
+    *   - `earlyStopAfterAct` — an OPTIONAL early-stop hook emitted after a per-element action (ShortCircuit breaks out of the walk; Reduce no-ops).
+    *   - the WRITE direction is intentionally NOT baked into `backward`: a shape whose write-cursor advances opposite the visit direction (Scan) supplies its
+    *     own `runLeaf`/`run`/`act` that write in the write frame while the walk visits in `backward`. Reduce's write dir == visit dir, so its callbacks just
+    *     use `backward`.
+    */
   private final case class WalkSpec(
-      sig: String,             // the method signature (e.g. "static <Z> Z reduceFwdRefRef(FBase root, Z acc, …f)")
-      K: String,               // input kind name (node-class prefix: ${K}Arr / ${K}One / …)
-      isInt: Boolean,          // emit the RangeNode arm (Int input only)
-      retState: String,        // the value to `return` at the end (e.g. "acc" / "o"); "" for a void walk
+      sig: String, // the method signature (e.g. "static <Z> Z reduceFwdRefRef(FBase root, Z acc, …f)")
+      K: String, // input kind name (node-class prefix: ${K}Arr / ${K}One / …)
+      isInt: Boolean, // emit the RangeNode arm (Int input only)
+      retState: String, // the value to `return` at the end (e.g. "acc" / "o"); "" for a void walk
       recurReverse: String => Unit, // the ReverseNode arm: given "rev.base", emit the opposite-direction call
-      act: String => Unit,     // per-element action on an element expr (One/Prepend·elem/Append·elem/Pad·filler/Range)
+      act: String => Unit, // per-element action on an element expr (One/Prepend·elem/Append·elem/Pad·filler/Range)
       runLeaf: String => Unit, // a WHOLE-leaf run over the named array (HotSpot drops the bounds check)
       run: (String, String, String) => Unit, // a leaf window run over arr[start, start±count) (Slice/Pad/Updated)
       winCall: (String, String, String) => Unit, // deep-base window hand-off: node[lo, lo+len) in THIS direction
-      cursorDecl: String = "",  // OPTIONAL output-cursor decl, threaded beside the state (Build/Partition); "" here
-      cursorArgs: String = "",  // OPTIONAL output-cursor arg(s) on a recursive call; "" here
+      cursorDecl: String = "", // OPTIONAL output-cursor decl, threaded beside the state (Build/Partition); "" here
+      cursorArgs: String = "", // OPTIONAL output-cursor arg(s) on a recursive call; "" here
       earlyStopAfterAct: () => Unit = () => (), // OPTIONAL early-stop hook after a per-element act (ShortCircuit); no-op here
       prelude: () => Unit = () => (), // OPTIONAL extra local decls emitted after `int sp = 0;` (Partition's two int cursors); no-op here
       prependVar: String = "p" // the Prepend arm's pattern-binding name; "pr" for shapes whose fn param is named `p` (Filter/Partition)
   )
 
-  /** Emit the ITERATIVE MAIN WALK from a `WalkSpec` — the single source for the un-windowed, explicit-stack
-    * lowering (generalizing `reduceTraverser`'s former body verbatim: same node arms, same lazy `FBase[]`/
-    * `tail[]`/`isTail[]` stack, same `winCall` hand-off, same pop loop). `backward` mirrors the VISIT order. This
-    * emits the method from its `sig` through its closing brace; the caller emits any trailing windowed traverser. */
+  /** Emit the ITERATIVE MAIN WALK from a `WalkSpec` — the single source for the un-windowed, explicit-stack lowering (generalizing `reduceTraverser`'s former
+    * body verbatim: same node arms, same lazy `FBase[]`/ `tail[]`/`isTail[]` stack, same `winCall` hand-off, same pop loop). `backward` mirrors the VISIT
+    * order. This emits the method from its `sig` through its closing brace; the caller emits any trailing windowed traverser.
+    */
   private def emitMainWalk(e: Emit, spec: WalkSpec, backward: Boolean): Unit = {
     val K = spec.K
     // the Java element type for this input kind (Pad filler / Updated leaf-array element type).
@@ -2407,12 +2764,11 @@ object GenCores extends BleepCodegenScript("GenCores") {
     e.close() // method
   }
 
-  /** Emit one Reduce push traverser over input kind `k`. `refAcc` picks the function type (Z=Ref generic vs
-    * Z=${k} unboxed) and the acc type; `backward` mirrors visit order. Per §4.1: Concat/Append/Prepend
-    * deferrals + deep Slice/Pad/Updated bases ride a LOCAL explicit stack (lazily allocated — null until the
-    * first defer); a bare-leaf walk never touches it. ONLY ReverseNode recurses — fwd calls bwd on rev.base
-    * (and vice versa), so the direction flip rides the JVM call boundary. (Deep bases over a NON-leaf use
-    * applyBoxed — minimal but correct; the leaf-base fast path is unboxed.) */
+  /** Emit one Reduce push traverser over input kind `k`. `refAcc` picks the function type (Z=Ref generic vs Z=${k} unboxed) and the acc type; `backward`
+    * mirrors visit order. Per §4.1: Concat/Append/Prepend deferrals + deep Slice/Pad/Updated bases ride a LOCAL explicit stack (lazily allocated — null until
+    * the first defer); a bare-leaf walk never touches it. ONLY ReverseNode recurses — fwd calls bwd on rev.base (and vice versa), so the direction flip rides
+    * the JVM call boundary. (Deep bases over a NON-leaf use applyBoxed — minimal but correct; the leaf-base fast path is unboxed.)
+    */
   private def reduceTraverser(e: Emit, k: Kind, backward: Boolean, refAcc: Boolean): Unit = {
     val K = k.name
     val je = jelem(k) // Java element type: int/long/double/Object
@@ -2496,9 +2852,16 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val winName = s"reduceWindow${dir}${K}${if refAcc then "Ref" else K}"
     val winOther = s"reduceWindow${other}${K}${if refAcc then "Ref" else K}"
     val win = WinSpec(
-      name = winName, other = winOther, tparam = if refAcc then "<Z> " else "",
-      retT = accT, retState = "acc", stateDecl = s", $accT acc, $foldT f", stateArgs = ", acc", fnArgs = ", f",
-      backward = backward, capture = v => s"acc = $v;",
+      name = winName,
+      other = winOther,
+      tparam = if refAcc then "<Z> " else "",
+      retT = accT,
+      retState = "acc",
+      stateDecl = s", $accT acc, $foldT f",
+      stateArgs = ", acc",
+      fnArgs = ", f",
+      backward = backward,
+      capture = v => s"acc = $v;",
       act = el => e.line(s"acc = f.apply(acc, $el);"),
       actRun = (arr, start, count) => run(arr, start, count),
       isInt = K == "Int"
@@ -2515,7 +2878,10 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // acted by the One arm. No output-cursor, no early-stop, and write dir == visit dir (the run/runLeaf/act
     // callbacks all use `backward` directly).
     val spec = WalkSpec(
-      sig = sig, K = K, isInt = K == "Int", retState = "acc",
+      sig = sig,
+      K = K,
+      isInt = K == "Int",
+      retState = "acc",
       recurReverse = base => e.line(s"acc = $recur($base, acc, f);"),
       act = el => e.line(s"acc = f.apply(acc, $el);"),
       runLeaf = arr => runLeaf(arr),
@@ -2527,13 +2893,12 @@ object GenCores extends BleepCodegenScript("GenCores") {
     emitWindow(e, k, win)
   }
 
-  /** Emit one Build (map) push traverser over (input kind `ki`, output kind `ko`). The SAME lazy-stack walk
-    * skeleton as `reduceTraverser`, but instead of threading an accumulator it WRITES `out[o] = f.apply(elem)`
-    * and bumps `o`; it returns the final cursor `o`. `backward` mirrors the READ order (Concat r-then-l,
-    * runs descending, …) yet the cursor `o` still advances ascending — so a ReverseNode visited from the Fwd
-    * build calls the Bwd build (reading last-to-first), which fills out[o..] in reversed-source order, exactly
-    * as `reverse.map` requires. Deep-base Slice/Pad/Updated read per-index via applyBoxed (later pass replaces
-    * those — do NOT change here). `out` is `O[]` (prim) / `Object[]` (Ref); `f` is the (I,O) Build SAM. */
+  /** Emit one Build (map) push traverser over (input kind `ki`, output kind `ko`). The SAME lazy-stack walk skeleton as `reduceTraverser`, but instead of
+    * threading an accumulator it WRITES `out[o] = f.apply(elem)` and bumps `o`; it returns the final cursor `o`. `backward` mirrors the READ order (Concat
+    * r-then-l, runs descending, …) yet the cursor `o` still advances ascending — so a ReverseNode visited from the Fwd build calls the Bwd build (reading
+    * last-to-first), which fills out[o..] in reversed-source order, exactly as `reverse.map` requires. Deep-base Slice/Pad/Updated read per-index via
+    * applyBoxed (later pass replaces those — do NOT change here). `out` is `O[]` (prim) / `Object[]` (Ref); `f` is the (I,O) Build SAM.
+    */
   private def buildTraverser(e: Emit, ki: Kind, ko: Kind, backward: Boolean): Unit = {
     val KI = ki.name
     val jiE = jelem(ki) // input Java element type: int/long/double/Object
@@ -2605,9 +2970,16 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val winName = s"buildWindow${dir}${KI}${ko.name}"
     val winOther = s"buildWindow${other}${KI}${ko.name}"
     val win = WinSpec(
-      name = winName, other = winOther, tparam = tpClause,
-      retT = "int", retState = "o", stateDecl = s", $outT out, int o, $fnT f", stateArgs = ", out, o", fnArgs = ", f",
-      backward = backward, capture = v => s"o = $v;",
+      name = winName,
+      other = winOther,
+      tparam = tpClause,
+      retT = "int",
+      retState = "o",
+      stateDecl = s", $outT out, int o, $fnT f",
+      stateArgs = ", out, o",
+      fnArgs = ", f",
+      backward = backward,
+      capture = v => s"o = $v;",
       act = el => writeElem(el),
       actRun = (arr, start, count) => run(arr, start, count),
       isInt = KI == "Int"
@@ -2622,7 +2994,10 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // and is written by the One arm. Write dir == visit dir (the run/runLeaf/writeElem callbacks all use `backward`
     // directly).
     val spec = WalkSpec(
-      sig = sig, K = KI, isInt = KI == "Int", retState = "o",
+      sig = sig,
+      K = KI,
+      isInt = KI == "Int",
+      retState = "o",
       recurReverse = base => e.line(s"o = $recur($base, out, o, f);"),
       act = el => writeElem(el),
       runLeaf = arr => runLeaf(arr),
@@ -2634,16 +3009,15 @@ object GenCores extends BleepCodegenScript("GenCores") {
     emitWindow(e, ki, win)
   }
 
-  /** Emit one Build-filtered (filter) push traverser over input kind `k`. The SAME lazy-stack walk skeleton as
-    * `buildTraverser`, but the write is predicate-GUARDED: `if (p.apply(elem)) { out[o] = elem; o += 1; }`. The
-    * kept-count cursor `o` advances ascending in BOTH directions; `backward` mirrors the READ order only. The
-    * ReverseNode arm is the ONLY recursion: it bounces into the OPPOSITE-direction filter (Fwd <-> Bwd), so a
-    * reversed subtree is READ last-to-first while the WRITE stays forward out[o++] — keeping the SAME kept
-    * elements in REVERSED order, exactly as `reverse.filter` requires (the scan-style decoupling: visit dir flips
-    * at the ReverseNode, write dir is fixed forward; filter has no per-slot acc so it is simpler — only the read
-    * order changes). Deep-base Slice/Pad/Updated read per-index via applyBoxed (later pass replaces those — do NOT
-    * change here). `out` is the `${K}[]` max-size array; `p` is the `${K}Pred` SAM. Fwd is the public entry
-    * `buildFiltered${K}`; Bwd is the reverse-arm helper `buildFilteredBwd${K}`. Returns the kept-count cursor. */
+  /** Emit one Build-filtered (filter) push traverser over input kind `k`. The SAME lazy-stack walk skeleton as `buildTraverser`, but the write is
+    * predicate-GUARDED: `if (p.apply(elem)) { out[o] = elem; o += 1; }`. The kept-count cursor `o` advances ascending in BOTH directions; `backward` mirrors
+    * the READ order only. The ReverseNode arm is the ONLY recursion: it bounces into the OPPOSITE-direction filter (Fwd <-> Bwd), so a reversed subtree is READ
+    * last-to-first while the WRITE stays forward out[o++] — keeping the SAME kept elements in REVERSED order, exactly as `reverse.filter` requires (the
+    * scan-style decoupling: visit dir flips at the ReverseNode, write dir is fixed forward; filter has no per-slot acc so it is simpler — only the read order
+    * changes). Deep-base Slice/Pad/Updated read per-index via applyBoxed (later pass replaces those — do NOT change here). `out` is the `${K}[]` max-size
+    * array; `p` is the `${K}Pred` SAM. Fwd is the public entry `buildFiltered${K}`; Bwd is the reverse-arm helper `buildFilteredBwd${K}`. Returns the
+    * kept-count cursor.
+    */
   private def buildFilteredTraverser(e: Emit, k: Kind, backward: Boolean): Unit = {
     val K = k.name
     val je = jelem(k) // input Java element type: int/long/double/Object
@@ -2705,9 +3079,16 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val winName = if backward then s"buildFilteredWindowBwd${K}" else s"buildFilteredWindow${K}"
     val winOther = if backward then s"buildFilteredWindow${K}" else s"buildFilteredWindowBwd${K}"
     val win = WinSpec(
-      name = winName, other = winOther, tparam = "",
-      retT = "int", retState = "o", stateDecl = s", $je[] out, int o, ${K}Pred p", stateArgs = ", out, o", fnArgs = ", p",
-      backward = backward, capture = v => s"o = $v;",
+      name = winName,
+      other = winOther,
+      tparam = "",
+      retT = "int",
+      retState = "o",
+      stateDecl = s", $je[] out, int o, ${K}Pred p",
+      stateArgs = ", out, o",
+      fnArgs = ", p",
+      backward = backward,
+      capture = v => s"o = $v;",
       act = el => writeElem(el),
       actRun = (arr, start, count) => run(arr, start, count),
       isInt = K == "Int"
@@ -2722,7 +3103,10 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // deferred Append/Prepend element rides as a ${K}One on the stack and is written (guarded) by the One arm.
     // Write dir == visit dir.
     val spec = WalkSpec(
-      sig = sig, K = K, isInt = K == "Int", retState = "o",
+      sig = sig,
+      K = K,
+      isInt = K == "Int",
+      retState = "o",
       recurReverse = base => e.line(s"o = $recur($base, out, o, p);"),
       act = el => writeElem(el),
       runLeaf = arr => runLeaf(arr),
@@ -2735,14 +3119,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
     emitWindow(e, k, win)
   }
 
-  /** Emit one Partition push traverser over input kind `k` — the DUAL-output sibling of `buildFilteredTraverser`.
-    * SAME lazy-stack walk skeleton, but each element routes to outA[oa++] (predicate true) or outB[ob++] (false);
-    * BOTH cursors advance ascending in BOTH directions. `backward` mirrors the READ order only. The ReverseNode arm
-    * is the ONLY recursion: it bounces into the OPPOSITE-direction partition (Fwd <-> Bwd), threading BOTH cursors
-    * via a PACKED long (oa in the low 32 bits, ob in the high 32 bits), so a reversed subtree is READ last-to-first
-    * while BOTH WRITES stay forward — keeping the SAME split in REVERSED order, exactly as `reverse.partition`
-    * requires. Returns the packed (oa, ob) long. Fwd entry `partitionFwd${K}` (Scala passes oa = ob = 0); Bwd is the
-    * reverse-arm helper `partitionBwd${K}`. Deep-base Slice/Pad/Updated read per-index via applyBoxed (later pass). */
+  /** Emit one Partition push traverser over input kind `k` — the DUAL-output sibling of `buildFilteredTraverser`. SAME lazy-stack walk skeleton, but each
+    * element routes to outA[oa++] (predicate true) or outB[ob++] (false); BOTH cursors advance ascending in BOTH directions. `backward` mirrors the READ order
+    * only. The ReverseNode arm is the ONLY recursion: it bounces into the OPPOSITE-direction partition (Fwd <-> Bwd), threading BOTH cursors via a PACKED long
+    * (oa in the low 32 bits, ob in the high 32 bits), so a reversed subtree is READ last-to-first while BOTH WRITES stay forward — keeping the SAME split in
+    * REVERSED order, exactly as `reverse.partition` requires. Returns the packed (oa, ob) long. Fwd entry `partitionFwd${K}` (Scala passes oa = ob = 0); Bwd is
+    * the reverse-arm helper `partitionBwd${K}`. Deep-base Slice/Pad/Updated read per-index via applyBoxed (later pass).
+    */
   private def partitionTraverser(e: Emit, k: Kind, backward: Boolean): Unit = {
     val K = k.name
     val je = jelem(k)
@@ -2806,10 +3189,14 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val winName = if backward then s"partitionWindowBwd${K}" else s"partitionWindowFwd${K}"
     val winOther = if backward then s"partitionWindowFwd${K}" else s"partitionWindowBwd${K}"
     val win = WinSpec(
-      name = winName, other = winOther, tparam = "",
-      retT = "long", retState = packedRet,
+      name = winName,
+      other = winOther,
+      tparam = "",
+      retT = "long",
+      retState = packedRet,
       stateDecl = s", $je[] outA, $je[] outB, long oa0, long ob0, ${K}Pred p",
-      stateArgs = ", outA, outB, (long) oa, (long) ob", fnArgs = ", p",
+      stateArgs = ", outA, outB, (long) oa, (long) ob",
+      fnArgs = ", p",
       backward = backward,
       capture = v => s"{ long _pk = $v; oa = (int) (_pk & 0xffffffffL); ob = (int) (_pk >>> 32); }",
       act = el => writeElem(el),
@@ -2828,7 +3215,10 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // Append/Prepend element rides as a ${K}One on the stack and is dual-written by the One arm. The fn param is
     // named `p` so the Prepend binding is `pr`. Write dir == visit dir.
     val spec = WalkSpec(
-      sig = sig, K = K, isInt = K == "Int", retState = packedRet,
+      sig = sig,
+      K = K,
+      isInt = K == "Int",
+      retState = packedRet,
       recurReverse = base => {
         e.line(s"long _pk = $recur($base, outA, outB, (long) oa, (long) ob, p);")
         e.line("oa = (int) (_pk & 0xffffffffL);")
@@ -2846,12 +3236,12 @@ object GenCores extends BleepCodegenScript("GenCores") {
     emitWindow(e, k, win)
   }
 
-  /** Emit one Foreach push traverser over input kind `k`. The SAME lazy-stack walk skeleton as `reduceTraverser`,
-    * but it threads NO accumulator and produces NO output — each element just calls `f.apply(elem)`. `backward`
-    * mirrors visit order (needed because a ReverseNode flips a subtree's local order — the Fwd traverser recurses
-    * into the Bwd one). Deep-base Slice/Pad/Updated keep the per-index applyBoxed read (a later pass replaces
-    * those — do NOT change here). The deferred-element stack mirrors reduceTraverser (Prepend fwd-defer / Append
-    * bwd-defer); a deferred tail slot APPLIES `f` to the deferred element on pop. Returns void. */
+  /** Emit one Foreach push traverser over input kind `k`. The SAME lazy-stack walk skeleton as `reduceTraverser`, but it threads NO accumulator and produces NO
+    * output — each element just calls `f.apply(elem)`. `backward` mirrors visit order (needed because a ReverseNode flips a subtree's local order — the Fwd
+    * traverser recurses into the Bwd one). Deep-base Slice/Pad/Updated keep the per-index applyBoxed read (a later pass replaces those — do NOT change here).
+    * The deferred-element stack mirrors reduceTraverser (Prepend fwd-defer / Append bwd-defer); a deferred tail slot APPLIES `f` to the deferred element on
+    * pop. Returns void.
+    */
   private def foreachTraverser(e: Emit, k: Kind, backward: Boolean): Unit = {
     val K = k.name
     val je = jelem(k) // int/long/double/Object
@@ -2906,9 +3296,16 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val winName = s"foreachWindow${dir}${K}"
     val winOther = s"foreachWindow${other}${K}"
     val win = WinSpec(
-      name = winName, other = winOther, tparam = "",
-      retT = "void", retState = "", stateDecl = s", ${K}Consumer f", stateArgs = "", fnArgs = ", f",
-      backward = backward, capture = v => s"$v;",
+      name = winName,
+      other = winOther,
+      tparam = "",
+      retT = "void",
+      retState = "",
+      stateDecl = s", ${K}Consumer f",
+      stateArgs = "",
+      fnArgs = ", f",
+      backward = backward,
+      capture = v => s"$v;",
       act = el => e.line(s"f.apply($el);"),
       actRun = (arr, start, count) => run(arr, start, count),
       isInt = K == "Int"
@@ -2922,7 +3319,10 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // opposite-direction foreach; a deferred Append/Prepend element rides as a ${K}One on the stack and is applied
     // by the One arm.
     val spec = WalkSpec(
-      sig = sig, K = K, isInt = K == "Int", retState = "",
+      sig = sig,
+      K = K,
+      isInt = K == "Int",
+      retState = "",
       recurReverse = base => e.line(s"$recur($base, f);"),
       act = el => e.line(s"f.apply($el);"),
       runLeaf = arr => runLeaf(arr),
@@ -2934,14 +3334,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
     emitWindow(e, k, win)
   }
 
-  /** Emit one Scan push traverser over input kind `k`. KEY TRICK: the running accumulator is ALWAYS the LAST
-    * value already written to `out` — `out[o-1]` for the Fwd scan (writing ascending), `out[o+1]` for the Bwd
-    * scan (writing descending) — so there is NO accumulator threading and NO dual return; each method returns
-    * only the advanced cursor `o`. Per element: write `out[o] = f.apply(out[o-1], elem)` then `o += 1` (Fwd) /
-    * mirror (Bwd). `refAcc` picks the SAM (Z=Ref generic `${K}ToRefFold<Z>` vs Z=${k} unboxed `${K}To${K}Fold`)
-    * and the `out` array's element type; a Ref acc reads `out[o-1]` as Object and casts to Z. Same lazy-stack
-    * walk skeleton; ReverseNode recurses into the opposite direction; deep-base Slice/Pad/Updated keep the
-    * per-index applyBoxed read (a later pass replaces those — do NOT change here). */
+  /** Emit one Scan push traverser over input kind `k`. KEY TRICK: the running accumulator is ALWAYS the LAST value already written to `out` — `out[o-1]` for
+    * the Fwd scan (writing ascending), `out[o+1]` for the Bwd scan (writing descending) — so there is NO accumulator threading and NO dual return; each method
+    * returns only the advanced cursor `o`. Per element: write `out[o] = f.apply(out[o-1], elem)` then `o += 1` (Fwd) / mirror (Bwd). `refAcc` picks the SAM
+    * (Z=Ref generic `${K}ToRefFold<Z>` vs Z=${k} unboxed `${K}To${K}Fold`) and the `out` array's element type; a Ref acc reads `out[o-1]` as Object and casts
+    * to Z. Same lazy-stack walk skeleton; ReverseNode recurses into the opposite direction; deep-base Slice/Pad/Updated keep the per-index applyBoxed read (a
+    * later pass replaces those — do NOT change here).
+    */
   // Emit ONE scan push traverser. The WRITE convention is FIXED by the op (`writeBackward`: false = scanLeft,
   // writes out[o]=f(out[o-1],e) then o++; true = scanRight, writes out[o]=f(e,out[o+1]) then o--). The VISIT
   // direction (`visitBackward`: leaf-loop direction + Concat/Append/Prepend descent order) is INDEPENDENT and
@@ -2952,13 +3351,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
   // ReverseNode arm recursed into the opposite-direction scan, switching write conventions mid-output (AIOOBE).
   private def scanTraverser(e: Emit, k: Kind, writeBackward: Boolean, visitBackward: Boolean, refAcc: Boolean): Unit = {
     val K = k.name
-    val je = jelem(k)         // input Java element type: int/long/double/Object
-    val backward = visitBackward            // VISIT direction drives the walk skeleton (leaf loop + descent order)
-    val dir = if writeBackward then "Bwd" else "Fwd"   // write dir tags the name (MAIN entries keep scan{Fwd,Bwd}…)
-    val rev = if visitBackward == writeBackward then "" else "Rev"   // reverse arm = visit dir != write dir
-    val zT = if refAcc then "Z" else je      // accumulator Java type
+    val je = jelem(k) // input Java element type: int/long/double/Object
+    val backward = visitBackward // VISIT direction drives the walk skeleton (leaf loop + descent order)
+    val dir = if writeBackward then "Bwd" else "Fwd" // write dir tags the name (MAIN entries keep scan{Fwd,Bwd}…)
+    val rev = if visitBackward == writeBackward then "" else "Rev" // reverse arm = visit dir != write dir
+    val zT = if refAcc then "Z" else je // accumulator Java type
     val foldT = if refAcc then s"${K}ToRefFold<Z>" else s"${K}To${K}Fold"
-    val outT = if refAcc then "Object[]" else s"$je[]"   // out array element type = accumulator kind
+    val outT = if refAcc then "Object[]" else s"$je[]" // out array element type = accumulator kind
     val tparam = if refAcc then "<Z> " else ""
     val name = s"scan${dir}${rev}${K}${if refAcc then "Ref" else K}"
     val sig = s"static ${tparam}int $name(FBase root, $outT out, int o, $foldT f)"
@@ -3026,9 +3425,16 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val winName = s"scanWindow${dir}${rev}${K}${accSuffix}"
     val winOther = s"scanWindow${dir}${if rev == "Rev" then "" else "Rev"}${K}${accSuffix}"
     val win = WinSpec(
-      name = winName, other = winOther, tparam = tparam,
-      retT = "int", retState = "o", stateDecl = s", $outT out, int o, $foldT f", stateArgs = ", out, o", fnArgs = ", f",
-      backward = backward, capture = v => s"o = $v;",
+      name = winName,
+      other = winOther,
+      tparam = tparam,
+      retT = "int",
+      retState = "o",
+      stateDecl = s", $outT out, int o, $foldT f",
+      stateArgs = ", out, o",
+      fnArgs = ", f",
+      backward = backward,
+      capture = v => s"o = $v;",
       act = el => writeElem(el),
       actRun = (arr, start, count) => run(arr, start, count),
       isInt = K == "Int"
@@ -3044,7 +3450,10 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // ReverseNode arm recurses into the SAME write dir with the OPPOSITE visit dir (the `Rev` mutual mirror),
     // threading `o`; a deferred Append/Prepend element rides as a ${K}One on the stack and is written by the One arm.
     val spec = WalkSpec(
-      sig = sig, K = K, isInt = K == "Int", retState = "o",
+      sig = sig,
+      K = K,
+      isInt = K == "Int",
+      retState = "o",
       recurReverse = base => e.line(s"o = $recur($base, out, o, f);"),
       act = el => writeElem(el),
       runLeaf = arr => runLeaf(arr),
@@ -3056,15 +3465,14 @@ object GenCores extends BleepCodegenScript("GenCores") {
     emitWindow(e, k, win)
   }
 
-  /** Emit one Short-circuit push traverser over input kind `k`. SAME lazy-stack walk skeleton as the foreach
-    * traverser, but it returns the FIRST-HIT global index and ABANDONS the walk via the method `return` on a hit
-    * (no run-to-completion). It threads a cumulative element count `cum` (Fwd: the global index of the run's first
-    * element, ascending; Bwd: the global index of the run's HIGHEST element, descending) so a local leaf hit maps
-    * to a global index, and `from` (Fwd) / `end` (Bwd) clamps each leaf window — whole leaves wholly below `from`
-    * / above `end` are skipped without testing the predicate. A ReverseNode recurses into the opposite direction;
-    * the recursion ENCODES "no hit, updated cum = C" as `~C` (always negative, since the running cum stays in
-    * range) and a hit as the global index (`>= 0`). The caller decodes: r >= 0 -> propagate the hit; else cum = ~r.
-    * Deep-base Slice/Pad/Updated keep the per-index applyBoxed read (consistent with the other shapes). */
+  /** Emit one Short-circuit push traverser over input kind `k`. SAME lazy-stack walk skeleton as the foreach traverser, but it returns the FIRST-HIT global
+    * index and ABANDONS the walk via the method `return` on a hit (no run-to-completion). It threads a cumulative element count `cum` (Fwd: the global index of
+    * the run's first element, ascending; Bwd: the global index of the run's HIGHEST element, descending) so a local leaf hit maps to a global index, and `from`
+    * (Fwd) / `end` (Bwd) clamps each leaf window — whole leaves wholly below `from` / above `end` are skipped without testing the predicate. A ReverseNode
+    * recurses into the opposite direction; the recursion ENCODES "no hit, updated cum = C" as `~C` (always negative, since the running cum stays in range) and
+    * a hit as the global index (`>= 0`). The caller decodes: r >= 0 -> propagate the hit; else cum = ~r. Deep-base Slice/Pad/Updated keep the per-index
+    * applyBoxed read (consistent with the other shapes).
+    */
   private def scTraverser(e: Emit, k: Kind, backward: Boolean): Unit = {
     val K = k.name
     val je = jelem(k) // int/long/double/Object
@@ -3354,7 +3762,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
   private def fbase: String = {
     val leaves = prims.flatMap(p => List(s"${p.name}Arr", s"${p.name}Append", s"${p.name}Prepend"))
     val permits =
-      (List("Empty") ++ leaves ++ List("RefArr", "RefAppend", "RefPrepend", "Concat", "RangeNode", "ReverseNode", "SliceNode") ++ padKinds.map(_._1 + "Pad") ++ padKinds.map(
+      (List("Empty") ++ leaves ++ List("RefArr", "RefAppend", "RefPrepend", "Concat", "RangeNode", "ReverseNode", "SliceNode") ++ padKinds.map(
+        _._1 + "Pad"
+      ) ++ padKinds.map(
         _._1 + "Updated"
       ) ++ oneKinds.map(_._1 + "One")).mkString(", ")
     s"""package farray;
@@ -3395,9 +3805,15 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |
        |    @Override public Object applyBoxed(int i) { return ${p.boxed}.valueOf(arr[i]); }
        |
-       |    @Override public FBase take(int n) { int m = n < 0 ? 0 : (n > length ? length : n); return m == 0 ? Empty.INSTANCE : (m == 1 ? ${one1("0")} : (m == length ? this : new SliceNode(this, 0, m))); }
-       |    @Override public FBase drop(int n) { int d = n < 0 ? 0 : (n > length ? length : n); int m = length - d; return m == 0 ? Empty.INSTANCE : (m == 1 ? ${one1("d")} : (d == 0 ? this : new SliceNode(this, d, m))); }
-       |    @Override public FBase slice(int from, int until) { int lo = from < 0 ? 0 : from, hi = until > length ? length : until; int m = hi - lo; if (m <= 0) return Empty.INSTANCE; if (m == 1) return ${one1("lo")}; return (lo == 0 && hi == length) ? this : new SliceNode(this, lo, m); }
+       |    @Override public FBase take(int n) { int m = n < 0 ? 0 : (n > length ? length : n); return m == 0 ? Empty.INSTANCE : (m == 1 ? ${one1(
+        "0"
+      )} : (m == length ? this : new SliceNode(this, 0, m))); }
+       |    @Override public FBase drop(int n) { int d = n < 0 ? 0 : (n > length ? length : n); int m = length - d; return m == 0 ? Empty.INSTANCE : (m == 1 ? ${one1(
+        "d"
+      )} : (d == 0 ? this : new SliceNode(this, d, m))); }
+       |    @Override public FBase slice(int from, int until) { int lo = from < 0 ? 0 : from, hi = until > length ? length : until; int m = hi - lo; if (m <= 0) return Empty.INSTANCE; if (m == 1) return ${one1(
+        "lo"
+      )}; return (lo == 0 && hi == length) ? this : new SliceNode(this, lo, m); }
        |    @Override public FBase reverse() { return length < 2 ? this : new ReverseNode(this); }
        |    @Override public FBase init() { return take(length - 1); }
        |
@@ -3642,8 +4058,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
   /** Ops-kinds (Int/Long/Double/Ref) for the per-kind lazy nodes that carry a primitive payload. */
   private val padKinds = List(("Int", "int", "Integer"), ("Long", "long", "Long"), ("Double", "double", "Double"), ("Ref", "Object", ""))
 
-  /** Kinds with a `${K}One` singleton: EVERY prim leaf kind + Ref. Every length-1 FArray is one of these, so a
-    * length-1 leaf/append/prepend/slice of any prim kind canonicalizes to its own-kind One with no boxing. */
+  /** Kinds with a `${K}One` singleton: EVERY prim leaf kind + Ref. Every length-1 FArray is one of these, so a length-1 leaf/append/prepend/slice of any prim
+    * kind canonicalizes to its own-kind One with no boxing.
+    */
   private val oneKinds: List[(String, String, String)] = prims.map(p => (p.name, p.jt, p.boxed)) :+ ("Ref", "Object", "")
 
   /** padTo as a lazy node: base + targetLen + a constant filler. O(1) construct, O(depth) index — so range(1M).padTo(2M, x).last is O(1). For prims base is
@@ -3943,7 +4360,8 @@ $oneFill
     val applyB = if isAppend then "i < base.length ? base.applyBoxed(i) : elem" else "i == 0 ? elem : base.applyBoxed(i - 1)"
     val take = if isAppend then "return n >= length ? this : base.take(n);"
     else "if (n <= 0) return Empty.INSTANCE; if (n >= length) return this; if (n == 1) return new RefOne(elem); return new RefPrepend(elem, base.take(n - 1));"
-    val drop = if isAppend then "if (n <= 0) return this; if (n >= length) return Empty.INSTANCE; if (n == length - 1) return new RefOne(elem); return new RefAppend(base.drop(n), elem);"
+    val drop = if isAppend then
+      "if (n <= 0) return this; if (n >= length) return Empty.INSTANCE; if (n == length - 1) return new RefOne(elem); return new RefAppend(base.drop(n), elem);"
     else "if (n <= 0) return this; if (n >= length) return Empty.INSTANCE; return n == 1 ? base : base.drop(n - 1);"
     val reverse = "return new ReverseNode(this);"
     val init = if isAppend then "return base;" else "return take(length - 1);"

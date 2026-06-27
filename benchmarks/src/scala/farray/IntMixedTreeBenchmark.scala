@@ -58,13 +58,15 @@ class IntMixedTreeBenchmark:
 
     // farray tree: slice via take/drop, concat back in uneven order
     val farrayFlat = FArray.tabulate(size)(i => i)
-    farrayTree = pieces(size).map { case (o, l) => farrayFlat.drop(o).take(l) }
+    farrayTree = pieces(size)
+      .map { case (o, l) => farrayFlat.drop(o).take(l) }
       .reduce(_ ++ _)
     farrayMat = FArray.tabulate(size)(i => i)
 
     // ziochunk tree
     val zioFlat = zio.Chunk.fromArray(flat)
-    ziochunkTree = pieces(size).map { case (o, l) => zioFlat.drop(o).take(l) }
+    ziochunkTree = pieces(size)
+      .map { case (o, l) => zioFlat.drop(o).take(l) }
       .reduce(_ ++ _)
     ziochunkMat = ziochunkTree.materialize
 

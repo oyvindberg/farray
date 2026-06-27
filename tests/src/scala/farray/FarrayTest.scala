@@ -288,16 +288,16 @@ class FListTest:
     locally {
       val d0 = Array.fill(3)(-1)
       assert(FArray.empty[Int].copyToArray(d0, 0, 3) == 0 && d0.toList == List(-1, -1, -1)) // empty src
-      assert(FArray(7).copyToArray(d0, 0, 0) == 0 && d0.toList == List(-1, -1, -1))          // len 0
-      assert(FArray(7).copyToArray(d0, 3, 5) == 0 && d0.toList == List(-1, -1, -1))          // no room
+      assert(FArray(7).copyToArray(d0, 0, 0) == 0 && d0.toList == List(-1, -1, -1)) // len 0
+      assert(FArray(7).copyToArray(d0, 3, 5) == 0 && d0.toList == List(-1, -1, -1)) // no room
       val d1 = Array.fill(3)(-1)
-      assert(FArray(9).copyToArray(d1, 1, 1) == 1 && d1.toList == List(-1, 9, -1))           // leaf size 1
+      assert(FArray(9).copyToArray(d1, 1, 1) == 1 && d1.toList == List(-1, 9, -1)) // leaf size 1
       val d2 = Array.fill(3)(-1)
       assert((0 +: FArray.empty[Int]).copyToArray(d2, 0, 1) == 1 && d2.toList == List(0, -1, -1)) // One node
       val d3 = Array.fill(3)(-1)
-      assert(FArray(1, 2, 3).copyToArray(d3, 0, 1) == 1 && d3.toList == List(1, -1, -1))     // clamp len to 1
+      assert(FArray(1, 2, 3).copyToArray(d3, 0, 1) == 1 && d3.toList == List(1, -1, -1)) // clamp len to 1
       val d4 = Array.fill(2)(-1)
-      assert(FArray(1, 2, 3).copyToArray(d4, 1, 9) == 1 && d4.toList == List(-1, 1))         // clamp avail to 1
+      assert(FArray(1, 2, 3).copyToArray(d4, 1, 9) == 1 && d4.toList == List(-1, 1)) // clamp avail to 1
       // matches List semantics for n == 0 / 1
       assert(FArray(5).copyToArray(Array.fill(3)(0), 0, 1) == List(5).copyToArray(Array.fill(3)(0), 0, 1))
     }
@@ -313,8 +313,7 @@ class FListTest:
     // exercise the 16- and 32-arg overloads (boundary cases)
     val f16 = FArray(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16)
     assert(f16.toList == (1 to 16).toList)
-    val f32 = FArray(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
-      17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32)
+    val f32 = FArray(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32)
     assert(f32.toList == (1 to 32).toList && f32.length == 32)
     val d16 = FArray(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0)
     assert(d16.toList == (1 to 16).map(_.toDouble).toList) // Double kind, 16-arg
@@ -456,17 +455,26 @@ class FListTest:
     for (name, fa, la) <- shapes do
       // predicates of varying selectivity, including all-keep / none-keep (identity-shortcut & Empty edges)
       for (pn, p) <- List[(String, Int => Boolean)](
-             ("even", _ % 2 == 0), ("gt5", _ > 5), ("all", _ => true), ("none", _ => false),
-             ("eq0", _ == la.headOption.getOrElse(-1)), ("multi3", _ % 3 == 0)
-           ) do
+          ("even", _ % 2 == 0),
+          ("gt5", _ > 5),
+          ("all", _ => true),
+          ("none", _ => false),
+          ("eq0", _ == la.headOption.getOrElse(-1)),
+          ("multi3", _ % 3 == 0)
+        )
+      do
         assertEquals(s"$name filter $pn", la.filter(p), fa.filter(p).toList)
         assertEquals(s"$name filterNot $pn", la.filterNot(p), fa.filterNot(p).toList)
         assertCanonical(fa.filter(p), s"$name filter $pn canon")
         assertCanonical(fa.filterNot(p), s"$name filterNot $pn canon")
       // prefix wrappers (takeWhile/dropWhile/span) over the SAME structural shapes
       for (wn, w) <- List[(String, Int => Boolean)](
-             ("ltLast", _ < la.lastOption.getOrElse(0)), ("ge0", _ >= 0), ("falseHead", _ => false), ("lt6", _ < 6)
-           ) do
+          ("ltLast", _ < la.lastOption.getOrElse(0)),
+          ("ge0", _ >= 0),
+          ("falseHead", _ => false),
+          ("lt6", _ < 6)
+        )
+      do
         assertEquals(s"$name takeWhile $wn", la.takeWhile(w), fa.takeWhile(w).toList)
         assertEquals(s"$name dropWhile $wn", la.dropWhile(w), fa.dropWhile(w).toList)
         assertEquals(s"$name span._1 $wn", la.span(w)._1, fa.span(w)._1.toList)
@@ -486,21 +494,32 @@ class FListTest:
       ("sliceDeep", (FArray.tabulate(5)(s) ++ FArray.tabulate(9)(i => s(i + 5))).slice(2, 13), (0 until 14).map(s).toList.slice(2, 13)),
       ("reverseSliceDeep", (FArray.tabulate(5)(s) ++ FArray.tabulate(9)(i => s(i + 5))).slice(2, 13).reverse, (0 until 14).map(s).toList.slice(2, 13).reverse),
       ("padDeep", (FArray.tabulate(4)(s) ++ FArray.tabulate(4)(i => s(i + 4))).padTo(12, "Z"), (0 until 8).map(s).toList ::: List.fill(4)("Z")),
-      ("reversePadDeep", (FArray.tabulate(4)(s) ++ FArray.tabulate(4)(i => s(i + 4))).padTo(12, "Z").reverse, ((0 until 8).map(s).toList ::: List.fill(4)("Z")).reverse),
+      (
+        "reversePadDeep",
+        (FArray.tabulate(4)(s) ++ FArray.tabulate(4)(i => s(i + 4))).padTo(12, "Z").reverse,
+        ((0 until 8).map(s).toList ::: List.fill(4)("Z")).reverse
+      ),
       ("updatedDeep", (FArray.tabulate(6)(s) ++ FArray.tabulate(6)(i => s(i + 6))).updated(6, "X"), flat.updated(6, "X")),
       ("reverseUpdatedDeep", (FArray.tabulate(6)(s) ++ FArray.tabulate(6)(i => s(i + 6))).updated(6, "X").reverse, flat.updated(6, "X").reverse)
     )
     for (name, fa, la) <- shapes do
       for (pn, p) <- List[(String, String => Boolean)](
-             ("len1", _.length == 1), ("all", _ => true), ("none", _ => false),
-             ("eqHead", _ == la.headOption.getOrElse("")), ("hasZ", _.contains("Z"))
-           ) do
+          ("len1", _.length == 1),
+          ("all", _ => true),
+          ("none", _ => false),
+          ("eqHead", _ == la.headOption.getOrElse("")),
+          ("hasZ", _.contains("Z"))
+        )
+      do
         assertEquals(s"$name filter $pn", la.filter(p), fa.filter(p).toList)
         assertEquals(s"$name filterNot $pn", la.filterNot(p), fa.filterNot(p).toList)
         assertCanonical(fa.filter(p), s"$name filter $pn canon")
       for (wn, w) <- List[(String, String => Boolean)](
-             ("len1", _.length == 1), ("always", _ => true), ("falseHead", _ => false)
-           ) do
+          ("len1", _.length == 1),
+          ("always", _ => true),
+          ("falseHead", _ => false)
+        )
+      do
         assertEquals(s"$name takeWhile $wn", la.takeWhile(w), fa.takeWhile(w).toList)
         assertEquals(s"$name dropWhile $wn", la.dropWhile(w), fa.dropWhile(w).toList)
         assertEquals(s"$name span._1 $wn", la.span(w)._1, fa.span(w)._1.toList)
@@ -531,8 +550,13 @@ class FListTest:
     for (name, fa, la) <- shapes do
       // partition: vary selectivity incl. all-keep / none-keep (the reuse-xs / Empty edges on BOTH outputs)
       for (pn, p) <- List[(String, Int => Boolean)](
-             ("even", _ % 2 == 0), ("gt5", _ > 5), ("all", _ => true), ("none", _ => false), ("multi3", _ % 3 == 0)
-           ) do
+          ("even", _ % 2 == 0),
+          ("gt5", _ > 5),
+          ("all", _ => true),
+          ("none", _ => false),
+          ("multi3", _ % 3 == 0)
+        )
+      do
         assertEquals(s"$name partition._1 $pn", la.partition(p)._1, fa.partition(p)._1.toList)
         assertEquals(s"$name partition._2 $pn", la.partition(p)._2, fa.partition(p)._2.toList)
         assertCanonical(fa.partition(p)._1, s"$name partition._1 $pn canon")
@@ -576,8 +600,12 @@ class FListTest:
     )
     for (name, fa, la) <- shapes do
       for (pn, p) <- List[(String, String => Boolean)](
-             ("len1", _.length == 1), ("all", _ => true), ("none", _ => false), ("hasZ", _.contains("Z"))
-           ) do
+          ("len1", _.length == 1),
+          ("all", _ => true),
+          ("none", _ => false),
+          ("hasZ", _.contains("Z"))
+        )
+      do
         assertEquals(s"$name partition._1 $pn", la.partition(p)._1, fa.partition(p)._1.toList)
         assertEquals(s"$name partition._2 $pn", la.partition(p)._2, fa.partition(p)._2.toList)
         assertCanonical(fa.partition(p)._1, s"$name partition._1 $pn canon")
@@ -690,8 +718,7 @@ class FListTest:
     val n = asBase(fa).length
     if n == 0 then assert(isEmpty(fa), s"$ctx: len 0 but ${kindName(fa)} != Empty")
     else if n == 1 then assert(isOne(fa), s"$ctx: len 1 but ${kindName(fa)} not a *One")
-    else
-      assert(!isEmpty(fa) && !isOne(fa), s"$ctx: len $n but ${kindName(fa)} is Empty/One")
+    else assert(!isEmpty(fa) && !isOne(fa), s"$ctx: len $n but ${kindName(fa)} is Empty/One")
 
   @Test def test_invariant_canonical_singletons(): Unit =
     // every constructor's size-0/1 output is exactly Empty / *One
@@ -760,9 +787,9 @@ class FListTest:
     val cases: Seq[(FArray[Int], List[Int])] = Seq(
       (FArray.empty[Int], Nil),
       (FArray(7), List(7)),
-      ((4 +: FArray.empty[Int]), List(4)),       // One via prepend
-      (FArray(1, 2, 3).take(1), List(1)),        // One via take
-      (FArray.range(9, 10), List(9))             // One via range
+      ((4 +: FArray.empty[Int]), List(4)), // One via prepend
+      (FArray(1, 2, 3).take(1), List(1)), // One via take
+      (FArray.range(9, 10), List(9)) // One via range
     )
     for (fa, la) <- cases do
       val c = s"${fa.toList} vs $la"
@@ -799,21 +826,21 @@ class FListTest:
   @Test def test_scan_structural_shapes(): Unit =
     def leaf(xs: Int*): FArray[Int] = FArray.tabulate(xs.length)(i => xs(i)) // genuine flat IntArr leaf
     val cases: Seq[FArray[Int]] = Seq(
-      FArray(1, 2, 3).reverse,                                   // ReverseNode of a leaf (len 3) — the core repro
-      FArray(1, 2).reverse,                                      // ReverseNode of a leaf (len 2, smallest crashing)
+      FArray(1, 2, 3).reverse, // ReverseNode of a leaf (len 3) — the core repro
+      FArray(1, 2).reverse, // ReverseNode of a leaf (len 2, smallest crashing)
       (leaf(0, 1, 2, 3, 4) ++ leaf(5, 6, 7, 8, 9, 10, 11)).reverse, // ReverseNode of a Concat (the review's probe)
-      FArray(1, 2, 3, 4, 5).reverse.reverse,                     // DOUBLE reverse — visit dir must flip back, write fixed
+      FArray(1, 2, 3, 4, 5).reverse.reverse, // DOUBLE reverse — visit dir must flip back, write fixed
       ((leaf(1, 2, 3) ++ leaf(4, 5)).reverse ++ leaf(6, 7)).reverse, // nested ReverseNodes inside a Concat
-      FArray(1, 2, 3, 4, 5, 6).slice(1, 5).reverse,              // ReverseNode of a SliceNode (deep base)
-      FArray(1, 2, 3).padTo(6, 9).reverse,                       // ReverseNode of a Pad (deep base)
-      FArray(1, 2, 3, 4).updated(1, 99).reverse,                 // ReverseNode of an Updated (deep base)
-      (FArray(1, 2, 3).reverse).slice(0, 2),                     // SliceNode whose base is a ReverseNode
-      leaf(1, 2, 3) ++ leaf(4, 5, 6),                            // plain Concat (no reverse)
-      0 +: 1 +: 2 +: leaf(3, 4, 5),                              // Prepend spine
-      leaf(1, 2, 3) :+ 4 :+ 5 :+ 6,                              // Append spine
-      (0 +: leaf(1, 2, 3) :+ 4).reverse,                         // reverse over a prepend+append spine
-      leaf(),                                                    // empty leaf
-      FArray.empty[Int].reverse                                  // reverse of empty
+      FArray(1, 2, 3, 4, 5, 6).slice(1, 5).reverse, // ReverseNode of a SliceNode (deep base)
+      FArray(1, 2, 3).padTo(6, 9).reverse, // ReverseNode of a Pad (deep base)
+      FArray(1, 2, 3, 4).updated(1, 99).reverse, // ReverseNode of an Updated (deep base)
+      (FArray(1, 2, 3).reverse).slice(0, 2), // SliceNode whose base is a ReverseNode
+      leaf(1, 2, 3) ++ leaf(4, 5, 6), // plain Concat (no reverse)
+      0 +: 1 +: 2 +: leaf(3, 4, 5), // Prepend spine
+      leaf(1, 2, 3) :+ 4 :+ 5 :+ 6, // Append spine
+      (0 +: leaf(1, 2, 3) :+ 4).reverse, // reverse over a prepend+append spine
+      leaf(), // empty leaf
+      FArray.empty[Int].reverse // reverse of empty
     )
     for fa <- cases do
       val la = fa.toList
@@ -838,18 +865,18 @@ class FListTest:
   @Test def test_window_deepbase_shapes(): Unit =
     def leaf(xs: Int*): FArray[Int] = FArray.tabulate(xs.length)(i => xs(i)) // genuine flat IntArr leaf
     // TREE bases (each a non-leaf node) paired with the equivalent List.
-    val concatBase   = leaf(0, 1, 2, 3, 4) ++ leaf(5, 6, 7, 8, 9, 10, 11)                 // Concat, len 12
-    val concatL      = (0 to 11).toList
-    val revBase      = leaf(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11).reverse                 // ReverseNode of leaf, len 12
-    val revL         = (0 to 11).toList.reverse
-    val revConcat    = (leaf(0, 1, 2, 3, 4) ++ leaf(5, 6, 7, 8, 9, 10, 11)).reverse       // ReverseNode of Concat
-    val revConcatL   = (0 to 11).toList.reverse
-    val spineBase    = (90 +: 91 +: leaf(0, 1, 2, 3, 4, 5, 6, 7) :+ 92 :+ 93)             // Prepend+Append spine, len 12
-    val spineL       = List(90, 91, 0, 1, 2, 3, 4, 5, 6, 7, 92, 93)
-    val revSpine     = (90 +: leaf(0, 1, 2, 3, 4, 5, 6, 7, 8, 9) :+ 91).reverse           // reverse over a spine, len 12
-    val revSpineL    = List(90, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 91).reverse
-    val nestedRev    = ((leaf(0, 1, 2) ++ leaf(3, 4)).reverse ++ leaf(5, 6, 7, 8, 9, 10, 11)) // nested ReverseNode in Concat
-    val nestedRevL   = (List(0, 1, 2, 3, 4).reverse ::: List(5, 6, 7, 8, 9, 10, 11))
+    val concatBase = leaf(0, 1, 2, 3, 4) ++ leaf(5, 6, 7, 8, 9, 10, 11) // Concat, len 12
+    val concatL = (0 to 11).toList
+    val revBase = leaf(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11).reverse // ReverseNode of leaf, len 12
+    val revL = (0 to 11).toList.reverse
+    val revConcat = (leaf(0, 1, 2, 3, 4) ++ leaf(5, 6, 7, 8, 9, 10, 11)).reverse // ReverseNode of Concat
+    val revConcatL = (0 to 11).toList.reverse
+    val spineBase = (90 +: 91 +: leaf(0, 1, 2, 3, 4, 5, 6, 7) :+ 92 :+ 93) // Prepend+Append spine, len 12
+    val spineL = List(90, 91, 0, 1, 2, 3, 4, 5, 6, 7, 92, 93)
+    val revSpine = (90 +: leaf(0, 1, 2, 3, 4, 5, 6, 7, 8, 9) :+ 91).reverse // reverse over a spine, len 12
+    val revSpineL = List(90, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 91).reverse
+    val nestedRev = ((leaf(0, 1, 2) ++ leaf(3, 4)).reverse ++ leaf(5, 6, 7, 8, 9, 10, 11)) // nested ReverseNode in Concat
+    val nestedRevL = (List(0, 1, 2, 3, 4).reverse ::: List(5, 6, 7, 8, 9, 10, 11))
 
     val trees: List[(String, FArray[Int], List[Int])] = List(
       ("concat", concatBase, concatL),
@@ -866,8 +893,13 @@ class FListTest:
       // SliceNode windows: full (0,n), prefix, suffix (from the END — exercises the Bwd reversed-frame clip),
       // interior, length 0 (empty window), length 1, and slice-of-slice.
       val sliceCases: List[(String, (Int, Int))] = List(
-        ("full", (0, n)), ("prefix", (0, 4)), ("suffix", (n - 5, n)),
-        ("interior", (3, 9)), ("len0", (5, 5)), ("len1", (6, 7)), ("fromEnd", (n - 1, n))
+        ("full", (0, n)),
+        ("prefix", (0, 4)),
+        ("suffix", (n - 5, n)),
+        ("interior", (3, 9)),
+        ("len0", (5, 5)),
+        ("len1", (6, 7)),
+        ("fromEnd", (n - 1, n))
       )
       for (sn, (from, until)) <- sliceCases do
         val fa = base.slice(from, until)
