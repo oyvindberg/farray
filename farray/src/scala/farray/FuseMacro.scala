@@ -1,6 +1,7 @@
 package farray
 
 import scala.quoted.*
+import farray.json.{NdjsonSource, JsonScanner}
 
 /** which terminal a fused pipeline ends in (the macro shares one lowering core across all of them). */
 enum TTag:
@@ -202,13 +203,21 @@ object FuseMacro:
     val args = extraExprs.map(e => unwrap(e.asTerm))
     val (srcTerm, srcElem, stages) = parse(selfTerm.underlyingArgument, Nil)
 
+    // Is this a byte-backed JSON NDJSON source (`Json.ndjson[T](bytes).fuse…`) rather than an in-memory FArray?
+    // Detected by the source term's static type; if so we lower to a per-record scanner (see loopOverJson).
+    val jsonSrc: Option[Expr[NdjsonSource[?]]] =
+      // match on the type SYMBOL (NdjsonSource is invariant in T, so NdjsonSource[Rec] is not <:< NdjsonSource[Any]).
+      if srcTerm.tpe.widen.dealias.typeSymbol == TypeRepr.of[NdjsonSource[Any]].typeSymbol
+      then Some(srcTerm.asExprOf[NdjsonSource[?]]) else None
+    val isJson = jsonSrc.isDefined
+
     // identity → hand back the source (only meaningful for Run).
-    if stages.isEmpty && tag == TTag.Run then
+    if stages.isEmpty && tag == TTag.Run && !isJson then
       return '{ ${ srcTerm.asExpr }.asInstanceOf[FBase] }
 
-    val srcK = kindOf(srcElem)
+    val srcK = if isJson then Kind.KRef else kindOf(srcElem)
     val outK = kindOf(aType)
-    val srcBase: Expr[FBase] = '{ ${ srcTerm.asExpr }.asInstanceOf[FBase] }
+    val srcBase: Expr[FBase] = if isJson then '{ null.asInstanceOf[FBase] } else '{ ${ srcTerm.asExpr }.asInstanceOf[FBase] }
 
     val indexed: List[(Stage, Int)] = stages.zipWithIndex
     // stages needing an above-loop counter (take/drop = a clamped limit, zipWithIndex = a bare counter,
@@ -229,8 +238,18 @@ object FuseMacro:
     val scanCount: Int = stages.count(_.isInstanceOf[ScanLeftS])
     if scanCount > 1 then report.errorAndAbort("fuse: at most one scanLeft per pipeline")
     val hasScan: Boolean = scanCount == 1
-    // scanLeft emits one MORE element than its input (the initial z), so the output can exceed the source length
-    val needsGrow: Boolean = hasFlatMap || hasScan
+    // a JSON source has no static length (records are scanned, not indexed), so a Run/toList must grow the output
+    // like flatMap/scan. scanLeft emits one MORE element than its input, so the output can exceed source length.
+    val needsGrow: Boolean = hasFlatMap || hasScan || isJson
+    // v1 JSON scope guard: only map/filter stages over a JSON source (no zip/flatMap/take/drop/scan/distinct yet).
+    if isJson then
+      val unsupported = stages.find {
+        case MapS(_) | FilterS(_, _) => false
+        case _                       => true
+      }
+      unsupported.foreach(s => report.errorAndAbort(
+        s"fuse-json (v1): only `map` and `filter` stages are supported over a JSON source so far (got ${s.getClass.getSimpleName.stripSuffix("S")}). " +
+        "Project/filter then use a terminal (sum/fold/toList/count/foreach)."))
     // the scanLeft stage index + the stages downstream of it (run once with z as a prologue, then per element)
     val scanInfo: Option[(Int, List[(Stage, Int)])] =
       indexed.collectFirst { case (ScanLeftS(_, _, _), i) => i }.map(i => (i, indexed.drop(i + 1)))
@@ -642,6 +661,155 @@ object FuseMacro:
                  while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.refAt(s, i).asInstanceOf[se] }.asTerm) }; i += 1 }
                } }
 
+    // ===== JSON source lowering: a per-record byte scanner whose record is a Tup of byte-sourced columns =====
+    // The downstream (filter/map/sink/DCE/terminal) is the UNCHANGED optimizer — it consumes the Tup via
+    // continueShape, exactly like zipWithIndex/collect. Only the SOURCE read changes from `a(i)` to a scan-pass.
+
+    // the live top-level fields of T (those any map/filter lambda reads) — the projection∪predicate set, i.e.
+    // dead-column elimination computed up front (the "backwards live-set flow"): a field nothing reads gets no
+    // slot and is skipValue'd; the scanner only materializes what the pipeline touches.
+    def jsonLiveFields(elemTpe: TypeRepr): (List[(String, TypeRepr)], Set[String]) =
+      val fields = productFields(elemTpe).getOrElse(
+        report.errorAndAbort(s"fuse-json: ${elemTpe.show} is not a case class (flat case-class records only in v1)"))
+      val live = scala.collection.mutable.LinkedHashSet.empty[String]
+      def addFrom(lam: Term): Unit = decomposeLambda(lam) match
+        case Some((p, b)) => collectPaths(b, p).foreach(path => path.headOption.foreach(h => live += h._2))
+        case None         => report.errorAndAbort(s"fuse-json: could not decompose a stage lambda: ${lam.show}")
+      stages.foreach {
+        case MapS(f)        => addFrom(f)
+        case FilterS(p, _)  => addFrom(p)
+        case _              => ()
+      }
+      // a whole-record use (Nil path) forces all fields live (the record gets rebuilt) — detect it
+      val wholeUse = stages.exists {
+        case MapS(f)       => decomposeLambda(f).exists((p, b) => collectPaths(b, p).contains(Nil))
+        case FilterS(p, _) => decomposeLambda(p).exists((pr, b) => collectPaths(b, pr).contains(Nil))
+        case _             => false
+      }
+      val liveSet = if wholeUse then fields.map(_._1).toSet else live.toSet
+      (fields, liveSet)
+
+    // the scanner kind for a field type — what the slot holds and how the column reads it.
+    enum JKind { case JInt, JLong, JDouble, JString }
+    def jkindOf(t: TypeRepr): JKind =
+      if t =:= TypeRepr.of[Int] then JKind.JInt
+      else if t =:= TypeRepr.of[Long] then JKind.JLong
+      else if t =:= TypeRepr.of[Double] then JKind.JDouble
+      else if t =:= TypeRepr.of[String] then JKind.JString
+      else report.errorAndAbort(s"fuse-json (v1): unsupported field type ${t.show} (only Int/Long/Double/String).")
+
+    /** a typed default for a dead (never-read) field's placeholder column. */
+    def defaultOf(t: TypeRepr): Term = jkindOf(t) match
+      case JKind.JInt    => '{ 0 }.asTerm
+      case JKind.JLong   => '{ 0L }.asTerm
+      case JKind.JDouble => '{ 0.0 }.asTerm
+      case JKind.JString => '{ null.asInstanceOf[String] }.asTerm
+
+    def loopOverJson(jsrc: Expr[NdjsonSource[?]], elemTpe: TypeRepr, ss: List[(Stage, Int)], ctx: Ctx): Expr[Unit] =
+      val (fields, liveSet) = jsonLiveFields(elemTpe)
+      val liveFields = fields.zipWithIndex.filter { case ((n, _), _) => liveSet.contains(n) }
+      // per live field: the slot vars (mutable) + how a column reads it. We declare slots inside the per-record
+      // block and reference them from the Tup columns, so they dominate the reads (hygiene-safe).
+      // We build the whole per-record body via one continuation so symbols stay in scope.
+      val doneCond: Expr[Boolean] = ctx.done match { case Some(d) => d.read; case None => '{ false } }
+      // bind each live field's wanted-key bytes to a val ABOVE the loop (interned once), so the per-record scan
+      // references them with zero allocation. Thread the refs to jsonRecord.
+      def withKeyRefs(rem: List[((String, TypeRepr), Int)], acc: Map[String, Expr[Array[Byte]]])(
+                      k: Map[String, Expr[Array[Byte]]] => Expr[Unit]): Expr[Unit] =
+        rem match
+          case Nil => k(acc)
+          case ((name, _), _) :: rest =>
+            '{ val keyBytes: Array[Byte] = JsonScanner.internKey(${ Expr(name) })
+               ${ withKeyRefs(rest, acc + (name -> '{ keyBytes }))(k) } }
+      '{
+        val src = $jsrc
+        val buf: Array[Byte] = src.buf
+        val until: Int = src.until
+        ${ withKeyRefs(liveFields, Map.empty) { keyRefs =>
+          '{ var lineStart: Int = src.from
+             while lineStart < until && !$doneCond do
+               var lineEnd = lineStart
+               while lineEnd < until && buf(lineEnd) != '\n' do lineEnd += 1
+               ${ jsonRecord('buf, 'lineStart, 'lineEnd, fields, liveFields, keyRefs, ss, ctx).asExprOf[Unit] }
+               lineStart = lineEnd + 1 }
+        } }
+      }
+
+    // a live field's mutable scan slots: the value column (reads the slot lazily), a `seen` flag ref, and a
+    // `fill(buf, valuePos, end): newPos` quote that the scan-pass runs when this field's key matches.
+    final case class JSlot(idx: Int, name: String, jk: JKind, col: Shape, seen: Expr[Boolean],
+                           fill: (Expr[Int], Expr[Int]) => Expr[Int])
+
+    // one record: declare slots (nested quotes, like declareSlots), run the scan-pass, build the Tup, continue.
+    def jsonRecord(buf: Expr[Array[Byte]], lineStart: Expr[Int], lineEnd: Expr[Int],
+                   fields: List[(String, TypeRepr)], liveFields: List[((String, TypeRepr), Int)],
+                   keyRefs: Map[String, Expr[Array[Byte]]], ss: List[(Stage, Int)], ctx: Ctx): Term =
+      def withSlots(rem: List[((String, TypeRepr), Int)], acc: List[JSlot])(k: List[JSlot] => Term): Term =
+        rem match
+          case Nil => k(acc.reverse)
+          case ((name, tpe), idx) :: rest =>
+            jkindOf(tpe) match
+              // numeric fills decode the value into the slot var + the new position into `pNext` (a second slot
+              // var) — NO tuple returned (a `(Double,Int)` return boxed, costing the macro path its alloc edge).
+              case JKind.JInt =>
+                '{ var v: Int = 0; var pNext: Int = 0; var seen: Boolean = false
+                   ${ val s = JSlot(idx, name, JKind.JInt, Sc(kk => kk('{ v }.asTerm)), '{ seen },
+                        (p, end) => '{ v = JsonScanner.readIntAt($buf, $p, $end); pNext = JsonScanner.numEnd; seen = true; pNext })
+                      withSlots(rest, s :: acc)(k).asExpr } }.asTerm
+              case JKind.JLong =>
+                '{ var v: Long = 0L; var pNext: Int = 0; var seen: Boolean = false
+                   ${ val s = JSlot(idx, name, JKind.JLong, Sc(kk => kk('{ v }.asTerm)), '{ seen },
+                        (p, end) => '{ v = JsonScanner.readLongAt($buf, $p, $end); pNext = JsonScanner.numEnd; seen = true; pNext })
+                      withSlots(rest, s :: acc)(k).asExpr } }.asTerm
+              case JKind.JDouble =>
+                '{ var v: Double = 0.0; var pNext: Int = 0; var seen: Boolean = false
+                   ${ val s = JSlot(idx, name, JKind.JDouble, Sc(kk => kk('{ v }.asTerm)), '{ seen },
+                        (p, end) => '{ v = JsonScanner.readDoubleAt($buf, $p, $end); pNext = JsonScanner.numEnd; seen = true; pNext })
+                      withSlots(rest, s :: acc)(k).asExpr } }.asTerm
+              case JKind.JString =>
+                // lazy slice: slots are (start, len); the column decodes to String ON READ (memoized), so the
+                // existing sink defers the `new String` past the filter — compute-for-survivors, for free.
+                '{ var st: Int = 0; var ln: Int = 0; var seen: Boolean = false
+                   ${ val col = memoScalar(kk => kk('{ JsonScanner.decodeLatin1($buf, st, ln) }.asTerm))
+                      val s = JSlot(idx, name, JKind.JString, col, '{ seen },
+                        (p, end) => '{ val vs = $p + 1; val ve = JsonScanner.scanStringEnd($buf, vs, $end); st = vs; ln = ve - vs; seen = true; ve + 1 })
+                      withSlots(rest, s :: acc)(k).asExpr } }.asTerm
+
+      withSlots(liveFields, Nil) { slots =>
+        // the scan-pass: walk the record's keys, dispatch by raw-byte key compare to a live slot's fill, else skip.
+        val scanPass = jsonScanPass(buf, lineStart, lineEnd, slots, keyRefs)
+        // build the Tup: parts indexed like ALL fields (dead fields get a placeholder column that's never read).
+        val byIdx = slots.map(s => s.idx -> s).toMap
+        val parts = fields.zipWithIndex.map { case ((fname, ftpe), i) =>
+          // a dead field's column yields a typed default — only ever forced if the WHOLE record is materialized
+          // (rebuild), which the live-set marks all-fields-live for, so in practice this is never read; it exists
+          // so a value-ignoring terminal (e.g. count) that still rebuilds the Tup typechecks.
+          byIdx.get(i).map(_.col).getOrElse(Sc(k => k(defaultOf(ftpe))))
+        }
+        val recordTup: Shape = Tup(parts, vs => mkProduct(srcElem, vs))
+        '{ $scanPass; ${ continueShape(recordTup, ss, ctx).asExprOf[Unit] } }.asTerm
+      }
+
+    // emit the one-pass key-dispatch scan over a record's fields (compact NDJSON fast path).
+    def jsonScanPass(buf: Expr[Array[Byte]], lineStart: Expr[Int], lineEnd: Expr[Int], slots: List[JSlot],
+                     keyRefs: Map[String, Expr[Array[Byte]]]): Expr[Unit] =
+      // generate the per-key dispatch chain: if keyEquals(name0) fill0 else if … else skipValue.
+      def dispatch(ks: Expr[Int], ke: Expr[Int], p: Expr[Int]): Expr[Int] =
+        slots.foldRight[Expr[Int]]('{ JsonScanner.skipValue($buf, $p, $lineEnd) }) { (s, elseB) =>
+          '{ if !${ s.seen } && JsonScanner.keyEquals($buf, $ks, $ke, ${ keyRefs(s.name) }) then ${ s.fill(p, lineEnd) } else $elseB }
+        }
+      '{
+        var p: Int = $lineStart + 1 // past '{'
+        var open: Boolean = $buf($lineStart) == '{'
+        while open do
+          if $buf(p) == '}' then open = false
+          else
+            val ks = p + 1
+            val ke = JsonScanner.scanStringEnd($buf, ks, $lineEnd)
+            p = ${ dispatch('ks, 'ke, '{ ke + 2 }) } // ke+2: past closing key quote and ':'
+            if $buf(p) == ',' then p += 1 else open = false
+      }
+
     // --- declare loop-state vars (above the loop), then assemble the terminal body ---
     def withDone(k: Option[Done] => Term): Term =
       if needsDone then '{ var done: Boolean = false; ${ k(Some(Done('{ done = true }, '{ done }))).asExpr } }.asTerm
@@ -688,7 +856,11 @@ object FuseMacro:
 
     def assemble(src0: Expr[FBase], n0: Expr[Int], done: Option[Done], counters: Map[Int, Slot]): Term =
       def ctx(consume: Term => Term) = Ctx(consume, done, counters)
-      def loop(consume: Term => Term): Expr[Unit] = { val c = ctx(consume); withScanPrologue(c, loopOver(src0, srcK, srcElem, indexed, c)) }
+      def loop(consume: Term => Term): Expr[Unit] =
+        val c = ctx(consume)
+        jsonSrc match
+          case Some(js) => loopOverJson(js, srcElem, indexed, c)
+          case None     => withScanPrologue(c, loopOver(src0, srcK, srcElem, indexed, c))
       tag match
         case TTag.Count =>
           '{ var cnt = 0; ${ loop(_ => '{ cnt += 1 }.asTerm) }; cnt }.asTerm
@@ -764,7 +936,11 @@ object FuseMacro:
 
     // output array assembly: grow via ensureCap when a flatMap can expand it, else preallocate the upper bound.
     def assembleOut(src0: Expr[FBase], n0: Expr[Int], counters: Map[Int, Slot], ctx: (Term => Term) => Ctx): Term =
-      def loop(consume: Term => Term): Expr[Unit] = { val c = ctx(consume); withScanPrologue(c, loopOver(src0, srcK, srcElem, indexed, c)) }
+      def loop(consume: Term => Term): Expr[Unit] =
+        val c = ctx(consume)
+        jsonSrc match
+          case Some(js) => loopOverJson(js, srcElem, indexed, c)
+          case None     => withScanPrologue(c, loopOver(src0, srcK, srcElem, indexed, c))
       outK match
         case Kind.KInt =>
           if needsGrow then
@@ -804,5 +980,11 @@ object FuseMacro:
                if o == 0 then (RefArr.EMPTY: FBase) else if o == cap then new RefArr(out, o) else new RefArr(java.util.Arrays.copyOf(out, o), o) }.asTerm
 
     // --- final assembly: bind source + length once, then state vars, then the loop nest ---
-    '{ val src0: FBase = $srcBase; val n0: Int = src0.length
-       ${ withDone(done => declareSlots(counterStages, Map.empty)(counters => assemble('src0, 'n0, done, counters))).asExpr } }
+    // For a JSON source there's no FBase and no static length; n0 is just an initial output-capacity hint
+    // (the JSON path always uses the growable `needsGrow` assembly), so a fixed estimate is fine.
+    if isJson then
+      '{ val src0: FBase = null.asInstanceOf[FBase]; val n0: Int = 16
+         ${ withDone(done => declareSlots(counterStages, Map.empty)(counters => assemble('src0, 'n0, done, counters))).asExpr } }
+    else
+      '{ val src0: FBase = $srcBase; val n0: Int = src0.length
+         ${ withDone(done => declareSlots(counterStages, Map.empty)(counters => assemble('src0, 'n0, done, counters))).asExpr } }

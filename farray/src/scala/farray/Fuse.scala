@@ -23,7 +23,10 @@ import scala.reflect.ClassTag
  * type must be Int/Long/Double or a reference type (`<: AnyRef`) — a primitive-backed FArray widened to
  * `Any`/`AnyVal` is a compile error, not a silent miscompile.
  */
-final class Fuse[+A](private[farray] val base: FBase):
+// `base` is `AnyRef` (not `FBase`) so a non-array source (e.g. a byte-backed JSON NDJSON source) can flow
+// through the same `Fuse` surface + terminals; the macro detects the source's static type at the base case
+// and lowers accordingly (an `FBase` → the indexed array loop; a JSON source → a per-record scanner).
+final class Fuse[+A](private[farray] val base: AnyRef):
   // ---- stage markers (bodies irrelevant; the macro reads these calls off the AST) ----
   def map[B](f: A => B): Fuse[B] = this.asInstanceOf[Fuse[B]]
   def flatMap[B](f: A => FArray[B]): Fuse[B] = this.asInstanceOf[Fuse[B]]

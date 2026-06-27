@@ -5,7 +5,7 @@ import java.util.concurrent.TimeUnit
 import java.nio.charset.StandardCharsets.UTF_8
 import com.github.plokhotnyuk.jsoniter_scala.core.*
 import com.github.plokhotnyuk.jsoniter_scala.macros.*
-import farray.json.{RecScan, Rec, FatScan, FatRec}
+import farray.json.{RecScan, Rec, FatScan, FatRec, Json}
 
 /** THE kill-or-prove experiment (docs/json-parser-research.md §5.6).
  *
@@ -54,6 +54,15 @@ class JsonProjectionBenchmark:
     fatBuf = JsonProjectionBenchmark.fatNdjson(n)
 
   // ---- AGGREGATE query: filter(amount > t).map(amount).sum ----
+
+  /** the MACRO-DRIVEN path: the EXISTING fuse optimizer (filter→if, map, sink, DCE, fold) drives the byte
+   *  scanner. This is the real product — the hand-written `sum_fused` is just its spec. */
+  @Benchmark def sum_fuseMacro(): Double =
+    Json.ndjson[Rec](buf).fuse.filter(_.amount > threshold).map(_.amount).sum
+
+  /** same query via foldLeft (avoids Numeric[Double].plus boxing that `.sum` incurs) — the true zero-alloc path. */
+  @Benchmark def sum_fuseMacroFold(): Double =
+    Json.ndjson[Rec](buf).fuse.filter(_.amount > threshold).foldLeft(0.0)((a, r) => a + r.amount)
 
   @Benchmark def sum_fused(): Double =
     RecScan.sumAmountWhereGt(buf, 0, buf.length, threshold)

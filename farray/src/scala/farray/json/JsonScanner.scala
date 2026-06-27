@@ -124,7 +124,63 @@ object JsonScanner:
     JsonNum.parseDouble(buf, start, end, out)
     out.pos
 
+  // ---- macro-facing 2-arity decoders: return (value, newPos) via @specialized unboxed tuples (no holder,
+  //      no boxing). The fused JSON scanner generates calls to these; `_._1`/`_._2` project unboxed. ----
+  def readInt2(buf: Array[Byte], pos0: Int, end: Int): (Int, Int) =
+    var pos = pos0
+    var neg = false
+    if pos < end && buf(pos) == '-' then { neg = true; pos += 1 }
+    var x = 0
+    while pos < end && { val b = buf(pos); b >= '0' && b <= '9' } do { x = x * 10 - (buf(pos) - '0'); pos += 1 }
+    ((if neg then x else -x), pos)
+
+  def readLong2(buf: Array[Byte], pos0: Int, end: Int): (Long, Int) =
+    var pos = pos0
+    var neg = false
+    if pos < end && buf(pos) == '-' then { neg = true; pos += 1 }
+    var x = 0L
+    while pos < end && { val b = buf(pos); b >= '0' && b <= '9' } do { x = x * 10 - (buf(pos) - '0'); pos += 1 }
+    ((if neg then x else -x), pos)
+
+  def readDouble2(buf: Array[Byte], pos0: Int, end: Int): (Double, Int) =
+    val d = JsonNumLocal.d.get()
+    JsonNum.parseDouble(buf, pos0, end, d)
+    (d.value, d.pos)
+
+  // ---- macro-facing decoders that return the PRIMITIVE value (no tuple, no boxing) and stash the new
+  //      position in a thread-local `numEnd`. The generated scanner reads numEnd right after. ----
+  private val numEndTL: ThreadLocal[Array[Int]] = ThreadLocal.withInitial(() => new Array[Int](1))
+  inline def numEnd: Int = numEndTL.get()(0)
+
+  def readIntAt(buf: Array[Byte], pos0: Int, end: Int): Int =
+    var pos = pos0; var neg = false
+    if pos < end && buf(pos) == '-' then { neg = true; pos += 1 }
+    var x = 0
+    while pos < end && { val b = buf(pos); b >= '0' && b <= '9' } do { x = x * 10 - (buf(pos) - '0'); pos += 1 }
+    numEndTL.get()(0) = pos
+    if neg then x else -x
+
+  def readLongAt(buf: Array[Byte], pos0: Int, end: Int): Long =
+    var pos = pos0; var neg = false
+    if pos < end && buf(pos) == '-' then { neg = true; pos += 1 }
+    var x = 0L
+    while pos < end && { val b = buf(pos); b >= '0' && b <= '9' } do { x = x * 10 - (buf(pos) - '0'); pos += 1 }
+    numEndTL.get()(0) = pos
+    if neg then x else -x
+
+  def readDoubleAt(buf: Array[Byte], pos0: Int, end: Int): Double =
+    val d = JsonNumLocal.d.get()
+    JsonNum.parseDouble(buf, pos0, end, d)
+    numEndTL.get()(0) = d.pos
+    d.value
+
   // ---- key dispatch by raw byte comparison (the edge over jsoniter: NO key decode) ----
+
+  /** intern a wanted field name to a cached UTF-8 byte array (allocated once per distinct name, ever) — the
+   *  macro binds the result to a val above the scan loop so per-record key compares allocate nothing. */
+  private val keyCache = new java.util.concurrent.ConcurrentHashMap[String, Array[Byte]]()
+  def internKey(name: String): Array[Byte] =
+    keyCache.computeIfAbsent(name, n => n.getBytes(java.nio.charset.StandardCharsets.UTF_8))
 
   /** does the key slice [start, stop) equal the wanted name bytes, length-then-memcmp? */
   inline def keyEquals(buf: Array[Byte], start: Int, stop: Int, name: Array[Byte]): Boolean =
@@ -141,3 +197,7 @@ end JsonScanner
  *  (The macro path will use local `var` slots instead; these exist for the hand-written v0a scanner.
  *  Doubles/longs use the Java `JsonNum.D`/`JsonNum.L` holders.) */
 final class IntResult(var value: Int = 0)
+
+/** thread-local reusable double holder so `readDouble2` allocates nothing per call. */
+object JsonNumLocal:
+  val d: ThreadLocal[JsonNum.D] = ThreadLocal.withInitial(() => new JsonNum.D())
