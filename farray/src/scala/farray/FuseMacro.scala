@@ -240,16 +240,12 @@ object FuseMacro:
     // a decomposed PRODUCT (tuple / case class / named tuple): independent column shapes + how to rebuild the
     // whole value from them (only used if the product is ever materialized — used whole or emitted).
     final case class Tup(parts: List[Shape], rebuild: List[Term] => Term) extends Shape
-    type Path = List[(Int, String)] // a field path into a product: (column index, accessor name) per hop
+    type Path = farray.json.Ast.Path // a field path into a product: (column index, accessor name) per hop
 
     val unit: Term = '{ () }.asTerm
 
-    // --- AST helpers ---
-    def unwrap(t: Term): Term = t match
-      case Inlined(_, _, e) => unwrap(e)
-      case Typed(e, _)      => unwrap(e)
-      case Block(Nil, e)    => unwrap(e)
-      case _                => t
+    // --- AST helpers (pure q.reflect walks live in farray.json.Ast, shared with the JSON decoder) ---
+    def unwrap(t: Term): Term = farray.json.Ast.unwrap(t)
 
     def fuseElem(t: TypeRepr): TypeRepr = t.widen.dealias match
       case AppliedType(_, List(a)) => a
@@ -773,10 +769,7 @@ object FuseMacro:
     /** the (label, type) of each field of a product type (case class / tuple / named tuple), else None. This is reflect's view of `Mirror.ProductOf` —
       * `caseFields` are the product's accessors in declaration order.
       */
-    def productFields(tpe: TypeRepr): Option[List[(String, TypeRepr)]] =
-      val sym = tpe.typeSymbol
-      if sym.flags.is(Flags.Case) && sym.caseFields.nonEmpty then Some(sym.caseFields.map(f => (f.name, tpe.memberType(f))))
-      else None
+    def productFields(tpe: TypeRepr): Option[List[(String, TypeRepr)]] = farray.json.Ast.productFields(tpe)
 
     /** reconstruct a product value of `tpe` from its field values (companion `apply`, e.g. `C(...)` / tuple). */
     def mkProduct(tpe: TypeRepr, vs: List[Term]): Term =
@@ -791,75 +784,15 @@ object FuseMacro:
 
     // --- AST shape detection / substitution ---
     /** a 2-param lambda `(p0, p1) => body` → (p0 sym, p1 sym, body). Used to decompose a fold/reduce `op`. */
-    def decomposeLambda2(t: Term): Option[(Symbol, Symbol, Term)] = unwrap(t) match
-      case Lambda(List(vd0, vd1), body) => Some((vd0.symbol, vd1.symbol, body))
-      case _                            => None
-
-    def decomposeLambda(t: Term): Option[(Symbol, Term)] = unwrap(t) match
-      case Lambda(List(vd), body) => Some((vd.symbol, body))
-      case _                      => None
-
-    /** the index of field `name` in `inner`'s product type, if `inner.name` is a product-field access. */
-    def fieldAccess(inner: Term, name: String): Option[Int] =
-      productFields(inner.tpe.widen).flatMap { fs =>
-        val i = fs.indexWhere(_._1 == name); if i >= 0 then Some(i) else None
-      }
-    def isFieldSelect(t: Term): Option[(Term, Int, String)] = t match
-      case Select(inner, name) => fieldAccess(inner, name).map(i => (inner, i, name))
-      case _                   => None
-
-    /** a CANONICAL product construction `C(a, b, …)` / `(a, b)` / `new C(…)` → (product type, field args). Only the product's OWN apply/constructor counts (not
-      * an arbitrary factory returning C), so args == fields.
-      */
-    def isProductCtor(t: Term): Option[(TypeRepr, List[Term])] =
-      val rt = t.tpe.widen
-      productFields(rt) match
-        case Some(fields) =>
-          def appliedTo(fn: Term, as: List[Term]): Option[(TypeRepr, List[Term])] =
-            if as.length != fields.length then None
-            else
-              fn match
-                case Select(New(_), "<init>")                                                                  => Some((rt, as))
-                case sel @ Select(_, "apply") if sel.symbol.owner == rt.typeSymbol.companionModule.moduleClass => Some((rt, as))
-                case _                                                                                         => None
-          t match
-            case Apply(TypeApply(fn, _), as) => appliedTo(fn, as)
-            case Apply(fn, as)               => appliedTo(fn, as)
-            case _                           => None
-        case None => None
-    // a maximal field PATH rooted at a symbol: `p.a.x` -> (p, List((iₐ,"a"),(iₓ,"x"))); a bare `p` -> (p, Nil).
-    def projPath(t: Term): Option[(Symbol, Path)] = t match
-      case id: Ident           => Some((id.symbol, Nil))
-      case Select(inner, name) =>
-        (projPath(inner), fieldAccess(inner, name)) match
-          case (Some((s, p)), Some(idx)) => Some((s, p :+ (idx, name)))
-          case _                         => None
-      case _ => None
-
-    /** every maximal field path from `param` in `body` (Nil path = param used whole). */
-    def collectPaths(body: Term, param: Symbol): List[Path] =
-      val buf = scala.collection.mutable.LinkedHashSet.empty[Path]
-      (new TreeTraverser:
-        override def traverseTree(t: Tree)(owner: Symbol): Unit = t match
-          case (_: Ident | _: Select) if projPath(t.asInstanceOf[Term]).exists((s, _) => s == param) =>
-            buf += projPath(t.asInstanceOf[Term]).get._2 // maximal: don't descend into inner field reads
-          case _ => super.traverseTree(t)(owner)
-      ).traverseTree(body)(Symbol.spliceOwner)
-      buf.toList
-    def substParam(body: Term, param: Symbol, repl: Term): Term =
-      (new TreeMap:
-        override def transformTerm(t: Term)(owner: Symbol): Term = t match
-          case id: Ident if id.symbol == param => repl
-          case _                               => super.transformTerm(t)(owner)
-      ).transformTerm(body)(Symbol.spliceOwner)
-
-    /** replace each maximal param-field path with its resolved column ref. */
-    def substPaths(body: Term, param: Symbol, refs: Map[Path, Term]): Term =
-      (new TreeMap:
-        override def transformTerm(t: Term)(owner: Symbol): Term = projPath(t) match
-          case Some((s, p)) if s == param && refs.contains(p) => refs(p)
-          case _                                              => super.transformTerm(t)(owner)
-      ).transformTerm(body)(Symbol.spliceOwner)
+    def decomposeLambda2(t: Term): Option[(Symbol, Symbol, Term)] = farray.json.Ast.decomposeLambda2(t)
+    def decomposeLambda(t: Term): Option[(Symbol, Term)] = farray.json.Ast.decomposeLambda(t)
+    def fieldAccess(inner: Term, name: String): Option[Int] = farray.json.Ast.fieldAccess(inner, name)
+    def isFieldSelect(t: Term): Option[(Term, Int, String)] = farray.json.Ast.isFieldSelect(t)
+    def isProductCtor(t: Term): Option[(TypeRepr, List[Term])] = farray.json.Ast.isProductCtor(t)
+    def projPath(t: Term): Option[(Symbol, Path)] = farray.json.Ast.projPath(t)
+    def collectPaths(body: Term, param: Symbol): List[Path] = farray.json.Ast.collectPaths(body, param)
+    def substParam(body: Term, param: Symbol, repl: Term): Term = farray.json.Ast.substParam(body, param, repl)
+    def substPaths(body: Term, param: Symbol, refs: Map[Path, Term]): Term = farray.json.Ast.substPaths(body, param, refs)
 
     /** navigate a shape down a field path to the leaf column (no intermediate product is materialized). */
     def navigate(cur: Shape, path: Path): Shape = path match
