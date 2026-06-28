@@ -18,9 +18,9 @@ import farray.Fuse
   * `indexWhere`). Nested objects/arrays and `zip`/`flatMap`/`collect`/`takeWhile`/`distinct` over the JSON source are not yet supported (a clear compile error).
   */
 final class NdjsonSource[T](
-    private[farray] val backing: Array[Byte],
-    private[farray] val from: Int,
-    private[farray] val until: Int
+    val backing: Array[Byte],
+    val from: Int,
+    val until: Int
 ) extends ByteRecordSource:
   /** Start the fused pipeline over this source. Named `stream` (not `fuse`) to signal at the call site that the data is a byte SOURCE consumed record-by-record
     * — `Json.ndjson[T](bytes).stream.filter(…).map(…)` — not an in-memory `FArray` (which uses `.fuse`). The macro reads `T`'s fields + the downstream
@@ -35,10 +35,10 @@ final class NdjsonSource[T](
   //    `nextRecord` walks newline-framed records from `from` to `until`. No carry buffer, no Partial — every record
   //    is already complete and contiguous. This is the parity anchor for the extraction (zero behaviour change).
   def buf: Array[Byte] = backing
-  private var chunkServed: Boolean = false
-  private var cursor: Int = from // start of the NEXT record to frame
-  private var recStart: Int = from
-  private var recEnd: Int = from
+  var chunkServed: Boolean = false
+  var cursor: Int = from // start of the NEXT record to frame
+  var recStart: Int = from
+  var recEnd: Int = from
   def recordStart: Int = recStart
   def recordEnd: Int = recEnd
   def nextChunk(): Boolean =
