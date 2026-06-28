@@ -73,7 +73,16 @@ object JsonDemo:
           |`val`, reused. Decomposition + DCE + the sink + CSE all fall out of one idea: model a product as
           |independent lazy columns and bind each at its first use.""".stripMargin,
         "xs.fuse.map(x => (x*x + 1, x*x + 2)).map(t => t._1 + t._2).run",
-        clean(c_cse))
+        clean(c_cse)),
+      Example(
+        "…and the decomposition reaches the terminal's lambda",
+        """The same column analysis applies to a `foldLeft`/`reduce` lambda. Here the fold reads only `s.score`,
+          |so the optimizer never builds the `Stat`: `s.id` and `s.weight` (and the `Stat` itself) are DEAD and
+          |absent — the loop is just `acc = acc + (x * 100)`. (A *method* call on `s` — `s.combined` — would need
+          |the whole object and correctly rebuilds it; only field accessors project to columns.) Before this, the
+          |fold rebuilt the entire product per element just to read one field.""".stripMargin,
+        "xs.fuse.map(x => Stat(x, x * 100, x * 1000)).foldLeft(0)((acc, s) => acc + s.score)",
+        clean(c_foldop))
     )
 
   // ════════════════════════════════ PAGE 2: the optimizer parses JSON ════════════════════════════════════
@@ -225,7 +234,11 @@ object JsonDemo:
   private inline def c_dce: String       = FuseDebug.show(xs5.fuse.map(x => (x % 3, x * 7, x * 13)).filter(_._1 == 0).map(_._2).run)
   private inline def c_survivors: String = FuseDebug.show(xs5.fuse.map(x => (x % 2, expensive(x))).filter(_._1 == 0).map(_._2).sum)
   private inline def c_cse: String       = FuseDebug.show(xs5.fuse.map(x => (x*x + 1, x*x + 2)).map(t => t._1 + t._2).run)
+  private inline def c_foldop: String    = FuseDebug.show(xs5.fuse.map(x => Stat(x, x * 100, x * 1000)).foldLeft(0)((acc, s) => acc + s.score))
   private def expensive(x: Int): Int = { var s = 0; var i = 0; while i < x do { s += i; i += 1 }; s }
+
+  /** a 3-field product for the fold-decomposition example. The fold reads only `score`; `id`/`weight` are dead. */
+  final case class Stat(id: Int, score: Int, weight: Int)
 
   private inline def j_sum: String   = FuseDebug.show(Json.ndjson[Event](sample).fuse.filter(_.amount > 150).map(_.amount).foldLeft(0.0)(_ + _))
   private inline def j_cat: String   = FuseDebug.show(Json.ndjson[Event](sample).fuse.filter(_.amount > 150).map(_.category).toList)
