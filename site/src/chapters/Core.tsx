@@ -50,10 +50,20 @@ export default function Core() {
       <Complexity />
 
       <p>
-        The array is the preferred shape, and it reasserts itself the moment you compute: run a <code>map</code>{" "}
-        or a <code>filter</code> and the whole lazy tree collapses back into one contiguous primitive array. You
-        can cons a million elements on one at a time, <code>map</code> once, and you're holding an{" "}
-        <code>int[]</code> again.
+        The reason that table is almost all <code>O(1)</code> is that the nodes are <strong>lazy</strong>: a{" "}
+        <code>Concat</code> or a <code>SliceNode</code> records an intention, it doesn't do the work. Nothing is
+        computed until you read. So if you <code>++</code> twenty arrays together and then call{" "}
+        <code>take(2)</code>, the traversal walks two elements into the tree and stops — the other nineteen
+        concatenations are never constructed into anything. That's a lot of collections you simply don't build.
+        You pay for what you read, not for what you wrote.
+      </p>
+
+      <p>
+        And what you do pay <strong>amortizes</strong>. Cons a million elements on one at a time and you've
+        built a million-deep tree of O(1) nodes; the first real traversal — a <code>map</code>, a{" "}
+        <code>sum</code>, a <code>foldLeft</code> — flattens the whole thing into one contiguous primitive array
+        in a single pass, and every read after that is array-speed. The array is the preferred shape, and it
+        reasserts itself the moment you compute.
       </p>
 
       <h3>It keeps up with List at List's own game</h3>
