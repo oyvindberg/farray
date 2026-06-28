@@ -116,6 +116,25 @@ class JsonFuseTest:
     val got = Json.ndjson[Rec](buf).fuse.filter(_.amount > threshold).map(_.category).nonEmpty
     assertEquals(ref, got)
 
+  /** terminal lambdas read fields directly on a JSON source WITHOUT a leading map/filter — those fields must
+   *  be scanned, not defaulted (regression: `foldLeft((a,r) => a + r.amount)` over JSON gave `a + 0.0`). */
+  @Test def fused_noMapTerminal_readsFields(): Unit =
+    val ref = jsoniterRecs.map(_.amount).sum
+    // foldLeft directly on the source (no map/filter to pre-mark `amount` live)
+    val fold = Json.ndjson[Rec](buf).fuse.foldLeft(0.0)((a, r) => a + r.amount)
+    assertEquals(ref, fold, 1e-6)
+    // foreach directly on the source
+    var fe = 0.0
+    Json.ndjson[Rec](buf).fuse.foreach(r => fe += r.amount)
+    assertEquals(ref, fe, 1e-6)
+    // agg directly on the source
+    val (s, n) = Json.ndjson[Rec](buf).fuse.agg(farray.Agg.sum(_.amount), farray.Agg.count)
+    assertEquals(ref, s, 1e-6)
+    assertEquals(jsoniterRecs.length, n)
+    // find directly on the source
+    val found = Json.ndjson[Rec](buf).fuse.find(_.amount > 290)
+    assertEquals(jsoniterRecs.find(_.amount > 290).map(_.amount), found.map(_.amount))
+
   /** predicate-fail early-out correctness: a selective filter then a projection of a different field. The
    *  early-out must abandon rejected records without affecting the result (boundary cases: all-reject, all-pass).
    *  Cross-checked vs jsoniter. */

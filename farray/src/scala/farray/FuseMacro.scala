@@ -651,6 +651,11 @@ object FuseMacro:
       // materialize the final shape — its value is dead (e.g. `map(_.category).count` must not decode the string).
       if tail.isEmpty && discardsElem then
         buildSegment(seg.map(_._1), shape)(_ => ctx.consume(unit))
+      else if tail.isEmpty && ctx.consumeShape.isDefined then
+        // shape-aware terminal (fold/reduce/agg): hand the decomposed shape so the terminal's lambdas project
+        // only the fields they read — NEVER materialize the whole product (which would read dead placeholder
+        // columns: the `{ null; …; 0.0 }` rebuild bug on a JSON record fed to agg with no leading filter).
+        buildSegment(seg.map(_._1), shape)(fs => ctx.consumeShape.get(fs))
       else
         buildSegment(seg.map(_._1), shape)(fs => readShape(fs)(t => buildBody(tail, t, ctx)))
 
@@ -833,20 +838,40 @@ object FuseMacro:
       val fields = productFields(elemTpe).getOrElse(
         report.errorAndAbort(s"fuse-json: ${elemTpe.show} is not a case class (flat case-class records only in v1)"))
       val live = scala.collection.mutable.LinkedHashSet.empty[String]
+      var wholeUse = false
+      def addFromBody(param: Symbol, b: Term): Unit =
+        val paths = collectPaths(b, param)
+        if paths.contains(Nil) then wholeUse = true
+        paths.foreach(path => path.headOption.foreach(h => live += h._2))
       def addFrom(lam: Term): Unit = decomposeLambda(lam) match
-        case Some((p, b)) => collectPaths(b, p).foreach(path => path.headOption.foreach(h => live += h._2))
+        case Some((p, b)) => addFromBody(p, b)
         case None         => report.errorAndAbort(s"fuse-json: could not decompose a stage lambda: ${lam.show}")
+      // a terminal that applies a lambda to the ELEMENT must also contribute its read fields — otherwise the
+      // scanner treats those fields as dead and feeds the terminal a default (the `acc + 0.0` agg bug).
+      def addTerminalLambdas(): Unit =
+        def add1(lam: Term): Unit = decomposeLambda(lam).foreach((p, b) => addFromBody(p, b))
+        def add2(lam: Term): Unit = decomposeLambda2(lam).foreach((_, e, b) => addFromBody(e, b)) // (acc, elem) => …
+        tag match
+          case TTag.Foreach | TTag.IndexWhere => add1(args(0))                 // f / p over the element
+          case TTag.Find | TTag.Exists | TTag.Forall => add1(args(0))
+          case TTag.Fold                      => add2(args(1))                 // op: (acc, elem) => …
+          case TTag.ReduceOpt                 => add2(args(0))
+          case TTag.ExtremumBy                => add1(args(0))                 // f: elem => key
+          case TTag.Agg =>
+            parseAggList(args(0)).foreach {
+              case AggSpec.Sum(f, _)            => add1(f)
+              case AggSpec.Avg(f)               => add1(f)
+              case AggSpec.Extremum(f, _, _, _) => add1(f)
+              case AggSpec.Fold(_, op, _)       => add2(op)
+              case AggSpec.Count                => ()
+            }
+          case _ => ()
       stages.foreach {
         case MapS(f)        => addFrom(f)
         case FilterS(p, _)  => addFrom(p)
         case _              => ()
       }
-      // a whole-record use (Nil path) forces all fields live (the record gets rebuilt) — detect it
-      val wholeUse = stages.exists {
-        case MapS(f)       => decomposeLambda(f).exists((p, b) => collectPaths(b, p).contains(Nil))
-        case FilterS(p, _) => decomposeLambda(p).exists((pr, b) => collectPaths(b, pr).contains(Nil))
-        case _             => false
-      }
+      addTerminalLambdas()
       val liveSet = if wholeUse then fields.map(_._1).toSet else live.toSet
       (fields, liveSet)
 
