@@ -13,7 +13,7 @@ class IntConvertBenchmark extends IntInputs {
   @Benchmark def farray_toArray(): Array[Int] = farrayInput.toArray
   @Benchmark def list_toArray(): Array[Int] = listInput.toArray
   @Benchmark def vector_toArray(): Array[Int] = vectorInput.toArray
-  @Benchmark def iarray_toArray(): IArray[Int] = IArray.unsafeFromArray(IArray.genericWrapArray(iarrayInput).toArray)
+  @Benchmark def iarray_toArray(): Array[Int] = iarrayInput.toArray
   @Benchmark def ziochunk_toArray(): Array[Int] = zioChunkInput.toArray
   @Benchmark def fs2chunk_toArray(): Array[Int] = fs2ChunkInput.toArray
 

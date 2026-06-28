@@ -3,19 +3,6 @@ package farray
 import org.openjdk.jmh.annotations.*
 import java.util.concurrent.TimeUnit
 
-// Prototype: push-based fused pipeline. Each stage composes a SPECIALIZED Function1 (Int=>Int etc. are
-// @specialized, so no boxing), and `run` feeds the source through the whole composed sink in ONE pass —
-// no intermediate FArray per stage. Compare to the eager chain (3 intermediate IntArrs).
-object Fusion:
-  final class IntProducer(val run: (Int => Unit) => Unit):
-    def map(f: Int => Int): IntProducer = IntProducer(push => run(x => push(f(x))))
-    def filter(p: Int => Boolean): IntProducer = IntProducer(push => run(x => if p(x) then push(x)))
-    def toArray: Array[Int] =
-      val b = scala.collection.mutable.ArrayBuilder.make[Int]
-      run(b.addOne)
-      b.result()
-  def from(xs: FArray[Int]): IntProducer = IntProducer(push => xs.foreach(push))
-
 @State(Scope.Thread)
 @BenchmarkMode(Array(Mode.Throughput))
 @OutputTimeUnit(TimeUnit.SECONDS)
@@ -24,12 +11,12 @@ object Fusion:
 @Fork(1)
 class FusionBench extends IntInputs:
   // eager: 3 intermediate IntArr allocations, 3 passes
-  @Benchmark def eager(): Array[Int] =
-    farrayInput.map(_ + 1).filter(_ % 2 == 0).map(_ * 2).toArray
+  @Benchmark def eager(): FArray[Int] =
+    farrayInput.map(_ + 1).filter(_ % 2 == 0).map(_ * 2)
 
   // fused: one pass, one output, no intermediate FArrays — but stages are stored (specialized) closures
-  @Benchmark def fused(): Array[Int] =
-    Fusion.from(farrayInput).map(_ + 1).filter(_ % 2 == 0).map(_ * 2).toArray
+  @Benchmark def fused(): FArray[Int] =
+    farrayInput.fuse.map(_ + 1).filter(_ % 2 == 0).map(_ * 2).run
 
   // hand-inlined: what a macro/staging would generate — one pass, NO closures, fully inlined+unboxed
   @Benchmark def handFused(): Array[Int] =
@@ -38,15 +25,6 @@ class FusionBench extends IntInputs:
       val y = x + 1; if (y % 2 == 0) b.addOne(y * 2)
     }
     b.result()
-
-  // ---- FArray -> FArray (apples-to-apples): same pipeline, eager 3-pass vs the fused macro ----
-  // eager: 2 intermediate FArrays + 3 passes, returns FArray[Int]
-  @Benchmark def eagerF(): FArray[Int] =
-    farrayInput.map(_ + 1).filter(_ % 2 == 0).map(_ * 2)
-
-  // fused macro: one unboxed pass, one output FArray, no intermediates, no per-element closures
-  @Benchmark def fuseMacro(): FArray[Int] =
-    farrayInput.fuse.map(_ + 1).filter(_ % 2 == 0).map(_ * 2).run
 
   // ---- flatMap: eager (intermediate FArrays) vs fused (one nested loop, growable out) ----
   @Benchmark def flatMapEager(): FArray[Int] =
