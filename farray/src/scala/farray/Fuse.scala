@@ -190,6 +190,22 @@ final class Fuse[+A](private[farray] val base: AnyRef):
     foreach { a => val k = key(a); val b = f(a); m.updateWith(k) { case Some(o) => Some(reduce(o, b)); case None => Some(b) } }
     m.toMap
 
+  /** group by `key`, combine each element's `value` per key with `reduce`, in ONE fused pass — into a primitive-
+   *  keyed open-addressing map (an Int key stays UNBOXED in the hot loop, an Int/Long/Double value too), boxing
+   *  only at the final O(#keys) materialization to `Map[K,B]`. The fast analogue of `groupMapReduce`. */
+  inline def groupReduceBy[K, B](inline key: A => K)(inline value: A => B)(inline reduce: (B, B) => B): Map[K, B] =
+    ${ FuseMacro.groupReduceByImpl[A, K, B]('this, 'key, 'value, 'reduce) }
+  /** group-reduce with `value = identity` — combine the elements themselves per key. (`A1 >: A` so the
+   *  covariant element type may appear in `reduce`'s contravariant position, like `reduce`/`+:`.) */
+  inline def groupReduce[K, A1 >: A](inline key: A => K)(inline reduce: (A1, A1) => A1): Map[K, A1] =
+    groupReduceBy(key)(a => (a: A1))(reduce)
+  /** count elements per key (unboxed Int accumulator). */
+  inline def groupCount[K](inline key: A => K): Map[K, Int] =
+    groupReduceBy(key)(_ => 1)((x, y) => x + y)
+  /** sum the projected `value` per key (unboxed for Int/Long/Double values). */
+  inline def groupSum[K, B](inline key: A => K)(inline value: A => B)(using num: Numeric[B]): Map[K, B] =
+    groupReduceBy(key)(value)((x, y) => num.plus(x, y))
+
   // ---- multi-output terminals: one fused pass into two builders ----
   inline def partition(inline p: A => Boolean): (FArray[A], FArray[A]) =
     val y = List.newBuilder[A]; val n = List.newBuilder[A]

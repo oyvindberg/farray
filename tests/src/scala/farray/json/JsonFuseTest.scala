@@ -158,6 +158,17 @@ class JsonFuseTest:
     val got = Json.ndjson[Rec](buf).fuse.filter(_.status == "active").map(_.name).toList
     assertEquals(ref, got)
 
+  /** groupReduceBy over the JSON source: sum amount per region (String key → boxed map), and count per age
+   *  (Int key → unboxed IntKeyMap). Cross-checked vs jsoniter. The key/value lambdas must contribute their
+   *  fields to the scanner's live-set (region/amount, age). */
+  @Test def fused_groupReduceBy_overJson(): Unit =
+    val byRegion = Json.ndjson[Rec](buf).fuse.groupReduceBy(_.region)(_.amount)(_ + _)
+    val refR = jsoniterRecs.groupMapReduce(_.region)(_.amount)(_ + _)
+    assertEquals(refR.keySet, byRegion.keySet)
+    refR.foreach { case (k, v) => assertEquals(v, byRegion(k), 1e-6) }
+    val byAge = Json.ndjson[Rec](buf).fuse.groupCount(_.age)
+    assertEquals(jsoniterRecs.groupBy(_.age).view.mapValues(_.size).toMap, byAge)
+
 end JsonFuseTest
 
 object JsonFuseTest:

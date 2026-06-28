@@ -6,6 +6,7 @@ import farray.json.{NdjsonSource, JsonScanner}
 /** which terminal a fused pipeline ends in (the macro shares one lowering core across all of them). */
 enum TTag:
   case Run, Foreach, Fold, Count, Find, Exists, Forall, HeadOption, Head, IndexWhere, ReduceOpt, ExtremumBy, Agg
+  case GroupReduce // group by key(a), combine value(a) per key with reduce → Map[K,B]; primitive-keyed, no boxing
   case Plan // not a real terminal: returns a String DESCRIPTION of the plan the macro built, for testing
 
 /**
@@ -49,6 +50,11 @@ object FuseMacro:
 
   def countImpl[A: Type](self: Expr[Fuse[A]])(using Quotes): Expr[Int] =
     '{ ${ core[A](self, TTag.Count, Nil) }.asInstanceOf[Int] }
+
+  // primitive-keyed group-reduce: group by key(a), combine value(a) per key with reduce. One fused pass into an
+  // open-addressing map (unboxed Int/Long key, primitive value array for prim B), materialized to Map[K,B].
+  def groupReduceByImpl[A: Type, K: Type, B: Type](self: Expr[Fuse[A]], key: Expr[A => K], value: Expr[A => B], reduce: Expr[(B, B) => B])(using Quotes): Expr[Map[K, B]] =
+    '{ ${ core[A](self, TTag.GroupReduce, List(key, value, reduce)) }.asInstanceOf[Map[K, B]] }
 
   // plan description (testing): TTag.Plan returns a String describing the built plan, never runs the loop.
   def planImpl[A: Type](self: Expr[Fuse[A]])(using Quotes): Expr[String] =
@@ -875,6 +881,7 @@ object FuseMacro:
           case TTag.Fold                      => add2(args(1))                 // op: (acc, elem) => …
           case TTag.ReduceOpt                 => add2(args(0))
           case TTag.ExtremumBy                => add1(args(0))                 // f: elem => key
+          case TTag.GroupReduce               => add1(args(0)); add1(args(1)) // key + value read record fields (reduce doesn't)
           case TTag.Agg => addAggSpecs(parseAggList(args(0)))
           case TTag.Plan if args.nonEmpty =>
             // planFold passes a 2-param fold op; planAgg passes an agg list. Distinguish by shape.
@@ -909,6 +916,7 @@ object FuseMacro:
       tag match
         case TTag.Foreach | TTag.IndexWhere | TTag.Find | TTag.Exists | TTag.Forall | TTag.ExtremumBy => add1(args(0))
         case TTag.Fold => add2(args(1)); case TTag.ReduceOpt => add2(args(0))
+        case TTag.GroupReduce => add1(args(0)); add1(args(1))
         case TTag.Agg => aggSpecs(parseAggList(args(0)))
         case TTag.Plan if args.nonEmpty => decomposeLambda2(args(0)) match { case Some(_) => add2(args(0)); case None => aggSpecs(parseAggList(args(0))) }
         case _ => ()
@@ -1353,6 +1361,69 @@ object FuseMacro:
               case None       => mkTupleN(states.map(_.finish))
             '{ ${ loopS(perElemTerm)(perElemShape) }; ${ resultExpr(result) } }.asTerm
           }
+        case TTag.GroupReduce =>
+          // group by key(a), combine value(a) per key with reduce → Map[K,B]. ONE fused pass into an
+          // open-addressing map (UNBOXED Int key via IntKeyMap; other key kinds via a boxed HashMap fallback).
+          // key/value lambdas are decomposed against the element Shape (unboxed, projection-aware over JSON too);
+          // `reduce` is inlined (applyN) at the merge — no SAM stored, no per-element closure.
+          val key = args(0); val value = args(1); val reduce = args(2)
+          def resultTpe(lam: Term, n: Int): TypeRepr = lam.tpe.widen.dealias match
+            case AppliedType(_, ts) if ts.length > n => ts(n)
+            case _                                   => TypeRepr.of[Any]
+          val kTpe = resultTpe(key, 0)   // A => K   → last targ is K
+          val bTpe = resultTpe(value, 0) // A => B   → last targ is B (both 1-arg: targ(1) is the result)
+          val kTpeR = key.tpe.widen.dealias match { case AppliedType(_, ts) => ts.last; case _ => TypeRepr.of[Any] }
+          val bTpeR = value.tpe.widen.dealias match { case AppliedType(_, ts) => ts.last; case _ => TypeRepr.of[Any] }
+          (kTpeR.asType, bTpeR.asType) match
+            case ('[kk], '[bb]) =>
+              // value packing: only Int/Long/Double values use the unboxed long[] slot; everything else (incl.
+              // Char/Byte/Short/Boolean/refs) uses the Object[] slot (boxed). Key: only Int uses IntKeyMap.
+              val isI = bTpeR =:= TypeRepr.of[Int]
+              val isL = bTpeR =:= TypeRepr.of[Long]
+              val isD = bTpeR =:= TypeRepr.of[Double]
+              val primVal = isI || isL || isD
+              def packB(v: Term): Expr[Long] =
+                if isI then '{ ${ v.asExprOf[Int] }.toLong }
+                else if isL then v.asExprOf[Long]
+                else '{ java.lang.Double.doubleToRawLongBits(${ v.asExprOf[Double] }) }
+              def unpackB(l: Expr[Long]): Term =
+                if isI then '{ $l.toInt }.asTerm
+                else if isL then l.asTerm
+                else '{ java.lang.Double.longBitsToDouble($l) }.asTerm
+              val intKey = kTpeR =:= TypeRepr.of[Int]
+              if intKey then
+                  // the per-element merge: probe(key); seed or reduce(get, value) — reduce inlined.
+                  def merge(m: Expr[IntKeyMap], kT: Term, vT: Term): Term =
+                    if primVal then
+                      '{ val slot = $m.probe(${ kT.asExprOf[Int] })
+                         if $m.wasNew() then $m.setValuePrim(slot, ${ packB(vT) })
+                         else $m.setValuePrim(slot, ${ packB(applyN(reduce, List(unpackB('{ $m.getValuePrim(slot) }), vT))) }) }.asTerm
+                    else
+                      '{ val slot = $m.probe(${ kT.asExprOf[Int] })
+                         if $m.wasNew() then $m.setValueRef(slot, ${ vT.asExpr }.asInstanceOf[Object])
+                         else $m.setValueRef(slot, ${ applyN(reduce, List('{ $m.getValueRef(slot).asInstanceOf[bb] }.asTerm, vT)).asExpr }.asInstanceOf[Object]) }.asTerm
+                  '{ val m = new IntKeyMap(16, ${ Expr(primVal) })
+                     ${ loopS(
+                          v => fnOnShape(key, Sc(kk => kk(v)))(kT => fnOnShape(value, Sc(kk => kk(v)))(vT => merge('m, kT, vT))),
+                          )(sh => fnOnShape(key, sh)(kT => fnOnShape(value, sh)(vT => merge('m, kT, vT)))) }
+                     val b = Map.newBuilder[kk, bb]
+                     ${ if primVal
+                        then '{ m.foreachEntryPrim((k, l) => b += ((k.asInstanceOf[kk], ${ unpackB('l).asExprOf[bb] }))) }
+                        else '{ m.foreachEntryRef((k, o) => b += ((k.asInstanceOf[kk], o.asInstanceOf[bb]))) } }
+                     b.result() }.asTerm
+              else
+                // FALLBACK for any non-Int key (Long/Double/Char/Ref/…): a boxed mutable HashMap (correct, not
+                // yet specialized — Long/Ref-keyed unboxed maps are a follow-up).
+                def mergeBoxed(m: Expr[scala.collection.mutable.HashMap[kk, bb]], kT: Term, vT: Term): Term =
+                  '{ val k = ${ kT.asExprOf[kk] }; val v = ${ vT.asExprOf[bb] }
+                     $m.get(k) match
+                       case Some(o) => $m.update(k, ${ applyN(reduce, List('{ o }.asTerm, '{ v }.asTerm)).asExprOf[bb] })
+                       case None    => $m.update(k, v) }.asTerm
+                '{ val m = scala.collection.mutable.HashMap.empty[kk, bb]
+                   ${ loopS(
+                        v => fnOnShape(key, Sc(kk => kk(v)))(kT => fnOnShape(value, Sc(kk => kk(v)))(vT => mergeBoxed('m, kT, vT))),
+                        )(sh => fnOnShape(key, sh)(kT => fnOnShape(value, sh)(vT => mergeBoxed('m, kT, vT)))) }
+                   m.toMap }.asTerm
         case TTag.Run => assembleOut(src0, n0, counters, ctx)
 
     // output array assembly: grow via ensureCap when a flatMap can expand it, else preallocate the upper bound.
