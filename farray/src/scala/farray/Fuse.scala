@@ -35,6 +35,11 @@ final class Fuse[+A](private[farray] val base: AnyRef):
   def take(n: Int): Fuse[A] = this
   def drop(n: Int): Fuse[A] = this
 
+  /** the LAST `n` elements, in order — a ring buffer (O(n) memory), one pass, no `reverse`. Nothing is emitted until the stream ends, so unlike `take` this
+    * doesn't short-circuit the source; a downstream `take` does.
+    */
+  def takeRight(n: Int): Fuse[A] = this
+
   /** emit elements until `p` first fails, then stop the whole traversal (short-circuits like `take`). */
   def takeWhile(p: A => Boolean): Fuse[A] = this
 
@@ -49,6 +54,36 @@ final class Fuse[+A](private[farray] val base: AnyRef):
 
   /** running fold: emit `z`, then each successive `op(acc, a)` — yields one more element than the input. */
   def scanLeft[B](z: B)(op: (B, A) => B): Fuse[B] = this.asInstanceOf[Fuse[B]]
+
+  /** Streaming group-aggregate for input ALREADY CLUSTERED by `key`: emit `(k, acc)` once per maximal run of equal keys, where `acc` starts at
+    * `combine(seed, firstOfRun)` and folds the run with `combine`. O(1) memory (state = curKey, acc, started), no buffer, no hashmap, short-circuits under
+    * `take` — the ordered-input counterpart of `groupMapReduce`. The "already clustered by key" precondition is the USER'S declaration; on unordered input the
+    * result is per-run, not per-key (documented, not detected).
+    */
+  def foldAdjacentBy[K, B](key: A => K)(seed: B)(combine: (B, A) => B): Fuse[(K, B)] = this.asInstanceOf[Fuse[(K, B)]]
+
+  /** Streaming GROUP stage for input ALREADY CLUSTERED by `key`: emit each maximal run of equal keys as its own `FArray[A]` (the rows, in order). O(largest
+    * run) memory — buffers one run at a time, not all N — no hashmap, short-circuits under `take`. The materializing counterpart of `foldAdjacentBy` (use that
+    * when you only need a per-run aggregate and never the rows). Same "clustered by key" user precondition.
+    */
+  def groupAdjacentBy[K](key: A => K): Fuse[FArray[A]] = this.asInstanceOf[Fuse[FArray[A]]]
+
+  /** NESTED FUSION — the spec's headline: for input ALREADY CLUSTERED by `key`, reduce each run with a FUSED sub-pipeline and emit `(k, result)` per run.
+    * `prep` is the per-group stages (map/filter/collect/take/…) over the run's rows; `agg` is the per-group aggregate (`Agg.sum`/`count`/`min`/`fold`/…). When
+    * the aggregate is a fold, the run's rows are NEVER materialized — the inner fold runs inline as rows stream past: O(1) memory per group, zero per-group
+    * allocation. Same "clustered by key" precondition. Example: {{{src.fuse.groupAdjacentReduceBy(_.day)(_.map(_.amount))(Agg.sum(identity))}}}
+    *
+    * (Spelled `(prep)(agg)` rather than `(reduce: Fuse[A] => B)` because an inner inline terminal like `.sum` expands before this macro reads the lambda;
+    * `prep` is plain stage markers and `agg` is a macro-read value.)
+    */
+  inline def groupAdjacentReduceBy[K, B, R](inline key: A => K)(inline prep: Fuse[A] => Fuse[B])(inline agg: Agg[B, R]): Fuse[(K, R)] =
+    ${ FuseMacro.groupReduceStageImpl[A, K, B, R]('this, 'key, 'prep, 'agg) }
+
+  /** Internal non-inline marker the `.run`/agg macro reads off the AST for nested fusion. `agg` here is an `AggRaw.*` (the non-compileTimeOnly twin) —
+    * `groupReduceStageImpl` already consumed the user's `Agg.*`. Not for direct use.
+    */
+  def groupAdjacentReduceByMarker[K, B, R](key: A => K)(prep: Fuse[A] => Fuse[B])(agg: Agg[B, R]): Fuse[(K, R)] =
+    this.asInstanceOf[Fuse[(K, R)]]
 
   /** run `f` for its side effect on each surviving element, passing the element through unchanged. */
   def tapEach(f: A => Unit): Fuse[A] = this
@@ -270,14 +305,12 @@ final class Fuse[+A](private[farray] val base: AnyRef):
     }
     (FArray.from(l.result()), FArray.from(r.result()))
 
-  // ---- windowing terminals (one fused pass; sub-arrays materialize) ----
-  /** fixed-size chunks; the last may be shorter. */
-  inline def grouped(n: Int): FArray[FArray[A]] =
-    require(n > 0, "grouped size must be > 0")
-    val out = List.newBuilder[FArray[A]]; var buf = List.newBuilder[A]; var c = 0
-    foreach { a => buf += a; c += 1; if c == n then { out += FArray.from(buf.result()); buf = List.newBuilder[A]; c = 0 } }
-    if c > 0 then out += FArray.from(buf.result())
-    FArray.from(out.result())
+  // ---- windowing ----
+  /** Fixed-size chunks (the last may be shorter) — a composable STAGE: `grouped(n)` emits an `FArray[A]` every `n` elements, so it fuses into the one pass AND
+    * short-circuits under a downstream `take`. `xs.fuse.grouped(n).run` gives the same `FArray[FArray[A]]` the old terminal did, but you can now keep
+    * transforming the chunks. O(n) memory.
+    */
+  def grouped(n: Int): Fuse[FArray[A]] = this.asInstanceOf[Fuse[FArray[A]]]
 
   /** overlapping windows of size `n` stepping by 1; a shorter-than-`n` stream yields one partial window. */
   inline def sliding(n: Int): FArray[FArray[A]] =

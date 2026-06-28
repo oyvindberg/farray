@@ -6,21 +6,22 @@ import java.nio.charset.StandardCharsets.UTF_8
 import com.github.plokhotnyuk.jsoniter_scala.core.*
 import com.github.plokhotnyuk.jsoniter_scala.macros.*
 import org.typelevel.jawn.ast.{JParser, JValue}
-import farray.json.{RecScan, Rec, FatScan, FatRec, Json}
+import farray.json.{Rec, FatRec, Json}
 
-/** THE kill-or-prove experiment (docs/json-parser-research.md §5.6).
+/** THE kill-or-prove experiment (docs/json-parser-research.md §5.6): the fused-JSON macro vs the field's parsers.
   *
   * Query: over NDJSON of 20-field records, `filter(amount > t).map(amount).sum` (aggregate, the zero-alloc headline) and `filter(amount > t).map(category)`
   * (projection + lazy string).
   *
   * Contenders:
-  *   - fused : the hand-written projection scanner (the shape the macro will generate) — reads 1-2 of 20 fields, skips the rest by the byte, lazy string
-  *     decode, predicate early-out.
+  *   - fuseMacro : the PRODUCT — the fuse optimizer drives a per-record byte scanner: reads 1-2 of 20 fields, skips the rest by the byte, lazy string decode,
+  *     predicate early-out, no per-record object.
   *   - jsoniterFull : jsoniter parses the FULL 20-field Rec, then filter/map in Scala (the common baseline).
   *   - jsoniterNarrow: jsoniter parses a NARROW record (only the read fields), skipping the rest — jsoniter's own best projection. The FAIREST baseline (still
   *     decodes every key + byte-walks skips).
+  *   - jsoniterReaderManual / jawn / jackson : other points on the spectrum.
   *
-  * Success criterion: fused throughput >= jsoniterNarrow (target >=1.3x), and near-zero alloc on the sum variant (run with -prof gc). Selectivity ~25% here
+  * Success criterion: fuseMacro throughput >= jsoniterNarrow (target >=1.3x), and near-zero alloc on the sum variant (run with -prof gc). Selectivity ~25% here
   * (amount > 150, amounts in [0,298.5]).
   */
 @State(Scope.Thread)
@@ -83,18 +84,13 @@ class JsonProjectionBenchmark:
 
   // ---- AGGREGATE query: filter(amount > t).map(amount).sum ----
 
-  /** the MACRO-DRIVEN path: the EXISTING fuse optimizer (filter→if, map, sink, DCE, fold) drives the byte scanner. This is the real product — the hand-written
-    * `sum_fused` is just its spec.
-    */
+  /** the MACRO-DRIVEN path: the EXISTING fuse optimizer (filter→if, map, sink, DCE, fold) drives the byte scanner. */
   @Benchmark def sum_fuseMacro(): Double =
     Json.ndjson[Rec](buf).fuse.filter(_.amount > threshold).map(_.amount).sum
 
   /** same query via foldLeft (avoids Numeric[Double].plus boxing that `.sum` incurs) — the true zero-alloc path. */
   @Benchmark def sum_fuseMacroFold(): Double =
     Json.ndjson[Rec](buf).fuse.filter(_.amount > threshold).foldLeft(0.0)((a, r) => a + r.amount)
-
-  @Benchmark def sum_fused(): Double =
-    RecScan.sumAmountWhereGt(buf, 0, buf.length, threshold)
 
   @Benchmark def sum_jsoniterFull(): Double =
     var acc = 0.0; var start = 0
@@ -159,9 +155,6 @@ class JsonProjectionBenchmark:
   @Benchmark def cat_fuseMacro(): Int =
     Json.ndjson[Rec](buf).fuse.filter(_.amount > threshold).map(_.category).count
 
-  @Benchmark def cat_fused(): Int =
-    RecScan.categoryWhereAmountGt(buf, 0, buf.length, threshold).size
-
   @Benchmark def cat_jsoniterNarrow(): Int =
     var c = 0; var start = 0
     while start < buf.length do
@@ -175,8 +168,8 @@ class JsonProjectionBenchmark:
   // m0/m5 in [0,150); threshold 75 → ~50% selectivity so the compute-for-survivors win shows.
   val fatThreshold = 75.0
 
-  @Benchmark def fatM5_fused(): Double =
-    FatScan.sumM5WhereM0Gt(fatBuf, 0, fatBuf.length, fatThreshold)
+  @Benchmark def fatM5_fuseMacro(): Double =
+    Json.ndjson[FatRec](fatBuf).fuse.filter(_.m0 > fatThreshold).map(_.m5).sum
 
   /** jsoniter-narrow {m0, m5}: decodes BOTH doubles for every record + allocates the record. */
   @Benchmark def fatM5_jsoniterNarrow(): Double =
@@ -188,8 +181,8 @@ class JsonProjectionBenchmark:
       start = end + 1
     acc
 
-  @Benchmark def fat3_fused(): Double =
-    FatScan.sumM1M2M3WhereM0Gt(fatBuf, 0, fatBuf.length, fatThreshold)
+  @Benchmark def fat3_fuseMacro(): Double =
+    Json.ndjson[FatRec](fatBuf).fuse.filter(_.m0 > fatThreshold).map(r => r.m1 + r.m2 + r.m3).sum
 
   /** jsoniter-narrow {m0,m1,m2,m3}: decodes ALL FOUR doubles for EVERY record (no compute-for-survivors). */
   @Benchmark def fat3_jsoniterNarrow(): Double =

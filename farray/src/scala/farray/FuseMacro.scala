@@ -1,7 +1,6 @@
 package farray
 
 import scala.quoted.*
-import farray.json.{NdjsonSource, JsonScanner}
 
 /** which terminal a fused pipeline ends in (the macro shares one lowering core across all of them). */
 enum TTag:
@@ -47,6 +46,29 @@ object FuseMacro:
       Quotes
   ): Expr[Map[K, B]] =
     '{ ${ core[A](self, TTag.GroupReduce, List(key, value, reduce)) }.asInstanceOf[Map[K, B]] }
+
+  /** NESTED FUSION stage. `groupAdjacentReduceBy` is inline so its `Agg.*` argument reaches a macro splice (else `@compileTimeOnly` fires before the outer
+    * `.run` macro can read it). This impl CONSUMES that `Agg.*` here by rewriting it to the non-compileTimeOnly `AggRaw.*` twin (same method name → same
+    * `parseAgg1` shape), then re-emits the non-inline `groupAdjacentReduceByMarker` call carrying the rewritten agg. The `.run`/agg macro parses that marker
+    * normally — the agg now survives in the tree as a plain value.
+    */
+  def groupReduceStageImpl[A: Type, K: Type, B: Type, R: Type](
+      self: Expr[Fuse[A]],
+      key: Expr[A => K],
+      prep: Expr[Fuse[A] => Fuse[B]],
+      agg: Expr[Agg[B, R]]
+  )(using Quotes): Expr[Fuse[(K, R)]] =
+    import quotes.reflect.*
+    // rewrite every `Agg.<name>` selection to `AggRaw.<name>` (the compileTimeOnly twin → plain). Match by the Agg
+    // module symbol so an `import farray.Agg` alias is handled too.
+    val aggMod = Symbol.requiredModule("farray.Agg")
+    val aggRawMod = Symbol.requiredModule("farray.AggRaw")
+    val rewriter = new TreeMap:
+      override def transformTerm(t: Term)(owner: Symbol): Term = t match
+        case Select(qual, name) if qual.symbol == aggMod => Select.unique(Ref(aggRawMod), name)
+        case _                                           => super.transformTerm(t)(owner)
+    val aggRaw = rewriter.transformTerm(agg.asTerm)(Symbol.spliceOwner).asExprOf[Agg[B, R]]
+    '{ $self.groupAdjacentReduceByMarker[K, B, R]($key)($prep)($aggRaw) }
 
   // plan description (testing): TTag.Plan returns a String describing the built plan, never runs the loop.
   def planImpl[A: Type](self: Expr[Fuse[A]])(using Quotes): Expr[String] =
@@ -99,6 +121,17 @@ object FuseMacro:
     final case class TapEachS(f: Term) extends Stage // run f for side effect, pass element through
     case object ZipWithIndexS extends Stage
     final case class ZipS(that: Term, bTpe: TypeRepr, combine: Option[Term]) extends Stage // zip (None) / map2 (Some f)
+    // streaming group-aggregate for input ALREADY CLUSTERED by key: emit `(k, acc)` once per run of equal keys.
+    final case class FoldAdjacentByS(key: Term, seed: Term, combine: Term, kTpe: TypeRepr, bTpe: TypeRepr) extends Stage
+    // streaming GROUP for input ALREADY CLUSTERED by key: emit each run's rows as an `FArray[A]`.
+    final case class GroupAdjacentByS(key: Term, kTpe: TypeRepr, aTpe: TypeRepr) extends Stage
+    // fixed-size chunks: emit an `FArray[A]` of `n` rows (the last may be shorter). A bounded-buffer stage.
+    final case class GroupedS(n: Term, aTpe: TypeRepr) extends Stage
+    // keep only the LAST n elements (a ring buffer): nothing emitted mid-loop, the ring replayed in order at the end.
+    final case class TakeRightS(n: Term, aTpe: TypeRepr) extends Stage
+    // NESTED FUSION: per run, push the rows through `innerStages` then fold into the per-run aggregate; emit (k, R).
+    // `agg` is the raw `Agg.*` term (parsed to AggSpecs later, where parseAggList is in scope).
+    final case class GroupReduceAdjacentByS(key: Term, innerStages: List[Stage], agg: Term, kTpe: TypeRepr, rTpe: TypeRepr) extends Stage
 
     enum Kind:
       case KInt, KLong, KDouble, KFloat, KShort, KByte, KChar, KBoolean, KRef
@@ -134,8 +167,51 @@ object FuseMacro:
         zipThat: Option[(Expr[FBase], TypeRepr)] = None,
         flag: Option[(Expr[Boolean], Expr[Unit])] = None,
         seen: Option[Expr[scala.collection.mutable.HashSet[Any]]] = None,
-        acc: Option[(Term, Term => Term)] = None
-    ) // scanLeft: (read accumulator, assign accumulator)
+        acc: Option[(Term, Term => Term)] = None, // scanLeft: (read accumulator, assign accumulator)
+        foldAdj: Option[FoldAdjState] = None, // foldAdjacentBy: curKey/acc/started handles + the seed
+        groupAdj: Option[GroupAdjState] = None, // groupAdjacentBy: per-run row buffer + curKey/started
+        grouped: Option[GroupedState] = None, // grouped(n): fixed-size row buffer + a fill count
+        takeRight: Option[TakeRightState] = None, // takeRight(n): a ring buffer; `replay` emits its contents in order
+        groupReduceAdj: Option[GroupReduceAdjState] = None // nested fusion: per-run inner-agg accumulator + curKey/started
+    )
+    // nested fusion's above-loop state: the run key + started flag, plus the inner agg's per-run accumulator as a
+    // (reset, step, finish) triple. `step(shape)` folds one inner-pipeline-output value (the prep output for a row)
+    // into the accumulator; `reset` re-inits it at each key change; `finish` reads it to the emitted R.
+    final case class GroupReduceAdjState(
+        curKeyRead: Term,
+        setCurKey: Term => Term,
+        started: Expr[Boolean],
+        start: Expr[Unit],
+        innerReset: Expr[Unit],
+        innerStep: Term => Term, // run the inner pipeline on one row, folding its output into the per-run acc (Unit term)
+        innerFinish: Term // reads the per-run accumulator → R
+    )
+    // grouped(n)'s above-loop state: append a row, the current fill count, the window-size n, build/reset the buffer.
+    final case class GroupedState(append: Term => Expr[Unit], sizeRead: Expr[Int], n: Expr[Int], emitRun: Term, reset: Expr[Unit])
+    // takeRight(n)'s above-loop state: `store` writes the element into the ring; the read primitives let the
+    // epilogue build a `done`-aware replay loop (count to emit, oldest index, ring size, read-at-ring-index).
+    final case class TakeRightState(store: Term => Expr[Unit], count: Expr[Int], oldest: Expr[Int], size: Expr[Int], readAt: Expr[Int] => Term)
+    // foldAdjacentBy's above-loop state: the run key, the run accumulator, the started flag, and the (once-bound) seed.
+    final case class FoldAdjState(
+        curKeyRead: Term,
+        setCurKey: Term => Term,
+        accRead: Term,
+        setAcc: Term => Term,
+        started: Expr[Boolean],
+        start: Expr[Unit],
+        seed: Term
+    )
+    // groupAdjacentBy's above-loop state: a growable Object[] row buffer (+ fill count), the run key, the started
+    // flag. `append(elem)` grows+stores; `emitRun` builds the `FArray[A]` leaf from the buffer; `reset` empties it.
+    final case class GroupAdjState(
+        curKeyRead: Term,
+        setCurKey: Term => Term,
+        started: Expr[Boolean],
+        start: Expr[Unit],
+        append: Term => Expr[Unit],
+        emitRun: Term, // an `FArray[A]` term built from the current buffer contents
+        reset: Expr[Unit]
+    )
     // how a counter-needing stage declares its above-loop state
     sealed trait CSpec
     final case class LimSpec(arg: Term) extends CSpec // take/drop: a clamped limit
@@ -144,6 +220,12 @@ object FuseMacro:
     case object DropWhileSpec extends CSpec // dropWhile: a `var dropping = true`
     case object DistinctSpec extends CSpec // distinct/distinctBy: a `seen` HashSet
     final case class ScanSpec(z: Term, zTpe: TypeRepr) extends CSpec // scanLeft: a `var acc: Z = z`
+    final case class FoldAdjSpec(seed: Term, kTpe: TypeRepr, bTpe: TypeRepr) extends CSpec // foldAdjacentBy: curKey/acc/started/seed
+    final case class GroupAdjSpec(kTpe: TypeRepr, aTpe: TypeRepr) extends CSpec // groupAdjacentBy: buffer + curKey/started
+    final case class GroupedSpec(n: Term, aTpe: TypeRepr) extends CSpec // grouped(n): row buffer + a count + started
+    final case class TakeRightSpec(n: Term, aTpe: TypeRepr) extends CSpec // takeRight(n): a ring buffer + pos + cnt
+    final case class GroupReduceAdjSpec(innerStages: List[Stage], innerAggs: List[AggSpec], kTpe: TypeRepr, rTpe: TypeRepr)
+        extends CSpec // nested fusion: curKey/started + the inner agg's per-run accumulator
     // `consume` takes a MATERIALIZED element. `consumeShape`, when present, takes the element's decomposed Shape
     // instead — so a terminal whose lambda projects fields (e.g. `foldLeft((acc, r) => acc + r.amount)`) reads
     // only the columns it touches and never rebuilds the whole product (DCE/sink reaching the terminal's lambda).
@@ -157,43 +239,75 @@ object FuseMacro:
     // a decomposed PRODUCT (tuple / case class / named tuple): independent column shapes + how to rebuild the
     // whole value from them (only used if the product is ever materialized — used whole or emitted).
     final case class Tup(parts: List[Shape], rebuild: List[Term] => Term) extends Shape
-    type Path = List[(Int, String)] // a field path into a product: (column index, accessor name) per hop
+    type Path = Ast.Path // a field path into a product: (column index, accessor name) per hop
 
     val unit: Term = '{ () }.asTerm
 
-    // --- AST helpers ---
-    def unwrap(t: Term): Term = t match
-      case Inlined(_, _, e) => unwrap(e)
-      case Typed(e, _)      => unwrap(e)
-      case Block(Nil, e)    => unwrap(e)
-      case _                => t
+    // --- AST helpers (pure q.reflect walks live in `Ast`, shared with the decomposed-source decoder) ---
+    def unwrap(t: Term): Term = Ast.unwrap(t)
 
     def fuseElem(t: TypeRepr): TypeRepr = t.widen.dealias match
       case AppliedType(_, List(a)) => a
       case other                   => report.errorAndAbort(s"fuse: expected Fuse[_], got ${other.show}")
 
+    /** parse the INNER pipeline of a nested fusion: `prep: Fuse[A] => Fuse[B]` whose body is a stage chain rooted at the lambda param `g` (the run's rows). The
+      * source base case is `Ident(g)` (vs `new Fuse(src)` for the outer parse). v1 supports only STATELESS inner stages (map/filter/filterNot/collect) — no
+      * per-run counters needed; take/drop/takeWhile/dropWhile inside a group (resettable per-run counters) are a documented follow-up.
+      */
+    def parseInner(prep: Term): List[Stage] =
+      val (gSym, body) = unwrap(prep) match
+        case Lambda(List(vd), b) => (vd.symbol, b)
+        case _                   => report.errorAndAbort(s"fuse: groupAdjacentReduceBy prep must be a lambda; got ${prep.show}")
+      def go(t0: Term, acc: List[Stage]): List[Stage] = unwrap(t0) match
+        case Apply(TypeApply(Select(prev, "map"), _), List(f))            => go(prev, MapS(unwrap(f)) :: acc)
+        case Apply(Select(prev, "filter"), List(p))                       => go(prev, FilterS(unwrap(p), false) :: acc)
+        case Apply(Select(prev, "withFilter"), List(p))                   => go(prev, FilterS(unwrap(p), false) :: acc)
+        case Apply(Select(prev, "filterNot"), List(p))                    => go(prev, FilterS(unwrap(p), true) :: acc)
+        case Apply(TypeApply(Select(prev, "collect"), List(b)), List(pf)) => go(prev, CollectS(unwrap(pf), b.tpe) :: acc)
+        case Ident(n) if n == gSym.name                                   => acc // source = the run's rows
+        case other                                                        =>
+          report.errorAndAbort(s"fuse: unsupported per-group stage in groupAdjacentReduceBy (v1 supports map/filter/filterNot/collect only): ${other.show}")
+      go(body, Nil)
+
     def parse(t0: Term, acc: List[Stage]): (Term, TypeRepr, List[Stage]) =
       unwrap(t0) match
-        case Apply(TypeApply(Select(prev, "map"), _), List(f))                              => parse(prev, MapS(unwrap(f)) :: acc)
-        case Apply(TypeApply(Select(prev, "flatMap"), List(b)), List(f))                    => parse(prev, FlatMapS(unwrap(f), b.tpe) :: acc)
-        case Apply(Select(prev, "filter"), List(p))                                         => parse(prev, FilterS(unwrap(p), false) :: acc)
-        case Apply(Select(prev, "withFilter"), List(p))                                     => parse(prev, FilterS(unwrap(p), false) :: acc)
-        case Apply(Select(prev, "filterNot"), List(p))                                      => parse(prev, FilterS(unwrap(p), true) :: acc)
-        case Apply(TypeApply(Select(prev, "collect"), List(b)), List(pf))                   => parse(prev, CollectS(unwrap(pf), b.tpe) :: acc)
-        case Apply(Select(prev, "take"), List(n))                                           => parse(prev, TakeS(unwrap(n)) :: acc)
-        case Apply(Select(prev, "drop"), List(n))                                           => parse(prev, DropS(unwrap(n)) :: acc)
-        case Apply(Select(prev, "takeWhile"), List(p))                                      => parse(prev, TakeWhileS(unwrap(p)) :: acc)
-        case Apply(Select(prev, "dropWhile"), List(p))                                      => parse(prev, DropWhileS(unwrap(p)) :: acc)
-        case Select(prev, "distinct")                                                       => parse(prev, DistinctS(None) :: acc)
-        case Apply(TypeApply(Select(prev, "distinctBy"), _), List(f))                       => parse(prev, DistinctS(Some(unwrap(f))) :: acc)
-        case Apply(Apply(TypeApply(Select(prev, "scanLeft"), List(b)), List(z)), List(op))  => parse(prev, ScanLeftS(unwrap(z), unwrap(op), b.tpe) :: acc)
+        case Apply(TypeApply(Select(prev, "map"), _), List(f))                             => parse(prev, MapS(unwrap(f)) :: acc)
+        case Apply(TypeApply(Select(prev, "flatMap"), List(b)), List(f))                   => parse(prev, FlatMapS(unwrap(f), b.tpe) :: acc)
+        case Apply(Select(prev, "filter"), List(p))                                        => parse(prev, FilterS(unwrap(p), false) :: acc)
+        case Apply(Select(prev, "withFilter"), List(p))                                    => parse(prev, FilterS(unwrap(p), false) :: acc)
+        case Apply(Select(prev, "filterNot"), List(p))                                     => parse(prev, FilterS(unwrap(p), true) :: acc)
+        case Apply(TypeApply(Select(prev, "collect"), List(b)), List(pf))                  => parse(prev, CollectS(unwrap(pf), b.tpe) :: acc)
+        case Apply(Select(prev, "take"), List(n))                                          => parse(prev, TakeS(unwrap(n)) :: acc)
+        case Apply(Select(prev, "drop"), List(n))                                          => parse(prev, DropS(unwrap(n)) :: acc)
+        case Apply(Select(prev, "takeWhile"), List(p))                                     => parse(prev, TakeWhileS(unwrap(p)) :: acc)
+        case Apply(Select(prev, "dropWhile"), List(p))                                     => parse(prev, DropWhileS(unwrap(p)) :: acc)
+        case Select(prev, "distinct")                                                      => parse(prev, DistinctS(None) :: acc)
+        case Apply(TypeApply(Select(prev, "distinctBy"), _), List(f))                      => parse(prev, DistinctS(Some(unwrap(f))) :: acc)
+        case Apply(Apply(TypeApply(Select(prev, "scanLeft"), List(b)), List(z)), List(op)) => parse(prev, ScanLeftS(unwrap(z), unwrap(op), b.tpe) :: acc)
+        // foldAdjacentBy[K,B](key)(seed)(combine): 3 term arg-lists on a 2-type-arg TypeApply.
+        case Apply(Apply(Apply(TypeApply(Select(prev, "foldAdjacentBy"), List(kt, bt)), List(key)), List(seed)), List(combine)) =>
+          parse(prev, FoldAdjacentByS(unwrap(key), unwrap(seed), unwrap(combine), kt.tpe, bt.tpe) :: acc)
+        // groupAdjacentBy[K](key): aTpe = the key lambda's argument type (A in A => K).
+        case Apply(TypeApply(Select(prev, "groupAdjacentBy"), List(kt)), List(key)) =>
+          val aTpe = unwrap(key).tpe.widen.dealias match { case AppliedType(_, ts) if ts.length >= 2 => ts.head; case _ => TypeRepr.of[Any] }
+          parse(prev, GroupAdjacentByS(unwrap(key), kt.tpe, aTpe) :: acc)
+        // grouped(n): no type/lambda args — the element type A comes from the receiver's `Fuse[A]`.
+        case Apply(Select(prev, "grouped"), List(n)) =>
+          parse(prev, GroupedS(unwrap(n), fuseElem(prev.tpe)) :: acc)
+        // takeRight(n): the last n elements — element type A from the receiver's `Fuse[A]`.
+        case Apply(Select(prev, "takeRight"), List(n)) =>
+          parse(prev, TakeRightS(unwrap(n), fuseElem(prev.tpe)) :: acc)
         case Apply(Select(prev, "tapEach"), List(f))                                        => parse(prev, TapEachS(unwrap(f)) :: acc)
         case Select(prev, "zipWithIndex")                                                   => parse(prev, ZipWithIndexS :: acc)
         case Apply(TypeApply(Select(prev, "zip"), List(b)), List(that))                     => parse(prev, ZipS(unwrap(that), b.tpe, None) :: acc)
         case Apply(Apply(TypeApply(Select(prev, "map2"), List(b, _)), List(that)), List(f)) => parse(prev, ZipS(unwrap(that), b.tpe, Some(unwrap(f))) :: acc)
-        case base @ Apply(Select(New(_), "<init>"), List(src))                              => (src.underlyingArgument, fuseElem(base.tpe), acc)
-        case base @ Apply(TypeApply(Select(New(_), "<init>"), _), List(src))                => (src.underlyingArgument, fuseElem(base.tpe), acc)
-        case other                                                                          =>
+        // groupAdjacentReduceByMarker[K,B,R](key)(prep)(agg): nested fusion (re-emitted by groupReduceStageImpl, agg
+        // now AggRaw.*). Parse `prep` as an inner stage chain rooted at its lambda param; `agg` later via parseAgg1.
+        case Apply(Apply(Apply(TypeApply(Select(prev, "groupAdjacentReduceByMarker"), List(kt, bt, rt)), List(key)), List(prep)), List(agg)) =>
+          parse(prev, GroupReduceAdjacentByS(unwrap(key), parseInner(unwrap(prep)), unwrap(agg), kt.tpe, rt.tpe) :: acc)
+        case base @ Apply(Select(New(_), "<init>"), List(src))               => (src.underlyingArgument, fuseElem(base.tpe), acc)
+        case base @ Apply(TypeApply(Select(New(_), "<init>"), _), List(src)) => (src.underlyingArgument, fuseElem(base.tpe), acc)
+        case other                                                           =>
           report.errorAndAbort(s"fuse: unsupported pipeline step near:\n${other.show(using Printer.TreeStructure)}")
 
     /** beta-reduce `fn(args…)` to inline the lambda body (no closure); falls back to a real `.apply` call. */
@@ -377,11 +491,16 @@ object FuseMacro:
         case Repeated(es, _)           => es
         case Apply(_, List(inner))     => seqElems(inner) // wrapRefArray(…)
         case _                         => report.errorAndAbort(s"fuse: agg arg not a literal list: ${seq.show}")
-      def typeArgOf(t: Term, i: Int): TypeRepr = t match
-        case TypeApply(_, ts) if ts.length > i => ts(i).tpe
-        case Apply(fn, _)                      => typeArgOf(fn, i)
-        case _                                 => TypeRepr.of[Any]
-      def one(a: Term): AggSpec = unwrap(a) match
+      elems(t).map(parseAgg1)
+
+    def typeArgOf(t: Term, i: Int): TypeRepr = t match
+      case TypeApply(_, ts) if ts.length > i => ts(i).tpe
+      case Apply(fn, _)                      => typeArgOf(fn, i)
+      case _                                 => TypeRepr.of[Any]
+
+    /** parse a SINGLE `Agg.*` term → its AggSpec (shared by `parseAggList`'s multi-agg and nested fusion's one agg). */
+    def parseAgg1(a: Term): AggSpec =
+      unwrap(a) match
         case Apply(Apply(fn @ TypeApply(Select(_, "sum"), _), List(f)), _)     => AggSpec.Sum(unwrap(f), typeArgOf(fn, 1))
         case Apply(fn @ TypeApply(Select(_, "sum"), _), List(f))               => AggSpec.Sum(unwrap(f), typeArgOf(fn, 1))
         case TypeApply(Select(_, "count"), _)                                  => AggSpec.Count
@@ -408,7 +527,6 @@ object FuseMacro:
         case other =>
           report.errorAndAbort(s"fuse: unsupported agg — use Agg.sum/count/min/max/avg/fold/reduce/minBy/maxBy/topNBy/bottomNBy/largest/smallest. Got:\n${other
               .show(using Printer.TreeStructure)}")
-      elems(t).map(one)
 
     // --- unboxed primitive ops for Agg.sum / Agg.min/max (else fall back to Numeric/Ordering, which box). ---
     def isPrim(t: TypeRepr, p: TypeRepr): Boolean = t =:= p
@@ -447,8 +565,15 @@ object FuseMacro:
             val ord = Expr.summon[Ordering[bb]].getOrElse(report.errorAndAbort(s"fuse: no Ordering for ${bTpe.show} in Agg.min/max"))
             if isMax then '{ $ord.gt(${ kk.asExprOf[bb] }, ${ best.asExprOf[bb] }) } else '{ $ord.lt(${ kk.asExprOf[bb] }, ${ best.asExprOf[bb] }) }
 
-    // Is this a byte-backed JSON NDJSON source (`Json.ndjson[T](bytes).fuse…`) rather than an in-memory FArray?
-    // Detected by the source term's static type; if so we lower to a per-record scanner (see loopOverJson).
+    // equality on keys: unboxed `==` for primitive kinds, Scala universal `==` (equals) for references.
+    def keyEq(kTpe: TypeRepr, a: Term, b: Term): Expr[Boolean] =
+      if isPrim(kTpe, TypeRepr.of[Int]) then '{ ${ a.asExprOf[Int] } == ${ b.asExprOf[Int] } }
+      else if isPrim(kTpe, TypeRepr.of[Long]) then '{ ${ a.asExprOf[Long] } == ${ b.asExprOf[Long] } }
+      else if isPrim(kTpe, TypeRepr.of[Double]) then '{ ${ a.asExprOf[Double] } == ${ b.asExprOf[Double] } }
+      else
+        kTpe.asType match
+          case '[kk] => '{ ${ a.asExprOf[kk] } == ${ b.asExprOf[kk] } }
+
     // The RUNTIME source: read the value the `Fuse` wrapper already holds (`self.base`), NOT a re-splice of the
     // raw source expression. The source has already been evaluated once when the `Fuse` was constructed; splicing
     // the original (often INLINED, e.g. `FArray.fromIterable(...)`) tree a SECOND time emits a duplicate inlined
@@ -457,31 +582,46 @@ object FuseMacro:
     // bare local val). `srcTerm` is still used below for COMPILE-TIME type analysis only. `Fuse.base: AnyRef`.
     val selfBase: Expr[AnyRef] = '{ ${ self }.base }
 
-    val jsonSrc: Option[Expr[NdjsonSource[?]]] =
-      // match on the type SYMBOL (NdjsonSource is invariant in T, so NdjsonSource[Rec] is not <:< NdjsonSource[Any]).
-      if srcTerm.tpe.widen.dealias.typeSymbol == TypeRepr.of[NdjsonSource[Any]].typeSymbol
-      then Some('{ $selfBase.asInstanceOf[NdjsonSource[?]] })
+    // A decomposed BYTE-RECORD source: the engine lowers it to a per-record projection scanner via the
+    // `ByteRecordSource` contract (nextChunk/nextRecord/recordStart/recordEnd), dispatched through `RecordDecoder`.
+    // Detected by subtyping against the contract; the element type `T` (the record case class) is read off `Fuse[T]`.
+    val decomposedSrc: Option[Expr[ByteRecordSource]] =
+      if srcTerm.tpe.widen.dealias <:< TypeRepr.of[ByteRecordSource]
+      then Some('{ $selfBase.asInstanceOf[ByteRecordSource] })
       else None
-    val isJson = jsonSrc.isDefined
+    val isDecomposed = decomposedSrc.isDefined
 
-    // identity → hand back the source (only meaningful for Run).
-    if stages.isEmpty && tag == TTag.Run && !isJson then return '{ $selfBase.asInstanceOf[FBase] }
+    // a streaming `Source[A]` source (covariant, so check by subtyping against `Source[Any]`). The chunk driver
+    // wraps the in-memory element loop in an outer pull loop → constant memory over an incremental source.
+    val streamSrc: Option[Expr[Source[?]]] =
+      if !isDecomposed && srcTerm.tpe.widen.dealias <:< TypeRepr.of[Source[Any]]
+      then Some('{ $selfBase.asInstanceOf[Source[?]] })
+      else None
+    val isStream = streamSrc.isDefined
 
-    val srcK = if isJson then Kind.KRef else kindOf(srcElem)
+    // identity → hand back the source (only meaningful for Run, and only for an already-realized in-memory FArray).
+    if stages.isEmpty && tag == TTag.Run && !isDecomposed && !isStream then return '{ $selfBase.asInstanceOf[FBase] }
+
+    val srcK = if isDecomposed then Kind.KRef else kindOf(srcElem)
     val outK = kindOf(aType)
-    val srcBase: Expr[FBase] = if isJson then '{ null.asInstanceOf[FBase] } else '{ $selfBase.asInstanceOf[FBase] }
+    val srcBase: Expr[FBase] = if isDecomposed || isStream then '{ null.asInstanceOf[FBase] } else '{ $selfBase.asInstanceOf[FBase] }
 
     val indexed: List[(Stage, Int)] = stages.zipWithIndex
     // stages needing an above-loop counter (take/drop = a clamped limit, zipWithIndex = a bare counter,
     // zip/map2 = `that` + its length + a counter).
     val counterStages: List[(Int, CSpec)] = indexed.collect {
-      case (TakeS(n), i)            => (i, LimSpec(n))
-      case (DropS(n), i)            => (i, LimSpec(n))
-      case (ZipWithIndexS, i)       => (i, IdxSpec)
-      case (ZipS(that, b, _), i)    => (i, ZipSpec(that, b))
-      case (DropWhileS(_), i)       => (i, DropWhileSpec)
-      case (DistinctS(_), i)        => (i, DistinctSpec)
-      case (ScanLeftS(z, _, zt), i) => (i, ScanSpec(z, zt))
+      case (TakeS(n), i)                                  => (i, LimSpec(n))
+      case (DropS(n), i)                                  => (i, LimSpec(n))
+      case (ZipWithIndexS, i)                             => (i, IdxSpec)
+      case (ZipS(that, b, _), i)                          => (i, ZipSpec(that, b))
+      case (DropWhileS(_), i)                             => (i, DropWhileSpec)
+      case (DistinctS(_), i)                              => (i, DistinctSpec)
+      case (ScanLeftS(z, _, zt), i)                       => (i, ScanSpec(z, zt))
+      case (FoldAdjacentByS(_, seed, _, kt, bt), i)       => (i, FoldAdjSpec(seed, kt, bt))
+      case (GroupAdjacentByS(_, kt, at), i)               => (i, GroupAdjSpec(kt, at))
+      case (GroupedS(n, at), i)                           => (i, GroupedSpec(n, at))
+      case (TakeRightS(n, at), i)                         => (i, TakeRightSpec(n, at))
+      case (GroupReduceAdjacentByS(_, is, ag, kt, rt), i) => (i, GroupReduceAdjSpec(is, List(parseAgg1(ag)), kt, rt))
     }
     val takesPresent: Boolean = stages.exists(_.isInstanceOf[TakeS])
     val hasZip: Boolean = stages.exists(_.isInstanceOf[ZipS])
@@ -490,21 +630,35 @@ object FuseMacro:
     val scanCount: Int = stages.count(_.isInstanceOf[ScanLeftS])
     if scanCount > 1 then report.errorAndAbort("fuse: at most one scanLeft per pipeline")
     val hasScan: Boolean = scanCount == 1
-    // a JSON source has no static length (records are scanned, not indexed), so a Run/toList must grow the output
-    // like flatMap/scan. scanLeft emits one MORE element than its input, so the output can exceed source length.
-    val needsGrow: Boolean = hasFlatMap || hasScan || isJson
-    // v1 JSON scope guard: only map/filter stages over a JSON source (no zip/flatMap/take/drop/scan/distinct yet).
-    if isJson then
-      val unsupported = stages.find {
-        case MapS(_) | FilterS(_, _) => false
-        case _                       => true
-      }
-      unsupported.foreach(s =>
-        report.errorAndAbort(
-          s"fuse-json (v1): only `map` and `filter` stages are supported over a JSON source so far (got ${s.getClass.getSimpleName.stripSuffix("S")}). " +
-            "Project/filter then use a terminal (sum/fold/toList/count/foreach)."
-        )
+    // foldAdjacentBy / groupAdjacentBy / grouped / takeRight all hold a pending run/window/ring and use the single
+    // prologue/epilogue weave point (the epilogue flushes the final run / replays the ring) — at most ONE per
+    // pipeline, and not with scanLeft (v1).
+    def isBufferStage(s: Stage): Boolean = s match
+      case _: FoldAdjacentByS | _: GroupAdjacentByS | _: GroupedS | _: TakeRightS | _: GroupReduceAdjacentByS => true
+      case _                                                                                                  => false
+    val adjCount: Int = stages.count(isBufferStage)
+    if adjCount > 1 then report.errorAndAbort("fuse: at most one foldAdjacentBy/groupAdjacentBy/groupAdjacentReduceBy/grouped/takeRight per pipeline (v1)")
+    if adjCount == 1 && hasScan then
+      report.errorAndAbort(
+        "fuse: a buffering stage (foldAdjacentBy/groupAdjacentBy/groupAdjacentReduceBy/grouped/takeRight) cannot be combined with scanLeft (v1)"
       )
+    // the buffering stage's index + the stages downstream of it — the epilogue flushes its pending final run/window.
+    val adjInfo: Option[(Int, List[(Stage, Int)])] =
+      indexed.collectFirst { case (s, i) if isBufferStage(s) => i }.map(i => (i, indexed.drop(i + 1)))
+    // a decomposed or streaming source has no static length (records are scanned, not indexed), so a Run/toList must
+    // GROW the output (no `capExpr` bound) — like flatMap/scan. scanLeft also emits one MORE element than its input.
+    val needsGrow: Boolean = hasFlatMap || hasScan || isDecomposed || isStream
+    // v1 scope guard for a decomposed source: only map/filter stages so far (no zip/flatMap/take/drop/scan/distinct).
+    // The guard lives in the engine — the one place that knows the Stage ADT — so the decoder only ever sees map/filter.
+    if isDecomposed then
+      stages
+        .find { case MapS(_) | FilterS(_, _) => false; case _ => true }
+        .foreach(s =>
+          report.errorAndAbort(
+            s"fuse (decomposed source, v1): only `map` and `filter` stages are supported so far (got ${s.getClass.getSimpleName.stripSuffix("S")}). " +
+              "Project/filter then use a terminal (sum/fold/toList/count/foreach)."
+          )
+        )
     // the scanLeft stage index + the stages downstream of it (run once with z as a prologue, then per element)
     val scanInfo: Option[(Int, List[(Stage, Int)])] =
       indexed.collectFirst { case (ScanLeftS(_, _, _), i) => i }.map(i => (i, indexed.drop(i + 1)))
@@ -551,6 +705,19 @@ object FuseMacro:
 
     def srcShape(cur: Term): Shape = Sc(k => k(cur)) // already bound by the loop / an upstream stage
 
+    /** emit one completed `foldAdjacentBy` run `(curKey, acc)` downstream — as a DECOMPOSED `Tup` so a downstream `.map(_._2)` never builds the tuple, and an
+      * all-primitive (K, B) stays unboxed via `mkPair`. Used by BOTH the per-element key-change emit and the epilogue's final-run flush, so they share one
+      * definition.
+      */
+    def emitFoldAdjRun(st: FoldAdjState, rest: List[(Stage, Int)], ctx: Ctx): Term =
+      continueShape(Tup(List(srcShape(st.curKeyRead), srcShape(st.accRead)), ts => mkPair(ts(0), ts(1))), rest, ctx)
+
+    /** emit one completed nested-fusion run `(curKey, innerFinish)` downstream — same decomposed-Tup path as emitFoldAdjRun, so a downstream `.map(_._2)` never
+      * builds the tuple and an all-primitive (K, R) stays unboxed. Shared by the per-element key-change emit and the epilogue's final-run flush.
+      */
+    def emitGroupReduceRun(st: GroupReduceAdjState, rest: List[(Stage, Int)], ctx: Ctx): Term =
+      continueShape(Tup(List(srcShape(st.curKeyRead), srcShape(st.innerFinish)), ts => mkPair(ts(0), ts(1))), rest, ctx)
+
     /** materialize a shape to a single Term (binding columns as needed); a decomposed product is rebuilt. */
     def readShape(shape: Shape)(k: Term => Term): Term = shape match
       case Sc(read)            => read(k)
@@ -596,10 +763,7 @@ object FuseMacro:
     /** the (label, type) of each field of a product type (case class / tuple / named tuple), else None. This is reflect's view of `Mirror.ProductOf` —
       * `caseFields` are the product's accessors in declaration order.
       */
-    def productFields(tpe: TypeRepr): Option[List[(String, TypeRepr)]] =
-      val sym = tpe.typeSymbol
-      if sym.flags.is(Flags.Case) && sym.caseFields.nonEmpty then Some(sym.caseFields.map(f => (f.name, tpe.memberType(f))))
-      else None
+    def productFields(tpe: TypeRepr): Option[List[(String, TypeRepr)]] = Ast.productFields(tpe)
 
     /** reconstruct a product value of `tpe` from its field values (companion `apply`, e.g. `C(...)` / tuple). */
     def mkProduct(tpe: TypeRepr, vs: List[Term]): Term =
@@ -614,75 +778,15 @@ object FuseMacro:
 
     // --- AST shape detection / substitution ---
     /** a 2-param lambda `(p0, p1) => body` → (p0 sym, p1 sym, body). Used to decompose a fold/reduce `op`. */
-    def decomposeLambda2(t: Term): Option[(Symbol, Symbol, Term)] = unwrap(t) match
-      case Lambda(List(vd0, vd1), body) => Some((vd0.symbol, vd1.symbol, body))
-      case _                            => None
-
-    def decomposeLambda(t: Term): Option[(Symbol, Term)] = unwrap(t) match
-      case Lambda(List(vd), body) => Some((vd.symbol, body))
-      case _                      => None
-
-    /** the index of field `name` in `inner`'s product type, if `inner.name` is a product-field access. */
-    def fieldAccess(inner: Term, name: String): Option[Int] =
-      productFields(inner.tpe.widen).flatMap { fs =>
-        val i = fs.indexWhere(_._1 == name); if i >= 0 then Some(i) else None
-      }
-    def isFieldSelect(t: Term): Option[(Term, Int, String)] = t match
-      case Select(inner, name) => fieldAccess(inner, name).map(i => (inner, i, name))
-      case _                   => None
-
-    /** a CANONICAL product construction `C(a, b, …)` / `(a, b)` / `new C(…)` → (product type, field args). Only the product's OWN apply/constructor counts (not
-      * an arbitrary factory returning C), so args == fields.
-      */
-    def isProductCtor(t: Term): Option[(TypeRepr, List[Term])] =
-      val rt = t.tpe.widen
-      productFields(rt) match
-        case Some(fields) =>
-          def appliedTo(fn: Term, as: List[Term]): Option[(TypeRepr, List[Term])] =
-            if as.length != fields.length then None
-            else
-              fn match
-                case Select(New(_), "<init>")                                                                  => Some((rt, as))
-                case sel @ Select(_, "apply") if sel.symbol.owner == rt.typeSymbol.companionModule.moduleClass => Some((rt, as))
-                case _                                                                                         => None
-          t match
-            case Apply(TypeApply(fn, _), as) => appliedTo(fn, as)
-            case Apply(fn, as)               => appliedTo(fn, as)
-            case _                           => None
-        case None => None
-    // a maximal field PATH rooted at a symbol: `p.a.x` -> (p, List((iₐ,"a"),(iₓ,"x"))); a bare `p` -> (p, Nil).
-    def projPath(t: Term): Option[(Symbol, Path)] = t match
-      case id: Ident           => Some((id.symbol, Nil))
-      case Select(inner, name) =>
-        (projPath(inner), fieldAccess(inner, name)) match
-          case (Some((s, p)), Some(idx)) => Some((s, p :+ (idx, name)))
-          case _                         => None
-      case _ => None
-
-    /** every maximal field path from `param` in `body` (Nil path = param used whole). */
-    def collectPaths(body: Term, param: Symbol): List[Path] =
-      val buf = scala.collection.mutable.LinkedHashSet.empty[Path]
-      (new TreeTraverser:
-        override def traverseTree(t: Tree)(owner: Symbol): Unit = t match
-          case (_: Ident | _: Select) if projPath(t.asInstanceOf[Term]).exists((s, _) => s == param) =>
-            buf += projPath(t.asInstanceOf[Term]).get._2 // maximal: don't descend into inner field reads
-          case _ => super.traverseTree(t)(owner)
-      ).traverseTree(body)(Symbol.spliceOwner)
-      buf.toList
-    def substParam(body: Term, param: Symbol, repl: Term): Term =
-      (new TreeMap:
-        override def transformTerm(t: Term)(owner: Symbol): Term = t match
-          case id: Ident if id.symbol == param => repl
-          case _                               => super.transformTerm(t)(owner)
-      ).transformTerm(body)(Symbol.spliceOwner)
-
-    /** replace each maximal param-field path with its resolved column ref. */
-    def substPaths(body: Term, param: Symbol, refs: Map[Path, Term]): Term =
-      (new TreeMap:
-        override def transformTerm(t: Term)(owner: Symbol): Term = projPath(t) match
-          case Some((s, p)) if s == param && refs.contains(p) => refs(p)
-          case _                                              => super.transformTerm(t)(owner)
-      ).transformTerm(body)(Symbol.spliceOwner)
+    def decomposeLambda2(t: Term): Option[(Symbol, Symbol, Term)] = Ast.decomposeLambda2(t)
+    def decomposeLambda(t: Term): Option[(Symbol, Term)] = Ast.decomposeLambda(t)
+    def fieldAccess(inner: Term, name: String): Option[Int] = Ast.fieldAccess(inner, name)
+    def isFieldSelect(t: Term): Option[(Term, Int, String)] = Ast.isFieldSelect(t)
+    def isProductCtor(t: Term): Option[(TypeRepr, List[Term])] = Ast.isProductCtor(t)
+    def projPath(t: Term): Option[(Symbol, Path)] = Ast.projPath(t)
+    def collectPaths(body: Term, param: Symbol): List[Path] = Ast.collectPaths(body, param)
+    def substParam(body: Term, param: Symbol, repl: Term): Term = Ast.substParam(body, param, repl)
+    def substPaths(body: Term, param: Symbol, refs: Map[Path, Term]): Term = Ast.substPaths(body, param, refs)
 
     /** navigate a shape down a field path to the leaf column (no intermediate product is materialized). */
     def navigate(cur: Shape, path: Path): Shape = path match
@@ -865,7 +969,7 @@ object FuseMacro:
       else if tail.isEmpty && ctx.consumeShape.isDefined then
         // shape-aware terminal (fold/reduce/agg): hand the decomposed shape so the terminal's lambdas project
         // only the fields they read — NEVER materialize the whole product (which would read dead placeholder
-        // columns: the `{ null; …; 0.0 }` rebuild bug on a JSON record fed to agg with no leading filter).
+        // columns: the `{ null; …; 0.0 }` rebuild bug on a decomposed record fed to agg with no leading filter).
         buildSegment(seg.map(_._1), shape)(fs => ctx.consumeShape.get(fs))
       else buildSegment(seg.map(_._1), shape)(fs => readShape(fs)(t => buildBody(tail, t, ctx)))
 
@@ -970,6 +1074,79 @@ object FuseMacro:
           ${ setAcc(applyN(op, List(accRead, cur))).asExprOf[Unit] }
           ${ letBind(accRead)(a => buildBody(rest, a, ctx)).asExprOf[Unit] }
         }.asTerm
+      case (FoldAdjacentByS(key, _, combine, kTpe, _), i) :: rest =>
+        // input is clustered by key. Per element: start a run / accumulate it / on key-change EMIT the run and
+        // start a new one. The FINAL run is emitted by the epilogue (withEpilogue), via the SAME emit path.
+        val st = ctx.counters(i).foldAdj.get
+        letBind(applyLambda(key, cur)) { kv =>
+          '{
+            if ! ${ st.started } then {
+              ${ st.setCurKey(kv).asExprOf[Unit] }
+              ${ st.setAcc(applyN(combine, List(st.seed, cur))).asExprOf[Unit] }
+              ${ st.start }
+            } else if ${ keyEq(kTpe, kv, st.curKeyRead) } then ${ st.setAcc(applyN(combine, List(st.accRead, cur))).asExprOf[Unit] }
+            else {
+              ${ emitFoldAdjRun(st, rest, ctx).asExprOf[Unit] } // key changed → emit completed run, then start new
+              ${ st.setCurKey(kv).asExprOf[Unit] }
+              ${ st.setAcc(applyN(combine, List(st.seed, cur))).asExprOf[Unit] }
+            }
+          }.asTerm
+        }
+      case (GroupAdjacentByS(key, kTpe, _), i) :: rest =>
+        // buffer each run's rows; on key-change EMIT the run's rows as an FArray[A], then start a new run. The
+        // final run is emitted by the epilogue. O(largest run) memory.
+        val st = ctx.counters(i).groupAdj.get
+        letBind(applyLambda(key, cur)) { kv =>
+          '{
+            if ! ${ st.started } then {
+              ${ st.setCurKey(kv).asExprOf[Unit] }
+              ${ st.reset }
+              ${ st.append(cur) }
+              ${ st.start }
+            } else if ${ keyEq(kTpe, kv, st.curKeyRead) } then ${ st.append(cur) }
+            else {
+              ${ continueShape(srcShape(st.emitRun), rest, ctx).asExprOf[Unit] } // emit completed run's rows
+              ${ st.setCurKey(kv).asExprOf[Unit] }
+              ${ st.reset }
+              ${ st.append(cur) }
+            }
+          }.asTerm
+        }
+      case (GroupReduceAdjacentByS(key, _, _, kTpe, _), i) :: rest =>
+        // NESTED FUSION. input clustered by key. Per element: start a run (reset the inner acc, step the first row) /
+        // step the inner pipeline / on key-change EMIT (k, innerFinish) and start a new run. The rows are NEVER
+        // materialized — the inner fold runs inline. The FINAL run is flushed by the epilogue, via the SAME emit path.
+        val st = ctx.counters(i).groupReduceAdj.get
+        letBind(applyLambda(key, cur)) { kv =>
+          '{
+            if ! ${ st.started } then {
+              ${ st.setCurKey(kv).asExprOf[Unit] }
+              ${ st.innerReset }
+              ${ st.innerStep(cur).asExprOf[Unit] }
+              ${ st.start }
+            } else if ${ keyEq(kTpe, kv, st.curKeyRead) } then ${ st.innerStep(cur).asExprOf[Unit] }
+            else {
+              ${ emitGroupReduceRun(st, rest, ctx).asExprOf[Unit] } // key changed → emit completed run
+              ${ st.setCurKey(kv).asExprOf[Unit] }
+              ${ st.innerReset }
+              ${ st.innerStep(cur).asExprOf[Unit] }
+            }
+          }.asTerm
+        }
+      case (GroupedS(_, _), i) :: rest =>
+        // buffer rows; when the buffer fills to `n` emit it as an FArray[A] and reset. The last (partial) chunk is
+        // emitted by the epilogue. Bounded-buffer stage — O(n) memory, short-circuits under a downstream take.
+        val st = ctx.counters(i).grouped.get
+        '{
+          ${ st.append(cur) }
+          if ${ st.sizeRead } == ${ st.n } then {
+            ${ continueShape(srcShape(st.emitRun), rest, ctx).asExprOf[Unit] }
+            ${ st.reset }
+          }
+        }.asTerm
+      case (TakeRightS(_, _), i) :: rest =>
+        // ring-buffer the LAST n elements; nothing is emitted here — the epilogue replays the ring in order. O(n).
+        ctx.counters(i).takeRight.get.store(cur).asTerm
       case (TapEachS(f), _) :: rest =>
         // run the side effect eagerly for every element reaching here, then pass the element through unchanged.
         '{ ${ applyLambda(f, cur).asExprOf[Unit] }; ${ buildBody(rest, cur, ctx).asExprOf[Unit] } }.asTerm
@@ -1014,7 +1191,10 @@ object FuseMacro:
         }.asTerm
 
     // --- traverse one level (source OR a flatMap inner): leaf fast-path + `<kind>At` fallback, `done` break ---
-    def loopOver(src: Expr[FBase], k: Kind, elemTpe: TypeRepr, ss: List[(Stage, Int)], ctx: Ctx): Expr[Unit] =
+    // The shared INNER element loop over ONE realized chunk `s` (an `FBase` leaf/tree). Both the in-memory path
+    // (one chunk = the whole FArray) and the streaming chunk-driver (many chunks) emit this verbatim — only the
+    // SOURCE of `s` differs. `cond` already folds in `done`, so a satisfied short-circuit stops mid-chunk.
+    def elementLoop(src: Expr[FBase], k: Kind, elemTpe: TypeRepr, ss: List[(Stage, Int)], ctx: Ctx): Expr[Unit] =
       def cond(len: Expr[Int], i: Expr[Int]): Expr[Boolean] = ctx.done match
         case Some(d) => '{ $i < $len && ! ${ d.read } }
         case None    => '{ $i < $len }
@@ -1126,396 +1306,214 @@ object FuseMacro:
                     while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.refAt(s, i).asInstanceOf[se] }.asTerm) }; i += 1 }
               }
 
-    // ===== JSON source lowering: a per-record byte scanner whose record is a Tup of byte-sourced columns =====
-    // The downstream (filter/map/sink/DCE/terminal) is the UNCHANGED optimizer — it consumes the Tup via
-    // continueShape, exactly like zipWithIndex/collect. Only the SOURCE read changes from `a(i)` to a scan-pass.
+    // in-memory: ONE chunk = the whole FArray. Just the shared element loop.
+    def loopOver(src: Expr[FBase], k: Kind, elemTpe: TypeRepr, ss: List[(Stage, Int)], ctx: Ctx): Expr[Unit] =
+      elementLoop(src, k, elemTpe, ss, ctx)
 
-    // the live top-level fields of T (those any map/filter lambda reads) — the projection∪predicate set, i.e.
-    // dead-column elimination computed up front (the "backwards live-set flow"): a field nothing reads gets no
-    // slot and is skipValue'd; the scanner only materializes what the pipeline touches.
-    def jsonLiveFields(elemTpe: TypeRepr): (List[(String, TypeRepr)], Set[String]) =
-      val fields =
-        productFields(elemTpe).getOrElse(report.errorAndAbort(s"fuse-json: ${elemTpe.show} is not a case class (flat case-class records only in v1)"))
-      val live = scala.collection.mutable.LinkedHashSet.empty[String]
-      var wholeUse = false
-      def addFromBody(param: Symbol, b: Term): Unit =
-        val paths = collectPaths(b, param)
-        if paths.contains(Nil) then wholeUse = true
-        paths.foreach(path => path.headOption.foreach(h => live += h._2))
-      def addFrom(lam: Term): Unit = decomposeLambda(lam) match
-        case Some((p, b)) => addFromBody(p, b)
-        case None         => report.errorAndAbort(s"fuse-json: could not decompose a stage lambda: ${lam.show}")
-      // a terminal that applies a lambda to the ELEMENT must also contribute its read fields — otherwise the
-      // scanner treats those fields as dead and feeds the terminal a default (the `acc + 0.0` agg bug).
-      // CRUCIAL: only when the lambda's param is still the RECORD type. If a `map` changed the element type
-      // (e.g. `…map(_.amount).sum`), the terminal's param is the MAPPED value, not the record — its field reads
-      // are over that value, and the record's live fields were already declared by the map stage. Treating the
-      // mapped param as a record reader (whole-use → all fields live) is the "interns all 20 keys" bug.
-      def isRecordParam(param: Symbol): Boolean = param.termRef.widen =:= elemTpe
-      def addTerminalLambdas(): Unit =
-        def add1(lam: Term): Unit = decomposeLambda(lam).foreach((p, b) => if isRecordParam(p) then addFromBody(p, b))
-        def add2(lam: Term): Unit = decomposeLambda2(lam).foreach((_, e, b) => if isRecordParam(e) then addFromBody(e, b)) // (acc, elem) => …
-        tag match
-          case TTag.IndexWhere                       => add1(args(0)) // p over the element
-          case TTag.Find | TTag.Exists | TTag.Forall => add1(args(0))
-          case TTag.GroupReduce                      => add1(args(0)); add1(args(1)) // key + value read record fields (reduce doesn't)
-          case TTag.Agg                              => addAggSpecs(parseAggList(args(0)))
-          case TTag.Plan if args.nonEmpty            =>
-            // planFold passes a 2-param fold op; planAgg passes an agg list. Distinguish by shape.
-            decomposeLambda2(args(0)) match
-              case Some(_) => add2(args(0)) // planFold(op)
-              case None    => addAggSpecs(parseAggList(args(0))) // planAgg(aggs)
-          case _ => ()
-        def addAggSpecs(specs: List[AggSpec]): Unit = specs.foreach {
-          case AggSpec.Sum(f, _)                  => add1(f)
-          case AggSpec.Avg(f)                     => add1(f)
-          case AggSpec.Foreach(f)                 => add1(f)
-          case AggSpec.Extremum(f, _, _, _)       => add1(f)
-          case AggSpec.Fold(_, op, _)             => add2(op)
-          case AggSpec.TopN(k, _, _, _, _, _)     => add1(k); wholeUse = true // topN RETAINS elements → whole record live
-          case AggSpec.Reduce(op, _, _)           => add2(op); wholeUse = true // reduce combines whole elements
-          case AggSpec.ExtremumByElem(f, _, _, _) => add1(f); wholeUse = true // returns the whole best element
-          case AggSpec.Count                      => ()
-        }
-      stages.foreach {
-        case MapS(f)       => addFrom(f)
-        case FilterS(p, _) => addFrom(p)
-        case _             => ()
+    // streaming: drive a `Source` — pull a chunk, run the shared element loop over it, repeat. CONSTANT MEMORY:
+    // live data = stage state (hoisted above by withDone/declareSlots) + ONE chunk's backing array. `done` is
+    // checked at BOTH levels — the inner loop stops mid-chunk on short-circuit, and the outer `&& !done` gate
+    // prevents the NEXT pull (so `take(1)` over a file reads one chunk and no more I/O happens).
+    def loopOverSource(srcExpr: Expr[Source[?]], k: Kind, elemTpe: TypeRepr, ss: List[(Stage, Int)], ctx: Ctx): Expr[Unit] =
+      val notDone: Expr[Boolean] = ctx.done match { case Some(d) => '{ ! ${ d.read } }; case None => '{ true } }
+      // CRUCIAL: the next pull is GATED on `!done`. After the element loop sets `done` mid-chunk, we must NOT pull
+      // the next chunk (that would be one chunk of wasted I/O, and breaks `take(1)`-reads-one-chunk). So the
+      // trailing re-pull only happens while not done; otherwise we fall to End and exit.
+      // ALWAYS try/finally close() — resource safety on all three exit paths (exhaustion / short-circuit / throw).
+      // `close()` defaults to a no-op, so pure sources pay only the (JIT-elided) try/finally frame.
+      '{
+        val src = $srcExpr
+        try
+          var chunk: FArray[Any] | Source.End = src.pullChunk().asInstanceOf[FArray[Any] | Source.End]
+          while (chunk ne Source.End) && $notDone do
+            ${ elementLoop('{ chunk.asInstanceOf[FArray[Any]].asInstanceOf[FBase] }, k, elemTpe, ss, ctx) }
+            chunk = if $notDone then src.pullChunk().asInstanceOf[FArray[Any] | Source.End] else Source.End
+        finally src.close()
       }
-      addTerminalLambdas()
-      val liveSet = if wholeUse then fields.map(_._1).toSet else live.toSet
-      (fields, liveSet)
 
-    // expose `wholeUse` (whether the record is materialized) separately for the plan description.
-    def jsonWholeUse(elemTpe: TypeRepr): Boolean =
-      productFields(elemTpe).getOrElse(Nil)
+    // ── DECOMPOSED-SOURCE bridge: a byte-record source lowers to a per-record scanner whose record is a Tup of
+    //    on-demand columns. The downstream (filter/map/sink/DCE/terminal) is the UNCHANGED optimizer — it consumes the
+    //    Tup via continueShape, exactly like zipWithIndex/collect; only the SOURCE read changes from `a(i)` to a
+    //    scan-pass. The engine builds the SPI input + owns the Shape rejoin (`continue`); the decoder owns the byte
+    //    mechanics + the projection/early-out analysis. ──
+
+    // the pipeline's map/filter stage lambdas (in order), flattened for the decoder's live-field + early-out analysis.
+    def stageLambdasOfPipeline: List[StageLambda[quotes.type]] = stages.collect {
+      case MapS(f)         => StageLambda[quotes.type](f, isFilter = false, isPositiveFilter = false)
+      case FilterS(p, neg) => StageLambda[quotes.type](p, isFilter = true, isPositiveFilter = !neg)
+    }
+
+    // the terminal's record-reading lambdas, pre-decomposed to (param, body) and filtered to the RECORD param (a map
+    // that changed the element type means the terminal reads the MAPPED value, not the record — those fields were
+    // already declared by the map). Mirrors the old `addTerminalLambdas` SELECTION, but collecting rather than folding.
+    def terminalRecordReadersOfPipeline: (List[(Symbol, Term)], Boolean) =
+      val readers = scala.collection.mutable.ListBuffer.empty[(Symbol, Term)]
       var whole = false
-      def chk(param: Symbol, b: Term): Unit = if collectPaths(b, param).contains(Nil) then whole = true
-      def add1(lam: Term): Unit = decomposeLambda(lam).foreach((p, b) => if p.termRef.widen =:= elemTpe then chk(p, b))
-      def add2(lam: Term): Unit = decomposeLambda2(lam).foreach((_, e, b) => if e.termRef.widen =:= elemTpe then chk(e, b))
-      stages.foreach {
-        case MapS(f) => decomposeLambda(f).foreach((p, b) => chk(p, b)); case FilterS(p, _) => decomposeLambda(p).foreach((pr, b) => chk(pr, b)); case _ => ()
+      def isRecordParam(p: Symbol): Boolean = p.termRef.widen =:= srcElem
+      def add1(lam: Term): Unit = decomposeLambda(lam).foreach((p, b) => if isRecordParam(p) then readers += ((p, b)))
+      def add2(lam: Term): Unit = decomposeLambda2(lam).foreach((_, e, b) => if isRecordParam(e) then readers += ((e, b)))
+      def addAggSpecs(specs: List[AggSpec]): Unit = specs.foreach {
+        case AggSpec.Sum(f, _)                  => add1(f)
+        case AggSpec.Avg(f)                     => add1(f)
+        case AggSpec.Foreach(f)                 => add1(f)
+        case AggSpec.Extremum(f, _, _, _)       => add1(f)
+        case AggSpec.Fold(_, op, _)             => add2(op)
+        case AggSpec.TopN(k, _, _, _, _, _)     => add1(k); whole = true // topN RETAINS elements → whole record live
+        case AggSpec.Reduce(op, _, _)           => add2(op); whole = true // reduce combines whole elements
+        case AggSpec.ExtremumByElem(f, _, _, _) => add1(f); whole = true // returns the whole best element
+        case AggSpec.Count                      => ()
       }
       tag match
         case TTag.IndexWhere | TTag.Find | TTag.Exists | TTag.Forall => add1(args(0))
         case TTag.GroupReduce                                        => add1(args(0)); add1(args(1))
-        case TTag.Agg                                                => aggSpecs(parseAggList(args(0)))
-        case TTag.Plan if args.nonEmpty => decomposeLambda2(args(0)) match { case Some(_) => add2(args(0)); case None => aggSpecs(parseAggList(args(0))) }
-        case _                          => ()
-      def aggSpecs(specs: List[AggSpec]): Unit = specs.foreach {
-        case AggSpec.Sum(f, _) => add1(f); case AggSpec.Avg(f) => add1(f); case AggSpec.Foreach(f) => add1(f); case AggSpec.Extremum(f, _, _, _) => add1(f);
-        case AggSpec.Fold(_, op, _)   => add2(op); case AggSpec.TopN(k, _, _, _, _, _)                   => add1(k); whole = true;
-        case AggSpec.Reduce(op, _, _) => add2(op); whole = true; case AggSpec.ExtremumByElem(f, _, _, _) => add1(f); whole = true; case AggSpec.Count => ()
-      }
-      whole
+        case TTag.Agg                                                => addAggSpecs(parseAggList(args(0)))
+        case TTag.Plan if args.nonEmpty                              =>
+          decomposeLambda2(args(0)) match { case Some(_) => add2(args(0)); case None => addAggSpecs(parseAggList(args(0))) }
+        case _ => ()
+      (readers.toList, whole)
 
-    // the scanner kind for a field type — what the slot holds and how the column reads it.
-    enum JKind { case JInt, JLong, JDouble, JString }
-    def jkindOf(t: TypeRepr): JKind =
-      if t =:= TypeRepr.of[Int] then JKind.JInt
-      else if t =:= TypeRepr.of[Long] then JKind.JLong
-      else if t =:= TypeRepr.of[Double] then JKind.JDouble
-      else if t =:= TypeRepr.of[String] then JKind.JString
-      else report.errorAndAbort(s"fuse-json (v1): unsupported field type ${t.show} (only Int/Long/Double/String).")
+    // the terminal's display name for the plan string (planFold reports Fold, planAgg reports Agg).
+    def terminalDisplayName: String =
+      if tag == TTag.Plan && args.nonEmpty then (if decomposeLambda2(args(0)).isDefined then "Fold" else "Agg") else tag.toString
 
-    /** a typed default for a dead (never-read) field's placeholder column. */
-    def defaultOf(t: TypeRepr): Term = jkindOf(t) match
-      case JKind.JInt    => '{ 0 }.asTerm
-      case JKind.JLong   => '{ 0L }.asTerm
-      case JKind.JDouble => '{ 0.0 }.asTerm
-      case JKind.JString => '{ null.asInstanceOf[String] }.asTerm
-
-    // A machine-checkable DESCRIPTION of the plan the macro built for a JSON pipeline — so tests assert on the
-    // STRUCTURE (which fields are scanned, decoded vs sliced, the predicate/early-out set, rebuild, terminal)
-    // rather than on brittle pretty-printed code or on output values that can be coincidentally right.
-    def jsonPlanString(elemTpe: TypeRepr): String =
-      val (fields, liveSet) = jsonLiveFields(elemTpe)
-      val whole = jsonWholeUse(elemTpe)
-      // a String live field is kept as a lazy (start,len) slice; a numeric live field is decoded to a value.
-      val live = fields.filter(f => liveSet.contains(f._1))
-      val decoded = live.collect { case (n, t) if jkindOf(t) != JKind.JString => n }
-      val sliced = live.collect { case (n, t) if jkindOf(t) == JKind.JString => n }
-      // predicate fields = fields read by the LEADING positive filters (the early-out set).
-      val leadingFilters = stages.takeWhile { case FilterS(_, false) => true; case _ => false }.collect { case FilterS(p, false) => p }
-      val predNames =
-        leadingFilters.flatMap(p => decomposeLambda(p).toList.flatMap((param, b) => collectPaths(b, param).flatMap(_.headOption.map(_._2)))).distinct
-      val projOnly = live.map(_._1).exists(n => !predNames.contains(n))
-      val earlyOut = leadingFilters.nonEmpty && predNames.nonEmpty && projOnly
-      val termName =
-        if tag == TTag.Plan && args.nonEmpty then (if decomposeLambda2(args(0)).isDefined then "Fold" else "Agg")
-        else tag.toString // planFold reports Fold, planAgg reports Agg
-      // deterministic, sorted, compact:
-      def s(xs: Iterable[String]) = xs.toList.sorted.mkString("[", ",", "]")
-      s"JsonPlan(record=${elemTpe.typeSymbol.name}, terminal=$termName, " +
-        s"live=${s(liveSet)}, decoded=${s(decoded)}, sliced=${s(sliced)}, " +
-        s"predicate=${s(predNames)}, earlyOut=$earlyOut, rebuildsRecord=$whole)"
+    // assemble the SPI input. `continue` is the engine-owned rejoin: turn the decoder's decomposed columns into a
+    // Shape (memoizing String columns) and run the shared downstream optimizer. `c`/`notDone` are only meaningful for
+    // the real loop; the Plan terminal passes a trivial Ctx (planString ignores src/notDone/continue).
+    def decoderInput(src: Expr[ByteRecordSource], c: Ctx): DecomposedInput[quotes.type] =
+      val (readers, whole) = terminalRecordReadersOfPipeline
+      val notDone: Expr[Boolean] = c.done match { case Some(d) => '{ ! ${ d.read } }; case None => '{ true } }
+      val continue: RecordColumns[quotes.type] => Expr[Unit] = cols =>
+        val parts: List[Shape] = cols.columns.map(col => if col.isString then memoScalar(k => col.read(k)) else Sc(k => col.read(k)))
+        continueShape(Tup(parts, vs => mkProduct(srcElem, vs)), indexed, c).asExprOf[Unit]
+      DecomposedInput[quotes.type](srcElem, src, notDone, stageLambdasOfPipeline, readers, whole, terminalDisplayName, continue)
 
     if tag == TTag.Plan then
-      return (if isJson then Expr(jsonPlanString(srcElem)) else Expr(s"InMemoryPlan(elem=${srcElem.typeSymbol.name}, terminal=$tag, stages=${stages.length})"))
-
-    def loopOverJson(jsrc: Expr[NdjsonSource[?]], elemTpe: TypeRepr, ss: List[(Stage, Int)], ctx: Ctx): Expr[Unit] =
-      val (fields, liveSet) = jsonLiveFields(elemTpe)
-      val liveFields = fields.zipWithIndex.filter { case ((n, _), _) => liveSet.contains(n) }
-      // per live field: the slot vars (mutable) + how a column reads it. We declare slots inside the per-record
-      // block and reference them from the Tup columns, so they dominate the reads (hygiene-safe).
-      // We build the whole per-record body via one continuation so symbols stay in scope.
-      val doneCond: Expr[Boolean] = ctx.done match { case Some(d) => d.read; case None => '{ false } }
-      // bind each live field's wanted-key bytes to a val ABOVE the loop (interned once), so the per-record scan
-      // references them with zero allocation. Thread the refs to jsonRecord.
-      def withKeyRefs(rem: List[((String, TypeRepr), Int)], acc: Map[String, Expr[Array[Byte]]])(k: Map[String, Expr[Array[Byte]]] => Expr[Unit]): Expr[Unit] =
-        rem match
-          case Nil                    => k(acc)
-          case ((name, _), _) :: rest =>
-            '{
-              val keyBytes: Array[Byte] = JsonScanner.internKey(${ Expr(name) })
-              ${ withKeyRefs(rest, acc + (name -> '{ keyBytes }))(k) }
-            }
-      '{
-        val src = $jsrc
-        val buf: Array[Byte] = src.buf
-        val until: Int = src.until
-        ${
-          withKeyRefs(liveFields, Map.empty) { keyRefs =>
-            '{
-              var lineStart: Int = src.from
-              while lineStart < until && ! $doneCond do
-                var lineEnd = lineStart
-                while lineEnd < until && buf(lineEnd) != '\n' do lineEnd += 1
-                ${ jsonRecord('buf, 'lineStart, 'lineEnd, fields, liveFields, keyRefs, ss, ctx).asExprOf[Unit] }
-                lineStart = lineEnd + 1
-            }
-          }
-        }
-      }
-
-    // a live field's mutable scan slots: the value column (reads the slot lazily), a `seen` flag ref, and a
-    // `fill(buf, valuePos, end): newPos` quote that the scan-pass runs when this field's key matches.
-    // `rawRead` is the direct value term (the `v` var, or `decodeLatin1(...)` for a String) used to evaluate a
-    // predicate inline — it does NOT go through `letBind` (which is Unit-only), unlike the lazy `col`.
-    final case class JSlot(idx: Int, name: String, jk: JKind, col: Shape, seen: Expr[Boolean], fill: (Expr[Int], Expr[Int]) => Expr[Int], rawRead: Term)
-
-    // one record: declare slots (nested quotes, like declareSlots), run the scan-pass, build the Tup, continue.
-    def jsonRecord(
-        buf: Expr[Array[Byte]],
-        lineStart: Expr[Int],
-        lineEnd: Expr[Int],
-        fields: List[(String, TypeRepr)],
-        liveFields: List[((String, TypeRepr), Int)],
-        keyRefs: Map[String, Expr[Array[Byte]]],
-        ss: List[(Stage, Int)],
-        ctx: Ctx
-    ): Term =
-      def withSlots(rem: List[((String, TypeRepr), Int)], acc: List[JSlot])(k: List[JSlot] => Term): Term =
-        rem match
-          case Nil                        => k(acc.reverse)
-          case ((name, tpe), idx) :: rest =>
-            jkindOf(tpe) match
-              // numeric fills decode the value into the slot var + the new position into `pNext` (a second slot
-              // var) — NO tuple returned (a `(Double,Int)` return boxed, costing the macro path its alloc edge).
-              case JKind.JInt =>
-                '{
-                  var v: Int = 0; var pNext: Int = 0; var seen: Boolean = false
-                  ${
-                    val s = JSlot(
-                      idx,
-                      name,
-                      JKind.JInt,
-                      Sc(kk => kk('{ v }.asTerm)),
-                      '{ seen },
-                      (p, end) => '{ v = JsonScanner.readIntAt($buf, $p, $end); pNext = JsonScanner.numEnd; seen = true; pNext },
-                      '{ v }.asTerm
-                    )
-                    withSlots(rest, s :: acc)(k).asExpr
-                  }
-                }.asTerm
-              case JKind.JLong =>
-                '{
-                  var v: Long = 0L; var pNext: Int = 0; var seen: Boolean = false
-                  ${
-                    val s = JSlot(
-                      idx,
-                      name,
-                      JKind.JLong,
-                      Sc(kk => kk('{ v }.asTerm)),
-                      '{ seen },
-                      (p, end) => '{ v = JsonScanner.readLongAt($buf, $p, $end); pNext = JsonScanner.numEnd; seen = true; pNext },
-                      '{ v }.asTerm
-                    )
-                    withSlots(rest, s :: acc)(k).asExpr
-                  }
-                }.asTerm
-              case JKind.JDouble =>
-                '{
-                  var v: Double = 0.0; var pNext: Int = 0; var seen: Boolean = false
-                  ${
-                    val s = JSlot(
-                      idx,
-                      name,
-                      JKind.JDouble,
-                      Sc(kk => kk('{ v }.asTerm)),
-                      '{ seen },
-                      (p, end) => '{ v = JsonScanner.readDoubleAt($buf, $p, $end); pNext = JsonScanner.numEnd; seen = true; pNext },
-                      '{ v }.asTerm
-                    )
-                    withSlots(rest, s :: acc)(k).asExpr
-                  }
-                }.asTerm
-              case JKind.JString =>
-                // lazy slice: slots are (start, len); the column decodes to String ON READ (memoized), so the
-                // existing sink defers the `new String` past the filter — compute-for-survivors, for free.
-                '{
-                  var st: Int = 0; var ln: Int = 0; var seen: Boolean = false
-                  ${
-                    val col = memoScalar(kk => kk('{ JsonScanner.decodeLatin1($buf, st, ln) }.asTerm))
-                    val s = JSlot(
-                      idx,
-                      name,
-                      JKind.JString,
-                      col,
-                      '{ seen },
-                      (p, end) => '{ val vs = $p + 1; val ve = JsonScanner.scanStringEnd($buf, vs, $end); st = vs; ln = ve - vs; seen = true; ve + 1 },
-                      '{ JsonScanner.decodeLatin1($buf, st, ln) }.asTerm
-                    )
-                    withSlots(rest, s :: acc)(k).asExpr
-                  }
-                }.asTerm
-
-      withSlots(liveFields, Nil) { slots =>
-        val byIdx = slots.map(s => s.idx -> s).toMap
-        // build the Tup: parts indexed like ALL fields (dead fields get a placeholder column that's never read).
-        def colFor(i: Int, ftpe: TypeRepr): Shape =
-          // a dead field's column yields a typed default — only ever forced if the WHOLE record is materialized
-          // (rebuild), which the live-set marks all-fields-live for, so in practice this is never read; it exists
-          // so a value-ignoring terminal (e.g. count) that still rebuilds the Tup typechecks.
-          byIdx.get(i).map(_.col).getOrElse(Sc(k => k(defaultOf(ftpe))))
-        val parts = fields.zipWithIndex.map { case ((_, ftpe), i) => colFor(i, ftpe) }
-        val recordTup: Shape = Tup(parts, vs => mkProduct(srcElem, vs))
-
-        // ---- PREDICATE-FAIL EARLY-OUT ----
-        // The LEADING run of filters (filters before any map) can be evaluated DURING the scan, the moment all
-        // their fields are captured. If a filter fails, abandon the record immediately — never scanning the
-        // projection-only fields that come later. This is the strong early-out (vs `allSeen`, which waits for
-        // ALL live fields). We keep the filters downstream too (a cheap re-check on survivors over already-
-        // decoded values), so correctness doesn't depend on stripping them.
-        // only POSITIVE filters (not `filterNot`) are taken for the inline early-out — negation would need a
-        // wrapped lambda; `filterNot` falls back to downstream-only filtering (still correct, just no early-out).
-        val leadingFilters: List[Term] = ss
-          .takeWhile {
-            case (FilterS(_, false), _) => true
-            case _                      => false
-          }
-          .collect { case (FilterS(p, false), _) => p }
-        // the fields those leading filters read (their slots must be seen before we can evaluate them).
-        val predFieldIdxs: Set[Int] =
-          leadingFilters.flatMap(p => decomposeLambda(p).toList.flatMap((param, b) => collectPaths(b, param).flatMap(_.headOption.map(_._1)))).toSet
-        val predSlots = slots.filter(s => predFieldIdxs.contains(s.idx))
-        // a predicate-fail early-out is only worthwhile when there ARE projection-only fields to skip AND the
-        // predicate's fields are a proper subset of live (otherwise `allSeen` already covers it).
-        val projOnly = slots.exists(s => !predFieldIdxs.contains(s.idx))
-        val earlyPred: Option[(Expr[Boolean], Expr[Boolean])] =
-          if leadingFilters.isEmpty || predSlots.isEmpty || !projOnly then None
-          else
-            // allPredSeen = conjunction of the predicate slots' seen flags
-            val allPredSeen = predSlots.map(_.seen).reduce((a, b) => '{ $a && $b })
-            // predHolds = conjunction of each leading filter evaluated inline. Each predicate's field accesses
-            // (`_.amount`) are substituted DIRECTLY with the slot's read term (the decoded `v` var / a decoded
-            // String) — no `letBind` (which is Unit-only, for loop bodies); the slots are already bound, so a
-            // field read is just the var. We only handle predicates whose every path resolves to a known slot.
-            val byField: Map[Int, JSlot] = byIdx
-            def predBool(p: Term): Option[Expr[Boolean]] = decomposeLambda(p) match
-              case Some((param, body)) =>
-                val paths = collectPaths(body, param)
-                // each path is a single-hop field read into a slot; map it to the slot's raw value term (the
-                // decoded `v` var / `decodeLatin1(...)` — NOT through `letBind`).
-                val refs: Map[Path, Term] = paths.flatMap { path =>
-                  path.headOption.flatMap { case (i, _) => byField.get(i).map(s => path -> s.rawRead) }
-                }.toMap
-                if refs.size == paths.size then Some(substPaths(body, param, refs).asExprOf[Boolean])
-                else None // a path didn't resolve to a slot → skip inline check (downstream handles it)
-              case None => None
-            val predBools = leadingFilters.map(predBool)
-            val predHolds: Option[Expr[Boolean]] =
-              if predBools.contains(None) then None
-              else Some(predBools.flatten.reduce((a, b) => '{ $a && $b }))
-            predHolds.map(ph => (allPredSeen, ph)) // None if any predicate couldn't be lowered inline
-
-        if earlyPred.isEmpty then
-          // no inline predicate early-out — just scan (with allSeen) and run downstream.
-          '{
-            ${ jsonScanPass(buf, lineStart, lineEnd, slots, keyRefs, None, '{ () }) }
-            ${ continueShape(recordTup, ss, ctx).asExprOf[Unit] }
-          }.asTerm
-        else
-          '{
-            var rejected: Boolean = false
-            ${ jsonScanPass(buf, lineStart, lineEnd, slots, keyRefs, earlyPred, '{ rejected = true }) }
-            if !rejected then ${ continueShape(recordTup, ss, ctx).asExprOf[Unit] }
-          }.asTerm
-      }
-
-    // emit the one-pass key-dispatch scan over a record's fields (compact NDJSON fast path).
-    // earlyPred = Some((allPredSeen, predHolds)): evaluate the leading filters the moment their fields are all
-    //   captured; if they fail, run `reject` and stop the scan (predicate-fail early-out — skips projection fields).
-    def jsonScanPass(
-        buf: Expr[Array[Byte]],
-        lineStart: Expr[Int],
-        lineEnd: Expr[Int],
-        slots: List[JSlot],
-        keyRefs: Map[String, Expr[Array[Byte]]],
-        earlyPred: Option[(Expr[Boolean], Expr[Boolean])],
-        reject: Expr[Unit]
-    ): Expr[Unit] =
-      // generate the per-key dispatch chain: if keyEquals(name0) fill0 else if … else skipValue.
-      def dispatch(ks: Expr[Int], ke: Expr[Int], p: Expr[Int]): Expr[Int] =
-        slots.foldRight[Expr[Int]]('{ JsonScanner.skipValue($buf, $p, $lineEnd) }) { (s, elseB) =>
-          '{ if ! ${ s.seen } && JsonScanner.keyEquals($buf, $ks, $ke, ${ keyRefs(s.name) }) then ${ s.fill(p, lineEnd) } else $elseB }
-        }
-      // projection EARLY-OUT: once every live field is captured, abandon the rest (nothing else is read).
-      def allSeen: Expr[Boolean] =
-        slots match
-          case Nil           => '{ false } // no live fields → never early-out (scan to '}' normally)
-          case first :: more => more.foldLeft(first.seen)((acc, s) => '{ $acc && ${ s.seen } })
-      // the per-key step, with the predicate-fail check (if any) folded in: after capturing a field, if all
-      // predicate fields are now seen, evaluate the leading filters; on failure reject + stop.
-      earlyPred match
-        case None =>
-          '{
-            var p: Int = $lineStart + 1
-            var open: Boolean = $buf($lineStart) == '{'
-            while open do
-              if $buf(p) == '}' then open = false
-              else
-                val ks = p + 1
-                val ke = JsonScanner.scanStringEnd($buf, ks, $lineEnd)
-                p = ${ dispatch('ks, 'ke, '{ ke + 2 }) }
-                if $allSeen then open = false
-                else if $buf(p) == ',' then p += 1
-                else open = false
-          }
-        case Some((allPredSeen, predHolds)) =>
-          '{
-            var p: Int = $lineStart + 1
-            var open: Boolean = $buf($lineStart) == '{'
-            var predChecked: Boolean = false
-            while open do
-              if $buf(p) == '}' then open = false
-              else
-                val ks = p + 1
-                val ke = JsonScanner.scanStringEnd($buf, ks, $lineEnd)
-                p = ${ dispatch('ks, 'ke, '{ ke + 2 }) }
-                if !predChecked && $allPredSeen then
-                  predChecked = true
-                  if ! $predHolds then { $reject; open = false } // PREDICATE FAILED → abandon the record now
-                if open then
-                  if $allSeen then open = false
-                  else if $buf(p) == ',' then p += 1
-                  else open = false
-          }
+      return decomposedSrc match
+        case Some(js) => Expr(RecordDecoder.planString(decoderInput(js, Ctx(t => t, None, Map.empty))))
+        case None     => Expr(s"InMemoryPlan(elem=${srcElem.typeSymbol.name}, terminal=$tag, stages=${stages.length})")
 
     // --- declare loop-state vars (above the loop), then assemble the terminal body ---
     def withDone(k: Option[Done] => Term): Term =
       if needsDone then '{ var done: Boolean = false; ${ k(Some(Done('{ done = true }, '{ done }))).asExpr } }.asTerm
       else k(None)
+
+    /** Nested fusion's inner aggregate as a per-run accumulator. Declares the accumulator var(s) ABOVE the loop (wrapping `k`), then hands `k` a (reset, step,
+      * finish): `reset` re-inits per run, `step(shape)` folds one inner-pipeline-output value into the accumulator, `finish` reads it → R. Mirrors the folding
+      * `stateFor` cases but in declare/reset/step/finish form (the vars persist across chunks; the loop body steps them; the run boundary + epilogue read+reset
+      * them). v1: ONE folding agg — Sum/Count/Fold/Avg/Extremum/Reduce/ExtremumByElem.
+      */
+    def innerAggState(spec: AggSpec)(k: (Expr[Unit], Shape => Term, Term) => Term): Term = spec match
+      case AggSpec.Count =>
+        '{
+          var c: Int = 0
+          ${ k('{ c = 0 }, (_: Shape) => '{ c += 1 }.asTerm, '{ c }.asTerm).asExpr }
+        }.asTerm
+      case AggSpec.Sum(f, bTpe) =>
+        bTpe.asType match
+          case '[bb] =>
+            '{
+              var acc: bb = ${ numZero(bTpe).asExprOf[bb] }
+              ${
+                k(
+                  '{ acc = ${ numZero(bTpe).asExprOf[bb] } },
+                  (sh: Shape) => fnOnShape(f, sh)(fv => '{ acc = ${ numAdd(bTpe, '{ acc }.asTerm, fv).asExprOf[bb] } }.asTerm),
+                  '{ acc }.asTerm
+                ).asExpr
+              }
+            }.asTerm
+      case AggSpec.Avg(f) =>
+        '{
+          var s: Double = 0.0; var c: Int = 0
+          ${
+            k(
+              '{ s = 0.0; c = 0 },
+              (sh: Shape) => fnOnShape(f, sh)(fv => '{ s = s + ${ fv.asExprOf[Double] }; c += 1 }.asTerm),
+              '{ if c == 0 then 0.0 else s / c }.asTerm
+            ).asExpr
+          }
+        }.asTerm
+      case AggSpec.Fold(z, op, sTpe) =>
+        sTpe.asType match
+          case '[ss] =>
+            '{
+              var acc: ss = ${ z.asExprOf[ss] }
+              ${
+                k(
+                  '{ acc = ${ z.asExprOf[ss] } },
+                  (sh: Shape) => opOnShape(op, '{ acc }.asTerm, sh)(r => '{ acc = ${ r.asExprOf[ss] } }.asTerm),
+                  '{ acc }.asTerm
+                ).asExpr
+              }
+            }.asTerm
+      case AggSpec.Extremum(f, bTpe, isMax, bare) =>
+        bTpe.asType match
+          case '[bb] =>
+            '{
+              var best: bb = null.asInstanceOf[bb]; var seen: Boolean = false
+              ${
+                k(
+                  '{ seen = false },
+                  (sh: Shape) =>
+                    fnOnShape(f, sh)(fv =>
+                      '{
+                        val kk: bb = ${ fv.asExprOf[bb] }
+                        if !seen || ${ ordWins(bTpe, '{ kk }.asTerm, '{ best }.asTerm, isMax) } then { best = kk; seen = true }
+                      }.asTerm
+                    ),
+                  if bare then '{ if seen then best else throw new java.util.NoSuchElementException("min1/max1 of empty group") }.asTerm
+                  else '{ if seen then Some(best) else None }.asTerm
+                ).asExpr
+              }
+            }.asTerm
+      case AggSpec.ExtremumByElem(f, bTpe, better, bare) =>
+        bTpe.asType match
+          case '[bb] =>
+            // best ELEMENT by key f(elem); `better(newKey, bestKey)` decides. Retains the winning element (boxed).
+            '{
+              var bestK: bb = null.asInstanceOf[bb]; var bestE: Any = null; var seen: Boolean = false
+              ${
+                k(
+                  '{ seen = false },
+                  (sh: Shape) =>
+                    readShape(sh)(elem =>
+                      fnOnShape(f, sh)(fv =>
+                        '{
+                          val kk: bb = ${ fv.asExprOf[bb] }
+                          if !seen || ${ applyN(better, List('{ kk }.asTerm, '{ bestK }.asTerm)).asExprOf[Boolean] } then {
+                            bestK = kk; bestE = ${ elem.asExpr }; seen = true
+                          }
+                        }.asTerm
+                      )
+                    ),
+                  if bare then '{ if seen then bestE else throw new java.util.NoSuchElementException("minBy1/maxBy1 of empty group") }.asTerm
+                  else '{ if seen then Some(bestE) else None }.asTerm
+                ).asExpr
+              }
+            }.asTerm
+      case AggSpec.Reduce(op, aTpe, bare) =>
+        aTpe.asType match
+          case '[aa] =>
+            '{
+              var acc: aa = null.asInstanceOf[aa]; var seen: Boolean = false
+              ${
+                k(
+                  '{ seen = false },
+                  (sh: Shape) =>
+                    readShape(sh)(elem =>
+                      '{
+                        if !seen then { acc = ${ elem.asExprOf[aa] }; seen = true }
+                        else acc = ${ applyN(op, List('{ acc }.asTerm, elem)).asExprOf[aa] }
+                      }.asTerm
+                    ),
+                  if bare then '{ if seen then acc else throw new java.util.NoSuchElementException("reduce of empty group") }.asTerm
+                  else '{ if seen then Some(acc) else None }.asTerm
+                ).asExpr
+              }
+            }.asTerm
+      case other =>
+        report.errorAndAbort(
+          s"fuse: groupAdjacentReduceBy v1 supports a single folding aggregate (Agg.sum/count/avg/fold/min/max/minBy/maxBy/reduce); got $other"
+        )
 
     def declareSlots(rem: List[(Int, CSpec)], acc: Map[Int, Slot])(k: Map[Int, Slot] => Term): Term =
       rem match
@@ -1557,6 +1555,113 @@ object FuseMacro:
                   declareSlots(rest, acc + (idx -> slot))(k).asExpr
                 }
               }.asTerm
+        case (idx, FoldAdjSpec(seed, kt, bt)) :: rest => // foldAdjacentBy: curKey, acc, started, seed (once)
+          (kt.asType, bt.asType) match
+            case ('[kk], '[bb]) =>
+              '{
+                var curKey: kk = null.asInstanceOf[kk]
+                var acc0: bb = null.asInstanceOf[bb]
+                var started: Boolean = false
+                val seed0: bb = ${ seed.asExprOf[bb] }
+                ${
+                  val st = FoldAdjState(
+                    '{ curKey }.asTerm,
+                    (v: Term) => '{ curKey = ${ v.asExprOf[kk] } }.asTerm,
+                    '{ acc0 }.asTerm,
+                    (v: Term) => '{ acc0 = ${ v.asExprOf[bb] } }.asTerm,
+                    '{ started },
+                    '{ started = true },
+                    '{ seed0 }.asTerm
+                  )
+                  declareSlots(rest, acc + (idx -> Slot('{ 0 }, '{ () }, None, foldAdj = Some(st))))(k).asExpr
+                }
+              }.asTerm
+        case (idx, GroupAdjSpec(kt, at)) :: rest => // groupAdjacentBy: Object[] row buffer + bn + curKey + started
+          (kt.asType, at.asType) match
+            case ('[kk], '[aa]) =>
+              '{
+                var curKey: kk = null.asInstanceOf[kk]
+                var started: Boolean = false
+                var buf: Array[Object] = new Array[Object](16)
+                var bn: Int = 0
+                ${
+                  val st = GroupAdjState(
+                    '{ curKey }.asTerm,
+                    (v: Term) => '{ curKey = ${ v.asExprOf[kk] } }.asTerm,
+                    '{ started },
+                    '{ started = true },
+                    (v: Term) =>
+                      '{ if bn >= buf.length then buf = java.util.Arrays.copyOf(buf, buf.length * 2); buf(bn) = ${ v.asExpr }.asInstanceOf[Object]; bn += 1 },
+                    '{ FArray.fromBoxedArray[aa](java.util.Arrays.copyOf(buf, bn)) }.asTerm,
+                    '{ bn = 0 }
+                  )
+                  declareSlots(rest, acc + (idx -> Slot('{ 0 }, '{ () }, None, groupAdj = Some(st))))(k).asExpr
+                }
+              }.asTerm
+        case (idx, GroupedSpec(nT, at)) :: rest => // grouped(n): Object[] row buffer + fill count + window-size n
+          at.asType match
+            case '[aa] =>
+              '{
+                val gn: Int = { val t = ${ nT.asExprOf[Int] }; if t < 1 then 1 else t }
+                var buf: Array[Object] = new Array[Object](gn)
+                var bn: Int = 0
+                ${
+                  val st = GroupedState(
+                    (v: Term) => '{ buf(bn) = ${ v.asExpr }.asInstanceOf[Object]; bn += 1 },
+                    '{ bn },
+                    '{ gn },
+                    '{ FArray.fromBoxedArray[aa](if bn == buf.length then buf else java.util.Arrays.copyOf(buf, bn)) }.asTerm,
+                    '{ bn = 0 }
+                  )
+                  declareSlots(rest, acc + (idx -> Slot('{ 0 }, '{ () }, None, grouped = Some(st))))(k).asExpr
+                }
+              }.asTerm
+        case (idx, TakeRightSpec(nT, at)) :: rest => // takeRight(n): a ring buffer (Object[n]) + write pos + total cnt
+          at.asType match
+            case '[aa] =>
+              '{
+                val rn: Int = { val t = ${ nT.asExprOf[Int] }; if t < 1 then 1 else t }
+                val ring: Array[Object] = new Array[Object](rn)
+                var rpos: Int = 0
+                var rcnt: Int = 0
+                ${
+                  val st = TakeRightState(
+                    (v: Term) => '{ ring(rpos) = ${ v.asExpr }.asInstanceOf[Object]; rpos = (rpos + 1) % rn; rcnt += 1 },
+                    '{ if rcnt < rn then rcnt else rn }, // count to emit = min(seen, n)
+                    '{ if rcnt < rn then 0 else rpos }, // oldest element's ring index (0 if not yet wrapped)
+                    '{ rn },
+                    (j: Expr[Int]) => '{ ring($j % rn).asInstanceOf[aa] }.asTerm
+                  )
+                  declareSlots(rest, acc + (idx -> Slot('{ 0 }, '{ () }, None, takeRight = Some(st))))(k).asExpr
+                }
+              }.asTerm
+        case (idx, GroupReduceAdjSpec(innerStages, innerAggs, kt, _)) :: rest => // nested fusion: curKey/started + inner agg acc
+          if innerAggs.length != 1 then
+            report.errorAndAbort("fuse: groupAdjacentReduceBy v1 supports exactly one aggregate per group (multi-aggregate is a follow-up)")
+          kt.asType match
+            case '[kk] =>
+              '{
+                var curKey: kk = null.asInstanceOf[kk]
+                var started: Boolean = false
+                ${
+                  // declare the inner agg's accumulator var(s) above the loop, then build the run state. innerStep(row)
+                  // runs the inner STATELESS stages on the row (via buildBody, empty counters), feeding each survivor
+                  // to the agg's step (consumeShape). The vars persist across chunks; reset/finish at each run boundary.
+                  innerAggState(innerAggs.head) { (reset, aggStep, finish) =>
+                    val innerIxd = innerStages.zipWithIndex
+                    val st = GroupReduceAdjState(
+                      '{ curKey }.asTerm,
+                      (v: Term) => '{ curKey = ${ v.asExprOf[kk] } }.asTerm,
+                      '{ started },
+                      '{ started = true },
+                      reset,
+                      (row: Term) => buildBody(innerIxd, row, Ctx(_ => unit, None, Map.empty, Some(aggStep))),
+                      finish
+                    )
+                    declareSlots(rest, acc + (idx -> Slot('{ 0 }, '{ () }, None, groupReduceAdj = Some(st))))(k)
+                  }.asExpr
+                }
+              }.asTerm
 
     /** static upper bound on output length = min(source length, every `take` limit and zip `that` length). */
     def capExpr(n0: Expr[Int], counters: Map[Int, Slot]): Expr[Int] =
@@ -1570,12 +1675,53 @@ object FuseMacro:
       case Some((i, post)) => '{ ${ buildBody(post, c.counters(i).acc.get._1, c).asExprOf[Unit] }; $body }
       case None            => body
 
+    // foldAdjacentBy / groupAdjacentBy: after the whole (possibly chunked) loop, flush the FINAL run downstream —
+    // but only if a run was started AND a downstream `take`/short-circuit isn't already satisfied (`!done`, else
+    // `take(k)` could yield k+1). The flush reads the above-loop run vars (which persist across chunks) and runs the
+    // SAME downstream continuation as the per-element emit. Mirror of `withScanPrologue`, on the other side of the loop.
+    def withEpilogue(c: Ctx, body: Expr[Unit]): Expr[Unit] = adjInfo match
+      case Some((i, post)) =>
+        val slot = c.counters(i)
+        // flush the pending final run/window if one was started (foldAdj/groupAdj) or the buffer is non-empty (grouped).
+        val flush: Expr[Unit] =
+          if slot.foldAdj.isDefined then
+            val fst = slot.foldAdj.get
+            '{ if ${ fst.started } then ${ emitFoldAdjRun(fst, post, c).asExprOf[Unit] } }
+          else if slot.groupReduceAdj.isDefined then
+            val gst = slot.groupReduceAdj.get
+            '{ if ${ gst.started } then ${ emitGroupReduceRun(gst, post, c).asExprOf[Unit] } }
+          else if slot.groupAdj.isDefined then
+            val gst = slot.groupAdj.get
+            '{ if ${ gst.started } then ${ continueShape(srcShape(gst.emitRun), post, c).asExprOf[Unit] } }
+          else if slot.grouped.isDefined then
+            val gst = slot.grouped.get
+            '{ if ${ gst.sizeRead } > 0 then ${ continueShape(srcShape(gst.emitRun), post, c).asExprOf[Unit] } }
+          else
+            // takeRight: replay the ring oldest→newest, each element through the downstream — `done`-aware so a
+            // downstream `take` (e.g. `takeRight(5).take(2)`) stops mid-replay.
+            val tr = slot.takeRight.get
+            val notDone: Expr[Boolean] = c.done match { case Some(d) => '{ ! ${ d.read } }; case None => '{ true } }
+            '{
+              val m: Int = ${ tr.count }
+              val startIdx: Int = ${ tr.oldest }
+              var j: Int = 0
+              while j < m && $notDone do {
+                ${ continueShape(srcShape(tr.readAt('{ startIdx + j })), post, c).asExprOf[Unit] }
+                j += 1
+              }
+            }
+        c.done match
+          case Some(d) => '{ $body; if ! ${ d.read } then $flush }
+          case None    => '{ $body; $flush }
+      case None => body
+
     def assemble(src0: Expr[FBase], n0: Expr[Int], done: Option[Done], counters: Map[Int, Slot]): Term =
       def ctx(consume: Term => Term) = Ctx(consume, done, counters)
       def drive(c: Ctx): Expr[Unit] =
-        jsonSrc match
-          case Some(js) => loopOverJson(js, srcElem, indexed, c)
-          case None     => withScanPrologue(c, loopOver(src0, srcK, srcElem, indexed, c))
+        (decomposedSrc, streamSrc) match
+          case (Some(js), _) => RecordDecoder.lower(decoderInput(js, c))
+          case (_, Some(ss)) => withEpilogue(c, withScanPrologue(c, loopOverSource(ss, srcK, srcElem, indexed, c)))
+          case _             => withEpilogue(c, withScanPrologue(c, loopOver(src0, srcK, srcElem, indexed, c)))
       def loop(consume: Term => Term): Expr[Unit] = drive(ctx(consume))
       // shape-aware driver: the terminal consumes the element's decomposed Shape (so `op`/`f` projects columns
       // without rebuilding the product). `consume` is a materialize-then-apply fallback for non-segment paths.
@@ -1785,7 +1931,7 @@ object FuseMacro:
             case AggSpec.Reduce(op, bTpe, bare) =>
               // seeded reduce op(acc, a): the first element seeds acc (no zero); thereafter acc = op(acc, a). acc is
               // typed B (the op's result type; B >: A so the element seeds it). reduce combines whole elements, so we
-              // read the element shape whole (wholeUse already set for JSON). `bare` (reduce1) returns B, else Option[B].
+              // read the element shape whole (wholeUse already set for a decomposed source). `bare` (reduce1) returns B, else Option[B].
               bTpe.asType match
                 case '[bb] =>
                   '{
@@ -1856,7 +2002,7 @@ object FuseMacro:
         case TTag.GroupReduce =>
           // group by key(a), combine value(a) per key with reduce → Map[K,B]. ONE fused pass into an
           // open-addressing map (UNBOXED Int key via IntKeyMap; other key kinds via a boxed HashMap fallback).
-          // key/value lambdas are decomposed against the element Shape (unboxed, projection-aware over JSON too);
+          // key/value lambdas are decomposed against the element Shape (unboxed, projection-aware over a decomposed source too);
           // `reduce` is inlined (applyN) at the merge — no SAM stored, no per-element closure.
           val key = args(0); val value = args(1); val reduce = args(2)
           def resultTpe(lam: Term, n: Int): TypeRepr = lam.tpe.widen.dealias match
@@ -1938,9 +2084,10 @@ object FuseMacro:
     def assembleOut(src0: Expr[FBase], n0: Expr[Int], counters: Map[Int, Slot], ctx: (Term => Term) => Ctx): Term =
       def loop(consume: Term => Term): Expr[Unit] =
         val c = ctx(consume)
-        jsonSrc match
-          case Some(js) => loopOverJson(js, srcElem, indexed, c)
-          case None     => withScanPrologue(c, loopOver(src0, srcK, srcElem, indexed, c))
+        (decomposedSrc, streamSrc) match
+          case (Some(js), _) => RecordDecoder.lower(decoderInput(js, c))
+          case (_, Some(ss)) => withEpilogue(c, withScanPrologue(c, loopOverSource(ss, srcK, srcElem, indexed, c)))
+          case _             => withEpilogue(c, withScanPrologue(c, loopOver(src0, srcK, srcElem, indexed, c)))
       outK match
         case Kind.KInt =>
           if needsGrow then
@@ -2115,9 +2262,9 @@ object FuseMacro:
             }.asTerm
 
     // --- final assembly: bind source + length once, then state vars, then the loop nest ---
-    // For a JSON source there's no FBase and no static length; n0 is just an initial output-capacity hint
-    // (the JSON path always uses the growable `needsGrow` assembly), so a fixed estimate is fine.
-    if isJson then
+    // A decomposed or streaming source has no FBase and no static length; n0 is just an initial output-capacity hint
+    // (both always use the growable `needsGrow` assembly), so a fixed estimate is fine.
+    if isDecomposed || isStream then
       '{
         val src0: FBase = null.asInstanceOf[FBase]; val n0: Int = 16
         ${ withDone(done => declareSlots(counterStages, Map.empty)(counters => assemble('src0, 'n0, done, counters))).asExpr }

@@ -80,3 +80,24 @@ object Agg:
   /** like `minBy`/`maxBy` but for a KNOWN-NON-EMPTY input → `A` (throws if empty). */
   @compileTimeOnly(Msg) def minBy1[A, B](f: A => B)(using Ordering[B]): Agg[A, A] = new Agg()
   @compileTimeOnly(Msg) def maxBy1[A, B](f: A => B)(using Ordering[B]): Agg[A, A] = new Agg()
+
+/** Non-`@compileTimeOnly` internal twin of `Agg`, used ONLY by nested fusion (`groupAdjacentReduceBy`). The inline `groupAdjacentReduceBy` consumes the user's
+  * `Agg.*` argument in a macro splice (satisfying `@compileTimeOnly`) and re-emits the SAME call against `AggRaw` (same method NAME, so the `.run` macro's
+  * `parseAgg1` reads it identically) — the agg now survives in the tree to the outer macro as a plain, non-compileTimeOnly marker. v1 carries only the folding
+  * aggregates (the ones nested fusion supports as a per-run accumulator). Never a usable runtime value.
+  */
+object AggRaw:
+  def sum[A, B](f: A => B)(using Numeric[B]): Agg[A, B] = null.asInstanceOf[Agg[A, B]]
+  def count[A]: Agg[A, Int] = null.asInstanceOf[Agg[A, Int]]
+  def min[A, B](f: A => B)(using Ordering[B]): Agg[A, Option[B]] = null.asInstanceOf[Agg[A, Option[B]]]
+  def max[A, B](f: A => B)(using Ordering[B]): Agg[A, Option[B]] = null.asInstanceOf[Agg[A, Option[B]]]
+  def min1[A, B](f: A => B)(using Ordering[B]): Agg[A, B] = null.asInstanceOf[Agg[A, B]]
+  def max1[A, B](f: A => B)(using Ordering[B]): Agg[A, B] = null.asInstanceOf[Agg[A, B]]
+  def fold[A, S](z: S)(step: (S, A) => S): Agg[A, S] = null.asInstanceOf[Agg[A, S]]
+  def avg[A](f: A => Double): Agg[A, Double] = null.asInstanceOf[Agg[A, Double]]
+  def reduce[A, B >: A](op: (B, B) => B): Agg[A, Option[B]] = null.asInstanceOf[Agg[A, Option[B]]]
+  def reduce1[A, B >: A](op: (B, B) => B): Agg[A, B] = null.asInstanceOf[Agg[A, B]]
+  def minBy[A, B](f: A => B)(using Ordering[B]): Agg[A, Option[A]] = null.asInstanceOf[Agg[A, Option[A]]]
+  def maxBy[A, B](f: A => B)(using Ordering[B]): Agg[A, Option[A]] = null.asInstanceOf[Agg[A, Option[A]]]
+  def minBy1[A, B](f: A => B)(using Ordering[B]): Agg[A, A] = null.asInstanceOf[Agg[A, A]]
+  def maxBy1[A, B](f: A => B)(using Ordering[B]): Agg[A, A] = null.asInstanceOf[Agg[A, A]]
