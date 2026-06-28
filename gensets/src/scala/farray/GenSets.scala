@@ -675,16 +675,20 @@ object GenSets extends BleepCodegenScript("GenSets") {
         // materialize: fold + memoize. A leaf returns itself; an algebra node merges its materialized children.
         ee.open(s"def materialize$K(node: SBase): SBase = node match")
         ee.line(s"case _: SMaterialized => node")
-        def algebra(tpe: String, bind: String, merge: String): Unit = {
+        def algebra(tpe: String, bind: String, merge: String, op: Int): Unit = {
           ee.open(s"case $bind: $tpe =>")
           ee.line(s"val m = $bind.memo")
-          ee.line(s"if (m != null) m else { val r = wrap$K($merge$K(asArr$K(materialize$K($bind.left)), asArr$K(materialize$K($bind.right)))); $bind.memo = r; r }")
+          if k.name == "Int" then
+            // Int routes through mergeAlgebraInt → word-parallel bitmap kernel when both children are bitmaps.
+            ee.line(s"if (m != null) m else { val r = mergeAlgebraInt($bind.left, $bind.right, $op); $bind.memo = r; r }")
+          else
+            ee.line(s"if (m != null) m else { val r = wrap$K($merge$K(asArr$K(materialize$K($bind.left)), asArr$K(materialize$K($bind.right)))); $bind.memo = r; r }")
           ee.close()
         }
-        algebra("SUnion", "u", "mergeUnion")
-        algebra("SInter", "n", "mergeInter")
-        algebra("SDiff", "d", "mergeDiff")
-        algebra("SXor", "x", "mergeXor")
+        algebra("SUnion", "u", "mergeUnion", 0)
+        algebra("SInter", "n", "mergeInter", 1)
+        algebra("SDiff", "d", "mergeDiff", 2)
+        algebra("SXor", "x", "mergeXor", 3)
         ee.line("""case _ => throw new UnsupportedOperationException("cannot materialize/enumerate an infinite or predicate set (range/above/below/universal/complement) — only contains is defined")""")
         ee.close()
       }
@@ -705,7 +709,7 @@ object GenSets extends BleepCodegenScript("GenSets") {
         ee.close()
         // build a bitmap from a sorted distinct Int array (the router already proved the span dense + bounded).
         ee.open("def buildBitmapInt(arr: Array[Int]): SBase =")
-        ee.line("val base = arr(0)")
+        ee.line("val base = (arr(0) >> 6) << 6 // round DOWN to a multiple of 64 so two bitmaps word-align for merging")
         ee.line("val nwords = ((arr(arr.length - 1) - base) >>> 6) + 1")
         ee.line("val words = new Array[Long](nwords)")
         ee.line("var i = 0")
@@ -727,6 +731,37 @@ object GenSets extends BleepCodegenScript("GenSets") {
         ee.line("wi += 1")
         ee.close()
         ee.line("out")
+        ee.close()
+        // word-parallel bitmap algebra (bases are multiples of 64 → word grids align). op 0=∪ 1=∩ 2=∖ 3=△.
+        // Maintain card via fused Long.bitCount; down-convert a sparse result (fill < 1/16) back through routeInt.
+        ee.open("def bitmapMergeInt(lb: SIntBitmap, rb: SIntBitmap, op: Int): SBase =")
+        ee.line("val base = if (lb.base < rb.base) lb.base else rb.base")
+        ee.line("val o1 = (lb.base - base) >>> 6; val o2 = (rb.base - base) >>> 6")
+        ee.line("val e1 = o1 + lb.words.length; val e2 = o2 + rb.words.length")
+        ee.line("val end = if (e1 > e2) e1 else e2")
+        ee.line("val words = new Array[Long](end)")
+        ee.line("var k = 0; var card = 0")
+        ee.open("while (k < end)")
+        ee.line("val w1 = if (k >= o1 && k < e1) lb.words(k - o1) else 0L")
+        ee.line("val w2 = if (k >= o2 && k < e2) rb.words(k - o2) else 0L")
+        ee.line("val r = if (op == 0) w1 | w2 else if (op == 1) w1 & w2 else if (op == 2) w1 & ~w2 else w1 ^ w2")
+        ee.line("words(k) = r; card += java.lang.Long.bitCount(r); k += 1")
+        ee.close()
+        ee.line("if (card == 0) SEmpty.INSTANCE")
+        ee.line("else if (card.toLong * 16L < end.toLong * 64L) routeInt(bitmapToArr(new SIntBitmap(base, card, words)))")
+        ee.line("else new SIntBitmap(base, card, words)")
+        ee.close()
+        // materialize an Int algebra node: bitmap fast-path when both children are bitmaps, else array sorted-merge.
+        ee.open("def mergeAlgebraInt(left: SBase, right: SBase, op: Int): SBase =")
+        ee.line("val l = materializeInt(left); val rr = materializeInt(right)")
+        ee.open("(l, rr) match")
+        ee.line("case (lb: SIntBitmap, rb: SIntBitmap) => bitmapMergeInt(lb, rb, op)")
+        ee.open("case _ =>")
+        ee.line("val a = asArrInt(l); val b = asArrInt(rr)")
+        ee.line("val arr = if (op == 0) mergeUnionInt(a, b) else if (op == 1) mergeInterInt(a, b) else if (op == 2) mergeDiffInt(a, b) else mergeXorInt(a, b)")
+        ee.line("wrapInt(arr)")
+        ee.close()
+        ee.close()
         ee.close()
       }
       // ---- the Ref merge CORE (§3.2 for references): leaves are hash-sorted (a parallel signed-hashCode key),
