@@ -1512,8 +1512,15 @@ object GenCores extends BleepCodegenScript("GenCores") {
             .map { kb =>
               val outType = if kb.name == "Ref" then "Array[Object]" else s"Array[${kb.arr}]"
               val leafBranch = s"{ val sa = leaf.arr; ${branch(ka, kb, readVal(ka, "sa(0)"), readVal(ka, "sa(i)"))} }"
-              val nodeBranch = branch(ka, kb, readVal(ka, s"${ka.lc}At(xs, 0)"), readVal(ka, s"${ka.lc}At(xs, i)"))
-              s"          case rb: ${kb.name}Repr[B] => { if (cnt == 0) Empty.INSTANCE else { var out: $outType = null; var off = 0; xs match { case leaf: ${ka.name}Arr => $leafBranch; case _ => $nodeBranch }; if (off == 0) Empty.INSTANCE else if (off == 1) new ${kb.name}One(out(0)) else if (off == out.length) new ${kb.name}Arr(out, off) else new ${kb.name}Arr(java.util.Arrays.copyOf(out, off), off) } }"
+              val canon = s"if (off == 0) Empty.INSTANCE else if (off == 1) new ${kb.name}One(out(0)) else if (off == out.length) new ${kb.name}Arr(out, off) else new ${kb.name}Arr(java.util.Arrays.copyOf(out, off), off)"
+              // LEAF source: direct array, first-inner sizing (unchanged, already optimal).
+              val leafCase = s"{ var out: $outType = null; var off = 0; $leafBranch; $canon }"
+              // TREE source: ONE dfs via foreachLeaf (genuine trees route through Traversers.foreachFwd) feeding a
+              // growable Group; the user lambda f inlines into the Consumer SAM, each inner f(v) appended unboxed.
+              // Replaces the old kindAt(xs, i) per-element random access (O(n*depth) tree-walks + a sealed dispatch
+              // on every element) with a single direction-aware DFS — the same treatment map/filter/fold already got.
+              val nodeCase = s"{ val buf = new ${kb.name}Group(); foreachLeaf${ka.name}(xs, (v) => { val inr = f(${wrapV(ka)}); val ln = inr.length; buf.arr = ensureCap${kb.name}(buf.arr, buf.size + ln); inr match { case lf: ${kb.name}Arr => System.arraycopy(lf.arr, 0, buf.arr, buf.size, ln); case _ => flatMapCopyOne${kb.name}(inr, buf.arr, buf.size) }; buf.size += ln }); buf.toLeaf }"
+              s"          case rb: ${kb.name}Repr[B] => { if (cnt == 0) Empty.INSTANCE else (xs match { case leaf: ${ka.name}Arr => $leafCase; case _ => $nodeCase }) }"
             }
             .mkString("\n") + "\n        }"
           s"      case r: ${ka.name}Repr[A] => $inner"
