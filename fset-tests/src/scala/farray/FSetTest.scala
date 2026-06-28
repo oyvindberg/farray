@@ -158,6 +158,22 @@ class FSetTest:
     assertTrue(merged === direct)
     assertEquals(merged.setHashCode, direct.setHashCode)
 
+  @Test def dense_bitmap_int(): Unit =
+    // dense + large → bitmap leaf: O(1) bit-test contains, incl. NEGATIVE spans (java.util.BitSet can't).
+    val a = FSet.fromArray((-50 to 50).toArray) // 101 dense, span 101 → bitmap
+    assertEquals(101, a.size)
+    assertTrue(a.contains(-50)); assertTrue(a.contains(0)); assertTrue(a.contains(50))
+    assertFalse(a.contains(-51)); assertFalse(a.contains(51))
+    assertEquals((-50 to 50).toList, a.toList) // bitmap iterates ascending
+    // bitmap algebra (via extraction) is correct
+    val b = FSet.fromArray((25 to 75).toArray)
+    assertEquals((-50 to 75).toSet, (a ++ b).materialize.toList.toSet)
+    assertEquals((25 to 50).toSet, (a & b).materialize.toList.toSet)
+    assertEquals((-50 to 24).toSet, (a &~ b).materialize.toList.toSet)
+    // sparse-wide stays NON-bitmap (router fallback) but still correct
+    val sparse = FSet.fromArray(Array(0, 1000000, 2000000))
+    assertTrue(sparse.contains(1000000)); assertFalse(sparse.contains(5)); assertEquals(3, sparse.size)
+
   @Test def merge_materialize_long(): Unit =
     val a = FSet(10L, 5L, 7L); val b = FSet(7L, 1L)
     assertEquals(List(1L, 5L, 7L, 10L), (a ++ b).materialize.toList)
