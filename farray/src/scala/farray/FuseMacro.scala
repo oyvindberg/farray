@@ -1560,8 +1560,12 @@ object FuseMacro:
             '{
               try
                 while src.nextChunk() && $notDone do
-                  val buf: Array[Byte] = src.buf
                   while src.nextRecord() && $notDone do
+                    // read `buf` PER RECORD: a streaming framer may reallocate its working buffer to stitch a record
+                    // across a block boundary, so a buffer cached per-chunk could go stale mid-loop. recordStart/End
+                    // are always relative to the buffer current AT THIS nextRecord(). (For the in-memory source `buf`
+                    // is a stable field, so this is a free re-read.)
+                    val buf: Array[Byte] = src.buf
                     val recStart: Int = src.recordStart
                     val recEnd: Int = src.recordEnd
                     ${ jsonRecord('buf, 'recStart, 'recEnd, fields, liveFields, keyRefs, ss, ctx).asExprOf[Unit] }
