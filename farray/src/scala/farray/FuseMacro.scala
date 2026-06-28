@@ -216,13 +216,14 @@ object FuseMacro:
         case _                                             => t
       peel(body) match
         case Block(stmts, last) =>
-          // the result must be `new ${K}Arr(outIdent, lenLit)`; capture the `out` symbol. PRIMITIVE leaves only
-          // (IntArr/LongArr/DoubleArr): their stored element exprs are clean `Typed(e, K)` we can re-splice
-          // straight downstream. The Ref leaf (RefArr) wraps each element in `(e: A).asInstanceOf[Object]`, which
-          // does not re-splice cleanly AND has no boxing win to recover (Ref was already a tie) — skip it.
-          val primArr = Set("IntArr", "LongArr", "DoubleArr")
+          // the result must be `new ${K}Arr(outIdent, lenLit)`; capture the `out` symbol. Covers every leaf:
+          //   - PRIMITIVE (IntArr/LongArr/DoubleArr): stores are `Typed(e, K)` — strip the ascription to `e`.
+          //   - REF (RefArr): stores are `(e: A).asInstanceOf[Object]` — strip the `.asInstanceOf[Object]` AND
+          //     the `Typed(_, A)` to recover the clean A-typed `e`. The downstream segment expects an A-typed
+          //     element, so the bare `e` (typed A by construction) re-splices correctly.
+          val leafArr = Set("IntArr", "LongArr", "DoubleArr", "RefArr")
           val outName: Option[String] = peel(last) match
-            case Apply(Select(New(tp), "<init>"), List(outRef, _)) if primArr.contains(tp.tpe.typeSymbol.name) =>
+            case Apply(Select(New(tp), "<init>"), List(outRef, _)) if leafArr.contains(tp.tpe.typeSymbol.name) =>
               outRef match { case Ident(nm) => Some(nm); case _ => None }
             case _ => None
           outName.flatMap { nm =>
@@ -235,10 +236,14 @@ object FuseMacro:
                   case Apply(Select(New(_), "<init>"), List(Literal(IntConstant(k))))               => k
                   case _                                                                            => -1
             }
-            // strip the `Typed(e, K)` ascription the prim store carries — `e` itself is the clean element expr.
-            def stripTyped(t: Term): Term = t match { case Typed(e, _) => stripTyped(e); case _ => t }
+            // strip the store wrapper to the clean element expr: a prim `Typed(e, K)` ascription, or a Ref
+            // `(e: A).asInstanceOf[Object]` cast (peel the cast, then the `Typed(_, A)`).
+            def stripStore(t: Term): Term = t match
+              case TypeApply(Select(inner, "asInstanceOf"), _) => stripStore(inner)
+              case Typed(e, _)                                 => stripStore(e)
+              case _                                           => t
             val updates: List[(Int, Term)] = stmts.collect {
-              case Apply(Select(Ident(n), "update"), List(Literal(IntConstant(idx)), elem)) if n == nm => (idx, stripTyped(elem))
+              case Apply(Select(Ident(n), "update"), List(Literal(IntConstant(idx)), elem)) if n == nm => (idx, stripStore(elem))
             }
             sizeOpt match
               case Some(k) if k >= 0 && updates.length == k && updates.map(_._1).sorted == (0 until k).toList =>
