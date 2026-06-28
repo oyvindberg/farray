@@ -23,12 +23,17 @@ final class NdjsonSource[T](
     private[farray] val from: Int,
     private[farray] val until: Int
 ):
-  /** start the fused pipeline. The macro reads `T`'s fields + the downstream `filter`/`map` accesses and
-   *  generates the projection scanner. */
+  /** Start the fused pipeline over this source. Named `stream` (not `fuse`) to signal at the call site that
+   *  the data is a byte SOURCE consumed record-by-record — `Json.ndjson[T](bytes).stream.filter(…).map(…)` —
+   *  not an in-memory `FArray` (which uses `.fuse`). The macro reads `T`'s fields + the downstream
+   *  `filter`/`map` accesses and generates the per-record projection scanner. */
+  inline def stream: Fuse[T] = new Fuse[T](this)
+  /** alias for `stream` (the in-memory verb), for readers who already know `.fuse`. */
   inline def fuse: Fuse[T] = new Fuse[T](this)
 
 object Json:
-  /** wrap an in-memory NDJSON byte buffer as a projectable source of `T` records. */
+  /** wrap an in-memory NDJSON byte buffer as a projectable SOURCE of `T` records — start a pipeline with
+   *  `.stream`: `Json.ndjson[T](bytes).stream.filter(…).map(…).<terminal>`. */
   inline def ndjson[T](bytes: Array[Byte]): NdjsonSource[T] = new NdjsonSource[T](bytes, 0, bytes.length)
   inline def ndjson[T](bytes: Array[Byte], from: Int, until: Int): NdjsonSource[T] =
     new NdjsonSource[T](bytes, from, until)

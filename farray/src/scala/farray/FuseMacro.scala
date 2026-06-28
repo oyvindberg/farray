@@ -848,9 +848,14 @@ object FuseMacro:
         case None         => report.errorAndAbort(s"fuse-json: could not decompose a stage lambda: ${lam.show}")
       // a terminal that applies a lambda to the ELEMENT must also contribute its read fields — otherwise the
       // scanner treats those fields as dead and feeds the terminal a default (the `acc + 0.0` agg bug).
+      // CRUCIAL: only when the lambda's param is still the RECORD type. If a `map` changed the element type
+      // (e.g. `…map(_.amount).sum`), the terminal's param is the MAPPED value, not the record — its field reads
+      // are over that value, and the record's live fields were already declared by the map stage. Treating the
+      // mapped param as a record reader (whole-use → all fields live) is the "interns all 20 keys" bug.
+      def isRecordParam(param: Symbol): Boolean = param.termRef.widen =:= elemTpe
       def addTerminalLambdas(): Unit =
-        def add1(lam: Term): Unit = decomposeLambda(lam).foreach((p, b) => addFromBody(p, b))
-        def add2(lam: Term): Unit = decomposeLambda2(lam).foreach((_, e, b) => addFromBody(e, b)) // (acc, elem) => …
+        def add1(lam: Term): Unit = decomposeLambda(lam).foreach((p, b) => if isRecordParam(p) then addFromBody(p, b))
+        def add2(lam: Term): Unit = decomposeLambda2(lam).foreach((_, e, b) => if isRecordParam(e) then addFromBody(e, b)) // (acc, elem) => …
         tag match
           case TTag.Foreach | TTag.IndexWhere => add1(args(0))                 // f / p over the element
           case TTag.Find | TTag.Exists | TTag.Forall => add1(args(0))

@@ -89,11 +89,14 @@ object JsonDemo:
   val jsonLede: String =
     """Now turn the optimizer loose on JSON. The insight that makes it work: a JSON object is a PRODUCT whose
       |fields are COLUMNS, sourced from byte ranges. So the SAME optimizer — unchanged — becomes an enormously
-      |fast, projection-aware JSON parser. It reads your `.filter(…).map(…)` pipeline, works out which fields it
-      |actually touches, and emits ONE specialized per-record scanner that reads straight off the `byte[]`: dead
-      |fields are skipped at the byte level, a projected string is decoded only for survivors, a record whose
-      |filter fails is abandoned mid-scan, and no per-record object is ever allocated. The result beats the JVM's
-      |best hand-tuned parser on a projection query — and laps the popular AST parsers."""
+      |fast, projection-aware JSON parser. You wrap a byte buffer as a source and start a pipeline with `.stream`
+      |(`Json.ndjson[Event](src).stream.filter(…).map(…)` — the `.stream` signals it's a record SOURCE consumed
+      |byte-by-byte, not an in-memory `FArray`, which uses `.fuse`). The macro reads your `.filter(…).map(…)`
+      |chain, works out which fields it actually touches, and emits ONE specialized per-record scanner that
+      |reads straight off the `byte[]`: dead fields are skipped at the byte level, a projected string is decoded
+      |only for survivors, a record whose filter fails is abandoned mid-scan, and no per-record object is ever
+      |allocated. The result beats the JVM's best hand-tuned parser on a projection query — and laps the popular
+      |AST parsers."""
 
   /** the benchmark setup, shown up front so the numbers below have context. (Sizes measured from the real
    *  10 000-record buffer the benchmark uses: 3 348 775 bytes total, ~334 bytes/record.) */
@@ -124,7 +127,7 @@ object JsonDemo:
           |scanner hands it to `skipValue`, which advances past its bytes without decoding or allocating. A
           |20-field record costs one number-parse and 19 byte-skips. No `Event` is built; the fold runs into a
           |`var`.""".stripMargin,
-        "Json.ndjson[Event](src).fuse.filter(_.amount > 150).map(_.amount).foldLeft(0.0)(_ + _)",
+        "Json.ndjson[Event](src).stream.filter(_.amount > 150).map(_.amount).foldLeft(0.0)(_ + _)",
         clean(j_sum),
         rival = Some(("the field — jsoniter-scala (hand-written reader, no object), jawn, and Jackson all do the same query", rivalsSrc)),
         bench = Some(Bench("fuse beats the JVM's best hand-tuned parser 1.5×, and laps the AST parsers 4–9× — at ~zero allocation",
@@ -140,7 +143,7 @@ object JsonDemo:
           |String. `amount` decodes (the filter needs it); `category` stays a byte slice and becomes a real
           |`String` only INSIDE the survivor `if`. Rejected rows never allocate a String. This is the same
           |compute-for-survivors sink from page 1, now over bytes.""".stripMargin,
-        "Json.ndjson[Event](src).fuse.filter(_.amount > 150).map(_.category).toList",
+        "Json.ndjson[Event](src).stream.filter(_.amount > 150).map(_.category).toList",
         clean(j_cat),
         rival = Some(("jsoniter-scala, narrow codec (only the read fields; the rest skipped)", jsoniterNarrowSrc))),
       Example(
@@ -148,7 +151,7 @@ object JsonDemo:
         """`count` ignores the element, so `map(_.category)` is a dead value. The optimizer captures the slice
           |but never turns it into a String — zero String allocations. Same for `isEmpty`/`nonEmpty`, and for
           |`map(expensive).count`, where `expensive` never runs. Dead-column elimination reaching the terminal.""".stripMargin,
-        """Json.ndjson[Event](src).fuse.filter(_.status == "active").map(_.category).count""",
+        """Json.ndjson[Event](src).stream.filter(_.status == "active").map(_.category).count""",
         clean(j_count),
         bench = Some(Bench("fuse 1.47× faster, and ~zero allocation vs jsoniter's per-record object",
           List(
@@ -161,7 +164,7 @@ object JsonDemo:
           |field. Here `key` is first, `payload` (a long string) is last, and 90% of records are rejected: the
           |rejected ones cost only "scan to `key`, compare, stop". This is the biggest win on fat selective
           |queries.""".stripMargin,
-        "Json.ndjson[Wide](src).fuse.filter(_.key > 90).map(_.payload).count",
+        "Json.ndjson[Wide](src).stream.filter(_.key > 90).map(_.payload).count",
         clean(j_wide),
         bench = Some(Bench("fuse 2.47× faster, near-zero allocation vs 1.4 MB/op",
           List(
@@ -174,7 +177,7 @@ object JsonDemo:
           |MERGED automatically: `amount`, `status`, and `score` are scanned (3 of 20 fields), each once; `count`
           |reads nothing extra. `aggTo(Stats.apply)` returns a case class, not a tuple. No `Event` is built; the
           |`sum`/`max` use `dadd`/`dcmp`, not the boxing `Numeric`/`Ordering`.""".stripMargin,
-        "Json.ndjson[Event](src).fuse.filter(_.status == \"active\")\n  .aggTo(Stats.apply)(Agg.sum(_.amount), Agg.count, Agg.max1(_.score))",
+        "Json.ndjson[Event](src).stream.filter(_.status == \"active\")\n  .aggTo(Stats.apply)(Agg.sum(_.amount), Agg.count, Agg.max1(_.score))",
         clean(j_agg))
     )
 
@@ -251,12 +254,12 @@ object JsonDemo:
   /** a 3-field product for the fold-decomposition example. The fold reads only `score`; `id`/`weight` are dead. */
   final case class Stat(id: Int, score: Int, weight: Int)
 
-  private inline def j_sum: String   = FuseDebug.show(Json.ndjson[Event](sample).fuse.filter(_.amount > 150).map(_.amount).foldLeft(0.0)(_ + _))
-  private inline def j_cat: String   = FuseDebug.show(Json.ndjson[Event](sample).fuse.filter(_.amount > 150).map(_.category).toList)
-  private inline def j_count: String = FuseDebug.show(Json.ndjson[Event](sample).fuse.filter(_.status == "active").map(_.category).count)
-  private inline def j_wide: String  = FuseDebug.show(Json.ndjson[Wide](wideSample).fuse.filter(_.key > 90).map(_.payload).count)
+  private inline def j_sum: String   = FuseDebug.show(Json.ndjson[Event](sample).stream.filter(_.amount > 150).map(_.amount).foldLeft(0.0)(_ + _))
+  private inline def j_cat: String   = FuseDebug.show(Json.ndjson[Event](sample).stream.filter(_.amount > 150).map(_.category).toList)
+  private inline def j_count: String = FuseDebug.show(Json.ndjson[Event](sample).stream.filter(_.status == "active").map(_.category).count)
+  private inline def j_wide: String  = FuseDebug.show(Json.ndjson[Wide](wideSample).stream.filter(_.key > 90).map(_.payload).count)
   private inline def j_agg: String   = FuseDebug.show(
-    Json.ndjson[Event](sample).fuse.filter(_.status == "active")
+    Json.ndjson[Event](sample).stream.filter(_.status == "active")
       .aggTo(Stats.apply)(farray.Agg.sum(_.amount), farray.Agg.count, farray.Agg.max1(_.score)))
 
   /** strip the dead `$proxy`/`Fuse_this` preamble and opacity-cast noise so the loop reads cleanly. */
@@ -336,7 +339,7 @@ object JsonDemo:
 
   private def highlightScala(s: String): String =
     var h = esc(s)
-    for kw <- List("filter", "foldLeft", "fuse", "ndjson", "map", "toList", "count", "headOption", "sum", "run",
+    for kw <- List("filter", "foldLeft", "fuse", "stream", "ndjson", "map", "toList", "count", "headOption", "sum", "run",
                    "aggTo", "agg", "Agg",
                    "def", "val", "var", "while", "if", "then", "else", "new", "given") do
       h = raw"(?<![A-Za-z_.])($kw)(?![A-Za-z0-9_])".r.replaceAllIn(h, m => s"""<span class="kw">${m.group(1)}</span>""")
