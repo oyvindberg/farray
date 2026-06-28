@@ -5,7 +5,7 @@ import org.openjdk.jmh.annotations.Benchmark
 // The point of the natural (run-detecting) mergesort: already-sorted or reverse-sorted input is O(n), not
 // O(n log n). Inputs are 0..N ascending. sortWith(_ < _) is one ascending run; sortWith(_ > _) is one
 // strictly-descending run (reversed in place). Both should be near-free vs sorting scrambled data.
-class IntSortAdaptiveBenchmark extends IntInputs {
+class SortAdaptiveIntBenchmark extends IntInputs {
   @Benchmark def farray_sorted(): FArray[Int] = farrayInput.sortWith((a, b) => a < b)
   @Benchmark def iarray_sorted(): IArray[Int] = iarrayInput.sortWith((a, b) => a < b)
   @Benchmark def list_sorted(): List[Int] = listInput.sortWith((a, b) => a < b)

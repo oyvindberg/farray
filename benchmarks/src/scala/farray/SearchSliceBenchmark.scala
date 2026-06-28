@@ -7,7 +7,7 @@ import org.openjdk.jmh.annotations.{Benchmark, Setup}
 //
 // The slice-search ops need a needle. We build a 3-element needle drawn from the middle of the haystack,
 // plus a full-copy "same" sequence for sameElements, in extra setup.
-class IntSearchSliceBenchmark extends IntInputs {
+class SearchSliceIntBenchmark extends IntInputs {
   // needle (a small slice taken from the middle), one per impl. fs2 has no slice-search ops,
   // so only the FArray + stdlib + zio needles are used below.
   var farraySlice: FArray[Int] = _

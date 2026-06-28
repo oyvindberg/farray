@@ -2,7 +2,7 @@ package farray
 
 import org.openjdk.jmh.annotations.Benchmark
 
-class IntZipBenchmark extends IntInputs:
+class ZipIntBenchmark extends IntInputs:
   @Benchmark def farray_zip(): FArray[(Int, Int)] = farrayInput.zip(farrayInput)
   @Benchmark def iarray_zip(): IArray[(Int, Int)] = iarrayInput.zip(iarrayInput)
   @Benchmark def list_zip(): List[(Int, Int)] = listInput.zip(listInput)
@@ -16,7 +16,7 @@ class IntZipBenchmark extends IntInputs:
   @Benchmark def fs2chunk_zipWithIndex(): fs2.Chunk[(Int, Int)] = fs2ChunkInput.zipWithIndex
   @Benchmark def ziochunk_zipWithIndex(): zio.Chunk[(Int, Int)] = zioChunkInput.zipWithIndex
 
-class StrZipBenchmark extends Inputs:
+class ZipStrBenchmark extends Inputs:
   @Benchmark def farray_zip(): FArray[(String, String)] = farrayInput.zip(farrayInput)
   @Benchmark def list_zip(): List[(String, String)] = listInput.zip(listInput)
   @Benchmark def iarray_zip(): IArray[(String, String)] = iarrayInput.zip(iarrayInput)

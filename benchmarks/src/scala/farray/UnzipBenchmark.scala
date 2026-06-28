@@ -3,7 +3,7 @@ package farray
 import org.openjdk.jmh.annotations.{Benchmark, Param, Setup}
 
 // unzip reads each tuple ONCE and fills both output arrays in a single pass (vs two tabulate passes).
-class IntUnzipBenchmark extends CommonParams {
+class UnzipIntBenchmark extends CommonParams {
   @Param(Array("1", "10", "100", "1000", "10000"))
   var size: Int = 1000
   var farrayInput: FArray[(Int, Int)] = _
@@ -25,7 +25,7 @@ class IntUnzipBenchmark extends CommonParams {
   // fs2.Chunk has no unzip
 }
 
-class StrUnzipBenchmark extends CommonParams {
+class UnzipStrBenchmark extends CommonParams {
   @Param(Array("1", "10", "100", "1000", "10000"))
   var size: Int = 1000
   var farrayInput: FArray[(String, Int)] = _

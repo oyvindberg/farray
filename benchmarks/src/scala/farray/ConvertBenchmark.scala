@@ -9,7 +9,7 @@ import org.openjdk.jmh.annotations.Benchmark
 // zero-copy O(1) FArraySeq wrapper, but a native Seq (List, Vector, zio.Chunk) returns `this` and so
 // allocates nothing at all. That single wrapper allocation is an inherent, un-winnable gap, so the
 // benchmark is omitted. `view` is likewise omitted (FArray has no view).
-class IntConvertBenchmark extends IntInputs {
+class ConvertIntBenchmark extends IntInputs {
   @Benchmark def farray_toArray(): Array[Int] = farrayInput.toArray
   @Benchmark def list_toArray(): Array[Int] = listInput.toArray
   @Benchmark def vector_toArray(): Array[Int] = vectorInput.toArray

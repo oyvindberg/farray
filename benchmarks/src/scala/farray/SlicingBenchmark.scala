@@ -4,7 +4,7 @@ import org.openjdk.jmh.annotations.Benchmark
 
 // partition / span / splitAt / distinct, plus grouped / sliding.
 // fs2.Chunk has splitAt only (no partition/span/distinct/grouped/sliding). zio.Chunk -> full IndexedSeq API.
-class IntSlicingBenchmark extends IntInputs {
+class SlicingIntBenchmark extends IntInputs {
   @Benchmark def farray_partition(): (FArray[Int], FArray[Int]) = farrayInput.partition(_ % 2 == 0)
   @Benchmark def list_partition(): (List[Int], List[Int]) = listInput.partition(_ % 2 == 0)
   @Benchmark def vector_partition(): (Vector[Int], Vector[Int]) = vectorInput.partition(_ % 2 == 0)

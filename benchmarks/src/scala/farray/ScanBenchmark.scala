@@ -4,7 +4,7 @@ import org.openjdk.jmh.annotations.Benchmark
 
 // scan / scanLeft / scanRight: running-accumulation, allocate a new collection of length n (+1 for scanLeft/Right).
 // fs2.Chunk has scanLeft only (no scan/scanRight). zio.Chunk is an IndexedSeq -> full API.
-class IntScanBenchmark extends IntInputs {
+class ScanIntBenchmark extends IntInputs {
   @Benchmark def farray_scanLeft(): FArray[Int] = farrayInput.scanLeft(0)(_ + _)
   @Benchmark def list_scanLeft(): List[Int] = listInput.scanLeft(0)(_ + _)
   @Benchmark def vector_scanLeft(): Vector[Int] = vectorInput.scanLeft(0)(_ + _)

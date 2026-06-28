@@ -4,7 +4,7 @@ import org.openjdk.jmh.annotations.Benchmark
 
 // reduce family. fs2.Chunk has none of the reduce family.
 // zio.Chunk is an IndexedSeq -> full API.
-class IntReduceBenchmark extends IntInputs {
+class ReduceIntBenchmark extends IntInputs {
   @Benchmark def farray_reduce(): Int = farrayInput.reduce(_ + _)
   @Benchmark def list_reduce(): Int = listInput.reduce(_ + _)
   @Benchmark def vector_reduce(): Int = vectorInput.reduce(_ + _)

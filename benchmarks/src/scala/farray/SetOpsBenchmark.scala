@@ -5,7 +5,7 @@ import org.openjdk.jmh.annotations.{Benchmark, Setup}
 // Set ops: diff / intersect / toSet / groupBy. FArray exposes all four.
 // fs2.Chunk has none of them. zio.Chunk is an IndexedSeq -> full API.
 // diff/intersect need a "that" — we use the even numbers in range as the second operand.
-class IntSetOpsBenchmark extends IntInputs {
+class SetOpsIntBenchmark extends IntInputs {
   var farrayThat: FArray[Int] = _
   var listThat: List[Int] = _
   var vectorThat: Vector[Int] = _

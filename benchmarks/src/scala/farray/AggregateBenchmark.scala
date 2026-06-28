@@ -4,7 +4,7 @@ import org.openjdk.jmh.annotations.Benchmark
 
 // Aggregations: max / min / maxBy / minBy / sum / product.
 // fs2.Chunk has none of these. zio.Chunk is an IndexedSeq -> full API.
-class IntAggregateBenchmark extends IntInputs {
+class AggregateIntBenchmark extends IntInputs {
   @Benchmark def farray_max(): Int = farrayInput.max
   @Benchmark def list_max(): Int = listInput.max
   @Benchmark def vector_max(): Int = vectorInput.max

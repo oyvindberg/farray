@@ -56,7 +56,7 @@ class ListLikeIntBenchmark:
 @Warmup(iterations = 4, time = 400, timeUnit = TimeUnit.MILLISECONDS)
 @Measurement(iterations = 6, time = 400, timeUnit = TimeUnit.MILLISECONDS)
 @Fork(1)
-class ListLikeStringBenchmark:
+class ListLikeStrBenchmark:
   @Param(Array("1000")) var size: Int = 1000
   var farrayInput: FArray[String] = _
   var listInput: List[String] = _
@@ -112,7 +112,7 @@ class ListLikeScalingIntBenchmark:
 @Warmup(iterations = 3, time = 400, timeUnit = TimeUnit.MILLISECONDS)
 @Measurement(iterations = 4, time = 400, timeUnit = TimeUnit.MILLISECONDS)
 @Fork(1)
-class ListLikeScalingStringBenchmark:
+class ListLikeScalingStrBenchmark:
   @Param(Array("1000", "100000", "1000000")) var size: Int = 1000
   var farrayInput: FArray[String] = _
   var listInput: List[String] = _
