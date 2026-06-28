@@ -87,6 +87,16 @@ final class Fuse[+A](private[farray] val base: AnyRef):
   inline def agg[R1, R2, R3, R4](inline a1: Agg[A, R1], inline a2: Agg[A, R2], inline a3: Agg[A, R3], inline a4: Agg[A, R4]): (R1, R2, R3, R4) =
     ${ FuseMacro.aggImpl[A, (R1, R2, R3, R4)]('this, '{ List(a1, a2, a3, a4) }) }
 
+  // ---- aggregate into a CASE CLASS (or any product): the aggregate results are passed to `make` (typically a
+  //      case-class constructor) instead of a tuple — same single fused pass, same column merge. E.g.
+  //      `xs.fuse.aggTo(Summary.apply)(Agg.sum(_.x), Agg.count, Agg.max(_.y))`. ----
+  inline def aggTo[R1, R2, R](inline make: (R1, R2) => R)(inline a1: Agg[A, R1], inline a2: Agg[A, R2]): R =
+    ${ FuseMacro.aggToImpl[A, R]('this, '{ List(a1, a2) }, 'make) }
+  inline def aggTo[R1, R2, R3, R](inline make: (R1, R2, R3) => R)(inline a1: Agg[A, R1], inline a2: Agg[A, R2], inline a3: Agg[A, R3]): R =
+    ${ FuseMacro.aggToImpl[A, R]('this, '{ List(a1, a2, a3) }, 'make) }
+  inline def aggTo[R1, R2, R3, R4, R](inline make: (R1, R2, R3, R4) => R)(inline a1: Agg[A, R1], inline a2: Agg[A, R2], inline a3: Agg[A, R3], inline a4: Agg[A, R4]): R =
+    ${ FuseMacro.aggToImpl[A, R]('this, '{ List(a1, a2, a3, a4) }, 'make) }
+
   // ===== derived terminals — pure sugar over the base terminals above; the whole pipeline still fuses =====
 
   // ---- conversions (one fused pass into a builder via foreach) ----

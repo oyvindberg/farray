@@ -41,6 +41,10 @@ object FuseMacro:
   // carries one accumulator per aggregate in one loop, and returns a tuple `R` of the finished results.
   def aggImpl[A: Type, R: Type](self: Expr[Fuse[A]], aggs: Expr[List[Agg[A, Any]]])(using Quotes): Expr[R] =
     '{ ${ core[A](self, TTag.Agg, List(aggs)) }.asInstanceOf[R] }
+  // like aggImpl but the finished results are passed to `make` (a case-class constructor / any productN builder)
+  // instead of tupled — so `aggTo(Summary.apply)(…)` returns a `Summary`. `make` is args(1) for the Agg case.
+  def aggToImpl[A: Type, R: Type](self: Expr[Fuse[A]], aggs: Expr[List[Agg[A, Any]]], make: Expr[Any])(using Quotes): Expr[R] =
+    '{ ${ core[A](self, TTag.Agg, List(aggs, make)) }.asInstanceOf[R] }
 
   def countImpl[A: Type](self: Expr[Fuse[A]])(using Quotes): Expr[Int] =
     '{ ${ core[A](self, TTag.Count, Nil) }.asInstanceOf[Int] }
@@ -254,6 +258,35 @@ object FuseMacro:
         case Apply(fn @ TypeApply(Select(_, "avg"), _), List(f))           => AggSpec.Avg(unwrap(f))
         case other => report.errorAndAbort(s"fuse: unsupported agg — use Agg.sum/count/min/max/avg/fold. Got:\n${other.show(using Printer.TreeStructure)}")
       elems(t).map(one)
+
+    // --- unboxed primitive ops for Agg.sum / Agg.min/max (else fall back to Numeric/Ordering, which box). ---
+    def isPrim(t: TypeRepr, p: TypeRepr): Boolean = t =:= p
+    def numZero(bTpe: TypeRepr): Term =
+      if isPrim(bTpe, TypeRepr.of[Int]) then '{ 0 }.asTerm
+      else if isPrim(bTpe, TypeRepr.of[Long]) then '{ 0L }.asTerm
+      else if isPrim(bTpe, TypeRepr.of[Double]) then '{ 0.0 }.asTerm
+      else if isPrim(bTpe, TypeRepr.of[Float]) then '{ 0.0f }.asTerm
+      else bTpe.asType match
+        case '[bb] => '{ ${ Expr.summon[Numeric[bb]].getOrElse(report.errorAndAbort(s"fuse: no Numeric for ${bTpe.show} in Agg.sum")) }.zero }.asTerm
+    def numAdd(bTpe: TypeRepr, a: Term, b: Term): Term =
+      if isPrim(bTpe, TypeRepr.of[Int]) then '{ ${ a.asExprOf[Int] } + ${ b.asExprOf[Int] } }.asTerm
+      else if isPrim(bTpe, TypeRepr.of[Long]) then '{ ${ a.asExprOf[Long] } + ${ b.asExprOf[Long] } }.asTerm
+      else if isPrim(bTpe, TypeRepr.of[Double]) then '{ ${ a.asExprOf[Double] } + ${ b.asExprOf[Double] } }.asTerm
+      else if isPrim(bTpe, TypeRepr.of[Float]) then '{ ${ a.asExprOf[Float] } + ${ b.asExprOf[Float] } }.asTerm
+      else bTpe.asType match
+        case '[bb] => '{ ${ Expr.summon[Numeric[bb]].getOrElse(report.errorAndAbort(s"fuse: no Numeric for ${bTpe.show} in Agg.sum")) }.plus(${ a.asExprOf[bb] }, ${ b.asExprOf[bb] }) }.asTerm
+    /** `kk wins over best` — `kk > best` for max / `kk < best` for min, unboxed for primitives. */
+    def ordWins(bTpe: TypeRepr, kk: Term, best: Term, isMax: Boolean): Expr[Boolean] =
+      def prim[T: Type](k: Expr[T], b: Expr[T])(gt: (Expr[T], Expr[T]) => Expr[Boolean], lt: (Expr[T], Expr[T]) => Expr[Boolean]): Expr[Boolean] =
+        if isMax then gt(k, b) else lt(k, b)
+      if isPrim(bTpe, TypeRepr.of[Int]) then prim(kk.asExprOf[Int], best.asExprOf[Int])((x, y) => '{ $x > $y }, (x, y) => '{ $x < $y })
+      else if isPrim(bTpe, TypeRepr.of[Long]) then prim(kk.asExprOf[Long], best.asExprOf[Long])((x, y) => '{ $x > $y }, (x, y) => '{ $x < $y })
+      else if isPrim(bTpe, TypeRepr.of[Double]) then prim(kk.asExprOf[Double], best.asExprOf[Double])((x, y) => '{ $x > $y }, (x, y) => '{ $x < $y })
+      else if isPrim(bTpe, TypeRepr.of[Float]) then prim(kk.asExprOf[Float], best.asExprOf[Float])((x, y) => '{ $x > $y }, (x, y) => '{ $x < $y })
+      else bTpe.asType match
+        case '[bb] =>
+          val ord = Expr.summon[Ordering[bb]].getOrElse(report.errorAndAbort(s"fuse: no Ordering for ${bTpe.show} in Agg.min/max"))
+          if isMax then '{ $ord.gt(${ kk.asExprOf[bb] }, ${ best.asExprOf[bb] }) } else '{ $ord.lt(${ kk.asExprOf[bb] }, ${ best.asExprOf[bb] }) }
 
     // Is this a byte-backed JSON NDJSON source (`Json.ndjson[T](bytes).fuse…`) rather than an in-memory FArray?
     // Detected by the source term's static type; if so we lower to a per-record scanner (see loopOverJson).
@@ -1171,23 +1204,25 @@ object FuseMacro:
               '{ var c: Int = 0
                  ${ k(AState((_, next) => '{ c += 1; ${ next().asExprOf[Unit] } }.asTerm, '{ c }.asTerm)).asExpr } }.asTerm
             case AggSpec.Sum(f, bTpe) =>
+              // UNBOXED for primitive field kinds: emit `acc + v` (iadd/ladd/dadd/fadd) directly, never the
+              // generic Numeric.plus (which boxes both operands per element). Fall back to Numeric for other types.
               bTpe.asType match
                 case '[bb] =>
-                  val num = Expr.summon[Numeric[bb]].getOrElse(report.errorAndAbort(s"fuse: no Numeric for ${bTpe.show} in Agg.sum"))
-                  '{ var acc: bb = $num.zero
-                     ${ k(AState((sh, next) => fnOnShape(f, sh)(fv => '{ acc = $num.plus(acc, ${ fv.asExprOf[bb] }); ${ next().asExprOf[Unit] } }.asTerm),
+                  '{ var acc: bb = ${ numZero(bTpe).asExprOf[bb] }
+                     ${ k(AState((sh, next) => fnOnShape(f, sh)(fv => '{ acc = ${ numAdd(bTpe, '{ acc }.asTerm, fv).asExprOf[bb] }; ${ next().asExprOf[Unit] } }.asTerm),
                           '{ acc }.asTerm)).asExpr } }.asTerm
             case AggSpec.Avg(f) =>
               '{ var s: Double = 0.0; var c: Int = 0
                  ${ k(AState((sh, next) => fnOnShape(f, sh)(fv => '{ s = s + ${ fv.asExprOf[Double] }; c += 1; ${ next().asExprOf[Unit] } }.asTerm),
                       '{ if c == 0 then 0.0 else s / c }.asTerm)).asExpr } }.asTerm
             case AggSpec.Extremum(f, bTpe, isMax) =>
+              // UNBOXED for primitive field kinds: emit `kk > best` / `kk < best` directly (if_icmp/dcmp), never
+              // the generic Ordering.gt/lt (which boxes). Fall back to Ordering for other types.
               bTpe.asType match
                 case '[bb] =>
-                  val ord = Expr.summon[Ordering[bb]].getOrElse(report.errorAndAbort(s"fuse: no Ordering for ${bTpe.show} in Agg.min/max"))
                   '{ var best: bb = null.asInstanceOf[bb]; var seen: Boolean = false
                      ${ k(AState((sh, next) => fnOnShape(f, sh)(fv => '{ val kk: bb = ${ fv.asExprOf[bb] }
-                                 if !seen || ${ if isMax then '{ $ord.gt(kk, best) } else '{ $ord.lt(kk, best) } } then { best = kk; seen = true }
+                                 if !seen || ${ ordWins(bTpe, '{ kk }.asTerm, '{ best }.asTerm, isMax) } then { best = kk; seen = true }
                                  ${ next().asExprOf[Unit] } }.asTerm),
                           '{ if seen then Some(best) else None }.asTerm)).asExpr } }.asTerm
             case AggSpec.Fold(z, op, sTpe) =>
@@ -1208,8 +1243,11 @@ object FuseMacro:
               case s :: rest => s.step(sh, () => chain(rest, sh))
             val perElemShape: Shape => Term = sh => chain(states, sh)
             val perElemTerm: Term => Term = v => perElemShape(Sc(kk => kk(v))) // non-segment fallback
-            '{ ${ loopS(perElemTerm)(perElemShape) }
-               ${ mkTupleN(states.map(_.finish)).asExpr } }.asTerm
+            // result: apply the user's `make` (aggTo) to the finished accumulators, else tuple them (agg).
+            val result: Term = args.lift(1) match
+              case Some(make) => applyN(make, states.map(_.finish))
+              case None       => mkTupleN(states.map(_.finish))
+            '{ ${ loopS(perElemTerm)(perElemShape) }; ${ resultExpr(result) } }.asTerm
           }
         case TTag.Run => assembleOut(src0, n0, counters, ctx)
 

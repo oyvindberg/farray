@@ -17,7 +17,9 @@ object Agg:
   def sum[A, B](f: A => B)(using Numeric[B]): Agg[A, B] = new Agg()
   /** number of (surviving) elements. */
   def count[A]: Agg[A, Int] = new Agg()
-  /** minimum / maximum of the projected field, or None if empty. */
+  /** minimum / maximum of the projected field, or None if empty. (For a primitive field the comparison is
+   *  unboxed; the `Option` wraps only the final result — so a case-class field receiving a min/max via `aggTo`
+   *  must be typed `Option[B]`.) */
   def min[A, B](f: A => B)(using Ordering[B]): Agg[A, Option[B]] = new Agg()
   def max[A, B](f: A => B)(using Ordering[B]): Agg[A, Option[B]] = new Agg()
   /** the general aggregate: a seeded left fold over the (surviving) elements. */

@@ -63,7 +63,30 @@ class AggTest:
     val (s, n, mn, mx) = xs.fuse.agg(Agg.sum(_.a), Agg.count, Agg.min(_.b), Agg.max(_.b))
     assertEquals(10, s); assertEquals(4, n); assertEquals(Some(10), mn); assertEquals(Some(40), mx)
 
+  /** aggTo: aggregate into a CASE CLASS instead of a tuple (field types must match the aggregate results:
+   *  sum→B, count→Int, max→Option[B]). Same fused pass, same column merge. */
+  @Test def aggTo_caseClass(): Unit =
+    val s = xs.fuse.aggTo(AggTest.Summary.apply)(Agg.sum(_.a), Agg.count, Agg.max(_.b))
+    assertEquals(AggTest.Summary(10, 4, Some(40)), s)
+    val f = xs.fuse.filter(_.a > 2).aggTo(AggTest.Summary.apply)(Agg.sum(_.a), Agg.count, Agg.max(_.b))
+    assertEquals(AggTest.Summary(7, 2, Some(40)), f)
+
+  /** sum/max over PRIMITIVE fields must be UNBOXED — fold a large input many times and assert it doesn't
+   *  allocate per element (a boxing regression would allocate millions of wrappers). */
+  @Test def primitiveAggs_dont_box(): Unit =
+    val big = FArray.tabulate(100000)(i => Rec(i, i % 1000, i.toDouble))
+    val rt = Runtime.getRuntime
+    System.gc(); Thread.sleep(20)
+    val before = rt.totalMemory - rt.freeMemory
+    var sink = 0L; var iter = 0
+    while iter < 50 do { val (s, _, _) = big.fuse.agg(Agg.sum(_.a), Agg.count, Agg.max(_.b)); sink += s; iter += 1 }
+    val after = rt.totalMemory - rt.freeMemory
+    assertTrue(s"sink=$sink", sink != 0)
+    // 50 passes over 100k: if sum/max boxed, ~5M+ wrapper allocations (>100 MB). Unboxed ≈ 0; allow slack.
+    assertTrue(s"alloc grew ${(after - before) / 1000000} MB — sum/max likely boxing", (after - before) < 60_000_000L)
+
 end AggTest
 
 object AggTest:
   final case class Rec(a: Int, b: Int, c: Double)
+  final case class Summary(total: Int, n: Int, top: Option[Int])
