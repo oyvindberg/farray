@@ -78,6 +78,15 @@ final class Fuse[+A](private[farray] val base: AnyRef):
   inline def headOption: Option[A] = ${ FuseMacro.headOptionImpl[A]('this) }
   inline def head: A = ${ FuseMacro.headImpl[A]('this) }
 
+  // ---- multi-aggregate: run several aggregations in ONE fused pass, carrying one accumulator each. The
+  //      aggregates' read fields are merged automatically (union computed, shared field once, survivor-gated). ----
+  inline def agg[R1, R2](inline a1: Agg[A, R1], inline a2: Agg[A, R2]): (R1, R2) =
+    ${ FuseMacro.aggImpl[A, (R1, R2)]('this, '{ List(a1, a2) }) }
+  inline def agg[R1, R2, R3](inline a1: Agg[A, R1], inline a2: Agg[A, R2], inline a3: Agg[A, R3]): (R1, R2, R3) =
+    ${ FuseMacro.aggImpl[A, (R1, R2, R3)]('this, '{ List(a1, a2, a3) }) }
+  inline def agg[R1, R2, R3, R4](inline a1: Agg[A, R1], inline a2: Agg[A, R2], inline a3: Agg[A, R3], inline a4: Agg[A, R4]): (R1, R2, R3, R4) =
+    ${ FuseMacro.aggImpl[A, (R1, R2, R3, R4)]('this, '{ List(a1, a2, a3, a4) }) }
+
   // ===== derived terminals — pure sugar over the base terminals above; the whole pipeline still fuses =====
 
   // ---- conversions (one fused pass into a builder via foreach) ----

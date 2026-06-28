@@ -5,7 +5,7 @@ import farray.json.{NdjsonSource, JsonScanner}
 
 /** which terminal a fused pipeline ends in (the macro shares one lowering core across all of them). */
 enum TTag:
-  case Run, Foreach, Fold, Count, Find, Exists, Forall, HeadOption, Head, IndexWhere, ReduceOpt, ExtremumBy
+  case Run, Foreach, Fold, Count, Find, Exists, Forall, HeadOption, Head, IndexWhere, ReduceOpt, ExtremumBy, Agg
 
 /**
  * Macro implementation for fused pipelines (see `Fuse` and `docs/fused-pipeline-design.md`).
@@ -36,6 +36,11 @@ object FuseMacro:
 
   def foldLeftImpl[A: Type, Z: Type](self: Expr[Fuse[A]], z: Expr[Z], op: Expr[(Z, A) => Z])(using Quotes): Expr[Z] =
     '{ ${ core[A](self, TTag.Fold, List(z, op)) }.asInstanceOf[Z] }
+
+  // multi-aggregate: `aggs` is `List(Agg.xxx(...), …)`; the macro reads each `Agg.xxx(...)` call off the AST,
+  // carries one accumulator per aggregate in one loop, and returns a tuple `R` of the finished results.
+  def aggImpl[A: Type, R: Type](self: Expr[Fuse[A]], aggs: Expr[List[Agg[A, Any]]])(using Quotes): Expr[R] =
+    '{ ${ core[A](self, TTag.Agg, List(aggs)) }.asInstanceOf[R] }
 
   def countImpl[A: Type](self: Expr[Fuse[A]])(using Quotes): Expr[Int] =
     '{ ${ core[A](self, TTag.Count, Nil) }.asInstanceOf[Int] }
@@ -217,6 +222,39 @@ object FuseMacro:
     val args = extraExprs.map(e => unwrap(e.asTerm))
     val (srcTerm, srcElem, stages) = parse(selfTerm.underlyingArgument, Nil)
 
+    // --- multi-aggregate spec (only for TTag.Agg): one per `Agg.xxx(...)` call in the agg(...) arg list ---
+    enum AggSpec:
+      case Sum(f: Term, bTpe: TypeRepr)                  // Σ f(a)
+      case Count                                          // Σ 1
+      case Extremum(f: Term, bTpe: TypeRepr, max: Boolean) // min/max f(a) → Option[B]
+      case Fold(z: Term, op: Term, sTpe: TypeRepr)        // seeded left fold
+      case Avg(f: Term)                                   // mean of f(a): Double
+    def parseAggList(t: Term): List[AggSpec] =
+      // the arg is `List(a1, a2, …)` — a varargs `List.apply(Seq(...))`; pull out the element terms.
+      def elems(x: Term): List[Term] = unwrap(x) match
+        case Apply(TypeApply(sel, _), List(seq)) if sel.symbol.name == "apply" => seqElems(seq)
+        case Apply(sel, List(seq)) if sel.symbol.name == "apply"               => seqElems(seq)
+        case _ => report.errorAndAbort(s"fuse: agg expects Agg.* arguments; got ${x.show}")
+      def seqElems(seq: Term): List[Term] = unwrap(seq) match
+        case Typed(Repeated(es, _), _) => es
+        case Repeated(es, _)           => es
+        case Apply(_, List(inner))     => seqElems(inner) // wrapRefArray(…)
+        case _                         => report.errorAndAbort(s"fuse: agg arg not a literal list: ${seq.show}")
+      def typeArgOf(t: Term, i: Int): TypeRepr = t match
+        case TypeApply(_, ts) if ts.length > i => ts(i).tpe
+        case Apply(fn, _)                      => typeArgOf(fn, i)
+        case _                                 => TypeRepr.of[Any]
+      def one(a: Term): AggSpec = unwrap(a) match
+        case Apply(Apply(fn @ TypeApply(Select(_, "sum"), _), List(f)), _) => AggSpec.Sum(unwrap(f), typeArgOf(fn, 1))
+        case Apply(fn @ TypeApply(Select(_, "sum"), _), List(f))           => AggSpec.Sum(unwrap(f), typeArgOf(fn, 1))
+        case TypeApply(Select(_, "count"), _)                              => AggSpec.Count
+        case Apply(Apply(fn @ TypeApply(Select(_, "min"), _), List(f)), _) => AggSpec.Extremum(unwrap(f), typeArgOf(fn, 1), false)
+        case Apply(Apply(fn @ TypeApply(Select(_, "max"), _), List(f)), _) => AggSpec.Extremum(unwrap(f), typeArgOf(fn, 1), true)
+        case Apply(Apply(TypeApply(Select(_, "fold"), st), List(z)), List(op)) => AggSpec.Fold(unwrap(z), unwrap(op), st.last.tpe)
+        case Apply(fn @ TypeApply(Select(_, "avg"), _), List(f))           => AggSpec.Avg(unwrap(f))
+        case other => report.errorAndAbort(s"fuse: unsupported agg — use Agg.sum/count/min/max/avg/fold. Got:\n${other.show(using Printer.TreeStructure)}")
+      elems(t).map(one)
+
     // Is this a byte-backed JSON NDJSON source (`Json.ndjson[T](bytes).fuse…`) rather than an in-memory FArray?
     // Detected by the source term's static type; if so we lower to a per-record scanner (see loopOverJson).
     val jsonSrc: Option[Expr[NdjsonSource[?]]] =
@@ -327,6 +365,12 @@ object FuseMacro:
       case List(a, b)    => mkPair(a, b)
       case List(a, b, c) => '{ scala.Tuple3(${ a.asExpr }, ${ b.asExpr }, ${ c.asExpr }) }.asTerm
       case _             => report.errorAndAbort("fuse: only tuple arities 2 and 3 are supported here")
+    /** build a Tuple of arity 2–4 from the given field terms (used by the `agg` result). */
+    def mkTupleN(ts: List[Term]): Term = ts match
+      case List(a, b)       => mkPair(a, b)
+      case List(a, b, c)    => '{ scala.Tuple3(${ a.asExpr }, ${ b.asExpr }, ${ c.asExpr }) }.asTerm
+      case List(a, b, c, d) => '{ scala.Tuple4(${ a.asExpr }, ${ b.asExpr }, ${ c.asExpr }, ${ d.asExpr }) }.asTerm
+      case _                => report.errorAndAbort(s"fuse: agg supports 2–4 aggregates (got ${ts.length})")
 
     /** the (label, type) of each field of a product type (case class / tuple / named tuple), else None. This is
      *  reflect's view of `Mirror.ProductOf` — `caseFields` are the product's accessors in declaration order. */
@@ -1110,6 +1154,63 @@ object FuseMacro:
                                  if !seeded || ${ applyN(better, List('{ k }.asTerm, '{ bestK }.asTerm)).asExprOf[Boolean] } then
                                    { best = ${ v.asExpr }; bestK = k; seeded = true } }.asTerm) }
                  if seeded then Some(best) else None }.asTerm
+        case TTag.Agg =>
+          // one accumulator (or two) per aggregate, all carried in ONE loop. Each aggregate's element lambda is
+          // decomposed against the SHARED element shape (via opOnShape/fnOnShape), so the aggregates' read
+          // columns merge automatically: the union is computed, a shared field once (CSE), survivor-gated.
+          val specs = parseAggList(args(0))
+          // per spec: a state carrying the per-element step (CPS: `(shape, next) => term`, so each step's column
+          // bindings stay in scope for the following steps → a column read by several aggregates binds ONCE) and
+          // the finish term. `next` is the continuation = the remaining steps + the loop tail.
+          // `step` is CPS with the continuation passed as a THUNK that is forced INSIDE this step's column-read
+          // scope — so the NEXT step's column reads see this step's memoized bindings (a field read by several
+          // aggregates binds ONCE, in the outermost reader's scope, and stays in scope for the rest).
+          final case class AState(step: (Shape, () => Term) => Term, finish: Term)
+          def stateFor(spec: AggSpec, k: AState => Term): Term = spec match
+            case AggSpec.Count =>
+              '{ var c: Int = 0
+                 ${ k(AState((_, next) => '{ c += 1; ${ next().asExprOf[Unit] } }.asTerm, '{ c }.asTerm)).asExpr } }.asTerm
+            case AggSpec.Sum(f, bTpe) =>
+              bTpe.asType match
+                case '[bb] =>
+                  val num = Expr.summon[Numeric[bb]].getOrElse(report.errorAndAbort(s"fuse: no Numeric for ${bTpe.show} in Agg.sum"))
+                  '{ var acc: bb = $num.zero
+                     ${ k(AState((sh, next) => fnOnShape(f, sh)(fv => '{ acc = $num.plus(acc, ${ fv.asExprOf[bb] }); ${ next().asExprOf[Unit] } }.asTerm),
+                          '{ acc }.asTerm)).asExpr } }.asTerm
+            case AggSpec.Avg(f) =>
+              '{ var s: Double = 0.0; var c: Int = 0
+                 ${ k(AState((sh, next) => fnOnShape(f, sh)(fv => '{ s = s + ${ fv.asExprOf[Double] }; c += 1; ${ next().asExprOf[Unit] } }.asTerm),
+                      '{ if c == 0 then 0.0 else s / c }.asTerm)).asExpr } }.asTerm
+            case AggSpec.Extremum(f, bTpe, isMax) =>
+              bTpe.asType match
+                case '[bb] =>
+                  val ord = Expr.summon[Ordering[bb]].getOrElse(report.errorAndAbort(s"fuse: no Ordering for ${bTpe.show} in Agg.min/max"))
+                  '{ var best: bb = null.asInstanceOf[bb]; var seen: Boolean = false
+                     ${ k(AState((sh, next) => fnOnShape(f, sh)(fv => '{ val kk: bb = ${ fv.asExprOf[bb] }
+                                 if !seen || ${ if isMax then '{ $ord.gt(kk, best) } else '{ $ord.lt(kk, best) } } then { best = kk; seen = true }
+                                 ${ next().asExprOf[Unit] } }.asTerm),
+                          '{ if seen then Some(best) else None }.asTerm)).asExpr } }.asTerm
+            case AggSpec.Fold(z, op, sTpe) =>
+              sTpe.asType match
+                case '[ss] =>
+                  '{ var acc: ss = ${ z.asExprOf[ss] }
+                     ${ k(AState((sh, next) => opOnShape(op, '{ acc }.asTerm, sh)(r => '{ acc = ${ r.asExprOf[ss] }; ${ next().asExprOf[Unit] } }.asTerm),
+                          '{ acc }.asTerm)).asExpr } }.asTerm
+          // declare all states (nested vars), then run all steps per element in ONE shared scope, then tuple up.
+          def withStates(rem: List[AggSpec], acc: List[AState])(k: List[AState] => Term): Term = rem match
+            case Nil          => k(acc.reverse)
+            case spec :: rest => stateFor(spec, st => withStates(rest, st :: acc)(k))
+          withStates(specs, Nil) { states =>
+            // chain head-first: step1's body forces `() => step2(...)` from WITHIN step1's column-read scope, so
+            // memoized columns bind in the right (outermost) scope and the rest see them.
+            def chain(ss: List[AState], sh: Shape): Term = ss match
+              case Nil      => unit
+              case s :: rest => s.step(sh, () => chain(rest, sh))
+            val perElemShape: Shape => Term = sh => chain(states, sh)
+            val perElemTerm: Term => Term = v => perElemShape(Sc(kk => kk(v))) // non-segment fallback
+            '{ ${ loopS(perElemTerm)(perElemShape) }
+               ${ mkTupleN(states.map(_.finish)).asExpr } }.asTerm
+          }
         case TTag.Run => assembleOut(src0, n0, counters, ctx)
 
     // output array assembly: grow via ensureCap when a flatMap can expand it, else preallocate the upper bound.
