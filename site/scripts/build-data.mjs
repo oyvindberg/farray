@@ -12,14 +12,14 @@
  *
  * Dev: re-run `npm run data` to refresh without restarting Vite. Prod: `vite build` bakes public/ into dist/.
  */
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, existsSync } from "node:fs";
 import { dirname, resolve, relative, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHighlighter } from "shiki";
 
-// Highlight at BUILD time with Shiki (TextMate grammars -> accurate Scala/Java). Theme tuned to the
-// page's deep code island; the resulting HTML ships in snippets.json, so the client highlights nothing.
-const THEME = "vitesse-dark";
+// Highlight at BUILD time with Shiki. Dual-theme: each token carries both --shiki-light and --shiki-dark,
+// and the page's [data-theme] picks which to show, so code follows the site's light/dark mode.
+const THEMES = { light: "vitesse-light", dark: "vitesse-dark" };
 
 // Schematic of the core, faithful to the real FBase `permits` clause but collapsed across element kinds.
 const NODE_TREE = `// An FArray[A] is one of these. Each carrying-data node exists once per element
@@ -40,9 +40,27 @@ final class ReverseNode(base: FBase)                      extends FBase  // reve
 final class IntPad(base: FBase, fill: Int, len: Int)      extends FBase  // padTo
 final class IntUpdated(base: FBase, i: Int, elem: Int)    extends FBase  // updated
 final class RangeNode(start: Int, step: Int, count: Int)  extends FBase  // FArray.range — elements never built`;
-const highlighter = await createHighlighter({ themes: [THEME], langs: ["scala", "java"] });
+
+// Extract a brace-balanced `def` verbatim from generated source, starting at the line matching `sigRe`.
+function extractBraceDef(text, sigRe) {
+  const lines = text.split("\n");
+  const i = lines.findIndex((l) => sigRe.test(l));
+  if (i < 0) throw new Error(`generated def not found: ${sigRe}`);
+  let depth = 0, started = false;
+  const out = [];
+  for (let j = i; j < lines.length; j++) {
+    out.push(lines[j]);
+    for (const ch of lines[j]) {
+      if (ch === "{") { depth++; started = true; }
+      else if (ch === "}") depth--;
+    }
+    if (started && depth === 0) break;
+  }
+  return dedent(out);
+}
+const highlighter = await createHighlighter({ themes: [THEMES.light, THEMES.dark], langs: ["scala", "java"] });
 const hl = (code, lang) =>
-  code == null ? null : highlighter.codeToHtml(code, { lang, theme: THEME });
+  code == null ? null : highlighter.codeToHtml(code, { lang, themes: THEMES, defaultColor: false });
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, "../..");
@@ -139,6 +157,7 @@ function buildSnippets() {
   const GOLDENS = [
     { name: "fuse-generated", file: "tests/snapshots/fuse-long-pipeline.snap" },
     { name: "fuse-collect-generated", file: "tests/snapshots/fuse-collect-zip.snap" },
+    { name: "map-generated", file: "tests/snapshots/map-inline.snap" },
   ];
   for (const g of GOLDENS) {
     const path = resolve(REPO, g.file);
@@ -158,6 +177,20 @@ function buildSnippets() {
   };
   for (const [name, v] of Object.entries(ILLUSTRATIONS)) {
     out[name] = { name, file: v.file, lang: v.lang, code: v.code, html: hl(v.code, v.lang), full: null, fullHtml: null };
+  }
+
+  // Real op source extracted VERBATIM from the generated FArrayOps, so the dispatch shown on the page is
+  // exactly what compiles — no hand-written stand-in. Requires a prior farray build (.bleep present).
+  const GEN_OPS = resolve(REPO, ".bleep/generated-sources/farray/farray.GenCores/farray/FArrayOps.scala");
+  if (!existsSync(GEN_OPS)) throw new Error(`generated FArrayOps not found at ${GEN_OPS} — build farray first (e.g. \`bleep compile farray\`)`);
+  const genOps = readFileSync(GEN_OPS, "utf8");
+  const EXTRACTS = [
+    { name: "map-dispatch-real", sig: /inline def mapImpl\[A, B\]/, file: "farray/FArrayOps.scala · generated · inline def mapImpl" },
+    { name: "map-leaf", sig: /^\s*def mapLeafIntInt\(/, file: "farray/FArrayOps.scala · generated · def mapLeafIntInt" },
+  ];
+  for (const e of EXTRACTS) {
+    const code = extractBraceDef(genOps, e.sig);
+    out[e.name] = { name: e.name, file: e.file, lang: "scala", code, html: hl(code, "scala"), full: null, fullHtml: null };
   }
 
   writeFileSync(resolve(OUT, "snippets.json"), JSON.stringify(out, null, 2));

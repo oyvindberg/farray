@@ -1628,6 +1628,13 @@ class FListTest:
       )
     )
 
+  // The inline layer, no fusion involved: a plain eager `map` on an FArray[Int]. summonFrom resolves the
+  // element kind at THIS call site, so the user's `_ + 1` inlines straight into a while-loop over int[] —
+  // static dispatch, unboxed by construction. The website shows this next to the one-liner that produced it.
+  @Test def test_map_inline_snapshot: Unit =
+    val ints = FArray(3, 14, 15, 92, 65, 35)
+    Snapshots.check("map-inline.snap", FuseDebug.show(ints.map(_ + 1)))
+
   @Test def test_hashCode_matchesList(): Unit =
     def chk(name: String, fa: FArray[Any], l: List[Any]): Unit =
       assertEquals(name, l.hashCode.toLong, fa.hashCode.toLong)

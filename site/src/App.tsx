@@ -1,6 +1,9 @@
 import { DataProvider, useStore } from "./data/store";
+import { ThemeProvider } from "./theme";
+import ThemeToggle from "./components/ThemeToggle";
 import Intro from "./chapters/Intro";
 import Core from "./chapters/Core";
+import Inline from "./chapters/Inline";
 
 function Hero() {
   return (
@@ -36,16 +39,20 @@ function Footer() {
 
 export default function App() {
   return (
-    <DataProvider>
-      <div className="wrap">
-        <Hero />
+    <ThemeProvider>
+      <DataProvider>
+        <ThemeToggle />
+        <div className="wrap">
+          <Hero />
         <Status />
-        <main>
-          <Intro />
-          <Core />
-        </main>
-        <Footer />
-      </div>
-    </DataProvider>
+          <main>
+            <Intro />
+            <Core />
+            <Inline />
+          </main>
+          <Footer />
+        </div>
+      </DataProvider>
+    </ThemeProvider>
   );
 }

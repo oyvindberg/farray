@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useStore } from "../data/store";
+import { useTheme } from "../theme";
 import {
   bandColor, edgeColor, lc, nf, nfAxis, ours, verdictAt, type Chart,
 } from "../data/bench";
@@ -54,6 +55,7 @@ function layout(chart: Chart) {
 function Card({ chart, title }: { chart: Chart; title?: string }) {
   const { groups, frame } = useMemo(() => layout(chart), [chart]);
   const [hover, setHover] = useState<number | null>(null);
+  const dark = useTheme().theme === "dark";
 
   const legend = chart.impls.filter((v) => chart.xs.some((x) => chart.series[v]?.[x] > 0));
   const g = hover != null ? groups[hover] : null;
@@ -82,7 +84,7 @@ function Card({ chart, title }: { chart: Chart; title?: string }) {
           {groups.map((grp, i) => (
             <g key={i}>
               {grp.vd && (
-                <rect x={grp.gx} y={BAR_TOP - 2} width={grp.gw} height={PLOT_H + 4} rx={5} fill={bandColor(grp.r)} />
+                <rect x={grp.gx} y={BAR_TOP - 2} width={grp.gw} height={PLOT_H + 4} rx={5} fill={bandColor(grp.r, dark)} />
               )}
             </g>
           ))}

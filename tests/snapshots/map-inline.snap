@@ -1,0 +1,23 @@
+{
+  val $proxy: FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  } = FArray$package.$asInstanceOf$[FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  }]
+  val FArray$package$_this: $proxy.type = $proxy
+  val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
+
+  (({
+    val n: Int = xs$proxy.length
+    val r: intRepr.type = intRepr
+    val rb: intRepr.type = r
+    mapLeafIntInt(xs$proxy, ((v: Int) => {
+      val a$proxy: Int = {
+        val _$: Int = (v: Int)
+        _$.+(1)
+      }
+
+      (a$proxy: Int)
+    }))
+  }: FBase): FArray[Int])
+}.$asInstanceOf$[FArray[Int]]
