@@ -174,6 +174,22 @@ class FSetTest:
     val sparse = FSet.fromArray(Array(0, 1000000, 2000000))
     assertTrue(sparse.contains(1000000)); assertFalse(sparse.contains(5)); assertEquals(3, sparse.size)
 
+  @Test def deep_union_spine_materialize(): Unit =
+    // a deep ++/incl-built left-spine would StackOverflow + be O(n²) in the recursive materialize — Step 5
+    // collapses the spine iteratively + balanced-merges. n=20000 overflows the old recursive path.
+    val n = 20000
+    var s: FSet[Int] = FSet.empty[Int]
+    var i = 0
+    while (i < n) { s = s ++ FSet(i); i += 1 }
+    assertEquals(n, s.materialize.size) // no StackOverflow
+    assertTrue(s.contains(0)); assertTrue(s.contains(n - 1)); assertFalse(s.contains(n))
+    // Ref spine too (hash-merge path)
+    var rs: FSet[String] = FSet.empty[String]
+    i = 0
+    while (i < n) { rs = rs ++ FSet("k" + i); i += 1 }
+    assertEquals(n, rs.materialize.size)
+    assertTrue(rs.contains("k0")); assertFalse(rs.contains("nope"))
+
   @Test def merge_materialize_long(): Unit =
     val a = FSet(10L, 5L, 7L); val b = FSet(7L, 1L)
     assertEquals(List(1L, 5L, 7L, 10L), (a ++ b).materialize.toList)

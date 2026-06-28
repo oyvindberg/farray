@@ -667,7 +667,39 @@ object GenSets extends BleepCodegenScript("GenSets") {
           e.line("else if (c > 0) { out(w) = b(j); w += 1; j += 1 }")
           e.line("else { i += 1; j += 1 }")
         }, tailA = true, tailB = true)
-        // materialize: fold + memoize. A leaf returns itself; an algebra node merges its materialized children.
+        // unionTwo: union of two already-materialized leaves (Int keeps the word-parallel bitmap fast-path).
+        ee.open(s"def unionTwo$K(a: SBase, b: SBase): SBase =")
+        if k.name == "Int" then {
+          ee.open("(a, b) match")
+          ee.line("case (lb: SIntBitmap, rb: SIntBitmap) => bitmapMergeInt(lb, rb, 0)")
+          ee.line("case _ => wrapInt(mergeUnionInt(asArrInt(a), asArrInt(b)))")
+          ee.close()
+        } else ee.line(s"wrap$K(mergeUnion$K(asArr$K(a), asArr$K(b)))")
+        ee.close()
+        // materialize a left-deep union SPINE iteratively (§Step 5): collect the spine leaves without deep
+        // recursion (a +/incl-built set is a left-deep SUnion(...,One) chain → would StackOverflow + be O(n²)),
+        // then balanced pairwise-merge → O(N log k). Union is commutative+associative, so order is free.
+        ee.open(s"def materializeUnion$K(u0: SUnion): SBase =")
+        ee.line("val parts = new java.util.ArrayList[SBase]()")
+        ee.line("var cur: SBase = u0")
+        ee.line("var go = true")
+        ee.open("while (go)")
+        ee.open("cur match")
+        ee.line(s"case uu: SUnion => parts.add(materialize$K(uu.right)); cur = uu.left")
+        ee.line(s"case _ => parts.add(materialize$K(cur)); go = false")
+        ee.close()
+        ee.close()
+        ee.line("var sz = parts.size")
+        ee.open("while (sz > 1)")
+        ee.line("var w = 0; var i = 0")
+        ee.line(s"while (i + 1 < sz) { parts.set(w, unionTwo$K(parts.get(i), parts.get(i + 1))); w += 1; i += 2 }")
+        ee.line("if (i < sz) { parts.set(w, parts.get(i)); w += 1 }")
+        ee.line("sz = w")
+        ee.close()
+        ee.line("if (parts.isEmpty) SEmpty.INSTANCE else parts.get(0)")
+        ee.close()
+        // materialize: fold + memoize. A leaf returns itself; Inter/Diff/Xor merge their materialized children;
+        // Union uses the iterative spine collapse above (StackOverflow-safe for deep incl chains).
         ee.open(s"def materialize$K(node: SBase): SBase = node match")
         ee.line(s"case _: SMaterialized => node")
         def algebra(tpe: String, bind: String, merge: String, op: Int): Unit = {
@@ -680,7 +712,10 @@ object GenSets extends BleepCodegenScript("GenSets") {
             ee.line(s"if (m != null) m else { val r = wrap$K($merge$K(asArr$K(materialize$K($bind.left)), asArr$K(materialize$K($bind.right)))); $bind.memo = r; r }")
           ee.close()
         }
-        algebra("SUnion", "u", "mergeUnion", 0)
+        ee.open("case u: SUnion =>")
+        ee.line("val m = u.memo")
+        ee.line(s"if (m != null) m else { val r = materializeUnion$K(u); u.memo = r; r }")
+        ee.close()
         algebra("SInter", "n", "mergeInter", 1)
         algebra("SDiff", "d", "mergeDiff", 2)
         algebra("SXor", "x", "mergeXor", 3)
@@ -877,6 +912,29 @@ object GenSets extends BleepCodegenScript("GenSets") {
         // xor a△b: a-group not in b + b-group not in a; carry both unique-hash runs; both tails.
         refMerge("mergeXorRef", "na + nb", "outA(w) = aA(i); outH(w) = ha; w += 1; i += 1",
           "outA(w) = bA(j); outH(w) = hb; w += 1; j += 1", tieAllA = false, tieKeepIfFound = false, emitBNotInA = true, tailA = true, tailB = true)
+        // union of two materialized Ref leaves + the iterative left-spine collapse (Step 5, StackOverflow-safe).
+        ee.open("def unionTwoRef(a: SBase, b: SBase): SBase =")
+        ee.line("mergeUnionRef(asArrRef(a), hashesOfRef(a), asArrRef(b), hashesOfRef(b))")
+        ee.close()
+        ee.open("def materializeUnionRef(u0: SUnion): SBase =")
+        ee.line("val parts = new java.util.ArrayList[SBase]()")
+        ee.line("var cur: SBase = u0")
+        ee.line("var go = true")
+        ee.open("while (go)")
+        ee.open("cur match")
+        ee.line("case uu: SUnion => parts.add(materializeRef(uu.right)); cur = uu.left")
+        ee.line("case _ => parts.add(materializeRef(cur)); go = false")
+        ee.close()
+        ee.close()
+        ee.line("var sz = parts.size")
+        ee.open("while (sz > 1)")
+        ee.line("var w = 0; var i = 0")
+        ee.line("while (i + 1 < sz) { parts.set(w, unionTwoRef(parts.get(i), parts.get(i + 1))); w += 1; i += 2 }")
+        ee.line("if (i < sz) { parts.set(w, parts.get(i)); w += 1 }")
+        ee.line("sz = w")
+        ee.close()
+        ee.line("if (parts.isEmpty) SEmpty.INSTANCE else parts.get(0)")
+        ee.close()
         // materialize: fold + memoize (children materialized once, only when the memo is unset).
         ee.open("def materializeRef(node: SBase): SBase = node match")
         ee.line("case _: SMaterialized => node")
@@ -886,7 +944,10 @@ object GenSets extends BleepCodegenScript("GenSets") {
           ee.line(s"if (m != null) m else { val l = materializeRef($bind.left); val rr = materializeRef($bind.right); val r = $merge(asArrRef(l), hashesOfRef(l), asArrRef(rr), hashesOfRef(rr)); $bind.memo = r; r }")
           ee.close()
         }
-        algebraRef("SUnion", "u", "mergeUnionRef")
+        ee.open("case u: SUnion =>")
+        ee.line("val m = u.memo")
+        ee.line("if (m != null) m else { val r = materializeUnionRef(u); u.memo = r; r }")
+        ee.close()
         algebraRef("SInter", "n", "mergeInterRef")
         algebraRef("SDiff", "d", "mergeDiffRef")
         algebraRef("SXor", "x", "mergeXorRef")
