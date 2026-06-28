@@ -607,11 +607,13 @@ object GenSets extends BleepCodegenScript("GenSets") {
         ee.line(s"case h: S${K}Hash => h.arr")
         ee.line(s"case _ => new Array[$P](0)")
         ee.close()
-        // wrap a sorted+distinct array into the canonical leaf (size-0/1 canonicalization)
+        // wrap a sorted+distinct array into the canonical leaf. Mirror buildSorted's threshold: ≤16 → Sorted
+        // (cache-local binary search), else the frozen Hash (O(1) probe) — so a materialized merge result is
+        // closed under the same leaf-kind choice as a fresh build (post-merge contains stays O(1), not O(log n)).
         ee.open(s"def wrap$K(arr: Array[$P]): SBase =")
         ee.line("if (arr.length == 0) SEmpty.INSTANCE")
         ee.line(s"else if (arr.length == 1) new S${K}One(arr(0))")
-        ee.line(s"else new S${K}Sorted(arr)")
+        ee.line(s"else if (arr.length <= 16) new S${K}Sorted(arr) else buildHash$K(arr)")
         ee.close()
         // the four unboxed sorted merges (a, b sorted+distinct; out trimmed to w).
         def merge(name: String, outLen: String, body: Emit => Unit, tailA: Boolean, tailB: Boolean): Unit = {
