@@ -1,7 +1,7 @@
 package farray
 
 import scala.quoted.*
-import farray.json.{NdjsonSource, ByteRecordSource, JsonScanner}
+import farray.json.ByteRecordSource
 
 /** which terminal a fused pipeline ends in (the macro shares one lowering core across all of them). */
 enum TTag:
@@ -1341,396 +1341,79 @@ object FuseMacro:
     // The downstream (filter/map/sink/DCE/terminal) is the UNCHANGED optimizer — it consumes the Tup via
     // continueShape, exactly like zipWithIndex/collect. Only the SOURCE read changes from `a(i)` to a scan-pass.
 
-    // the live top-level fields of T (those any map/filter lambda reads) — the projection∪predicate set, i.e.
-    // dead-column elimination computed up front (the "backwards live-set flow"): a field nothing reads gets no
-    // slot and is skipValue'd; the scanner only materializes what the pipeline touches.
-    def jsonLiveFields(elemTpe: TypeRepr): (List[(String, TypeRepr)], Set[String]) =
-      val fields =
-        productFields(elemTpe).getOrElse(report.errorAndAbort(s"fuse-json: ${elemTpe.show} is not a case class (flat case-class records only in v1)"))
-      val live = scala.collection.mutable.LinkedHashSet.empty[String]
-      var wholeUse = false
-      def addFromBody(param: Symbol, b: Term): Unit =
-        val paths = collectPaths(b, param)
-        if paths.contains(Nil) then wholeUse = true
-        paths.foreach(path => path.headOption.foreach(h => live += h._2))
-      def addFrom(lam: Term): Unit = decomposeLambda(lam) match
-        case Some((p, b)) => addFromBody(p, b)
-        case None         => report.errorAndAbort(s"fuse-json: could not decompose a stage lambda: ${lam.show}")
-      // a terminal that applies a lambda to the ELEMENT must also contribute its read fields — otherwise the
-      // scanner treats those fields as dead and feeds the terminal a default (the `acc + 0.0` agg bug).
-      // CRUCIAL: only when the lambda's param is still the RECORD type. If a `map` changed the element type
-      // (e.g. `…map(_.amount).sum`), the terminal's param is the MAPPED value, not the record — its field reads
-      // are over that value, and the record's live fields were already declared by the map stage. Treating the
-      // mapped param as a record reader (whole-use → all fields live) is the "interns all 20 keys" bug.
-      def isRecordParam(param: Symbol): Boolean = param.termRef.widen =:= elemTpe
-      def addTerminalLambdas(): Unit =
-        def add1(lam: Term): Unit = decomposeLambda(lam).foreach((p, b) => if isRecordParam(p) then addFromBody(p, b))
-        def add2(lam: Term): Unit = decomposeLambda2(lam).foreach((_, e, b) => if isRecordParam(e) then addFromBody(e, b)) // (acc, elem) => …
-        tag match
-          case TTag.IndexWhere                       => add1(args(0)) // p over the element
-          case TTag.Find | TTag.Exists | TTag.Forall => add1(args(0))
-          case TTag.GroupReduce                      => add1(args(0)); add1(args(1)) // key + value read record fields (reduce doesn't)
-          case TTag.Agg                              => addAggSpecs(parseAggList(args(0)))
-          case TTag.Plan if args.nonEmpty            =>
-            // planFold passes a 2-param fold op; planAgg passes an agg list. Distinguish by shape.
-            decomposeLambda2(args(0)) match
-              case Some(_) => add2(args(0)) // planFold(op)
-              case None    => addAggSpecs(parseAggList(args(0))) // planAgg(aggs)
-          case _ => ()
-        def addAggSpecs(specs: List[AggSpec]): Unit = specs.foreach {
-          case AggSpec.Sum(f, _)                  => add1(f)
-          case AggSpec.Avg(f)                     => add1(f)
-          case AggSpec.Foreach(f)                 => add1(f)
-          case AggSpec.Extremum(f, _, _, _)       => add1(f)
-          case AggSpec.Fold(_, op, _)             => add2(op)
-          case AggSpec.TopN(k, _, _, _, _, _)     => add1(k); wholeUse = true // topN RETAINS elements → whole record live
-          case AggSpec.Reduce(op, _, _)           => add2(op); wholeUse = true // reduce combines whole elements
-          case AggSpec.ExtremumByElem(f, _, _, _) => add1(f); wholeUse = true // returns the whole best element
-          case AggSpec.Count                      => ()
-        }
-      stages.foreach {
-        case MapS(f)       => addFrom(f)
-        case FilterS(p, _) => addFrom(p)
-        case _             => ()
-      }
-      addTerminalLambdas()
-      val liveSet = if wholeUse then fields.map(_._1).toSet else live.toSet
-      (fields, liveSet)
+    // ── JSON byte-source bridge: build the SPI input the byte decoder (farray.json.JsonDecode) consumes, then
+    //    dispatch to it. The decoder owns all byte mechanics + the projection/early-out analysis; the engine owns
+    //    the Shape rejoin (the `continue` callback) and the v1 stage-scope guard. Nothing JSON-shaped beyond this. ──
 
-    // expose `wholeUse` (whether the record is materialized) separately for the plan description.
-    def jsonWholeUse(elemTpe: TypeRepr): Boolean =
-      productFields(elemTpe).getOrElse(Nil)
+    // v1 scope: only map/filter stages over a JSON source (the decoder supports no others yet). The guard stays in
+    // the engine — it's the one place that knows the Stage ADT; by the time the decoder sees `stageLambdas`, they're
+    // guaranteed map/filter.
+    if isJson then
+      stages
+        .find { case MapS(_) | FilterS(_, _) => false; case _ => true }
+        .foreach(s =>
+          report.errorAndAbort(
+            s"fuse-json (v1): only `map` and `filter` stages are supported over a JSON source so far (got ${s.getClass.getSimpleName.stripSuffix("S")}). " +
+              "Project/filter then use a terminal (sum/fold/toList/count/foreach)."
+          )
+        )
+
+    import farray.json.{JsonLowerInput, StageLambda, JsonRecordColumns}
+
+    // the pipeline's map/filter stage lambdas (in order), flattened for the decoder's live-field + early-out analysis.
+    def jsonStageLambdas: List[StageLambda[quotes.type]] = stages.collect {
+      case MapS(f)         => StageLambda[quotes.type](f, isFilter = false, isPositiveFilter = false)
+      case FilterS(p, neg) => StageLambda[quotes.type](p, isFilter = true, isPositiveFilter = !neg)
+    }
+
+    // the terminal's record-reading lambdas, pre-decomposed to (param, body) and filtered to the RECORD param (a map
+    // that changed the element type means the terminal reads the MAPPED value, not the record — those fields were
+    // already declared by the map). Mirrors the old `addTerminalLambdas` SELECTION, but collecting rather than folding.
+    def jsonTerminalReaders: (List[(Symbol, Term)], Boolean) =
+      val readers = scala.collection.mutable.ListBuffer.empty[(Symbol, Term)]
       var whole = false
-      def chk(param: Symbol, b: Term): Unit = if collectPaths(b, param).contains(Nil) then whole = true
-      def add1(lam: Term): Unit = decomposeLambda(lam).foreach((p, b) => if p.termRef.widen =:= elemTpe then chk(p, b))
-      def add2(lam: Term): Unit = decomposeLambda2(lam).foreach((_, e, b) => if e.termRef.widen =:= elemTpe then chk(e, b))
-      stages.foreach {
-        case MapS(f) => decomposeLambda(f).foreach((p, b) => chk(p, b)); case FilterS(p, _) => decomposeLambda(p).foreach((pr, b) => chk(pr, b)); case _ => ()
+      def isRecordParam(p: Symbol): Boolean = p.termRef.widen =:= srcElem
+      def add1(lam: Term): Unit = decomposeLambda(lam).foreach((p, b) => if isRecordParam(p) then readers += ((p, b)))
+      def add2(lam: Term): Unit = decomposeLambda2(lam).foreach((_, e, b) => if isRecordParam(e) then readers += ((e, b)))
+      def addAggSpecs(specs: List[AggSpec]): Unit = specs.foreach {
+        case AggSpec.Sum(f, _)                  => add1(f)
+        case AggSpec.Avg(f)                     => add1(f)
+        case AggSpec.Foreach(f)                 => add1(f)
+        case AggSpec.Extremum(f, _, _, _)       => add1(f)
+        case AggSpec.Fold(_, op, _)             => add2(op)
+        case AggSpec.TopN(k, _, _, _, _, _)     => add1(k); whole = true // topN RETAINS elements → whole record live
+        case AggSpec.Reduce(op, _, _)           => add2(op); whole = true // reduce combines whole elements
+        case AggSpec.ExtremumByElem(f, _, _, _) => add1(f); whole = true // returns the whole best element
+        case AggSpec.Count                      => ()
       }
       tag match
         case TTag.IndexWhere | TTag.Find | TTag.Exists | TTag.Forall => add1(args(0))
         case TTag.GroupReduce                                        => add1(args(0)); add1(args(1))
-        case TTag.Agg                                                => aggSpecs(parseAggList(args(0)))
-        case TTag.Plan if args.nonEmpty => decomposeLambda2(args(0)) match { case Some(_) => add2(args(0)); case None => aggSpecs(parseAggList(args(0))) }
-        case _                          => ()
-      def aggSpecs(specs: List[AggSpec]): Unit = specs.foreach {
-        case AggSpec.Sum(f, _) => add1(f); case AggSpec.Avg(f) => add1(f); case AggSpec.Foreach(f) => add1(f); case AggSpec.Extremum(f, _, _, _) => add1(f);
-        case AggSpec.Fold(_, op, _)   => add2(op); case AggSpec.TopN(k, _, _, _, _, _)                   => add1(k); whole = true;
-        case AggSpec.Reduce(op, _, _) => add2(op); whole = true; case AggSpec.ExtremumByElem(f, _, _, _) => add1(f); whole = true; case AggSpec.Count => ()
-      }
-      whole
+        case TTag.Agg                                                => addAggSpecs(parseAggList(args(0)))
+        case TTag.Plan if args.nonEmpty =>
+          decomposeLambda2(args(0)) match { case Some(_) => add2(args(0)); case None => addAggSpecs(parseAggList(args(0))) }
+        case _ => ()
+      (readers.toList, whole)
 
-    // the scanner kind for a field type — what the slot holds and how the column reads it.
-    enum JKind { case JInt, JLong, JDouble, JString }
-    def jkindOf(t: TypeRepr): JKind =
-      if t =:= TypeRepr.of[Int] then JKind.JInt
-      else if t =:= TypeRepr.of[Long] then JKind.JLong
-      else if t =:= TypeRepr.of[Double] then JKind.JDouble
-      else if t =:= TypeRepr.of[String] then JKind.JString
-      else report.errorAndAbort(s"fuse-json (v1): unsupported field type ${t.show} (only Int/Long/Double/String).")
+    // the terminal's display name for the plan string (planFold reports Fold, planAgg reports Agg).
+    def jsonTerminalName: String =
+      if tag == TTag.Plan && args.nonEmpty then (if decomposeLambda2(args(0)).isDefined then "Fold" else "Agg") else tag.toString
 
-    /** a typed default for a dead (never-read) field's placeholder column. */
-    def defaultOf(t: TypeRepr): Term = jkindOf(t) match
-      case JKind.JInt    => '{ 0 }.asTerm
-      case JKind.JLong   => '{ 0L }.asTerm
-      case JKind.JDouble => '{ 0.0 }.asTerm
-      case JKind.JString => '{ null.asInstanceOf[String] }.asTerm
-
-    // A machine-checkable DESCRIPTION of the plan the macro built for a JSON pipeline — so tests assert on the
-    // STRUCTURE (which fields are scanned, decoded vs sliced, the predicate/early-out set, rebuild, terminal)
-    // rather than on brittle pretty-printed code or on output values that can be coincidentally right.
-    def jsonPlanString(elemTpe: TypeRepr): String =
-      val (fields, liveSet) = jsonLiveFields(elemTpe)
-      val whole = jsonWholeUse(elemTpe)
-      // a String live field is kept as a lazy (start,len) slice; a numeric live field is decoded to a value.
-      val live = fields.filter(f => liveSet.contains(f._1))
-      val decoded = live.collect { case (n, t) if jkindOf(t) != JKind.JString => n }
-      val sliced = live.collect { case (n, t) if jkindOf(t) == JKind.JString => n }
-      // predicate fields = fields read by the LEADING positive filters (the early-out set).
-      val leadingFilters = stages.takeWhile { case FilterS(_, false) => true; case _ => false }.collect { case FilterS(p, false) => p }
-      val predNames =
-        leadingFilters.flatMap(p => decomposeLambda(p).toList.flatMap((param, b) => collectPaths(b, param).flatMap(_.headOption.map(_._2)))).distinct
-      val projOnly = live.map(_._1).exists(n => !predNames.contains(n))
-      val earlyOut = leadingFilters.nonEmpty && predNames.nonEmpty && projOnly
-      val termName =
-        if tag == TTag.Plan && args.nonEmpty then (if decomposeLambda2(args(0)).isDefined then "Fold" else "Agg")
-        else tag.toString // planFold reports Fold, planAgg reports Agg
-      // deterministic, sorted, compact:
-      def s(xs: Iterable[String]) = xs.toList.sorted.mkString("[", ",", "]")
-      s"JsonPlan(record=${elemTpe.typeSymbol.name}, terminal=$termName, " +
-        s"live=${s(liveSet)}, decoded=${s(decoded)}, sliced=${s(sliced)}, " +
-        s"predicate=${s(predNames)}, earlyOut=$earlyOut, rebuildsRecord=$whole)"
+    // assemble the SPI input. `continue` is the engine-owned rejoin: turn the decoder's decomposed columns into a
+    // Shape (memoizing String columns) and run the shared downstream optimizer. `c`/`notDone` are only meaningful for
+    // the real loop; the Plan terminal passes a trivial Ctx (planString ignores src/notDone/continue).
+    def jsonInput(src: Expr[ByteRecordSource], c: Ctx): JsonLowerInput[quotes.type] =
+      val (readers, whole) = jsonTerminalReaders
+      val notDone: Expr[Boolean] = c.done match { case Some(d) => '{ ! ${ d.read } }; case None => '{ true } }
+      val continue: JsonRecordColumns[quotes.type] => Expr[Unit] = cols =>
+        val parts: List[Shape] = cols.columns.map(col => if col.isString then memoScalar(k => col.read(k)) else Sc(k => col.read(k)))
+        continueShape(Tup(parts, vs => mkProduct(srcElem, vs)), indexed, c).asExprOf[Unit]
+      JsonLowerInput[quotes.type](srcElem, src, notDone, jsonStageLambdas, readers, whole, jsonTerminalName, continue)
 
     if tag == TTag.Plan then
-      return (if isJson then Expr(jsonPlanString(srcElem)) else Expr(s"InMemoryPlan(elem=${srcElem.typeSymbol.name}, terminal=$tag, stages=${stages.length})"))
-
-    def loopOverJson(jsrc: Expr[ByteRecordSource], elemTpe: TypeRepr, ss: List[(Stage, Int)], ctx: Ctx): Expr[Unit] =
-      val (fields, liveSet) = jsonLiveFields(elemTpe)
-      val liveFields = fields.zipWithIndex.filter { case ((n, _), _) => liveSet.contains(n) }
-      // per live field: the slot vars (mutable) + how a column reads it. We declare slots inside the per-record
-      // block and reference them from the Tup columns, so they dominate the reads (hygiene-safe).
-      // We build the whole per-record body via one continuation so symbols stay in scope.
-      // short-circuit gate: a downstream take/find sets `done`; we must stop pulling records AND chunks.
-      val notDone: Expr[Boolean] = ctx.done match { case Some(d) => '{ ! ${ d.read } }; case None => '{ true } }
-      // bind each live field's wanted-key bytes to a val ABOVE the loop (interned once), so the per-record scan
-      // references them with zero allocation. Thread the refs to jsonRecord.
-      def withKeyRefs(rem: List[((String, TypeRepr), Int)], acc: Map[String, Expr[Array[Byte]]])(k: Map[String, Expr[Array[Byte]]] => Expr[Unit]): Expr[Unit] =
-        rem match
-          case Nil                    => k(acc)
-          case ((name, _), _) :: rest =>
-            '{
-              val keyBytes: Array[Byte] = JsonScanner.internKey(${ Expr(name) })
-              ${ withKeyRefs(rest, acc + (name -> '{ keyBytes }))(k) }
-            }
-      // Drive the ByteRecordSource contract: an OUTER chunk loop (nextChunk) wrapping an INNER record loop
-      // (nextRecord), both `done`-gated, in try/finally close(). The per-record body — jsonRecord — is UNTOUCHED;
-      // it already takes (buf, start, end), so it neither knows nor cares whether the frame came from a single
-      // in-memory buffer or a streaming chunk. The framer behind nextChunk/nextRecord owns boundary stitching.
-      '{
-        val src = $jsrc
-        ${
-          withKeyRefs(liveFields, Map.empty) { keyRefs =>
-            '{
-              try
-                while src.nextChunk() && $notDone do
-                  while src.nextRecord() && $notDone do
-                    // read `buf` PER RECORD: a streaming framer may reallocate its working buffer to stitch a record
-                    // across a block boundary, so a buffer cached per-chunk could go stale mid-loop. recordStart/End
-                    // are always relative to the buffer current AT THIS nextRecord(). (For the in-memory source `buf`
-                    // is a stable field, so this is a free re-read.)
-                    val buf: Array[Byte] = src.buf
-                    val recStart: Int = src.recordStart
-                    val recEnd: Int = src.recordEnd
-                    ${ jsonRecord('buf, 'recStart, 'recEnd, fields, liveFields, keyRefs, ss, ctx).asExprOf[Unit] }
-              finally src.close()
-            }
-          }
-        }
-      }
-
-    // a live field's mutable scan slots: the value column (reads the slot lazily), a `seen` flag ref, and a
-    // `fill(buf, valuePos, end): newPos` quote that the scan-pass runs when this field's key matches.
-    // `rawRead` is the direct value term (the `v` var, or `decodeLatin1(...)` for a String) used to evaluate a
-    // predicate inline — it does NOT go through `letBind` (which is Unit-only), unlike the lazy `col`.
-    final case class JSlot(idx: Int, name: String, jk: JKind, col: Shape, seen: Expr[Boolean], fill: (Expr[Int], Expr[Int]) => Expr[Int], rawRead: Term)
-
-    // one record: declare slots (nested quotes, like declareSlots), run the scan-pass, build the Tup, continue.
-    def jsonRecord(
-        buf: Expr[Array[Byte]],
-        lineStart: Expr[Int],
-        lineEnd: Expr[Int],
-        fields: List[(String, TypeRepr)],
-        liveFields: List[((String, TypeRepr), Int)],
-        keyRefs: Map[String, Expr[Array[Byte]]],
-        ss: List[(Stage, Int)],
-        ctx: Ctx
-    ): Term =
-      def withSlots(rem: List[((String, TypeRepr), Int)], acc: List[JSlot])(k: List[JSlot] => Term): Term =
-        rem match
-          case Nil                        => k(acc.reverse)
-          case ((name, tpe), idx) :: rest =>
-            jkindOf(tpe) match
-              // numeric fills decode the value into the slot var + the new position into `pNext` (a second slot
-              // var) — NO tuple returned (a `(Double,Int)` return boxed, costing the macro path its alloc edge).
-              case JKind.JInt =>
-                '{
-                  var v: Int = 0; var pNext: Int = 0; var seen: Boolean = false
-                  ${
-                    val s = JSlot(
-                      idx,
-                      name,
-                      JKind.JInt,
-                      Sc(kk => kk('{ v }.asTerm)),
-                      '{ seen },
-                      (p, end) => '{ v = JsonScanner.readIntAt($buf, $p, $end); pNext = JsonScanner.numEnd; seen = true; pNext },
-                      '{ v }.asTerm
-                    )
-                    withSlots(rest, s :: acc)(k).asExpr
-                  }
-                }.asTerm
-              case JKind.JLong =>
-                '{
-                  var v: Long = 0L; var pNext: Int = 0; var seen: Boolean = false
-                  ${
-                    val s = JSlot(
-                      idx,
-                      name,
-                      JKind.JLong,
-                      Sc(kk => kk('{ v }.asTerm)),
-                      '{ seen },
-                      (p, end) => '{ v = JsonScanner.readLongAt($buf, $p, $end); pNext = JsonScanner.numEnd; seen = true; pNext },
-                      '{ v }.asTerm
-                    )
-                    withSlots(rest, s :: acc)(k).asExpr
-                  }
-                }.asTerm
-              case JKind.JDouble =>
-                '{
-                  var v: Double = 0.0; var pNext: Int = 0; var seen: Boolean = false
-                  ${
-                    val s = JSlot(
-                      idx,
-                      name,
-                      JKind.JDouble,
-                      Sc(kk => kk('{ v }.asTerm)),
-                      '{ seen },
-                      (p, end) => '{ v = JsonScanner.readDoubleAt($buf, $p, $end); pNext = JsonScanner.numEnd; seen = true; pNext },
-                      '{ v }.asTerm
-                    )
-                    withSlots(rest, s :: acc)(k).asExpr
-                  }
-                }.asTerm
-              case JKind.JString =>
-                // lazy slice: slots are (start, len); the column decodes to String ON READ (memoized), so the
-                // existing sink defers the `new String` past the filter — compute-for-survivors, for free.
-                '{
-                  var st: Int = 0; var ln: Int = 0; var seen: Boolean = false
-                  ${
-                    val col = memoScalar(kk => kk('{ JsonScanner.decodeLatin1($buf, st, ln) }.asTerm))
-                    val s = JSlot(
-                      idx,
-                      name,
-                      JKind.JString,
-                      col,
-                      '{ seen },
-                      (p, end) => '{ val vs = $p + 1; val ve = JsonScanner.scanStringEnd($buf, vs, $end); st = vs; ln = ve - vs; seen = true; ve + 1 },
-                      '{ JsonScanner.decodeLatin1($buf, st, ln) }.asTerm
-                    )
-                    withSlots(rest, s :: acc)(k).asExpr
-                  }
-                }.asTerm
-
-      withSlots(liveFields, Nil) { slots =>
-        val byIdx = slots.map(s => s.idx -> s).toMap
-        // build the Tup: parts indexed like ALL fields (dead fields get a placeholder column that's never read).
-        def colFor(i: Int, ftpe: TypeRepr): Shape =
-          // a dead field's column yields a typed default — only ever forced if the WHOLE record is materialized
-          // (rebuild), which the live-set marks all-fields-live for, so in practice this is never read; it exists
-          // so a value-ignoring terminal (e.g. count) that still rebuilds the Tup typechecks.
-          byIdx.get(i).map(_.col).getOrElse(Sc(k => k(defaultOf(ftpe))))
-        val parts = fields.zipWithIndex.map { case ((_, ftpe), i) => colFor(i, ftpe) }
-        val recordTup: Shape = Tup(parts, vs => mkProduct(srcElem, vs))
-
-        // ---- PREDICATE-FAIL EARLY-OUT ----
-        // The LEADING run of filters (filters before any map) can be evaluated DURING the scan, the moment all
-        // their fields are captured. If a filter fails, abandon the record immediately — never scanning the
-        // projection-only fields that come later. This is the strong early-out (vs `allSeen`, which waits for
-        // ALL live fields). We keep the filters downstream too (a cheap re-check on survivors over already-
-        // decoded values), so correctness doesn't depend on stripping them.
-        // only POSITIVE filters (not `filterNot`) are taken for the inline early-out — negation would need a
-        // wrapped lambda; `filterNot` falls back to downstream-only filtering (still correct, just no early-out).
-        val leadingFilters: List[Term] = ss
-          .takeWhile {
-            case (FilterS(_, false), _) => true
-            case _                      => false
-          }
-          .collect { case (FilterS(p, false), _) => p }
-        // the fields those leading filters read (their slots must be seen before we can evaluate them).
-        val predFieldIdxs: Set[Int] =
-          leadingFilters.flatMap(p => decomposeLambda(p).toList.flatMap((param, b) => collectPaths(b, param).flatMap(_.headOption.map(_._1)))).toSet
-        val predSlots = slots.filter(s => predFieldIdxs.contains(s.idx))
-        // a predicate-fail early-out is only worthwhile when there ARE projection-only fields to skip AND the
-        // predicate's fields are a proper subset of live (otherwise `allSeen` already covers it).
-        val projOnly = slots.exists(s => !predFieldIdxs.contains(s.idx))
-        val earlyPred: Option[(Expr[Boolean], Expr[Boolean])] =
-          if leadingFilters.isEmpty || predSlots.isEmpty || !projOnly then None
-          else
-            // allPredSeen = conjunction of the predicate slots' seen flags
-            val allPredSeen = predSlots.map(_.seen).reduce((a, b) => '{ $a && $b })
-            // predHolds = conjunction of each leading filter evaluated inline. Each predicate's field accesses
-            // (`_.amount`) are substituted DIRECTLY with the slot's read term (the decoded `v` var / a decoded
-            // String) — no `letBind` (which is Unit-only, for loop bodies); the slots are already bound, so a
-            // field read is just the var. We only handle predicates whose every path resolves to a known slot.
-            val byField: Map[Int, JSlot] = byIdx
-            def predBool(p: Term): Option[Expr[Boolean]] = decomposeLambda(p) match
-              case Some((param, body)) =>
-                val paths = collectPaths(body, param)
-                // each path is a single-hop field read into a slot; map it to the slot's raw value term (the
-                // decoded `v` var / `decodeLatin1(...)` — NOT through `letBind`).
-                val refs: Map[Path, Term] = paths.flatMap { path =>
-                  path.headOption.flatMap { case (i, _) => byField.get(i).map(s => path -> s.rawRead) }
-                }.toMap
-                if refs.size == paths.size then Some(substPaths(body, param, refs).asExprOf[Boolean])
-                else None // a path didn't resolve to a slot → skip inline check (downstream handles it)
-              case None => None
-            val predBools = leadingFilters.map(predBool)
-            val predHolds: Option[Expr[Boolean]] =
-              if predBools.contains(None) then None
-              else Some(predBools.flatten.reduce((a, b) => '{ $a && $b }))
-            predHolds.map(ph => (allPredSeen, ph)) // None if any predicate couldn't be lowered inline
-
-        if earlyPred.isEmpty then
-          // no inline predicate early-out — just scan (with allSeen) and run downstream.
-          '{
-            ${ jsonScanPass(buf, lineStart, lineEnd, slots, keyRefs, None, '{ () }) }
-            ${ continueShape(recordTup, ss, ctx).asExprOf[Unit] }
-          }.asTerm
-        else
-          '{
-            var rejected: Boolean = false
-            ${ jsonScanPass(buf, lineStart, lineEnd, slots, keyRefs, earlyPred, '{ rejected = true }) }
-            if !rejected then ${ continueShape(recordTup, ss, ctx).asExprOf[Unit] }
-          }.asTerm
-      }
-
-    // emit the one-pass key-dispatch scan over a record's fields (compact NDJSON fast path).
-    // earlyPred = Some((allPredSeen, predHolds)): evaluate the leading filters the moment their fields are all
-    //   captured; if they fail, run `reject` and stop the scan (predicate-fail early-out — skips projection fields).
-    def jsonScanPass(
-        buf: Expr[Array[Byte]],
-        lineStart: Expr[Int],
-        lineEnd: Expr[Int],
-        slots: List[JSlot],
-        keyRefs: Map[String, Expr[Array[Byte]]],
-        earlyPred: Option[(Expr[Boolean], Expr[Boolean])],
-        reject: Expr[Unit]
-    ): Expr[Unit] =
-      // generate the per-key dispatch chain: if keyEquals(name0) fill0 else if … else skipValue.
-      def dispatch(ks: Expr[Int], ke: Expr[Int], p: Expr[Int]): Expr[Int] =
-        slots.foldRight[Expr[Int]]('{ JsonScanner.skipValue($buf, $p, $lineEnd) }) { (s, elseB) =>
-          '{ if ! ${ s.seen } && JsonScanner.keyEquals($buf, $ks, $ke, ${ keyRefs(s.name) }) then ${ s.fill(p, lineEnd) } else $elseB }
-        }
-      // projection EARLY-OUT: once every live field is captured, abandon the rest (nothing else is read).
-      def allSeen: Expr[Boolean] =
-        slots match
-          case Nil           => '{ false } // no live fields → never early-out (scan to '}' normally)
-          case first :: more => more.foldLeft(first.seen)((acc, s) => '{ $acc && ${ s.seen } })
-      // the per-key step, with the predicate-fail check (if any) folded in: after capturing a field, if all
-      // predicate fields are now seen, evaluate the leading filters; on failure reject + stop.
-      earlyPred match
-        case None =>
-          '{
-            var p: Int = $lineStart + 1
-            var open: Boolean = $buf($lineStart) == '{'
-            while open do
-              if $buf(p) == '}' then open = false
-              else
-                val ks = p + 1
-                val ke = JsonScanner.scanStringEnd($buf, ks, $lineEnd)
-                p = ${ dispatch('ks, 'ke, '{ ke + 2 }) }
-                if $allSeen then open = false
-                else if $buf(p) == ',' then p += 1
-                else open = false
-          }
-        case Some((allPredSeen, predHolds)) =>
-          '{
-            var p: Int = $lineStart + 1
-            var open: Boolean = $buf($lineStart) == '{'
-            var predChecked: Boolean = false
-            while open do
-              if $buf(p) == '}' then open = false
-              else
-                val ks = p + 1
-                val ke = JsonScanner.scanStringEnd($buf, ks, $lineEnd)
-                p = ${ dispatch('ks, 'ke, '{ ke + 2 }) }
-                if !predChecked && $allPredSeen then
-                  predChecked = true
-                  if ! $predHolds then { $reject; open = false } // PREDICATE FAILED → abandon the record now
-                if open then
-                  if $allSeen then open = false
-                  else if $buf(p) == ',' then p += 1
-                  else open = false
-          }
+      return jsonSrc match
+        case Some(js) => Expr(farray.json.JsonDecode.planString(jsonInput(js, Ctx(t => t, None, Map.empty))))
+        case None     => Expr(s"InMemoryPlan(elem=${srcElem.typeSymbol.name}, terminal=$tag, stages=${stages.length})")
 
     // --- declare loop-state vars (above the loop), then assemble the terminal body ---
     def withDone(k: Option[Done] => Term): Term =
@@ -2059,7 +1742,7 @@ object FuseMacro:
       def ctx(consume: Term => Term) = Ctx(consume, done, counters)
       def drive(c: Ctx): Expr[Unit] =
         (jsonSrc, streamSrc) match
-          case (Some(js), _) => loopOverJson(js, srcElem, indexed, c)
+          case (Some(js), _) => farray.json.JsonDecode.lower(jsonInput(js, c))
           case (_, Some(ss)) => withEpilogue(c, withScanPrologue(c, loopOverSource(ss, srcK, srcElem, indexed, c)))
           case _             => withEpilogue(c, withScanPrologue(c, loopOver(src0, srcK, srcElem, indexed, c)))
       def loop(consume: Term => Term): Expr[Unit] = drive(ctx(consume))
@@ -2425,7 +2108,7 @@ object FuseMacro:
       def loop(consume: Term => Term): Expr[Unit] =
         val c = ctx(consume)
         (jsonSrc, streamSrc) match
-          case (Some(js), _) => loopOverJson(js, srcElem, indexed, c)
+          case (Some(js), _) => farray.json.JsonDecode.lower(jsonInput(js, c))
           case (_, Some(ss)) => withEpilogue(c, withScanPrologue(c, loopOverSource(ss, srcK, srcElem, indexed, c)))
           case _             => withEpilogue(c, withScanPrologue(c, loopOver(src0, srcK, srcElem, indexed, c)))
       outK match
