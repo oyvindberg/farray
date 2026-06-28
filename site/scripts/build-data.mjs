@@ -256,6 +256,32 @@ function buildSnippets() {
     }
   }
 
+  // The opaque type + a few of its extension methods, assembled from VERBATIM lines of FArray.scala
+  // (picked by signature so it survives edits) — every line is real, it's just a selection.
+  const faLines = readFileSync(resolve(REPO, "farray/src/scala/farray/FArray.scala"), "utf8").split("\n");
+  const pick = (re) => {
+    const l = faLines.find((x) => re.test(x));
+    if (l == null) throw new Error(`surface: no line matched ${re}`);
+    return l.trim();
+  };
+  const surface = [
+    pick(/^opaque type FArray\[\+A\]/),
+    "",
+    pick(/^\s*extension \[A\]\(xs: FArray\[A\]\)/),
+    "  " + pick(/structural \(tree-aware FBase virtuals\)/),
+    "  " + pick(/^\s*def reverse: FArray\[A\]/),
+    "  " + pick(/^\s*def \+\+\[B >: A\]/),
+    "",
+    "  " + pick(/specialized element ops \(lambda inlined/),
+    "  " + pick(/^\s*inline def map\[B\]/),
+    "  " + pick(/^\s*inline def filter\(inline p/),
+    "  " + pick(/^\s*inline def foldLeft\[Z\]/),
+  ].join("\n");
+  out["surface"] = {
+    name: "surface", file: "farray/FArray.scala · the opaque type and a few of its extension methods",
+    lang: "scala", code: surface, html: hl(surface, "scala"), full: null, fullHtml: null,
+  };
+
   writeFileSync(resolve(OUT, "snippets.json"), JSON.stringify(out, null, 2));
   console.log(`snippets.json: ${Object.keys(out).length} snippets [${Object.keys(out).join(", ")}]`);
 }

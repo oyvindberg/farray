@@ -2,22 +2,21 @@ import Snippet from "../components/Snippet";
 
 export default function Inline() {
   return (
-    <section className="chapter" id="inline">
-      <h2>The inline layer</h2>
+    <section className="chapter" id="inside-map">
+      <h2>How map stays unboxed</h2>
 
       <p className="lede">
-        The Java core is fast, but it's generic: it only knows <code>FBase</code>. All the unboxing happens one
-        level up, in the Scala API — and the trick is that the surface inlines away. Every combinator is{" "}
-        <code>inline</code>, and resolves the element kind at <em>your</em> call site, leaving only a call into
-        a shared, specialized loop.
+        An elementwise combinator is one <code>inline</code> hop to a generated <code>…Impl</code>, and that
+        impl is where the element kind gets resolved. Take <code>map</code>. Its impl is the most over-built
+        method in the library: one big <code>summonFrom</code> — a compile-time match on which <code>Repr</code>{" "}
+        evidence exists for <code>A</code> — with an outer branch per input kind and, nested inside, one per
+        result kind.
       </p>
 
       <p>
-        The mechanism is Scala 3's <code>summonFrom</code>: a compile-time match on which <code>Repr</code>{" "}
-        evidence exists for the element type. The generated <code>map</code> is one outer branch per input kind
-        and, nested inside, one per result kind. Here's the shape of it — when the kinds line up (the common
-        case) the branch is a one-liner into a specialized leaf method; when they don't, it's a generic loop.
-        Toggle <em>all 81 branches</em> if you want to see the full cross-product you'll never write:
+        Here's the shape of it — when the kinds line up (the common case) the branch is a one-liner into a
+        specialized leaf method; when they don't, it's a generic loop. Toggle <em>all 81 branches</em> if you
+        want to see the full cross-product you'll never write:
       </p>
 
       <Snippet name="map-dispatch-real" />
@@ -30,9 +29,9 @@ export default function Inline() {
         A genuine <code>while</code>-loop over <code>int[]</code>, and <code>f</code> is an{" "}
         <code>IntToIntFn</code> — a specialized SAM, not a boxed <code>Function1</code>. The <code>IntArr</code>{" "}
         case is the fast path; a tree input falls through the <code>case _</code> to the shared traverser — the
-        one direction-aware walk every op reuses. Now watch what happens
-        at a concrete <code>FArray[Int]</code> call site. The compiler knows <code>A = Int</code>, so{" "}
-        <code>summonFrom</code> keeps the <code>IntRepr</code> branch and deletes the other eighty. So this:
+        one direction-aware walk every op reuses. Now watch what happens at a concrete <code>FArray[Int]</code>{" "}
+        call site. The compiler knows <code>A = Int</code>, so <code>summonFrom</code> keeps the{" "}
+        <code>IntRepr</code> branch and deletes the other eighty. So this:
       </p>
 
       <p className="codeline"><code>xs.map(_ + 1)</code> &nbsp;<span className="codeline__where">where <code>xs: FArray[Int]</code></span></p>

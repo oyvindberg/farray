@@ -3,6 +3,8 @@ import { ThemeProvider } from "./theme";
 import ThemeToggle from "./components/ThemeToggle";
 import Intro from "./chapters/Intro";
 import Core from "./chapters/Core";
+import Syntax from "./chapters/Syntax";
+import Combinators from "./chapters/Combinators";
 import Inline from "./chapters/Inline";
 
 function Hero() {
@@ -48,6 +50,8 @@ export default function App() {
           <main>
             <Intro />
             <Core />
+            <Syntax />
+            <Combinators />
             <Inline />
           </main>
           <Footer />
