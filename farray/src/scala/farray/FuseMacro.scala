@@ -945,31 +945,60 @@ object FuseMacro:
         case None    => '{ $i < $len }
       def perElem(read: Term): Expr[Unit] =
         letBind(read)(x => buildBody(ss, x, ctx)).asExprOf[Unit]
-      // ONE indexed loop per kind via the `${kind}At` accessor — no `isInstanceOf[${K}Arr]` leaf fast-path.
-      // (The hybrid-traversal base makes `${kind}At` plenty fast on flat leaves; a separate agent owns that
-      // speed. The old fast-path also baked in a leaf-layout assumption that doesn't hold on every node.)
+      // A `${K}Arr` LEAF fast-path peeled INLINE ahead of the `${kind}At` fallback. Why it matters: a `flatMap`
+      // inner builds a fresh small `${K}Arr` PER ELEMENT; reading it back through `${kind}At` (an FBase-typed
+      // megamorphic call) makes the freshly-allocated array ESCAPE, so the JIT can't scalar-replace it — on
+      // HotSpot C2 (weaker escape analysis than GraalVM) this turns a no-alloc fused pass into a per-element
+      // allocation and craters it (measured ~13x slower than eager). Reading `leaf.arr(i)` from a CONCRETE
+      // `${K}Arr` is monomorphic and INLINE (no call boundary) so EA proves the array stays local → scalar-
+      // replaced, no alloc, on both JVMs. The `${kind}At` arm still serves genuine tree sources (Concat/Slice/…).
+      // NOTE (measured, do NOT "simplify" back): routing this through the SHARED `foreachLeaf${K}`/`scFwdLeaf${K}`
+      // driver (push each element through a `${K}Consumer`/`${K}Pred` SAM) is 1.7-2.8x SLOWER here — passing the
+      // fresh inner array INTO a shared method is itself an escape boundary that defeats scalar replacement on
+      // BOTH C2 and GraalVM. The inline leaf-match is the point. Loop bound is `a.length` (the backing array's),
+      // NOT leaf.length, so the JIT drops the per-element bounds check.
       elemTpe.asType match
         case '[se] =>
           k match
             case Kind.KInt =>
               '{
-                val s = $src; val len = s.length; var i = 0
-                while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.intAt(s, i) }.asTerm) }; i += 1 }
+                $src match
+                  case leaf: IntArr =>
+                    val a = leaf.arr; val len = a.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ a(i) }.asTerm) }; i += 1 }
+                  case s =>
+                    val len = s.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.intAt(s, i) }.asTerm) }; i += 1 }
               }
             case Kind.KLong =>
               '{
-                val s = $src; val len = s.length; var i = 0
-                while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.longAt(s, i) }.asTerm) }; i += 1 }
+                $src match
+                  case leaf: LongArr =>
+                    val a = leaf.arr; val len = a.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ a(i) }.asTerm) }; i += 1 }
+                  case s =>
+                    val len = s.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.longAt(s, i) }.asTerm) }; i += 1 }
               }
             case Kind.KDouble =>
               '{
-                val s = $src; val len = s.length; var i = 0
-                while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.doubleAt(s, i) }.asTerm) }; i += 1 }
+                $src match
+                  case leaf: DoubleArr =>
+                    val a = leaf.arr; val len = a.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ a(i) }.asTerm) }; i += 1 }
+                  case s =>
+                    val len = s.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.doubleAt(s, i) }.asTerm) }; i += 1 }
               }
             case Kind.KRef =>
               '{
-                val s = $src; val len = s.length; var i = 0
-                while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.refAt(s, i).asInstanceOf[se] }.asTerm) }; i += 1 }
+                $src match
+                  case leaf: RefArr =>
+                    val a = leaf.arr; val len = a.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ a(i).asInstanceOf[se] }.asTerm) }; i += 1 }
+                  case s =>
+                    val len = s.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.refAt(s, i).asInstanceOf[se] }.asTerm) }; i += 1 }
               }
 
     // ===== JSON source lowering: a per-record byte scanner whose record is a Tup of byte-sourced columns =====
