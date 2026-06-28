@@ -54,7 +54,8 @@ object FSet:
     inline def excl(elem: A): FSet[A] = FSetOps.exclImpl[A, A](xs, elem)
     inline def +(elem: A): FSet[A] = xs.incl(elem)
     inline def -(elem: A): FSet[A] = xs.excl(elem)
-    def union(that: FSet[A]): FSet[A] = new SUnion(xs, that)
+    // smart `++`: eager-merges cheap operand pairs (bitmaps / small leaves), else an O(1) lazy SUnion.
+    inline def union(that: FSet[A]): FSet[A] = FSetOps.unionImpl[A](xs, that)
     def intersect(that: FSet[A]): FSet[A] = new SInter(xs, that)
     def diff(that: FSet[A]): FSet[A] = new SDiff(xs, that)
     def xor(that: FSet[A]): FSet[A] = new SXor(xs, that)

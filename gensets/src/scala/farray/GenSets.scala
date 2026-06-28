@@ -676,6 +676,23 @@ object GenSets extends BleepCodegenScript("GenSets") {
           ee.close()
         } else ee.line(s"wrap$K(mergeUnion$K(asArr$K(a), asArr$K(b)))")
         ee.close()
+        // unionEager: the smart `++` constructor — eagerly merge when the merge is CHEAP (both bitmaps with a
+        // modest merged span = a word-OR; or both small ≤16 leaves), so e.g. a chain of dense bitmaps collapses
+        // to ONE bitmap (contains = 1 bit-test). Stay LAZY for the O(n) cases (large Sorted/Hash) — deferring
+        // those is the win on refs/large sets. Mixed operands → lazy.
+        ee.open(s"def unionEager$K(a: SBase, b: SBase): SBase =")
+        ee.open("(a, b) match")
+        if k.name == "Int" then {
+          ee.open("case (la: SIntBitmap, lb: SIntBitmap) =>")
+          ee.line("val base = if (la.base < lb.base) la.base else lb.base")
+          ee.line("val hi = scala.math.max(la.base.toLong + la.words.length.toLong * 64L, lb.base.toLong + lb.words.length.toLong * 64L)")
+          ee.line("if (hi - base.toLong <= (1L << 20)) bitmapMergeInt(la, lb, 0) else new SUnion(a, b)")
+          ee.close()
+        }
+        ee.line(s"case (_: SEmpty | _: S${K}One | _: S${K}Sorted, _: SEmpty | _: S${K}One | _: S${K}Sorted) => unionTwo$K(a, b)")
+        ee.line("case _ => new SUnion(a, b)")
+        ee.close()
+        ee.close()
         // materialize a left-deep union SPINE iteratively (§Step 5): collect the spine leaves without deep
         // recursion (a +/incl-built set is a left-deep SUnion(...,One) chain → would StackOverflow + be O(n²)),
         // then balanced pairwise-merge → O(N log k). Union is commutative+associative, so order is free.
@@ -916,6 +933,14 @@ object GenSets extends BleepCodegenScript("GenSets") {
         ee.open("def unionTwoRef(a: SBase, b: SBase): SBase =")
         ee.line("mergeUnionRef(asArrRef(a), hashesOfRef(a), asArrRef(b), hashesOfRef(b))")
         ee.close()
+        // smart `++`: eager-merge two SMALL ref leaves (≤16, cheap); stay LAZY for large hash leaves (the O(n)
+        // sort-merge is the very thing that wins on refs by being deferred). Mixed/large → lazy.
+        ee.open("def unionEagerRef(a: SBase, b: SBase): SBase =")
+        ee.open("(a, b) match")
+        ee.line("case (_: SEmpty | _: SRefOne | _: SRefSorted, _: SEmpty | _: SRefOne | _: SRefSorted) => unionTwoRef(a, b)")
+        ee.line("case _ => new SUnion(a, b)")
+        ee.close()
+        ee.close()
         ee.open("def materializeUnionRef(u0: SUnion): SBase =")
         ee.line("val parts = new java.util.ArrayList[SBase]()")
         ee.line("var cur: SBase = u0")
@@ -961,6 +986,9 @@ object GenSets extends BleepCodegenScript("GenSets") {
 
     // contains: dispatch the kind, unwrap the element, call the shared containsLeaf${K}.
     val containsV = dispatchA(k => s"containsLeaf${k.name}(xs, ${unwrapElem(k, "elem")})")
+
+    // union: the smart `++` — kind-dispatch to unionEager${K}, which eager-merges cheap operand pairs.
+    val unionV = dispatchA(k => s"unionEager${k.name}(xs, that)")
 
     // empty: the shared SEmpty (kind-agnostic).
     val emptyV = "(SEmpty.INSTANCE: SBase)"
@@ -1310,6 +1338,7 @@ object GenSets extends BleepCodegenScript("GenSets") {
        |  inline def mapImpl[A, B](xs: SBase)(inline f: A => B): SBase = $mapV
        |  inline def inclImpl[A, B](xs: SBase, elem: B): SBase = $inclV
        |  inline def exclImpl[A, B](xs: SBase, elem: B): SBase = $exclV
+       |  inline def unionImpl[A](xs: SBase, that: SBase): SBase = $unionV
        |}
        |""".stripMargin
   }
