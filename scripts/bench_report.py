@@ -14,7 +14,11 @@ impl's throughput (and its ratio vs FArray) at that size.
 
 Usage: python3 scripts/bench_report.py <results.json> <out.html>
 """
-import json, sys, re, math
+import json, sys, re, math, os
+
+# The "subject" impl whose W/T/L the report scores (vs every competitor). Default FArray; the FSet suite
+# sets BENCH_SUBJECT=fset so the same renderer scores `fset` vs the set competitors. See scripts/setbench-run.sh.
+SUBJECT = os.environ.get("BENCH_SUBJECT", "farray")
 
 KNOWN = {
     "farray": ("FArray", "#16a34a"), "array": ("Array", "#94a3b8"),
@@ -23,12 +27,19 @@ KNOWN = {
     "ziochunk": ("zio.Chunk", "#ec4899"), "scalaRange": ("Range", "#64748b"),
     "farrayTree": ("FArray·tree", "#16a34a"), "farrayMat": ("FArray·flat", "#4ade80"),
     "ziochunkTree": ("zio·tree", "#ec4899"), "ziochunkMat": ("zio·flat", "#f9a8d4"),
+    # ---- FSet suite (subject = fset; competitors muted) ----
+    "fset": ("FSet", "#16a34a"), "scalaset": ("scala.immut", "#8b5cf6"), "scalamut": ("scala.mut", "#a78bfa"),
+    "immbitset": ("immut.BitSet", "#0ea5e9"), "jubitset": ("java.BitSet", "#38bdf8"),
+    "fastutil": ("fastutil", "#f59e0b"), "hppc": ("HPPC", "#f97316"),
+    "eclipse": ("Eclipse", "#ec4899"), "eclipsemut": ("Eclipse.mut", "#ec4899"), "eclipseimm": ("Eclipse.immut", "#f9a8d4"),
+    "roaring": ("Roaring", "#ef4444"), "guava": ("Guava", "#14b8a6"),
+    "juhashset": ("java.HashSet", "#64748b"), "jusetof": ("java.Set.of", "#94a3b8"),
 }
 ORDER = list(KNOWN.keys())
 XPRIORITY = ("size", "numChunks", "chunkCount", "numLeaves", "n", "innerSize", "chunkSize", "leafSize")
 
 def lc(v):    return KNOWN.get(v, (v, "#cbd5e1"))
-def ours(v):  return v.startswith("farray")
+def ours(v):  return v.startswith(SUBJECT)
 def section(c):
     if c.startswith("ListLike"): return "ListLike"
     if c.startswith("Str"): return "String"
@@ -247,7 +258,7 @@ def main(json_path, out_path):
                 f'<b class="gl">{sl}</b> loss</span></h2>'
                 f'<div class="grid">{"".join(cards[sec])}</div>')
 
-    html = f"""<!doctype html><html><head><meta charset="utf8"><title>FArray benchmarks</title>
+    html = f"""<!doctype html><html><head><meta charset="utf8"><title>{lc(SUBJECT)[0]} benchmarks</title>
 <meta name="viewport" content="width=device-width, initial-scale=1"><style>
 :root{{--fa:#16a34a;--bg:#f7f8fa;--card:#fff;--ink:#1f2430;--mut:#7a8699;--line:#eceef2;
   --win:#16a34a;--loss:#ef4444}}
@@ -312,7 +323,7 @@ table.score td.sc-hi{{color:#15803d;font-weight:650}} table.score td.sc-lo{{colo
 table.score .sc-total{{border-left:2px solid #e2e8f0;font-weight:750}}
 .scorenote{{color:var(--mut);font-size:11px;margin-top:8px;max-width:900px}}
 </style></head><body><div class="wrap">
-<div class="hero"><h1><b>FArray</b> — benchmark suite</h1>
+<div class="hero"><h1><b>{lc(SUBJECT)[0]}</b> — benchmark suite</h1>
 <div class="scorebar"><div class="sc-w">{W_} win</div><div class="sc-t">{T_} tie</div><div class="sc-l">{L_} loss</div></div></div>
 <div class="sub">grouped bars per benchmark · x = size or swept parameter · bar heights normalised <b>within each size</b> (relative comparison, not absolute throughput) · FArray = bold emerald, competitors muted · band behind each size + card frame tinted by verdict (green win · gray tie · red loss) vs the best competitor · hover a size to compare numbers{(' · '+str(skipped)+' non-ops/s skipped') if skipped else ''}</div>
 {score_table}
