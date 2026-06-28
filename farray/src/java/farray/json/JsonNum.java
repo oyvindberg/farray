@@ -38,12 +38,6 @@ public final class JsonNum {
         public int pos;
     }
 
-    /** holder for a parsed long + the position just past it. */
-    public static final class L {
-        public long value;
-        public int pos;
-    }
-
     /**
      * Parse a JSON number at {@code from} (which must point at the first byte of the number, after any
      * whitespace) into {@code out}; returns nothing (out.pos is set). No allocation on tiers 1-2.
@@ -117,22 +111,5 @@ public final class JsonNum {
             result = Double.parseDouble(new String(buf, from, pos - from, java.nio.charset.StandardCharsets.ISO_8859_1));
         }
         out.value = neg ? -result : result;
-    }
-
-    /** Parse a JSON long at {@code from}; negated-magnitude accumulation so Long.MIN_VALUE doesn't overflow. */
-    public static void parseLong(byte[] buf, int from, int end, L out) {
-        int pos = from;
-        boolean neg = false;
-        if (pos < end && buf[pos] == '-') { neg = true; pos++; }
-        long x = 0L; // negative magnitude
-        boolean any = false;
-        while (pos < end) {
-            int c = buf[pos];
-            if (c >= '0' && c <= '9') { x = x * 10 - (c - '0'); any = true; pos++; }
-            else break;
-        }
-        if (!any) throw new JsonParseException("expected long at " + from);
-        out.value = neg ? x : -x;
-        out.pos = pos;
     }
 }

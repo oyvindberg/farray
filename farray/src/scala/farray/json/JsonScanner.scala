@@ -1,18 +1,17 @@
 package farray.json
 
-/** Byte-level JSON scanning primitives — the hand-written form of the code the `fuse` JSON macro will
- *  eventually GENERATE per record. This is the v0a proof-of-thesis: projection pushdown (skip unwanted
- *  fields by the byte), key dispatch by raw byte comparison (NO key decode), lazy string slices (decode a
- *  string only when forced), and predicate early-out (abandon the record when a predicate fails).
+/** Byte-level JSON scanning primitives — the runtime helpers the `fuse` JSON macro GENERATES calls to
+ *  per record (`internKey`/`keyEquals`/`scanStringEnd`/`skipValue`/`readIntAt`/`readLongAt`/`readDoubleAt`/
+ *  `decodeLatin1`), and which the hand-written reference scanners in `Demo`/`FatNumeric` also use.
  *
- *  Techniques lifted from jsoniter-scala's `JsonReader` (the JVM king): the head/tail cursor with the
- *  position threaded as an explicit `Int`, the SWAR-friendly skip family (string = quote+escape scan,
- *  containers = string-aware brace counting), and negated-magnitude integer accumulation. Number/string
- *  decode is intentionally scalar-and-correct here; the SWAR fast paths are a later optimization once the
- *  thesis is proven.
+ *  Techniques lifted from jsoniter-scala's `JsonReader` (the JVM king): the position threaded as an explicit
+ *  `Int`, the string-aware skip family (string = quote+escape scan, containers = brace counting that routes
+ *  strings through the same scan so braces inside them don't miscount), and negated-magnitude integer
+ *  accumulation. The hot string-end scan is SWAR (8 bytes/word) in `JsonBytes`; double parsing is the
+ *  allocation-free tiered parser in `JsonNum`.
  *
- *  All methods take `(buf, pos)` and return the new `pos` (or pack a result via the out-params on the
- *  mutable scanner). Cursor invariant: `pos` points at the next unread byte; whitespace is skipped lazily.
+ *  All methods take `(buf, pos, end)` and return the new `pos` (the `…At` decoders stash it in `numEnd`).
+ *  Cursor invariant: `pos` points at the next unread byte.
  */
 object JsonScanner:
 
@@ -24,13 +23,6 @@ object JsonScanner:
     var pos = pos0
     while pos < end && isWs(buf(pos)) do pos += 1
     pos
-
-  /** at `pos` (a `"` or after `:`), expect and consume `'{'`, returning the position after it. */
-  def expectByte(buf: Array[Byte], pos0: Int, end: Int, b: Byte): Int =
-    val pos = skipWs(buf, pos0, end)
-    if pos >= end || buf(pos) != b then
-      throw JsonParseException(s"expected '${b.toChar}' at $pos, got ${if pos < end then buf(pos).toChar.toString else "<eof>"}")
-    pos + 1
 
   // ---- string scanning (escape-aware) ----
 
@@ -78,29 +70,7 @@ object JsonScanner:
       else pos += 1
     throw JsonParseException(s"unterminated container from $pos0")
 
-  /** skip the rest of the CURRENT object (we're mid-object, `pos` after some value); returns position
-   *  just past the object's closing `}`. Used for predicate early-out: reject a record and abandon its
-   *  remaining bytes. */
-  def skipObjectRest(buf: Array[Byte], pos0: Int, end: Int): Int =
-    skipContainer(buf, pos0, end, '{', '}')
-
   // ---- number decoding (scalar, correct; SWAR later) ----
-
-  /** decode a JSON int at `pos` into the result; returns the position just past the number.
-   *  Negated-magnitude accumulation (à la jsoniter) so Int.MinValue doesn't overflow. */
-  def readInt(buf: Array[Byte], pos0: Int, end: Int, out: IntResult): Int =
-    var pos = skipWs(buf, pos0, end)
-    var neg = false
-    if pos < end && buf(pos) == '-' then { neg = true; pos += 1 }
-    var x = 0
-    var any = false
-    while pos < end && { val b = buf(pos); b >= '0' && b <= '9' } do
-      x = x * 10 - (buf(pos) - '0') // negative magnitude
-      any = true
-      pos += 1
-    if !any then throw JsonParseException(s"expected int at $pos0")
-    out.value = if neg then x else -x
-    pos
 
   /** decode a JSON double via the allocation-free Java byte-level parser (tiers 1-2 allocate nothing;
    *  only genuinely-long/out-of-window inputs fall back to Double.parseDouble). Returns the position past it. */
@@ -155,11 +125,6 @@ object JsonScanner:
 
 end JsonScanner
 
-/** Mutable single-slot result carriers — avoid boxing primitives across the return.
- *  (The macro path will use local `var` slots instead; these exist for the hand-written v0a scanner.
- *  Doubles/longs use the Java `JsonNum.D`/`JsonNum.L` holders.) */
-final class IntResult(var value: Int = 0)
-
-/** thread-local reusable double holder so `readDouble2` allocates nothing per call. */
+/** thread-local reusable double holder so `readDoubleAt` allocates nothing per call. */
 object JsonNumLocal:
   val d: ThreadLocal[JsonNum.D] = ThreadLocal.withInitial(() => new JsonNum.D())

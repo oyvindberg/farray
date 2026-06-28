@@ -88,6 +88,9 @@ final class Fuse[+A](private[farray] val base: AnyRef):
   /** plan of the pipeline AS IF it ended in a fold whose `op` reads the element — captures a terminal that
    *  reads record fields directly (e.g. `Json.ndjson[Rec](b).stream.planFold((acc, r) => acc + r.amount)`). */
   inline def planFold[Z](inline op: (Z, A) => Z): String = ${ FuseMacro.planFoldImpl[A, Z]('this, 'op) }
+  /** plan of the pipeline AS IF it ended in these aggregates — so the agg live-set (the union of the
+   *  aggregates' read fields) can be asserted. `Json.ndjson[Rec](b).stream.planAgg(Agg.sum(_.amount), Agg.count)`. */
+  inline def planAgg(inline aggs: Agg[A, Any]*): String = ${ FuseMacro.planAggImpl[A]('this, 'aggs) }
 
   // ---- multi-aggregate: run several aggregations in ONE fused pass, carrying one accumulator each. The
   //      aggregates' read fields are merged automatically (union computed, shared field once, survivor-gated). ----

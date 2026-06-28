@@ -78,4 +78,20 @@ class JsonPlanTest:
     assertEquals(Set("id", "amount", "age"), fields(p, "decoded")) // Long/Double/Int decode
     assertEquals(Set("name"), fields(p, "sliced"))                  // String slices
 
+  // ── agg: live-set = union of the aggregates' read fields (count adds nothing) ────────────────────────
+  @Test def planAgg_scans_union(): Unit =
+    val p = Json.ndjson[Rec](b).stream.planAgg(Agg.sum(_.amount), Agg.count, Agg.max(_.score))
+    assertEquals(Set("amount", "score"), fields(p, "live")) // count contributes no field
+    assertEquals(Set("amount", "score"), fields(p, "decoded"))
+    assertTrue(p.contains("terminal=Agg"))
+    assertFalse(flag(p, "rebuildsRecord"))
+
+  @Test def planAgg_withFilter_mergesAndSlices(): Unit =
+    val p = Json.ndjson[Rec](b).stream.filter(_.status == "a").planAgg(Agg.sum(_.amount), Agg.count)
+    assertEquals(Set("status", "amount"), fields(p, "live"))
+    assertEquals(Set("amount"), fields(p, "decoded")) // status is the predicate string → sliced
+    assertEquals(Set("status"), fields(p, "sliced"))
+    assertEquals(Set("status"), fields(p, "predicate"))
+    assertTrue(flag(p, "earlyOut"))
+
 end JsonPlanTest

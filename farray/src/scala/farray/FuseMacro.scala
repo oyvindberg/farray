@@ -56,6 +56,10 @@ object FuseMacro:
   // planFold: same, but the live-set also reflects a fold `op` that reads the element directly.
   def planFoldImpl[A: Type, Z: Type](self: Expr[Fuse[A]], op: Expr[(Z, A) => Z])(using Quotes): Expr[String] =
     '{ ${ core[A](self, TTag.Plan, List(op)) }.asInstanceOf[String] }
+  // planAgg: the live-set reflects the union of the aggregates' read fields. Passes the varargs Seq as args(0)
+  // (parseAggList's seqElems already peels a Repeated/Typed(Repeated) — the varargs literal form).
+  def planAggImpl[A: Type](self: Expr[Fuse[A]], aggs: Expr[Seq[Agg[A, Any]]])(using Quotes): Expr[String] =
+    '{ ${ core[A](self, TTag.Plan, List(aggs)) }.asInstanceOf[String] }
 
   def findImpl[A: Type](self: Expr[Fuse[A]], p: Expr[A => Boolean])(using Quotes): Expr[Option[A]] =
     '{ ${ core[A](self, TTag.Find, List(p)) }.asInstanceOf[Option[A]] }
@@ -242,10 +246,11 @@ object FuseMacro:
       case Fold(z: Term, op: Term, sTpe: TypeRepr)        // seeded left fold
       case Avg(f: Term)                                   // mean of f(a): Double
     def parseAggList(t: Term): List[AggSpec] =
-      // the arg is `List(a1, a2, …)` — a varargs `List.apply(Seq(...))`; pull out the element terms.
+      // the arg is either `List(a1, a2, …)` (from agg/aggTo) or a bare varargs Seq (from planAgg); pull elements.
       def elems(x: Term): List[Term] = unwrap(x) match
         case Apply(TypeApply(sel, _), List(seq)) if sel.symbol.name == "apply" => seqElems(seq)
         case Apply(sel, List(seq)) if sel.symbol.name == "apply"               => seqElems(seq)
+        case Typed(Repeated(_, _), _) | Repeated(_, _)                         => seqElems(x) // planAgg varargs Seq
         case _ => report.errorAndAbort(s"fuse: agg expects Agg.* arguments; got ${x.show}")
       def seqElems(seq: Term): List[Term] = unwrap(seq) match
         case Typed(Repeated(es, _), _) => es
@@ -870,16 +875,20 @@ object FuseMacro:
           case TTag.Fold                      => add2(args(1))                 // op: (acc, elem) => …
           case TTag.ReduceOpt                 => add2(args(0))
           case TTag.ExtremumBy                => add1(args(0))                 // f: elem => key
-          case TTag.Agg =>
-            parseAggList(args(0)).foreach {
-              case AggSpec.Sum(f, _)            => add1(f)
-              case AggSpec.Avg(f)               => add1(f)
-              case AggSpec.Extremum(f, _, _, _) => add1(f)
-              case AggSpec.Fold(_, op, _)       => add2(op)
-              case AggSpec.Count                => ()
-            }
-          case TTag.Plan if args.nonEmpty => add2(args(0)) // planFold(op): treat like a fold over the element
+          case TTag.Agg => addAggSpecs(parseAggList(args(0)))
+          case TTag.Plan if args.nonEmpty =>
+            // planFold passes a 2-param fold op; planAgg passes an agg list. Distinguish by shape.
+            decomposeLambda2(args(0)) match
+              case Some(_) => add2(args(0))                 // planFold(op)
+              case None    => addAggSpecs(parseAggList(args(0)))  // planAgg(aggs)
           case _ => ()
+        def addAggSpecs(specs: List[AggSpec]): Unit = specs.foreach {
+          case AggSpec.Sum(f, _)            => add1(f)
+          case AggSpec.Avg(f)               => add1(f)
+          case AggSpec.Extremum(f, _, _, _) => add1(f)
+          case AggSpec.Fold(_, op, _)       => add2(op)
+          case AggSpec.Count                => ()
+        }
       stages.foreach {
         case MapS(f)        => addFrom(f)
         case FilterS(p, _)  => addFrom(p)
@@ -900,9 +909,10 @@ object FuseMacro:
       tag match
         case TTag.Foreach | TTag.IndexWhere | TTag.Find | TTag.Exists | TTag.Forall | TTag.ExtremumBy => add1(args(0))
         case TTag.Fold => add2(args(1)); case TTag.ReduceOpt => add2(args(0))
-        case TTag.Agg => parseAggList(args(0)).foreach { case AggSpec.Sum(f,_)=>add1(f); case AggSpec.Avg(f)=>add1(f); case AggSpec.Extremum(f,_,_,_)=>add1(f); case AggSpec.Fold(_,op,_)=>add2(op); case AggSpec.Count=>() }
-        case TTag.Plan if args.nonEmpty => add2(args(0))
+        case TTag.Agg => aggSpecs(parseAggList(args(0)))
+        case TTag.Plan if args.nonEmpty => decomposeLambda2(args(0)) match { case Some(_) => add2(args(0)); case None => aggSpecs(parseAggList(args(0))) }
         case _ => ()
+      def aggSpecs(specs: List[AggSpec]): Unit = specs.foreach { case AggSpec.Sum(f,_)=>add1(f); case AggSpec.Avg(f)=>add1(f); case AggSpec.Extremum(f,_,_,_)=>add1(f); case AggSpec.Fold(_,op,_)=>add2(op); case AggSpec.Count=>() }
       whole
 
     // the scanner kind for a field type — what the slot holds and how the column reads it.
@@ -937,7 +947,9 @@ object FuseMacro:
         collectPaths(b, param).flatMap(_.headOption.map(_._2)))).distinct
       val projOnly = live.map(_._1).exists(n => !predNames.contains(n))
       val earlyOut = leadingFilters.nonEmpty && predNames.nonEmpty && projOnly
-      val termName = if tag == TTag.Plan && args.nonEmpty then "Fold" else tag.toString // planFold reports Fold
+      val termName =
+        if tag == TTag.Plan && args.nonEmpty then (if decomposeLambda2(args(0)).isDefined then "Fold" else "Agg")
+        else tag.toString // planFold reports Fold, planAgg reports Agg
       // deterministic, sorted, compact:
       def s(xs: Iterable[String]) = xs.toList.sorted.mkString("[", ",", "]")
       s"JsonPlan(record=${elemTpe.typeSymbol.name}, terminal=$termName, " +
