@@ -80,6 +80,48 @@ class AggTest:
     org.junit.Assert.assertThrows(classOf[NoSuchElementException], () =>
       FArray.empty[Rec].fuse.agg(Agg.min1(_.a), Agg.count))
 
+  /** minBy / maxBy as aggregates: return the ELEMENT with the extreme key, composing alongside sum/count in
+   *  ONE pass. Cross-checked vs List.minBy/maxBy. */
+  @Test def minBy_maxBy_inAgg(): Unit =
+    val (lo, hi, total) = xs.fuse.agg(Agg.minBy(_.a), Agg.maxBy(_.b), Agg.sum(_.a))
+    assertEquals(Some(recs.minBy(_.a)), lo)
+    assertEquals(Some(recs.maxBy(_.b)), hi)
+    assertEquals(recs.map(_.a).sum, total)
+    // empty → None
+    val (e, _) = FArray.empty[Rec].fuse.agg(Agg.minBy(_.a), Agg.count)
+    assertEquals(None, e)
+
+  /** minBy1 / maxBy1: bare (non-Option) element for a known-non-empty input; throws on empty. */
+  @Test def minBy1_maxBy1_bare(): Unit =
+    val (lo, hi) = xs.fuse.agg(Agg.minBy1(_.a), Agg.maxBy1(_.b))
+    assertEquals(recs.minBy(_.a), lo) // plain Rec, not Option
+    assertEquals(recs.maxBy(_.b), hi)
+    org.junit.Assert.assertThrows(classOf[NoSuchElementException], () =>
+      FArray.empty[Rec].fuse.agg(Agg.minBy1(_.a), Agg.count))
+
+  /** reduce / reduce1 as aggregates over a primitive pipeline, alongside count. */
+  @Test def reduce_inAgg(): Unit =
+    val ns = FArray(3, 1, 4, 1, 5, 9, 2, 6)
+    val (sumOpt, n) = ns.fuse.agg(Agg.reduce[Int, Int](_ + _), Agg.count)
+    assertEquals(Some(ns.toList.sum), sumOpt)
+    assertEquals(ns.length, n)
+    val (mx) = ns.fuse.agg(Agg.reduce1[Int, Int](math.max))
+    assertEquals(9, mx)
+    val (none, _) = FArray.empty[Int].fuse.agg(Agg.reduce[Int, Int](_ + _), Agg.count)
+    assertEquals(None, none)
+
+  /** the STANDALONE reduce/minBy/maxBy/min/max terminals (re-routed through the same agg specs) still match. */
+  @Test def standalone_reduce_minBy_max(): Unit =
+    val ns = FArray(3, 1, 4, 1, 5)
+    assertEquals(14, ns.fuse.reduce(_ + _))
+    assertEquals(Some(14), ns.fuse.reduceOption(_ + _))
+    assertEquals(1, ns.fuse.min)
+    assertEquals(5, ns.fuse.max)
+    assertEquals(Rec(2, 9, 0.0), FArray(Rec(5, 1, 0.0), Rec(2, 9, 0.0), Rec(8, 4, 0.0)).fuse.minBy(_.a))
+    assertEquals(Rec(2, 9, 0.0), FArray(Rec(5, 1, 0.0), Rec(2, 9, 0.0), Rec(8, 4, 0.0)).fuse.maxBy(_.b))
+    assertEquals(None, FArray.empty[Int].fuse.reduceOption(_ + _))
+    assertEquals(None, FArray.empty[Rec].fuse.minByOption(_.a))
+
   /** sum/max over PRIMITIVE fields must be UNBOXED — fold a large input many times and assert it doesn't
    *  allocate per element (a boxing regression would allocate millions of wrappers). */
   @Test def primitiveAggs_dont_box(): Unit =

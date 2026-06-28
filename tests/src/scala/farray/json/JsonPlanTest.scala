@@ -86,6 +86,18 @@ class JsonPlanTest:
     assertTrue(p.contains("terminal=Agg"))
     assertFalse(flag(p, "rebuildsRecord"))
 
+  // ── topN agg: retains whole records → rebuildsRecord, plus the key field is live ─────────────────────
+  @Test def planAgg_topN_rebuilds_and_scansKey(): Unit =
+    val p = Json.ndjson[Rec](b).stream.planAgg(Agg.topNBy(5)(_.amount))
+    assertTrue("topN retains elements → whole record materialized", flag(p, "rebuildsRecord"))
+    assertTrue("the key field must be live", fields(p, "live").contains("amount"))
+
+  // ── minBy agg: returns the element → rebuildsRecord, key field live ──────────────────────────────────
+  @Test def planAgg_minBy_rebuilds_and_scansKey(): Unit =
+    val p = Json.ndjson[Rec](b).stream.planAgg(Agg.minBy(_.amount))
+    assertTrue("minBy returns the element → whole record materialized", flag(p, "rebuildsRecord"))
+    assertTrue("the key field must be live", fields(p, "live").contains("amount"))
+
   @Test def planAgg_withFilter_mergesAndSlices(): Unit =
     val p = Json.ndjson[Rec](b).stream.filter(_.status == "a").planAgg(Agg.sum(_.amount), Agg.count)
     assertEquals(Set("status", "amount"), fields(p, "live"))

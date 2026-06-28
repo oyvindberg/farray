@@ -111,6 +111,22 @@ final class Fuse[+A](private[farray] val base: AnyRef):
   inline def aggTo[R1, R2, R3, R4, R](inline make: (R1, R2, R3, R4) => R)(inline a1: Agg[A, R1], inline a2: Agg[A, R2], inline a3: Agg[A, R3], inline a4: Agg[A, R4]): R =
     ${ FuseMacro.aggToImpl[A, R]('this, '{ List(a1, a2, a3, a4) }, 'make) }
 
+  /** run ONE aggregate, returning its result bare (no Tuple1). The single-aggregate base for the standalone
+   *  sugar below; the whole pipeline still fuses. */
+  inline def agg[R1](inline a1: Agg[A, R1]): R1 =
+    ${ FuseMacro.aggImpl[A, R1]('this, '{ List(a1) }) }
+
+  // ---- standalone top-N: the n best elements by a key, in ONE fused pass via a bounded size-n heap
+  //      (O(N log n) time, O(n) memory — no full sort, no O(N) buffer). Returns FArray[A], best-first. ----
+  /** the `n` elements with the largest `key(a)`, best-first. */
+  inline def topNBy[B](n: Int)(inline key: A => B)(using Ordering[B]): FArray[A] = agg(Agg.topNBy(n)(key))
+  /** the `n` elements with the smallest `key(a)`, best-first. */
+  inline def bottomNBy[B](n: Int)(inline key: A => B)(using Ordering[B]): FArray[A] = agg(Agg.bottomNBy(n)(key))
+  /** the `n` largest elements by natural ordering, best-first. */
+  inline def topN[A1 >: A](n: Int)(using Ordering[A1]): FArray[A1] = agg(Agg.largest[A1](n))
+  /** the `n` smallest elements by natural ordering, best-first. */
+  inline def bottomN[A1 >: A](n: Int)(using Ordering[A1]): FArray[A1] = agg(Agg.smallest[A1](n))
+
   // ===== derived terminals — pure sugar over the base terminals above; the whole pipeline still fuses =====
 
   // ---- conversions (one fused pass into a builder via foreach) ----
@@ -132,8 +148,9 @@ final class Fuse[+A](private[farray] val base: AnyRef):
   inline def fold[B >: A](z: B)(inline op: (B, B) => B): B = foldLeft[B](z)((acc, a) => op(acc, a))
   inline def sum[B >: A](using num: Numeric[B]): B = foldLeft[B](num.zero)((acc, a) => num.plus(acc, a))
   inline def product[B >: A](using num: Numeric[B]): B = foldLeft[B](num.one)((acc, a) => num.times(acc, a))
-  // reduce/min/max/last all run through the seeded-accumulator ReduceOpt terminal: no per-element Option,
-  // one Some only at the very end. minBy/maxBy run through ExtremumBy: best element + its key in two vars.
+  // reduce/min/max/last desugar to `reduceOption` (a single-aggregate `agg(Agg.reduceL(...))`): seeded
+  // accumulator, no per-element Option, one Some at the end. minBy/maxBy desugar to `agg(Agg.minBy/maxBy(...))`:
+  // best element + its key in two vars. All share the Agg/AState terminal machinery.
   inline def reduceLeft[B >: A](inline op: (B, A) => B): B =
     reduceOption[B](op).getOrElse(throw new UnsupportedOperationException("reduceLeft on an empty fused pipeline"))
   inline def reduce[B >: A](inline op: (B, B) => B): B =
@@ -168,17 +185,17 @@ final class Fuse[+A](private[farray] val base: AnyRef):
   inline def to[C1](factory: scala.collection.Factory[A, C1]): C1 =
     val b = factory.newBuilder; foreach(b += _); b.result()
 
-  // ---- Option-returning reductions (empty → None instead of throwing); seeded ReduceOpt / ExtremumBy ----
-  inline def reduceOption[B >: A](inline op: (B, A) => B): Option[B] = ${ FuseMacro.reduceOptImpl[A, B]('this, 'op) }
+  // ---- Option-returning reductions (empty → None instead of throwing). These now desugar to a single-aggregate
+  //      `agg(...)`, sharing the Agg/AState terminal machinery (the dedicated ReduceOpt/ExtremumBy terminals were
+  //      folded into `Agg.reduceL`/`Agg.minBy`/`Agg.maxBy`). ----
+  inline def reduceOption[B >: A](inline op: (B, A) => B): Option[B] = agg(Agg.reduceL[A, B](op))
   inline def reduceLeftOption[B >: A](inline op: (B, A) => B): Option[B] = reduceOption[B](op)
   inline def minOption[B >: A](using ord: Ordering[B]): Option[A] =
     reduceOption[B]((acc, a) => if ord.lteq(acc, a) then acc else a).asInstanceOf[Option[A]]
   inline def maxOption[B >: A](using ord: Ordering[B]): Option[A] =
     reduceOption[B]((acc, a) => if ord.gteq(acc, a) then acc else a).asInstanceOf[Option[A]]
-  inline def minByOption[B](inline f: A => B)(using ord: Ordering[B]): Option[A] =
-    ${ FuseMacro.extremumByImpl[A, B]('this, 'f, '{ (k1: B, k2: B) => ord.lt(k1, k2) }) }
-  inline def maxByOption[B](inline f: A => B)(using ord: Ordering[B]): Option[A] =
-    ${ FuseMacro.extremumByImpl[A, B]('this, 'f, '{ (k1: B, k2: B) => ord.gt(k1, k2) }) }
+  inline def minByOption[B](inline f: A => B)(using ord: Ordering[B]): Option[A] = agg(Agg.minBy[A, B](f))
+  inline def maxByOption[B](inline f: A => B)(using ord: Ordering[B]): Option[A] = agg(Agg.maxBy[A, B](f))
 
   // ---- groupBy: one fused pass into per-key builders ----
   inline def groupBy[K](inline f: A => K): Map[K, List[A]] =

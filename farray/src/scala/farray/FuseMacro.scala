@@ -5,7 +5,7 @@ import farray.json.{NdjsonSource, JsonScanner}
 
 /** which terminal a fused pipeline ends in (the macro shares one lowering core across all of them). */
 enum TTag:
-  case Run, Foreach, Fold, Count, Find, Exists, Forall, HeadOption, Head, IndexWhere, ReduceOpt, ExtremumBy, Agg
+  case Run, Foreach, Fold, Count, Find, Exists, Forall, HeadOption, Head, IndexWhere, Agg
   case GroupReduce // group by key(a), combine value(a) per key with reduce → Map[K,B]; primitive-keyed, no boxing
   case Plan // not a real terminal: returns a String DESCRIPTION of the plan the macro built, for testing
 
@@ -85,13 +85,8 @@ object FuseMacro:
   // index of the first survivor satisfying `p` (post-upstream-filtering position), or -1 — short-circuits.
   def indexWhereImpl[A: Type](self: Expr[Fuse[A]], p: Expr[A => Boolean])(using Quotes): Expr[Int] =
     '{ ${ core[A](self, TTag.IndexWhere, List(p)) }.asInstanceOf[Int] }
-  // seeded single-accumulator reduce → Some(acc) over survivors, None if empty (one allocation, at the end).
-  def reduceOptImpl[A: Type, B: Type](self: Expr[Fuse[A]], op: Expr[(B, A) => B])(using Quotes): Expr[Option[B]] =
-    '{ ${ core[A](self, TTag.ReduceOpt, List(op)) }.asInstanceOf[Option[B]] }
-  // the survivor minimizing/maximizing key `f` under `better` (true if the new key wins), or None — two vars,
-  // no tuple, `f` computed once per element.
-  def extremumByImpl[A: Type, B: Type](self: Expr[Fuse[A]], f: Expr[A => B], better: Expr[(B, B) => Boolean])(using Quotes): Expr[Option[A]] =
-    '{ ${ core[A](self, TTag.ExtremumBy, List(f, better)) }.asInstanceOf[Option[A]] }
+  // (seeded reduce and extremum-by-element now flow through the Agg machinery — `Agg.reduceL` / `Agg.minBy` /
+  //  `Agg.maxBy` — so the standalone reduceOption/minByOption/maxByOption terminals desugar to a single-agg call.)
 
   // ---------- shared lowering core (Exprs cross the boundary; Terms are derived inside) ----------
   private def core[A: Type](self: Expr[Fuse[A]], tag: TTag, extraExprs: List[Expr[Any]])(using Quotes): Expr[Any] =
@@ -192,8 +187,8 @@ object FuseMacro:
         case Select(prev, "zipWithIndex")                                 => parse(prev, ZipWithIndexS :: acc)
         case Apply(TypeApply(Select(prev, "zip"), List(b)), List(that))    => parse(prev, ZipS(unwrap(that), b.tpe, None) :: acc)
         case Apply(Apply(TypeApply(Select(prev, "map2"), List(b, _)), List(that)), List(f)) => parse(prev, ZipS(unwrap(that), b.tpe, Some(unwrap(f))) :: acc)
-        case base @ Apply(Select(New(_), "<init>"), List(src))               => (src, fuseElem(base.tpe), acc)
-        case base @ Apply(TypeApply(Select(New(_), "<init>"), _), List(src)) => (src, fuseElem(base.tpe), acc)
+        case base @ Apply(Select(New(_), "<init>"), List(src))               => (src.underlyingArgument, fuseElem(base.tpe), acc)
+        case base @ Apply(TypeApply(Select(New(_), "<init>"), _), List(src)) => (src.underlyingArgument, fuseElem(base.tpe), acc)
         case other =>
           report.errorAndAbort(s"fuse: unsupported pipeline step near:\n${other.show(using Printer.TreeStructure)}")
 
@@ -202,6 +197,18 @@ object FuseMacro:
       val app = Apply(Select.unique(fn, "apply"), args)
       Term.betaReduce(app).getOrElse(app)
     def applyLambda(fn: Term, arg: Term): Term = applyN(fn, List(arg))
+
+    /** build the identity lambda `(a: A) => a` for element type `tpe` (used as the key of largest/smallest). */
+    def identityLambda(tpe: TypeRepr): Term = tpe.asType match
+      case '[a] => '{ (x: a) => x }.asTerm
+
+    /** the `better(newKey, bestKey): Boolean` predicate for minBy/maxBy from an `Ordering[B]` term: `ord.lt`
+     *  (min — a smaller new key wins) or `ord.gt` (max). Mirrors the standalone `extremumByImpl` wiring. */
+    def betterFromOrd(ordTerm: Term, bTpe: TypeRepr, max: Boolean): Term = bTpe.asType match
+      case '[b] =>
+        val ord = ordTerm.asExprOf[Ordering[b]]
+        if max then '{ (k1: b, k2: b) => $ord.gt(k1, k2) }.asTerm
+        else        '{ (k1: b, k2: b) => $ord.lt(k1, k2) }.asTerm
 
     /** `{ val v = value; cont(v) }` — binds `value` to a fresh val (no recompute; owners handled by the quote). */
     def letBind(value: Term)(cont: Term => Term): Term =
@@ -245,18 +252,42 @@ object FuseMacro:
     val (srcTerm, srcElem, stages0) = parse(selfTerm.underlyingArgument, Nil)
 
     // --- algebraic rewrites on adjacent stages (sound for a pure pipeline; removes redundant per-element
-    //     machinery the JIT won't always eliminate). Collapses DIRECTLY adjacent take/take and drop/drop:
+    //     machinery the JIT won't always eliminate). Collapses take/take and drop/drop that are adjacent OR
+    //     separated only by LENGTH-AND-POSITION-PRESERVING stages (map / tapEach), by sliding the limit stage
+    //     LEFT past such a stage first (`map(f).take(n)` ≡ `take(n).map(f)`, likewise drop). Then:
     //       take(n).take(m) → take(min(n,m))   (positions are post-prior-take, so the tighter bound wins)
     //       drop(n).drop(m) → drop(n+m)        (drop m more after dropping the first n)
-    //     The int args may be runtime Terms, so min/+ are emitted as terms. Other adjacencies are already
-    //     optimal (map.map fuses in one loop; filter.filter is nested ifs) or not commutative (take.drop). ---
+    //     so e.g. `take(5).map(f).take(3)` → `take(3).map(f)` and `drop(a).map(f).drop(b)` → `drop(a+b).map(f)`.
+    //     The int args may be runtime Terms, so min/+ are emitted as terms. We DON'T slide past filter (changes
+    //     positions/length), flatMap/scan (changes length), takeWhile/dropWhile/distinct/zip (likewise). map.map
+    //     already fuses into one loop with column-level DCE, so no rewrite is needed there. ---
+    // May the limit `lim` commute LEFT past stage `s`? Only `take` past `map`: in the current lowering take's
+    // done-flag already halts the loop at the bound, so `map(f).take(n)` evaluates `f` on exactly the same first-n
+    // elements as `take(n).map(f)` — identical even if `f` throws/side-effects. `drop` must NOT slide past map:
+    // `map(f).drop(k)` evaluates `f` on ALL elements (then drops k results), whereas `drop(k).map(f)` skips `f` on
+    // the first k — a behavior change for an effectful/throwing `f`. Nothing slides past tapEach (observable
+    // effects) or filter/flatMap/scan/while/distinct/zip (these change positions or length).
+    def slidesLeftPast(lim: Stage, s: Stage): Boolean = (lim, s) match
+      case (TakeS(_), MapS(_)) => true
+      case _                   => false
+    // collapse two adjacent same-kind limit stages: take/take → min, drop/drop → +. (`l` precedes `r`.)
+    def collapse(l: Stage, r: Stage): Option[Stage] = (l, r) match
+      case (TakeS(n), TakeS(m)) => Some(TakeS('{ java.lang.Math.min(${ n.asExprOf[Int] }, ${ m.asExprOf[Int] }) }.asTerm))
+      case (DropS(n), DropS(m)) => Some(DropS('{ ${ n.asExprOf[Int] } + ${ m.asExprOf[Int] } }.asTerm))
+      case _                    => None
+    // ONE left-to-right pass. At each stage we first rewrite the tail, then either fuse with the head limit it
+    // produced (adjacent take/take, drop/drop) or — for a preserving stage followed by a limit — pull that limit
+    // IN FRONT (`map(f).take(n)` → `take(n).map(f)`) and re-run from there so it can fuse with a prior limit.
     def rewriteStages(ss: List[Stage]): List[Stage] = ss match
-      case TakeS(n) :: TakeS(m) :: rest =>
-        rewriteStages(TakeS('{ java.lang.Math.min(${ n.asExprOf[Int] }, ${ m.asExprOf[Int] }) }.asTerm) :: rest)
-      case DropS(n) :: DropS(m) :: rest =>
-        rewriteStages(DropS('{ ${ n.asExprOf[Int] } + ${ m.asExprOf[Int] } }.asTerm) :: rest)
-      case s :: rest => s :: rewriteStages(rest)
       case Nil       => Nil
+      case s :: rest =>
+        val tail = rewriteStages(rest)
+        (s, tail) match
+          case (TakeS(_) | DropS(_), (l @ (TakeS(_) | DropS(_))) :: more) if collapse(s, l).isDefined =>
+            rewriteStages(collapse(s, l).get :: more)               // fuse with the immediately-following limit
+          case (_, (l @ (TakeS(_) | DropS(_))) :: more) if slidesLeftPast(l, s) =>
+            rewriteStages(l :: s :: more)                           // commute the limit left of this preserving stage
+          case _ => s :: tail
     val stages = rewriteStages(stages0)
 
     // --- multi-aggregate spec (only for TTag.Agg): one per `Agg.xxx(...)` call in the agg(...) arg list ---
@@ -266,6 +297,9 @@ object FuseMacro:
       case Extremum(f: Term, bTpe: TypeRepr, max: Boolean, bare: Boolean) // min/max f(a) → Option[B] (or B if bare)
       case Fold(z: Term, op: Term, sTpe: TypeRepr)        // seeded left fold
       case Avg(f: Term)                                   // mean of f(a): Double
+      case TopN(key: Term, aTpe: TypeRepr, bTpe: TypeRepr, n: Term, ord: Term, largest: Boolean) // top-n by key(a), best-first → FArray[A]
+      case Reduce(op: Term, aTpe: TypeRepr, bare: Boolean) // seeded reduce op(acc, a) → Option[B] (or B if bare)
+      case ExtremumByElem(f: Term, bTpe: TypeRepr, better: Term, bare: Boolean) // best ELEMENT by key f(a) → Option[A] (or A if bare)
     def parseAggList(t: Term): List[AggSpec] =
       // the arg is either `List(a1, a2, …)` (from agg/aggTo) or a bare varargs Seq (from planAgg); pull elements.
       def elems(x: Term): List[Term] = unwrap(x) match
@@ -292,7 +326,20 @@ object FuseMacro:
         case Apply(Apply(fn @ TypeApply(Select(_, "max1"), _), List(f)), _) => AggSpec.Extremum(unwrap(f), typeArgOf(fn, 1), true, true)
         case Apply(Apply(TypeApply(Select(_, "fold"), st), List(z)), List(op)) => AggSpec.Fold(unwrap(z), unwrap(op), st.last.tpe)
         case Apply(fn @ TypeApply(Select(_, "avg"), _), List(f))           => AggSpec.Avg(unwrap(f))
-        case other => report.errorAndAbort(s"fuse: unsupported agg — use Agg.sum/count/min/max/avg/fold. Got:\n${other.show(using Printer.TreeStructure)}")
+        // topNBy/bottomNBy(n)(key)(using ord): Apply(Apply(Apply(TypeApply(Select,_,name), [A,B]),[n]),[key]),[ord]
+        case Apply(Apply(Apply(fn @ TypeApply(Select(_, nm @ ("topNBy" | "bottomNBy")), _), List(n)), List(k)), List(ord)) =>
+          AggSpec.TopN(unwrap(k), typeArgOf(fn, 0), typeArgOf(fn, 1), unwrap(n), unwrap(ord), nm == "topNBy")
+        // largest/smallest(n)(using ord): key is identity. Apply(Apply(TypeApply(Select,_,name),[A]),[n]),[ord]
+        case Apply(Apply(fn @ TypeApply(Select(_, nm @ ("largest" | "smallest")), _), List(n)), List(ord)) =>
+          AggSpec.TopN(identityLambda(typeArgOf(fn, 0)), typeArgOf(fn, 0), typeArgOf(fn, 0), unwrap(n), unwrap(ord), nm == "largest")
+        // reduce/reduce1/reduceL(op): seeded reduce → Option[B] (or B). Apply(TypeApply(Select,_,name),[A,B]),[op]
+        case Apply(fn @ TypeApply(Select(_, nm @ ("reduce" | "reduce1" | "reduceL")), _), List(op)) =>
+          AggSpec.Reduce(unwrap(op), typeArgOf(fn, 1), nm == "reduce1")
+        // minBy/maxBy/minBy1/maxBy1(f)(using ord): best ELEMENT by key. Apply(Apply(TypeApply(Select,_,name),[A,B]),[f]),[ord]
+        case Apply(Apply(fn @ TypeApply(Select(_, nm @ ("minBy" | "maxBy" | "minBy1" | "maxBy1")), _), List(f)), List(ord)) =>
+          val bTpe = typeArgOf(fn, 1); val isMax = nm.startsWith("max")
+          AggSpec.ExtremumByElem(unwrap(f), bTpe, betterFromOrd(unwrap(ord), bTpe, isMax), nm.endsWith("1"))
+        case other => report.errorAndAbort(s"fuse: unsupported agg — use Agg.sum/count/min/max/avg/fold/reduce/minBy/maxBy/topNBy/bottomNBy/largest/smallest. Got:\n${other.show(using Printer.TreeStructure)}")
       elems(t).map(one)
 
     // --- unboxed primitive ops for Agg.sum / Agg.min/max (else fall back to Numeric/Ordering, which box). ---
@@ -326,19 +373,27 @@ object FuseMacro:
 
     // Is this a byte-backed JSON NDJSON source (`Json.ndjson[T](bytes).fuse…`) rather than an in-memory FArray?
     // Detected by the source term's static type; if so we lower to a per-record scanner (see loopOverJson).
+    // The RUNTIME source: read the value the `Fuse` wrapper already holds (`self.base`), NOT a re-splice of the
+    // raw source expression. The source has already been evaluated once when the `Fuse` was constructed; splicing
+    // the original (often INLINED, e.g. `FArray.fromIterable(...)`) tree a SECOND time emits a duplicate inlined
+    // block whose internal `$proxy` bindings collide with the first copy — yielding silently WRONG results (a
+    // hard-won finding: `filter.map.take` returned `[12,0]` instead of `[-12,12]` whenever the source wasn't a
+    // bare local val). `srcTerm` is still used below for COMPILE-TIME type analysis only. `Fuse.base: AnyRef`.
+    val selfBase: Expr[AnyRef] = '{ ${ self }.base }
+
     val jsonSrc: Option[Expr[NdjsonSource[?]]] =
       // match on the type SYMBOL (NdjsonSource is invariant in T, so NdjsonSource[Rec] is not <:< NdjsonSource[Any]).
       if srcTerm.tpe.widen.dealias.typeSymbol == TypeRepr.of[NdjsonSource[Any]].typeSymbol
-      then Some(srcTerm.asExprOf[NdjsonSource[?]]) else None
+      then Some('{ $selfBase.asInstanceOf[NdjsonSource[?]] }) else None
     val isJson = jsonSrc.isDefined
 
     // identity → hand back the source (only meaningful for Run).
     if stages.isEmpty && tag == TTag.Run && !isJson then
-      return '{ ${ srcTerm.asExpr }.asInstanceOf[FBase] }
+      return '{ $selfBase.asInstanceOf[FBase] }
 
     val srcK = if isJson then Kind.KRef else kindOf(srcElem)
     val outK = kindOf(aType)
-    val srcBase: Expr[FBase] = if isJson then '{ null.asInstanceOf[FBase] } else '{ ${ srcTerm.asExpr }.asInstanceOf[FBase] }
+    val srcBase: Expr[FBase] = if isJson then '{ null.asInstanceOf[FBase] } else '{ $selfBase.asInstanceOf[FBase] }
 
     val indexed: List[(Stage, Int)] = stages.zipWithIndex
     // stages needing an above-loop counter (take/drop = a clamped limit, zipWithIndex = a bare counter,
@@ -434,12 +489,14 @@ object FuseMacro:
       case List(a, b)    => mkPair(a, b)
       case List(a, b, c) => '{ scala.Tuple3(${ a.asExpr }, ${ b.asExpr }, ${ c.asExpr }) }.asTerm
       case _             => report.errorAndAbort("fuse: only tuple arities 2 and 3 are supported here")
-    /** build a Tuple of arity 2–4 from the given field terms (used by the `agg` result). */
+    /** build a Tuple of arity 2–4 from the given field terms (used by the `agg` result). A single aggregate
+     *  returns its result BARE (no Tuple1) — used by the standalone `topN`/`reduce`-style sugar. */
     def mkTupleN(ts: List[Term]): Term = ts match
+      case List(a)          => a
       case List(a, b)       => mkPair(a, b)
       case List(a, b, c)    => '{ scala.Tuple3(${ a.asExpr }, ${ b.asExpr }, ${ c.asExpr }) }.asTerm
       case List(a, b, c, d) => '{ scala.Tuple4(${ a.asExpr }, ${ b.asExpr }, ${ c.asExpr }, ${ d.asExpr }) }.asTerm
-      case _                => report.errorAndAbort(s"fuse: agg supports 2–4 aggregates (got ${ts.length})")
+      case _                => report.errorAndAbort(s"fuse: agg supports 1–4 aggregates (got ${ts.length})")
 
     /** the (label, type) of each field of a product type (case class / tuple / named tuple), else None. This is
      *  reflect's view of `Mirror.ProductOf` — `caseFields` are the product's accessors in declaration order. */
@@ -822,44 +879,23 @@ object FuseMacro:
         case None    => '{ $i < $len }
       def perElem(read: Term): Expr[Unit] =
         letBind(read)(x => buildBody(ss, x, ctx)).asExprOf[Unit]
+      // ONE indexed loop per kind via the `${kind}At` accessor — no `isInstanceOf[${K}Arr]` leaf fast-path.
+      // (The hybrid-traversal base makes `${kind}At` plenty fast on flat leaves; a separate agent owns that
+      // speed. The old fast-path also baked in a leaf-layout assumption that doesn't hold on every node.)
       elemTpe.asType match
         case '[se] => k match
           case Kind.KInt =>
-            '{ val s = $src; val len = s.length
-               if s.isInstanceOf[IntArr] then {
-                 val a = s.asInstanceOf[IntArr].arr; var i = 0
-                 while ${ cond('len, 'i) } do { ${ perElem('{ a(i) }.asTerm) }; i += 1 }
-               } else {
-                 var i = 0
-                 while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.intAt(s, i) }.asTerm) }; i += 1 }
-               } }
+            '{ val s = $src; val len = s.length; var i = 0
+               while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.intAt(s, i) }.asTerm) }; i += 1 } }
           case Kind.KLong =>
-            '{ val s = $src; val len = s.length
-               if s.isInstanceOf[LongArr] then {
-                 val a = s.asInstanceOf[LongArr].arr; var i = 0
-                 while ${ cond('len, 'i) } do { ${ perElem('{ a(i) }.asTerm) }; i += 1 }
-               } else {
-                 var i = 0
-                 while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.longAt(s, i) }.asTerm) }; i += 1 }
-               } }
+            '{ val s = $src; val len = s.length; var i = 0
+               while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.longAt(s, i) }.asTerm) }; i += 1 } }
           case Kind.KDouble =>
-            '{ val s = $src; val len = s.length
-               if s.isInstanceOf[DoubleArr] then {
-                 val a = s.asInstanceOf[DoubleArr].arr; var i = 0
-                 while ${ cond('len, 'i) } do { ${ perElem('{ a(i) }.asTerm) }; i += 1 }
-               } else {
-                 var i = 0
-                 while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.doubleAt(s, i) }.asTerm) }; i += 1 }
-               } }
+            '{ val s = $src; val len = s.length; var i = 0
+               while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.doubleAt(s, i) }.asTerm) }; i += 1 } }
           case Kind.KRef =>
-            '{ val s = $src; val len = s.length
-               if s.isInstanceOf[RefArr] then {
-                 val a = s.asInstanceOf[RefArr].arr; var i = 0
-                 while ${ cond('len, 'i) } do { ${ perElem('{ a(i).asInstanceOf[se] }.asTerm) }; i += 1 }
-               } else {
-                 var i = 0
-                 while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.refAt(s, i).asInstanceOf[se] }.asTerm) }; i += 1 }
-               } }
+            '{ val s = $src; val len = s.length; var i = 0
+               while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.refAt(s, i).asInstanceOf[se] }.asTerm) }; i += 1 } }
 
     // ===== JSON source lowering: a per-record byte scanner whose record is a Tup of byte-sourced columns =====
     // The downstream (filter/map/sink/DCE/terminal) is the UNCHANGED optimizer — it consumes the Tup via
@@ -894,8 +930,6 @@ object FuseMacro:
           case TTag.Foreach | TTag.IndexWhere => add1(args(0))                 // f / p over the element
           case TTag.Find | TTag.Exists | TTag.Forall => add1(args(0))
           case TTag.Fold                      => add2(args(1))                 // op: (acc, elem) => …
-          case TTag.ReduceOpt                 => add2(args(0))
-          case TTag.ExtremumBy                => add1(args(0))                 // f: elem => key
           case TTag.GroupReduce               => add1(args(0)); add1(args(1)) // key + value read record fields (reduce doesn't)
           case TTag.Agg => addAggSpecs(parseAggList(args(0)))
           case TTag.Plan if args.nonEmpty =>
@@ -909,6 +943,9 @@ object FuseMacro:
           case AggSpec.Avg(f)               => add1(f)
           case AggSpec.Extremum(f, _, _, _) => add1(f)
           case AggSpec.Fold(_, op, _)       => add2(op)
+          case AggSpec.TopN(k, _, _, _, _, _) => add1(k); wholeUse = true // topN RETAINS elements → whole record live
+          case AggSpec.Reduce(op, _, _)       => add2(op); wholeUse = true // reduce combines whole elements
+          case AggSpec.ExtremumByElem(f, _, _, _) => add1(f); wholeUse = true // returns the whole best element
           case AggSpec.Count                => ()
         }
       stages.foreach {
@@ -929,13 +966,13 @@ object FuseMacro:
       def add2(lam: Term): Unit = decomposeLambda2(lam).foreach((_, e, b) => if e.termRef.widen =:= elemTpe then chk(e, b))
       stages.foreach { case MapS(f) => decomposeLambda(f).foreach((p, b) => chk(p, b)); case FilterS(p, _) => decomposeLambda(p).foreach((pr, b) => chk(pr, b)); case _ => () }
       tag match
-        case TTag.Foreach | TTag.IndexWhere | TTag.Find | TTag.Exists | TTag.Forall | TTag.ExtremumBy => add1(args(0))
-        case TTag.Fold => add2(args(1)); case TTag.ReduceOpt => add2(args(0))
+        case TTag.Foreach | TTag.IndexWhere | TTag.Find | TTag.Exists | TTag.Forall => add1(args(0))
+        case TTag.Fold => add2(args(1))
         case TTag.GroupReduce => add1(args(0)); add1(args(1))
         case TTag.Agg => aggSpecs(parseAggList(args(0)))
         case TTag.Plan if args.nonEmpty => decomposeLambda2(args(0)) match { case Some(_) => add2(args(0)); case None => aggSpecs(parseAggList(args(0))) }
         case _ => ()
-      def aggSpecs(specs: List[AggSpec]): Unit = specs.foreach { case AggSpec.Sum(f,_)=>add1(f); case AggSpec.Avg(f)=>add1(f); case AggSpec.Extremum(f,_,_,_)=>add1(f); case AggSpec.Fold(_,op,_)=>add2(op); case AggSpec.Count=>() }
+      def aggSpecs(specs: List[AggSpec]): Unit = specs.foreach { case AggSpec.Sum(f,_)=>add1(f); case AggSpec.Avg(f)=>add1(f); case AggSpec.Extremum(f,_,_,_)=>add1(f); case AggSpec.Fold(_,op,_)=>add2(op); case AggSpec.TopN(k,_,_,_,_,_)=>add1(k); whole=true; case AggSpec.Reduce(op,_,_)=>add2(op); whole=true; case AggSpec.ExtremumByElem(f,_,_,_)=>add1(f); whole=true; case AggSpec.Count=>() }
       whole
 
     // the scanner kind for a field type — what the slot holds and how the column reads it.
@@ -1290,28 +1327,6 @@ object FuseMacro:
              ${ loopS(v => '{ if ${ applyLambda(p, v).asExprOf[Boolean] } then { idx = c; ${ d.set } }; c = c + 1 }.asTerm)(
                       sh => fnOnShape(p, sh)(b => '{ if ${ b.asExprOf[Boolean] } then { idx = c; ${ d.set } }; c = c + 1 }.asTerm)) }
              idx }.asTerm
-        case TTag.ReduceOpt =>
-          // one seeded accumulator (no per-element Option); a single Some(acc) at the end. acc's type = op's
-          // result (op: (B, A) => B). The `seeded` flag means the null/0 initializer is never observed.
-          val op = args(0)
-          val bTpe = op.tpe.widen.dealias match { case AppliedType(_, targs) => targs.last; case _ => srcElem }
-          bTpe.asType match
-            case '[bb] =>
-              '{ var seeded = false; var acc: bb = null.asInstanceOf[bb]
-                 ${ loop(v => '{ if !seeded then { acc = ${ v.asExprOf[bb] }; seeded = true }
-                                 else acc = ${ applyN(op, List('{ acc }.asTerm, v)).asExprOf[bb] } }.asTerm) }
-                 if seeded then Some(acc) else None }.asTerm
-        case TTag.ExtremumBy =>
-          // best element + its key in two vars (no tuple); `f` once per element; `better(newKey, bestKey)` wins.
-          val f = args(0); val better = args(1)
-          val bTpe = f.tpe.widen.dealias match { case AppliedType(_, targs) => targs.last; case _ => srcElem }
-          bTpe.asType match
-            case '[bb] =>
-              '{ var seeded = false; var best: Any = null; var bestK: bb = null.asInstanceOf[bb]
-                 ${ loop(v => '{ val k: bb = ${ applyLambda(f, v).asExprOf[bb] }
-                                 if !seeded || ${ applyN(better, List('{ k }.asTerm, '{ bestK }.asTerm)).asExprOf[Boolean] } then
-                                   { best = ${ v.asExpr }; bestK = k; seeded = true } }.asTerm) }
-                 if seeded then Some(best) else None }.asTerm
         case TTag.Agg =>
           // one accumulator (or two) per aggregate, all carried in ONE loop. Each aggregate's element lambda is
           // decomposed against the SHARED element shape (via opOnShape/fnOnShape), so the aggregates' read
@@ -1358,6 +1373,67 @@ object FuseMacro:
                   '{ var acc: ss = ${ z.asExprOf[ss] }
                      ${ k(AState((sh, next) => opOnShape(op, '{ acc }.asTerm, sh)(r => '{ acc = ${ r.asExprOf[ss] }; ${ next().asExprOf[Unit] } }.asTerm),
                           '{ acc }.asTerm)).asExpr } }.asTerm
+            case AggSpec.TopN(keyf, aTpe, bTpe, nT, ordT, largest) =>
+              // bounded size-n heap, best-first. The heap evicts the WORST first. For a PRIMITIVE key (the common
+              // `topNBy(_.numericField)`) we use an UNBOXED sibling heap (Int/Long/Double key array + direct </>
+              // comparison via a `largest` flag) — NO per-element key boxing. A reference key falls back to the
+              // generic Comparator heap (worst==minimum: the given ordering for `largest`, reversed for smallest).
+              // `mkState` is reused per heap kind: heap built above the loop, `offer(elem, key)` per element, drain
+              // to a best-first FArray at the end. The element is boxed only on ADMISSION (it's retained); a
+              // primitive key stays unboxed through the comparison.
+              val n = nT.asExprOf[Int]; val lg = Expr(largest)
+              aTpe.asType match
+                case '[aa] =>
+                  def mkState[H](mkHeap: Expr[H], offer: (Expr[H], Term, Term) => Expr[Unit],
+                                 drain: Expr[H] => Expr[Array[Object]])(using Type[H]): Term =
+                    '{ val heap: H = $mkHeap
+                       ${ k(AState(
+                            (sh, next) => readShape(sh)(elem => fnOnShape(keyf, sh)(key =>
+                              '{ ${ offer('{ heap }, elem, key) }; ${ next().asExprOf[Unit] } }.asTerm)),
+                            '{ FArray.fromBoxedArray[aa](${ drain('{ heap }) }) }.asTerm)).asExpr } }.asTerm
+                  if bTpe =:= TypeRepr.of[Int] then
+                    mkState[IntTopNHeap]('{ new IntTopNHeap($n, $lg) },
+                      (h, e, key) => '{ $h.offer(${ e.asExpr }.asInstanceOf[Object], ${ key.asExprOf[Int] }) }, h => '{ $h.toSortedArray })
+                  else if bTpe =:= TypeRepr.of[Long] then
+                    mkState[LongTopNHeap]('{ new LongTopNHeap($n, $lg) },
+                      (h, e, key) => '{ $h.offer(${ e.asExpr }.asInstanceOf[Object], ${ key.asExprOf[Long] }) }, h => '{ $h.toSortedArray })
+                  else if bTpe =:= TypeRepr.of[Double] then
+                    mkState[DoubleTopNHeap]('{ new DoubleTopNHeap($n, $lg) },
+                      (h, e, key) => '{ $h.offer(${ e.asExpr }.asInstanceOf[Object], ${ key.asExprOf[Double] }) }, h => '{ $h.toSortedArray })
+                  else bTpe.asType match
+                    case '[bb] =>
+                      val ord = ordT.asExprOf[Ordering[bb]]
+                      val cmp = if largest then '{ $ord } else '{ $ord.reverse }
+                      mkState[TopNHeap]('{ new TopNHeap($n, $cmp.asInstanceOf[java.util.Comparator[Any]]) },
+                        (h, e, key) => '{ $h.offer(${ e.asExpr }.asInstanceOf[Object], ${ key.asExpr }.asInstanceOf[Object]) }, h => '{ $h.toSortedArray })
+            case AggSpec.Reduce(op, bTpe, bare) =>
+              // seeded reduce op(acc, a): the first element seeds acc (no zero); thereafter acc = op(acc, a). acc is
+              // typed B (the op's result type; B >: A so the element seeds it). reduce combines whole elements, so we
+              // read the element shape whole (wholeUse already set for JSON). `bare` (reduce1) returns B, else Option[B].
+              bTpe.asType match
+                case '[bb] =>
+                  '{ var seeded = false; var acc: bb = null.asInstanceOf[bb]
+                     ${ k(AState(
+                          (sh, next) => readShape(sh)(elem =>
+                            '{ if !seeded then { acc = ${ elem.asExprOf[bb] }; seeded = true }
+                               else acc = ${ applyN(op, List('{ acc }.asTerm, elem)).asExprOf[bb] }
+                               ${ next().asExprOf[Unit] } }.asTerm),
+                          (if bare then '{ if seeded then acc else throw new java.util.NoSuchElementException("reduce1 of empty fused pipeline") }
+                           else '{ if seeded then Some(acc) else None }).asTerm)).asExpr } }.asTerm
+            case AggSpec.ExtremumByElem(f, bTpe, better, bare) =>
+              // best ELEMENT by key f(a): `f` once per element (shape-aware → reads only its fields), best element +
+              // its key in two vars; `better(newKey, bestKey)` decides. Returns the element (Option[A] or bare A).
+              bTpe.asType match
+                case '[bb] =>
+                  '{ var seeded = false; var best: Any = null; var bestK: bb = null.asInstanceOf[bb]
+                     ${ k(AState(
+                          (sh, next) => readShape(sh)(elem => fnOnShape(f, sh)(fv =>
+                            '{ val kk: bb = ${ fv.asExprOf[bb] }
+                               if !seeded || ${ applyN(better, List('{ kk }.asTerm, '{ bestK }.asTerm)).asExprOf[Boolean] } then
+                                 { best = ${ elem.asExpr }; bestK = kk; seeded = true }
+                               ${ next().asExprOf[Unit] } }.asTerm)),
+                          (if bare then '{ if seeded then best else throw new java.util.NoSuchElementException("minBy1/maxBy1 of empty fused pipeline") }
+                           else '{ if seeded then Some(best) else None }).asTerm)).asExpr } }.asTerm
           // declare all states (nested vars), then run all steps per element in ONE shared scope, then tuple up.
           def withStates(rem: List[AggSpec], acc: List[AState])(k: List[AState] => Term): Term = rem match
             case Nil          => k(acc.reverse)
@@ -1453,38 +1529,38 @@ object FuseMacro:
           if needsGrow then
             '{ var out = new Array[Int](java.lang.Math.max(8, $n0)); var o = 0
                ${ loop(v => '{ if o >= out.length then out = FArrayOps.ensureCapInt(out, o + 1); out(o) = ${ v.asExprOf[Int] }; o += 1 }.asTerm) }
-               if o == 0 then (IntArr.EMPTY: FBase) else if o == out.length then new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o) }.asTerm
+               if o == 0 then (Empty.INSTANCE: FBase) else if o == 1 then new IntOne(out(0)) else if o == out.length then new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o) }.asTerm
           else
             '{ val cap = ${ capExpr(n0, counters) }; val out = new Array[Int](cap); var o = 0
                ${ loop(v => '{ out(o) = ${ v.asExprOf[Int] }; o += 1 }.asTerm) }
-               if o == 0 then (IntArr.EMPTY: FBase) else if o == cap then new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o) }.asTerm
+               if o == 0 then (Empty.INSTANCE: FBase) else if o == 1 then new IntOne(out(0)) else if o == cap then new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o) }.asTerm
         case Kind.KLong =>
           if needsGrow then
             '{ var out = new Array[Long](java.lang.Math.max(8, $n0)); var o = 0
                ${ loop(v => '{ if o >= out.length then out = FArrayOps.ensureCapLong(out, o + 1); out(o) = ${ v.asExprOf[Long] }; o += 1 }.asTerm) }
-               if o == 0 then (LongArr.EMPTY: FBase) else if o == out.length then new LongArr(out, o) else new LongArr(java.util.Arrays.copyOf(out, o), o) }.asTerm
+               if o == 0 then (Empty.INSTANCE: FBase) else if o == 1 then new LongOne(out(0)) else if o == out.length then new LongArr(out, o) else new LongArr(java.util.Arrays.copyOf(out, o), o) }.asTerm
           else
             '{ val cap = ${ capExpr(n0, counters) }; val out = new Array[Long](cap); var o = 0
                ${ loop(v => '{ out(o) = ${ v.asExprOf[Long] }; o += 1 }.asTerm) }
-               if o == 0 then (LongArr.EMPTY: FBase) else if o == cap then new LongArr(out, o) else new LongArr(java.util.Arrays.copyOf(out, o), o) }.asTerm
+               if o == 0 then (Empty.INSTANCE: FBase) else if o == 1 then new LongOne(out(0)) else if o == cap then new LongArr(out, o) else new LongArr(java.util.Arrays.copyOf(out, o), o) }.asTerm
         case Kind.KDouble =>
           if needsGrow then
             '{ var out = new Array[Double](java.lang.Math.max(8, $n0)); var o = 0
                ${ loop(v => '{ if o >= out.length then out = FArrayOps.ensureCapDouble(out, o + 1); out(o) = ${ v.asExprOf[Double] }; o += 1 }.asTerm) }
-               if o == 0 then (DoubleArr.EMPTY: FBase) else if o == out.length then new DoubleArr(out, o) else new DoubleArr(java.util.Arrays.copyOf(out, o), o) }.asTerm
+               if o == 0 then (Empty.INSTANCE: FBase) else if o == 1 then new DoubleOne(out(0)) else if o == out.length then new DoubleArr(out, o) else new DoubleArr(java.util.Arrays.copyOf(out, o), o) }.asTerm
           else
             '{ val cap = ${ capExpr(n0, counters) }; val out = new Array[Double](cap); var o = 0
                ${ loop(v => '{ out(o) = ${ v.asExprOf[Double] }; o += 1 }.asTerm) }
-               if o == 0 then (DoubleArr.EMPTY: FBase) else if o == cap then new DoubleArr(out, o) else new DoubleArr(java.util.Arrays.copyOf(out, o), o) }.asTerm
+               if o == 0 then (Empty.INSTANCE: FBase) else if o == 1 then new DoubleOne(out(0)) else if o == cap then new DoubleArr(out, o) else new DoubleArr(java.util.Arrays.copyOf(out, o), o) }.asTerm
         case Kind.KRef =>
           if needsGrow then
             '{ var out = new Array[Object](java.lang.Math.max(8, $n0)); var o = 0
                ${ loop(v => '{ if o >= out.length then out = FArrayOps.ensureCapRef(out, o + 1); out(o) = ${ v.asExpr }.asInstanceOf[Object]; o += 1 }.asTerm) }
-               if o == 0 then (RefArr.EMPTY: FBase) else if o == out.length then new RefArr(out, o) else new RefArr(java.util.Arrays.copyOf(out, o), o) }.asTerm
+               if o == 0 then (Empty.INSTANCE: FBase) else if o == 1 then new RefOne(out(0)) else if o == out.length then new RefArr(out, o) else new RefArr(java.util.Arrays.copyOf(out, o), o) }.asTerm
           else
             '{ val cap = ${ capExpr(n0, counters) }; val out = new Array[Object](cap); var o = 0
                ${ loop(v => '{ out(o) = ${ v.asExpr }.asInstanceOf[Object]; o += 1 }.asTerm) }
-               if o == 0 then (RefArr.EMPTY: FBase) else if o == cap then new RefArr(out, o) else new RefArr(java.util.Arrays.copyOf(out, o), o) }.asTerm
+               if o == 0 then (Empty.INSTANCE: FBase) else if o == 1 then new RefOne(out(0)) else if o == cap then new RefArr(out, o) else new RefArr(java.util.Arrays.copyOf(out, o), o) }.asTerm
 
     // --- final assembly: bind source + length once, then state vars, then the loop nest ---
     // For a JSON source there's no FBase and no static length; n0 is just an initial output-capacity hint

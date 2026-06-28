@@ -1580,6 +1580,12 @@ object GenCores extends BleepCodegenScript("GenCores") {
       s"{ val n = as.length; if (n == 0) Empty.INSTANCE else if (n == 1) new ${k.name}One(${wr(k, "r.unwrap(as.head)")}) else { val out = ${alloc(k, "r")}; val it = as.iterator; var i = 0; while (it.hasNext) { out(i) = ${wr(k, "r.unwrap(it.next())")}; i += 1 }; new ${k.name}Arr(out, n) } }"
     )
     val fromArr = dispatchA(k => s"${leaf(k, "as.asInstanceOf[Array[" + k.arr + "]]", "as.length")}")
+    // wrap a boxed Array[Object] (from the topN heap) — Ref reuses it in place; prims unbox into a flat leaf.
+    // Canonicalizes size 0/1 via `leaf` like fromArr.
+    val fromBoxedArr = dispatchA(k =>
+      if k.name == "Ref" then s"${leaf(k, "as", "as.length")}"
+      else s"{ val n = as.length; val out = new Array[${k.arr}](n); var i = 0; while (i < n) { out(i) = ${k.unbox("as(i)")}; i += 1 }; ${leaf(k, "out", "n")} }"
+    )
     // small-arity construction without varargs/Seq/boxing (FArray(a, b) etc.) — the hot path inside flatMap
     def allocN(k: Kind, n: Int): String = if k.name == "Ref" then s"new Array[Object]($n)" else s"new Array[${k.arr}]($n)"
     val fromValues1 = dispatchA(k => s"new ${k.name}One(${wr(k, "r.unwrap(a)")})")
@@ -2048,6 +2054,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def fromValues32[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A, p18: A, p19: A, p20: A, p21: A, p22: A, p23: A, p24: A, p25: A, p26: A, p27: A, p28: A, p29: A, p30: A, p31: A, p32: A): FBase = $fromValues32
        |  inline def tabulateImpl[A](n: Int)(inline f: Int => A): FBase = $tabulate
        |  inline def fromArrayImpl[A](as: Array[A]): FBase = $fromArr
+       |  inline def fromBoxedArrayImpl[A](as: Array[Object]): FBase = $fromBoxedArr
        |  inline def mkStringImpl[A](xs: FBase, start: String, sep: String, end: String): String = if (xs.length == 0) start + end else if (xs.length == 1) start + String.valueOf(applyAtImpl[A](xs, 0)) + end else $mkStringV
        |  inline def toArrayImpl[A, B](xs: FBase)(ct: scala.reflect.ClassTag[B]): Array[B] = if (xs.length == 0) ct.newArray(0) else if (xs.length == 1) { val out = ct.newArray(1); out(0) = applyAtImpl[A](xs, 0).asInstanceOf[B]; out } else $toArrayV
        |  inline def copyToArrayImpl[A, B](xs: FBase, dest: Array[B], start: Int, len: Int): Int = $copyToArrayV

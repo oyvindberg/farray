@@ -531,6 +531,10 @@ object FArray:
   inline def fromArray[A](as: Array[A]): FArray[A] = FArrayOps.fromArrayImpl[A](as)
   inline def fromIterable[A](it: Iterable[A]): FArray[A] = FArrayOps.applyImpl[A](it.toSeq)
 
+  /** wrap a boxed `Array[Object]` (e.g. from the fused topN heap) into an FArray, UNBOXING per element kind so a
+   *  primitive element type lands in a flat primitive leaf rather than a boxed `RefArr`. Internal — used by the macro. */
+  inline def fromBoxedArray[A](as: Array[Object]): FArray[A] = FArrayOps.fromBoxedArrayImpl[A](as)
+
   def range(start: Int, end: Int, step: Int = 1): FArray[Int] =
     require(step != 0, "step cannot be 0")
     val count =

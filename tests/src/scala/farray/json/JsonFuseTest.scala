@@ -169,6 +169,26 @@ class JsonFuseTest:
     val byAge = Json.ndjson[Rec](buf).fuse.groupCount(_.age)
     assertEquals(jsoniterRecs.groupBy(_.age).view.mapValues(_.size).toMap, byAge)
 
+  /** topN over the JSON source: the n records with the largest amount. topN RETAINS whole records, so the
+   *  scanner must materialize them (wholeUse); the key field (amount) must also be live. Cross-checked vs
+   *  jsoniter's sortBy(-amount).take(n). */
+  @Test def fused_topN_overJson(): Unit =
+    val got = Json.ndjson[Rec](buf).fuse.topNBy(5)(_.amount).toList.map(_.amount)
+    val ref = jsoniterRecs.sortBy(-_.amount).take(5).map(_.amount).toList
+    assertEquals(ref, got)
+    // bottomNBy + an upstream filter
+    val gotB = Json.ndjson[Rec](buf).fuse.filter(_.age > 50).bottomNBy(3)(_.amount).toList.map(_.amount)
+    val refB = jsoniterRecs.filter(_.age > 50).sortBy(_.amount).take(3).map(_.amount).toList
+    assertEquals(refB, gotB)
+
+  /** minBy/maxBy/reduce over the JSON source: minBy reads only the KEY field (amount) but returns the whole
+   *  record (materialized). Cross-checked vs jsoniter. */
+  @Test def fused_minBy_maxBy_overJson(): Unit =
+    val lo = Json.ndjson[Rec](buf).fuse.minByOption(_.amount).map(_.amount)
+    assertEquals(jsoniterRecs.minByOption(_.amount).map(_.amount), lo)
+    val hi = Json.ndjson[Rec](buf).fuse.filter(_.age > 50).maxByOption(_.amount).map(_.amount)
+    assertEquals(jsoniterRecs.filter(_.age > 50).maxByOption(_.amount).map(_.amount), hi)
+
 end JsonFuseTest
 
 object JsonFuseTest:
