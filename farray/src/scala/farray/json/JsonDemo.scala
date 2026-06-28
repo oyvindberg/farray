@@ -168,11 +168,11 @@ object JsonDemo:
             ("fuse (rejected records stop at `key`)", "1212 ops/s", "0.17 B/op"),
             ("jsoniter — narrow codec {key, payload}", "491 ops/s", "1 432 000 B/op"))))),
       Example(
-        "Multi-aggregate — three SQL aggregates, ONE pass, into a case class",
-        """`SELECT sum(amount), count(*), max(score) WHERE status = 'active'` — `agg` runs all three in a single
-          |fused scan, carrying one (UNBOXED) accumulator each. The columns the aggregates read are MERGED
-          |automatically: `amount`, `status`, and `score` are scanned (3 of 20 fields), each once; `count` reads
-          |nothing extra. `aggTo(Stats.apply)` returns a case class, not a tuple. No `Event` is built; the
+        "Multi-aggregate — three aggregates, ONE pass, into a case class",
+        """Sum the amount, count the rows, and take the peak score of the active events — `agg` runs all three
+          |in a single fused scan, carrying one (UNBOXED) accumulator each. The columns the aggregates read are
+          |MERGED automatically: `amount`, `status`, and `score` are scanned (3 of 20 fields), each once; `count`
+          |reads nothing extra. `aggTo(Stats.apply)` returns a case class, not a tuple. No `Event` is built; the
           |`sum`/`max` use `dadd`/`dcmp`, not the boxing `Numeric`/`Ordering`.""".stripMargin,
         "Json.ndjson[Event](src).fuse.filter(_.status == \"active\")\n  .aggTo(Stats.apply)(Agg.sum(_.amount), Agg.count, Agg.max1(_.score))",
         clean(j_agg))
