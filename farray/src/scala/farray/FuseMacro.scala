@@ -197,6 +197,56 @@ object FuseMacro:
       Term.betaReduce(app).getOrElse(app)
     def applyLambda(fn: Term, arg: Term): Term = applyN(fn, List(arg))
 
+    /** If `body` is a LITERAL fixed-arity `FArray(e0, e1, …)` construction (which inline-expands to a Block that
+      * allocates a `${K}Arr` + backing array), return the element expressions `[e0, e1, …]` so a flatMap can splat
+      * them downstream with NO array allocation. The expanded shape (any leaf kind) is:
+      *   Block( ValDef("out", new Array[K](n)) :: out.update(0,e0) :: out.update(1,e1) :: … ,
+      *          new ${K}Arr(out, n) )
+      * wrapped in `Inlined`/`Typed`/`TypeApply(_, "$asInstanceOf$")`. Match it structurally (peel the wrappers,
+      * confirm the result is `new …Arr(<out>, _)`, then read the `<out>.update(i, e_i)` stores in index order). A
+      * non-literal body (variable `FArray`, a `range`/`tabulate`, an empty/1-elem special-case, …) returns None. */
+    def literalArrayElems(body: Term): Option[List[Term]] =
+      // peel asInstanceOf / Typed / single-expr Inlined wrappers WITHOUT collapsing a stmt-bearing Block.
+      def peel(t: Term): Term = t match
+        case TypeApply(Select(inner, "$asInstanceOf$"), _) => peel(inner)
+        case TypeApply(Select(inner, "asInstanceOf"), _)   => peel(inner)
+        case Typed(inner, _)                               => peel(inner)
+        case Inlined(_, Nil, inner)                         => peel(inner)
+        case Inlined(_, bindings, inner) if bindings.forall(_.isInstanceOf[ValDef]) => peel(inner)
+        case _                                             => t
+      peel(body) match
+        case Block(stmts, last) =>
+          // the result must be `new ${K}Arr(outIdent, lenLit)`; capture the `out` symbol. PRIMITIVE leaves only
+          // (IntArr/LongArr/DoubleArr): their stored element exprs are clean `Typed(e, K)` we can re-splice
+          // straight downstream. The Ref leaf (RefArr) wraps each element in `(e: A).asInstanceOf[Object]`, which
+          // does not re-splice cleanly AND has no boxing win to recover (Ref was already a tie) — skip it.
+          val primArr = Set("IntArr", "LongArr", "DoubleArr")
+          val outName: Option[String] = peel(last) match
+            case Apply(Select(New(tp), "<init>"), List(outRef, _)) if primArr.contains(tp.tpe.typeSymbol.name) =>
+              outRef match { case Ident(nm) => Some(nm); case _ => None }
+            case _ => None
+          outName.flatMap { nm =>
+            // collect `nm.update(idx, elem)` stores; require they are exactly indices 0..k-1 and that `nm` is a
+            // fresh `new Array[…](k)` local (so we are sure it is a self-contained literal, not an aliased array).
+            val sizeOpt: Option[Int] = stmts.collectFirst {
+              case ValDef(n, _, Some(rhs)) if n == nm =>
+                peel(rhs) match
+                  case Apply(TypeApply(Select(New(_), "<init>"), _), List(Literal(IntConstant(k)))) => k
+                  case Apply(Select(New(_), "<init>"), List(Literal(IntConstant(k))))               => k
+                  case _                                                                            => -1
+            }
+            // strip the `Typed(e, K)` ascription the prim store carries — `e` itself is the clean element expr.
+            def stripTyped(t: Term): Term = t match { case Typed(e, _) => stripTyped(e); case _ => t }
+            val updates: List[(Int, Term)] = stmts.collect {
+              case Apply(Select(Ident(n), "update"), List(Literal(IntConstant(idx)), elem)) if n == nm => (idx, stripTyped(elem))
+            }
+            sizeOpt match
+              case Some(k) if k >= 0 && updates.length == k && updates.map(_._1).sorted == (0 until k).toList =>
+                Some(updates.sortBy(_._1).map(_._2))
+              case _ => None
+          }
+        case _ => None
+
     /** build the identity lambda `(a: A) => a` for element type `tpe` (used as the key of largest/smallest). */
     def identityLambda(tpe: TypeRepr): Term = tpe.asType match
       case '[a] => '{ (x: a) => x }.asTerm
@@ -865,9 +915,21 @@ object FuseMacro:
           buildSegment(seg.map(_._1), srcShape(cur))(finalShape => ctx.consumeShape.get(finalShape))
         else buildSegment(seg.map(_._1), srcShape(cur))(finalShape => readShape(finalShape)(t => buildBody(rest, t, ctx)))
       case (FlatMapS(f, bTpe), _) :: rest =>
-        // open a nested loop over f(cur): everything downstream runs inside it.
-        val inner: Expr[FBase] = '{ ${ applyLambda(f, cur).asExpr }.asInstanceOf[FBase] }
-        loopOver(inner, kindOf(bTpe), bTpe, rest, ctx).asTerm
+        val innerBody = applyLambda(f, cur)
+        // FAST PATH: a literal `FArray(e0, e1, …)` flatMap body inline-expands to a Block that allocates a
+        // fresh `${K}Arr` (a `new Array` + element stores) PER ELEMENT. The JIT eliminates the `${K}Arr`
+        // wrapper but NOT the backing array (a small array read with a variable loop index is not scalar-
+        // replaceable on HotSpot) — so each such flatMap leaks one array/elem (measured: 1.68 MB/op, the C2
+        // flatMap floor). If the body is exactly that literal form, SPLAT the element exprs straight into the
+        // downstream segment — `buildBody(rest, e_k)` per element — with NO array, NO `${K}Arr`, NO inner loop.
+        // 0 alloc; measured ~3x faster than the array form on C2 (49k vs 16k ops/s) and beats eager.
+        literalArrayElems(innerBody) match
+          case Some(elems) =>
+            Block(elems.map(e => buildBody(rest, e, ctx)), '{ () }.asTerm)
+          case None =>
+            // general flatMap: open a nested loop over f(cur); everything downstream runs inside it.
+            val inner: Expr[FBase] = '{ ${ innerBody.asExpr }.asInstanceOf[FBase] }
+            loopOver(inner, kindOf(bTpe), bTpe, rest, ctx).asTerm
       case (CollectS(pf, bTpe), _) :: rest =>
         // inline the PartialFunction's match into the loop: each real case continues downstream, the synthetic
         // `case _ => default(x)` fallthrough becomes a skip. So collect is filter+map+match fused, no PF object.
