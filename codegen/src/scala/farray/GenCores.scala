@@ -575,10 +575,30 @@ object GenCores extends BleepCodegenScript("GenCores") {
         s"def onRunB(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val e = start - count; while (i > e) { ${body(rd)}; i -= 1 } }"
       s"$fwd; $bwd"
     }
+    // Friendly compile error for the no-Repr case (e.g. `FArray[Int | String]`, `FArray[Any]`,
+    // `FArray[Boolean]`): instead of the cryptic "cannot reduce summonFrom", explain the cause and the
+    // fix. `tp` names the offending type param ("A"/"B"). The element type itself can't be spliced into a
+    // `compiletime.error` literal (it needs a macro), so we name the type param and give the recipe.
+    def noReprErr(tp: String): String =
+      "scala.compiletime.error(\"FArray: no element-kind specialization for type parameter " + tp +
+        ". This op needs " + tp + " to be a known kind (Int/Long/Double or a reference type <: AnyRef). A union" +
+        " like `Int | String`, `Any`, `AnyVal`, or a non-specialized primitive (e.g. Boolean) has no" +
+        " unboxed representation. Fixes: (1) keep the element type homogeneous; (2) box the primitive" +
+        " side to a reference first, e.g. `ints.map(java.lang.Integer.valueOf) ++ strings : FArray[Integer" +
+        " | String]` (a reference union IS specializable); or (3) read via the boxed view `xs.toIndexedSeq`" +
+        " / `xs.iterator` if you must keep the primitive union.\")"
+    // Append a friendly-error catch-all to an already-built OUTER `summonFrom { … }` string. The outer
+    // dispatch keys on the element type param `tp` (A / A1 / …); if no `${K}Repr[tp]` matches (a primitive
+    // union / Any / Boolean), this `case _` fires `noReprErr` with the recipe instead of "cannot reduce
+    // summonFrom". Only the OUTER dispatch needs it — inner B/C dispatches only run after the outer matched.
+    def withErr(summonStr: String, tp: String): String =
+      val close = summonStr.lastIndexOf("\n    }")
+      if close < 0 then summonStr // defensive: shape changed, leave as-is
+      else summonStr.substring(0, close) + s"\n      case _ => ${noReprErr(tp)}" + summonStr.substring(close)
     def dispatchA(body: Kind => String): String =
-      "summonFrom {\n" + opKinds.map(k => s"      case r: ${k.name}Repr[A] => ${body(k)}").mkString("\n") + "\n    }"
+      "summonFrom {\n" + opKinds.map(k => s"      case r: ${k.name}Repr[A] => ${body(k)}").mkString("\n") + s"\n      case _ => ${noReprErr("A")}\n    }"
     def dispatchB(body: Kind => String): String =
-      "summonFrom {\n" + opKinds.map(k => s"      case r: ${k.name}Repr[B] => ${body(k)}").mkString("\n") + "\n    }"
+      "summonFrom {\n" + opKinds.map(k => s"      case r: ${k.name}Repr[B] => ${body(k)}").mkString("\n") + s"\n      case _ => ${noReprErr("B")}\n    }"
 
     // wrap an arbitrary RAW kind-array-typed expression `e` back to A (mirrors readOne, which hardcodes `v`).
     // `rawArray` ops (sum/product) read the prim directly; Ref always casts the Object element to A then wraps.
@@ -821,6 +841,31 @@ object GenCores extends BleepCodegenScript("GenCores") {
         } else {
           ee.line("var i = n - 1")
           ee.open("while (i >= 0)")
+          ee.line("acc = f.apply(acc, a(i))")
+          ee.line("i -= 1")
+          ee.close()
+        }
+        ee.line("acc")
+        // SLICE FAST-PATH: a top-level SliceNode over a matching leaf (the take/drop/tail/slice result shape)
+        // runs a STANDALONE constant-stride loop over [offset, offset+length), exactly like the bare-leaf arm,
+        // NOT nested inside the Traversers walk (the `cur != null` + long instanceof chain). `take(n).drop(1)`
+        // collapses to one such SliceNode, so a fold over a sliced array stays a flat lifted loop. Slices whose
+        // base is NOT this leaf kind (nested trees) still route through the tree call below.
+        ee.closeOpen(s"case s: SliceNode if s.base.isInstanceOf[${k.name}Arr] =>")
+        ee.line(s"val a = s.base.asInstanceOf[${k.name}Arr].arr")
+        ee.line("val so = s.offset")
+        ee.line("val sn = s.length")
+        ee.line(s"var acc: $accT = z")
+        if !backward then {
+          ee.line("var i = so")
+          ee.line("val e = so + sn")
+          ee.open("while (i < e)")
+          ee.line("acc = f.apply(acc, a(i))")
+          ee.line("i += 1")
+          ee.close()
+        } else {
+          ee.line("var i = so + sn - 1")
+          ee.open("while (i >= so)")
           ee.line("acc = f.apply(acc, a(i))")
           ee.line("i -= 1")
           ee.close()
@@ -1152,6 +1197,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.lines(foldSurface(k, backward = false))
         ee.close()
       }
+      ee.line(s"case _ => ${noReprErr("A")}")
       ee.close()
       ee.result
     }
@@ -1259,7 +1305,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
         s"scan${side}Leaf${K}Ref[B & AnyRef](xs, z.asInstanceOf[B & AnyRef], (acc, v) => ${scanComb(ka, backward, "acc.asInstanceOf[B]", wrapV(ka))}.asInstanceOf[B & AnyRef])"
     }
     def scanSurface(backward: Boolean): String =
-      "summonFrom {\n" + opKinds
+      withErr("summonFrom {\n" + opKinds
         .map { ka =>
           val inner = "summonFrom {\n" + opKinds
             .map { kb =>
@@ -1269,7 +1315,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
             .mkString("\n") + "\n        }"
           s"      case r: ${ka.name}Repr[A] => $inner"
         }
-        .mkString("\n") + "\n    }"
+        .mkString("\n") + "\n    }", "A")
     val scanLeftV = scanSurface(backward = false)
     val scanRightV = scanSurface(backward = true)
     val iteratorV = dispatchA(k =>
@@ -1289,6 +1335,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.lines(foldSurface(k, backward = true))
         ee.close()
       }
+      ee.line(s"case _ => ${noReprErr("A")}")
       ee.close()
       ee.result
     }
@@ -1327,12 +1374,12 @@ object GenCores extends BleepCodegenScript("GenCores") {
         if kb.name == "Ref" then "out(i) = f(applyAtImpl[A](xs, i)).asInstanceOf[Object]" else s"out(i) = ${wr(kb, "rb.unwrap(f(applyAtImpl[A](xs, i)))")}"
       s"{ val out = $alloc; var i = 0; while (i < n) { $write; i += 1 }; ${leaf(kb, "out", "n")} }"
     }
-    val mapM = "summonFrom {\n" + opKinds
+    val mapM = withErr("summonFrom {\n" + opKinds
       .map { ka =>
         val inner = dispatchBmap(kb => if buildCovered((ka.name, kb.name)) then mapLeafCall(ka, kb, "B", "rb") else mapGeneric(kb))
         s"      case r: ${ka.name}Repr[A] => $inner"
       }
-      .mkString("\n") + "\n    }"
+      .mkString("\n") + "\n    }", "A")
     // HYBRID Build-filtered surface (design §2.1/§5): filter/filterNot route through the shared leaf method
     // filterLeaf${I} (Empty/One/leaf peeled inline with the predicate-guarded append; genuine TREES ->
     // Traversers.buildFiltered${I}, which keeps the SAME elements in source order — visit flips at each
@@ -1353,7 +1400,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // not viable here: a primitive B forces applyOrElse's B result to UNBOX the AnyRef sentinel -> CCE). Each kept B
     // unwraps into a growable, unboxed ${O}Group buffer (dispatch on O), so the OUTPUT stays unboxed even though the
     // per-element A/B handoff boxes. buf.toLeaf canonicalises (Empty/One/Arr).
-    val collect = "summonFrom {\n" + opKinds
+    val collect = withErr("summonFrom {\n" + opKinds
       .map { ka =>
         val inner = "summonFrom {\n" + opKinds
           .map { kb =>
@@ -1363,14 +1410,14 @@ object GenCores extends BleepCodegenScript("GenCores") {
           .mkString("\n") + "\n        }"
         s"      case r: ${ka.name}Repr[A] => $inner"
       }
-      .mkString("\n") + "\n    }"
+      .mkString("\n") + "\n    }", "A")
     // partitionMap: ONE pass, TWO outputs of (possibly) DIFFERENT kinds — Lefts of B's kind to _1, Rights of C's
     // kind to _2. Like collect this is a BOXED-but-SHARED path (NOTED): f returns Either[A1, A2] (an allocated
     // Either, the values boxed), so the per-element handoff boxes regardless of the output kinds; we keep the
     // OUTPUTS unboxed via two growable ${B}Group / ${C}Group buffers and reuse the EXISTING shared foreachLeaf${I}
     // traverser (no surface inline leaf loop). Each f(a) is matched Left/Right ONCE; the value unwraps into its
     // buffer. Both buffers canonicalise via toLeaf.
-    val partitionMap = "summonFrom {\n" + opKinds
+    val partitionMap = withErr("summonFrom {\n" + opKinds
       .map { ka =>
         val m2 = "summonFrom {\n" + opKinds
           .map { kb =>
@@ -1386,7 +1433,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
           .mkString("\n") + "\n        }"
         s"      case r: ${ka.name}Repr[A] => $m2"
       }
-      .mkString("\n") + "\n    }"
+      .mkString("\n") + "\n    }", "A")
     // fused short-circuiting contains (prim compares unboxed against the unwrapped elem). Empty-body scan.
     // contains: a short-circuit forward scan for the first element == elem (the ${I}Pred wraps the raw element to
     // A and compares to elem). One leaf-method call; hit -> index < length.
@@ -1424,7 +1471,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
         val copy0 = s"inr0 match { case lf: ${kb.name}Arr => System.arraycopy(lf.arr, 0, out, 0, l0); case _ => flatMapCopyOne${kb.name}(inr0, out, 0) }"
         s"{ val inr0 = f($src0); val l0 = inr0.length; out = $alloc; $copy0; off = l0; var i = 1; while (i < cnt) { ${stepOf(kb, srcI)}; i += 1 } }"
       }
-      "summonFrom {\n" + opKinds
+      withErr("summonFrom {\n" + opKinds
         .map { ka =>
           val inner = "summonFrom {\n" + opKinds
             .map { kb =>
@@ -1436,7 +1483,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
             .mkString("\n") + "\n        }"
           s"      case r: ${ka.name}Repr[A] => $inner"
         }
-        .mkString("\n") + "\n    }"
+        .mkString("\n") + "\n    }", "A")
     }
     // single-pass unzip/unzip3: read each tuple ONCE, fill the 2/3 output arrays unboxed. Dispatch on the
     // component kinds (resolves to one case per concrete site). Source leaf fast-path / applyBoxed.
@@ -1445,7 +1492,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // a node's contents as ONE flat backing array: a leaf hands its array straight in, anything else materializes
     // via the single dfs ONCE. Lets zip/unzip/matchAll2 loop over a flat array on every shape — never kindAt.
     def flatOf(k: Kind, node: String): String = s"($node match { case lf: ${k.name}Arr => lf.arr; case _ => materialize${k.name}($node) })"
-    val unzipV = "summonFrom {\n" + opKinds
+    val unzipV = withErr("summonFrom {\n" + opKinds
       .map { k1 =>
         val inner = "summonFrom {\n" + opKinds
           .map { k2 =>
@@ -1455,8 +1502,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
           .mkString("\n") + "\n        }"
         s"      case r1: ${k1.name}Repr[A1] => $inner"
       }
-      .mkString("\n") + "\n    }"
-    val unzip3V = "summonFrom {\n" + opKinds
+      .mkString("\n") + "\n    }", "A1")
+    val unzip3V = withErr("summonFrom {\n" + opKinds
       .map { k1 =>
         val m2 = "summonFrom {\n" + opKinds
           .map { k2 =>
@@ -1471,7 +1518,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
           .mkString("\n") + "\n        }"
         s"      case r1: ${k1.name}Repr[A1] => $m2"
       }
-      .mkString("\n") + "\n    }"
+      .mkString("\n") + "\n    }", "A1")
     // zip / zipWithIndex: read both operands UNBOXED (leaf fast-path + <kind>At fallback) into a RefArr of
     // tuples. For primitive×primitive we name the stdlib @specialized Tuple2 directly (Tuple2$mcXY$sp), which
     // stores the two values unboxed — Scala 3 no longer picks it itself, so a uniform-int zip never boxes the
@@ -1479,7 +1526,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     def mkT(ka: Kind, kb: Kind, v1: String, v2: String): String =
       if (ka.isPrim && kb.isPrim) s"new scala.Tuple2$$mc${ka.specCh}${kb.specCh}$$sp($v1, $v2)"
       else s"new scala.Tuple2(${ka.box(v1)}, ${kb.box(v2)})"
-    val zipV = "summonFrom {\n" + opKinds
+    val zipV = withErr("summonFrom {\n" + opKinds
       .map { ka =>
         val inner = "summonFrom {\n" + opKinds
           .map { kb =>
@@ -1488,19 +1535,19 @@ object GenCores extends BleepCodegenScript("GenCores") {
           .mkString("\n") + "\n        }"
         s"      case r: ${ka.name}Repr[A] => $inner"
       }
-      .mkString("\n") + "\n    }"
+      .mkString("\n") + "\n    }", "A")
     def mkTIdx(ka: Kind, v: String, idx: String): String =
       if (ka.isPrim) s"new scala.Tuple2$$mc${ka.specCh}I$$sp($v, $idx)"
       else s"new scala.Tuple2($v, ${opKinds.head.box(idx)})" // index is Int
-    val zipIdxV = "summonFrom {\n" + opKinds
+    val zipIdxV = withErr("summonFrom {\n" + opKinds
       .map { ka =>
         s"      case r: ${ka.name}Repr[A] => { val out = new Array[Object](n); val ax = ${flatOf(ka, "xs")}; var i = 0; while (i < n) { out(i) = ${mkTIdx(ka, "ax(i)", "i")}; i += 1 }; new RefArr(out, n) }"
       }
-      .mkString("\n") + "\n    }"
+      .mkString("\n") + "\n    }", "A")
     // shared backbone for corresponds/startsWith/endsWith: walk xs[xsOff+i] vs that[i] for i in [0,m), calling
     // pred (continue while true). 2D dispatch on both operand kinds + leaf+leaf fast-path reading both arrays
     // unboxed (<kind>At fallback for trees) — kills the per-index applyAt O(n·depth) and the per-element match.
-    val matchAll2V = "summonFrom {\n" + opKinds
+    val matchAll2V = withErr("summonFrom {\n" + opKinds
       .map { ka =>
         val inner = "summonFrom {\n" + opKinds
           .map { kb =>
@@ -1510,7 +1557,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
           .mkString("\n") + "\n        }"
         s"      case r: ${ka.name}Repr[A] => $inner"
       }
-      .mkString("\n") + "\n    }"
+      .mkString("\n") + "\n    }", "A")
     val updated = dispatchB(k => s"new ${k.name}Updated(xs, index, ${wr(k, "r.unwrap(elem)")})")
     val append = dispatchB(k => s"new ${k.name}Append(xs, r.unwrap(elem))")
     val prepend = dispatchA(k => s"new ${k.name}Prepend(r.unwrap(elem), xs)")
