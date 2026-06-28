@@ -116,10 +116,22 @@ object Source:
   inline def repeat[A](value: A, chunkSize: Int = DefaultChunkSize): Source[A] =
     unfold[Unit, A]((), chunkSize)(_ => Some((value, ())))
 
-  /** an int range as a streaming source (chunked), [start, end) by step. */
-  inline def range(start: Int, end: Int, step: Int = 1, chunkSize: Int = DefaultChunkSize): Source[Int] =
+  /** an int range as a streaming source (chunked), `[start, end)` by `step`. Fills each chunk DIRECTLY into a raw `int[]` leaf — no `Option`/`Tuple2`/boxing
+    * per element (unlike the generic `unfold`, which would box every element through `Some((i, i+step))` and then unbox the whole chunk). So an `int` range
+    * streams at primitive- loop speed.
+    */
+  def range(start: Int, end: Int, step: Int = 1, chunkSize: Int = DefaultChunkSize): Source[Int] =
     require(step != 0, "range step cannot be 0")
-    unfold[Int, Int](start, chunkSize)(i => if (if step > 0 then i < end else i > end) then Some((i, i + step)) else None)
+    val cs = math.max(1, chunkSize)
+    def more(i: Int): Boolean = if step > 0 then i < end else i > end
+    unfoldChunk[Int, Int](start) { from =>
+      if !more(from) then None
+      else
+        val buf = new Array[Int](cs)
+        var n = 0; var i = from
+        while n < cs && more(i) do { buf(n) = i; i += step; n += 1 }
+        Some((FArray.fromArray(if n == cs then buf else java.util.Arrays.copyOf(buf, n)), i))
+    }
 
   // ── resource-owning sources (S2) — the driver always try/finally close()s, so the handle is released on
   //    exhaustion, on short-circuit (`take(10)` over a huge file), AND on exception. The headline streaming case:
