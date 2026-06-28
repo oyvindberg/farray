@@ -798,6 +798,27 @@ class FListTest:
   @Test def test_fuse_flatMap_tree_source: Unit =
     org.junit.Assert.assertEquals(List(1, 1, 2, 2, 3, 3, 4, 4), (FArray(1, 2) ++ FArray(3, 4)).fuse.flatMap(x => FArray(x, x)).run.toList)
 
+  // GUARD: a literal `FArray(e0, e1)` flatMap body must SPLAT (emit the downstream body once per element, no inner
+  // array / no inner loop) for EVERY element kind. The old expansion-matcher's hardcoded leaf set silently missed
+  // Float/Short/Byte/Char/Boolean; the symbol-based matcher covers them. Discriminator: a splatted literal-flatMap
+  // over a flat 1-elem source has NO inner-array build in the executed code — the `${K}Arr`/`new Array` for the
+  // inner only appears in the dead lazy `Fuse` stage markers, never in the run block, which a looped inner would
+  // re-emit. We check the EXECUTED block (after the `val src0` marker) contains no `new Array`/`${K}Arr`. Float and
+  // Char are the kinds the old matcher missed; the non-literal `tabulate` inner is the negative control.
+  @Test def test_fuse_flatMap_splats: Unit =
+    def execAllocs(code: String): Int = // `new Array`/`*Arr` ctors in the EXECUTED block (after the run-marker)
+      val exec = code.indexOf("val src0") match { case -1 => code; case i => code.substring(i) }
+      "new Array\\[".r.findAllIn(exec).size + "new \\w+Arr\\(".r.findAllIn(exec).size
+    val intCode = FuseDebug.show(FArray(7).fuse.flatMap(x => FArray(x, x + 1)).foldLeft(0)((a, x) => a + x))
+    val floatCode = FuseDebug.show(FArray(7.0f).fuse.flatMap(x => FArray(x, x + 1.0f)).foldLeft(0.0f)((a, x) => a + x))
+    val charCode = FuseDebug.show(FArray('a').fuse.flatMap(c => FArray(c, c.toUpper)).foldLeft(0)((a, c) => a + c.toInt))
+    val looped = FuseDebug.show(FArray(7).fuse.flatMap(x => FArray.tabulate(2)(j => x + j)).foldLeft(0)((a, x) => a + x))
+    org.junit.Assert.assertEquals(s"Int flatMap did not splat:\n$intCode", 0, execAllocs(intCode))
+    org.junit.Assert.assertEquals(s"Float flatMap did not splat (kind miss?):\n$floatCode", 0, execAllocs(floatCode))
+    org.junit.Assert.assertEquals(s"Char flatMap did not splat (kind miss?):\n$charCode", 0, execAllocs(charCode))
+    // negative control: a non-literal `tabulate` inner is NOT splatted -> it builds an inner array in the run block.
+    org.junit.Assert.assertTrue(s"non-literal flatMap should build an inner array:\n$looped", execAllocs(looped) >= 1)
+
   // ---- short-circuit terminals: find / exists / forall / headOption / head ----
   @Test def test_fuse_find: Unit =
     org.junit.Assert.assertEquals(l10.map(_ + 1).find(_ % 3 == 0), r10.fuse.map(_ + 1).find(_ % 3 == 0))

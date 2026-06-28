@@ -316,58 +316,16 @@ object FuseMacro:
       Term.betaReduce(app).getOrElse(app)
     def applyLambda(fn: Term, arg: Term): Term = applyN(fn, List(arg))
 
-    /** If `body` is a LITERAL fixed-arity `FArray(e0, e1, …)` construction (which inline-expands to a Block that allocates a `${K}Arr` + backing array), return
-      * the element expressions `[e0, e1, …]` so a flatMap can splat them downstream with NO array allocation. The expanded shape (any leaf kind) is: Block(
-      * ValDef("out", new Array[K](n)) :: out.update(0,e0) :: out.update(1,e1) :: … , new ${K}Arr(out, n) ) wrapped in `Inlined`/`Typed`/`TypeApply(_,
-      * "$asInstanceOf$")`. Match it structurally (peel the wrappers, confirm the result is `new …Arr(<out>, _)`, then read the `<out>.update(i, e_i)` stores in
-      * index order). A non-literal body (variable `FArray`, a `range`/`tabulate`, an empty/1-elem special-case, …) returns None.
-      */
-    def literalArrayElems(body: Term): Option[List[Term]] =
-      // peel asInstanceOf / Typed / single-expr Inlined wrappers WITHOUT collapsing a stmt-bearing Block.
-      def peel(t: Term): Term = t match
-        case TypeApply(Select(inner, "$asInstanceOf$"), _)                          => peel(inner)
-        case TypeApply(Select(inner, "asInstanceOf"), _)                            => peel(inner)
-        case Typed(inner, _)                                                        => peel(inner)
-        case Inlined(_, Nil, inner)                                                 => peel(inner)
-        case Inlined(_, bindings, inner) if bindings.forall(_.isInstanceOf[ValDef]) => peel(inner)
-        case _                                                                      => t
-      peel(body) match
-        case Block(stmts, last) =>
-          // the result must be `new ${K}Arr(outIdent, lenLit)`; capture the `out` symbol. Covers every leaf:
-          //   - PRIMITIVE (IntArr/LongArr/DoubleArr): stores are `Typed(e, K)` — strip the ascription to `e`.
-          //   - REF (RefArr): stores are `(e: A).asInstanceOf[Object]` — strip the `.asInstanceOf[Object]` AND
-          //     the `Typed(_, A)` to recover the clean A-typed `e`. The downstream segment expects an A-typed
-          //     element, so the bare `e` (typed A by construction) re-splices correctly.
-          val leafArr = Set("IntArr", "LongArr", "DoubleArr", "RefArr")
-          val outName: Option[String] = peel(last) match
-            case Apply(Select(New(tp), "<init>"), List(outRef, _)) if leafArr.contains(tp.tpe.typeSymbol.name) =>
-              outRef match { case Ident(nm) => Some(nm); case _ => None }
-            case _ => None
-          outName.flatMap { nm =>
-            // collect `nm.update(idx, elem)` stores; require they are exactly indices 0..k-1 and that `nm` is a
-            // fresh `new Array[…](k)` local (so we are sure it is a self-contained literal, not an aliased array).
-            val sizeOpt: Option[Int] = stmts.collectFirst {
-              case ValDef(n, _, Some(rhs)) if n == nm =>
-                peel(rhs) match
-                  case Apply(TypeApply(Select(New(_), "<init>"), _), List(Literal(IntConstant(k)))) => k
-                  case Apply(Select(New(_), "<init>"), List(Literal(IntConstant(k))))               => k
-                  case _                                                                            => -1
-            }
-            // strip the store wrapper to the clean element expr: a prim `Typed(e, K)` ascription, or a Ref
-            // `(e: A).asInstanceOf[Object]` cast (peel the cast, then the `Typed(_, A)`).
-            def stripStore(t: Term): Term = t match
-              case TypeApply(Select(inner, "asInstanceOf"), _) => stripStore(inner)
-              case Typed(e, _)                                 => stripStore(e)
-              case _                                           => t
-            val updates: List[(Int, Term)] = stmts.collect {
-              case Apply(Select(Ident(n), "update"), List(Literal(IntConstant(idx)), elem)) if n == nm => (idx, stripStore(elem))
-            }
-            sizeOpt match
-              case Some(k) if k >= 0 && updates.length == k && updates.map(_._1).sorted == (0 until k).toList =>
-                Some(updates.sortBy(_._1).map(_._2))
-              case _ => None
-          }
-        case _ => None
+    // The literal-FArray constructor symbols a flatMap inner can be (see `literalFArrayElems`). Matched by
+    // SYMBOL, not by `Ident("FArray")` (which shadowing/aliasing could fool). `FArray.apply` (every fixed-arity
+    // overload) is the primary key; `FArrayOps.fromValuesN` is accepted as a fallback for a body that presents
+    // the forwarder directly. Both are `inline`, so a literal `FArray(e0, e1)` body inline-expands to a tree
+    // whose `Inlined.call` is exactly one of these — carrying the element exprs in source form.
+    val fArrayApplySyms: Set[Symbol] =
+      Symbol.requiredModule("farray.FArray").methodMember("apply").toSet
+    val fromValuesSyms: Set[Symbol] =
+      Symbol.requiredModule("farray.FArrayOps").methodMembers.filter(_.name.matches("fromValues\\d+")).toSet
+    val literalCtorSyms: Set[Symbol] = fArrayApplySyms ++ fromValuesSyms
 
     /** build the identity lambda `(a: A) => a` for element type `tpe` (used as the key of largest/smallest). */
     def identityLambda(tpe: TypeRepr): Term = tpe.asType match
@@ -788,6 +746,65 @@ object FuseMacro:
     def substParam(body: Term, param: Symbol, repl: Term): Term = Ast.substParam(body, param, repl)
     def substPaths(body: Term, param: Symbol, refs: Map[Path, Term]): Term = Ast.substPaths(body, param, refs)
 
+    /** If the flatMap inner `innerBody` (= `applyLambda(f, cur)`, the cur-substituted lambda body) is a literal fixed-arity `FArray(e0, e1, …)`, return the
+      * element exprs `[e0, e1, …]` so a flatMap can splat them downstream (`buildBody(rest, e_k)` per element) with NO inner array, NO `${K}Arr`, NO inner loop
+      * — 0 alloc.
+      *
+      * Two-part design so we are neither brittle nor wrong:
+      *   1. RECOGNIZE via the stable PUBLIC API, matched by SYMBOL: an `inline def` expands to `Inlined(Some(call), …)` and `call` is the original
+      *      `FArray.apply`/`fromValuesN` invocation. Matching that symbol (not the `new ${K}Arr` expansion shape, not a hardcoded leaf-class set) decouples us
+      *      from `fromValuesN`'s codegen and covers every primitive kind + Ref uniformly. We do NOT use `.call`'s argument terms directly — `.call` is a
+      *      detached pre-typer tree whose param symbols don't match the real lambda, so they can't be re-spliced. We use it ONLY to learn "this is a literal
+      *      FArray of arity k".
+      *   2. EXTRACT the cur-substituted element terms from the EXPANSION (which betaReduce already fixed up): a 1-elem `FArray(e0)` is `new ${K}One(e0)`; an
+      *      n-elem is `… out.update(i, e_i) …; new ${K}Arr(out, n)`. We read those generically (any `*One`/`*Arr` class, strip `Typed`/`asInstanceOf` wrappers
+      *      uniformly — no per-kind branch). The `.call` arity is the cross-check that we found exactly k elements.
+      *
+      * A non-literal body (`FArray.tabulate`/`range`/`fill`, a `++`, a bound `val`, an `if/else`) has no `.call` with a `literalCtorSyms` symbol → None → the
+      * general `loopOver` path.
+      */
+    def literalFArrayElems(innerBody: Term): Option[List[Term]] =
+      // strip value-preserving wrappers WITHOUT collapsing a stmt-bearing Block.
+      def peel(t: Term): Term = t match
+        case TypeApply(Select(inner, "$asInstanceOf$"), _)                          => peel(inner)
+        case TypeApply(Select(inner, "asInstanceOf"), _)                            => peel(inner)
+        case Typed(inner, _)                                                        => peel(inner)
+        case Inlined(_, Nil, inner)                                                 => peel(inner)
+        case Inlined(_, bindings, inner) if bindings.forall(_.isInstanceOf[ValDef]) => peel(inner)
+        case _                                                                      => t
+      // (1) recognize: the expected element count from the original `FArray.apply`/`fromValuesN` call symbol.
+      def litArity(t: Term): Option[Int] = t match
+        case TypeApply(Select(inner, "$asInstanceOf$" | "asInstanceOf"), _)              => litArity(inner)
+        case Typed(inner, _)                                                             => litArity(inner)
+        case Block(Nil, inner)                                                           => litArity(inner)
+        case Inlined(Some(Apply(fn, args)), _, _) if literalCtorSyms.contains(fn.symbol) =>
+          args match
+            case List(Typed(Repeated(_, _), _)) | List(Repeated(_, _)) => None // varargs — not splatted
+            case _                                                     => Some(args.length)
+        case Inlined(_, _, expansion) => litArity(expansion)
+        case _                        => None
+      // (2) extract the cur-substituted elements from the expansion: `new *One(e0)` (1) or the `out.update` stores
+      // of a `new *Arr(out, n)` (n). Generic over all kinds — match `*One`/`*Arr` by class-name suffix, strip any
+      // `Typed`/`asInstanceOf` store wrapper uniformly (no hardcoded leaf set, no per-kind cast handling).
+      def stripStore(t: Term): Term = t match
+        case TypeApply(Select(inner, "asInstanceOf" | "$asInstanceOf$"), _) => stripStore(inner)
+        case Typed(e, _)                                                    => stripStore(e)
+        case _                                                              => t
+      def expansionElems: Option[List[Term]] = peel(innerBody) match
+        case Apply(Select(New(tp), "<init>"), List(e0)) if tp.tpe.typeSymbol.name.endsWith("One") =>
+          Some(List(stripStore(e0)))
+        case Block(stmts, last) =>
+          peel(last) match
+            case Apply(Select(New(tp), "<init>"), List(Ident(nm), _)) if tp.tpe.typeSymbol.name.endsWith("Arr") =>
+              val updates = stmts.collect {
+                case Apply(Select(Ident(n), "update"), List(Literal(IntConstant(idx)), e)) if n == nm => (idx, stripStore(e))
+              }
+              if updates.map(_._1).sorted == updates.indices.toList then Some(updates.sortBy(_._1).map(_._2)) else None
+            case _ => None
+        case _ => None
+      // require the `.call` arity (recognition) to agree with the expansion element count (extraction).
+      for k <- litArity(innerBody); es <- expansionElems if es.length == k && k > 0 yield es
+
     /** navigate a shape down a field path to the leaf column (no intermediate product is materialized). */
     def navigate(cur: Shape, path: Path): Shape = path match
       case Nil               => cur
@@ -1033,14 +1050,15 @@ object FuseMacro:
         else buildSegment(seg.map(_._1), srcShape(cur))(finalShape => readShape(finalShape)(t => buildBody(rest, t, ctx)))
       case (FlatMapS(f, bTpe), _) :: rest =>
         val innerBody = applyLambda(f, cur)
-        // FAST PATH: a literal `FArray(e0, e1, …)` flatMap body inline-expands to a Block that allocates a
-        // fresh `${K}Arr` (a `new Array` + element stores) PER ELEMENT. The JIT eliminates the `${K}Arr`
-        // wrapper but NOT the backing array (a small array read with a variable loop index is not scalar-
-        // replaceable on HotSpot) — so each such flatMap leaks one array/elem (measured: 1.68 MB/op, the C2
-        // flatMap floor). If the body is exactly that literal form, SPLAT the element exprs straight into the
-        // downstream segment — `buildBody(rest, e_k)` per element — with NO array, NO `${K}Arr`, NO inner loop.
-        // 0 alloc; measured ~3x faster than the array form on C2 (49k vs 16k ops/s) and beats eager.
-        literalArrayElems(innerBody) match
+        // FAST PATH: a literal `FArray(e0, e1, …)` flatMap body would otherwise allocate a fresh `${K}Arr` (a
+        // `new Array` + a backing `${jt}[n]`) PER ELEMENT — and the JIT scalar-replaces the wrapper but NOT the
+        // backing array (a small array read by a variable loop index is not scalar-replaceable on HotSpot), so
+        // each such flatMap leaks one array/elem (measured: 1.68 MB/op, the C2 flatMap floor). When the body is a
+        // literal `FArray(…)` we SPLAT its element exprs straight into the downstream segment — `buildBody(rest,
+        // e_k)` per element — with NO array, NO `${K}Arr`, NO inner loop. 0 alloc; ~3x faster on C2 (49k vs 16k
+        // ops/s) and beats eager. (`literalFArrayElems` reads the element exprs from the `Inlined.call`, so it is
+        // decoupled from `fromValuesN`'s codegen and covers every kind uniformly.)
+        literalFArrayElems(innerBody) match
           case Some(elems) =>
             Block(elems.map(e => buildBody(rest, e, ctx)), '{ () }.asTerm)
           case None =>
