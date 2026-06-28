@@ -202,23 +202,21 @@ object FuseMacro:
       Term.betaReduce(app).getOrElse(app)
     def applyLambda(fn: Term, arg: Term): Term = applyN(fn, List(arg))
 
-    /** If `body` is a LITERAL fixed-arity `FArray(e0, e1, …)` construction (which inline-expands to a Block that
-      * allocates a `${K}Arr` + backing array), return the element expressions `[e0, e1, …]` so a flatMap can splat
-      * them downstream with NO array allocation. The expanded shape (any leaf kind) is:
-      *   Block( ValDef("out", new Array[K](n)) :: out.update(0,e0) :: out.update(1,e1) :: … ,
-      *          new ${K}Arr(out, n) )
-      * wrapped in `Inlined`/`Typed`/`TypeApply(_, "$asInstanceOf$")`. Match it structurally (peel the wrappers,
-      * confirm the result is `new …Arr(<out>, _)`, then read the `<out>.update(i, e_i)` stores in index order). A
-      * non-literal body (variable `FArray`, a `range`/`tabulate`, an empty/1-elem special-case, …) returns None. */
+    /** If `body` is a LITERAL fixed-arity `FArray(e0, e1, …)` construction (which inline-expands to a Block that allocates a `${K}Arr` + backing array), return
+      * the element expressions `[e0, e1, …]` so a flatMap can splat them downstream with NO array allocation. The expanded shape (any leaf kind) is: Block(
+      * ValDef("out", new Array[K](n)) :: out.update(0,e0) :: out.update(1,e1) :: … , new ${K}Arr(out, n) ) wrapped in `Inlined`/`Typed`/`TypeApply(_,
+      * "$asInstanceOf$")`. Match it structurally (peel the wrappers, confirm the result is `new …Arr(<out>, _)`, then read the `<out>.update(i, e_i)` stores in
+      * index order). A non-literal body (variable `FArray`, a `range`/`tabulate`, an empty/1-elem special-case, …) returns None.
+      */
     def literalArrayElems(body: Term): Option[List[Term]] =
       // peel asInstanceOf / Typed / single-expr Inlined wrappers WITHOUT collapsing a stmt-bearing Block.
       def peel(t: Term): Term = t match
-        case TypeApply(Select(inner, "$asInstanceOf$"), _) => peel(inner)
-        case TypeApply(Select(inner, "asInstanceOf"), _)   => peel(inner)
-        case Typed(inner, _)                               => peel(inner)
-        case Inlined(_, Nil, inner)                         => peel(inner)
+        case TypeApply(Select(inner, "$asInstanceOf$"), _)                          => peel(inner)
+        case TypeApply(Select(inner, "asInstanceOf"), _)                            => peel(inner)
+        case Typed(inner, _)                                                        => peel(inner)
+        case Inlined(_, Nil, inner)                                                 => peel(inner)
         case Inlined(_, bindings, inner) if bindings.forall(_.isInstanceOf[ValDef]) => peel(inner)
-        case _                                             => t
+        case _                                                                      => t
       peel(body) match
         case Block(stmts, last) =>
           // the result must be `new ${K}Arr(outIdent, lenLit)`; capture the `out` symbol. Covers every leaf:

@@ -2262,8 +2262,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
   private def jelem(k: Kind): String =
     prims.find(_.name == k.name).map(_.jt).getOrElse("Object")
 
-  /** read a single boxed `Object` (from a deep non-leaf base's applyBoxed) cast to the element's Java type. For a
-    * primitive, cast to the wrapper and unbox via its `${jt}Value()`; for Ref the element IS Object (pass-through). */
+  /** read a single boxed `Object` (from a deep non-leaf base's applyBoxed) cast to the element's Java type. For a primitive, cast to the wrapper and unbox via
+    * its `${jt}Value()`; for Ref the element IS Object (pass-through).
+    */
   private def fromBoxedK(k: Kind, expr: String): String = prims.find(_.name == k.name) match
     case Some(p) => s"((${p.boxed}) $expr).${p.jt}Value()"
     case None    => expr
