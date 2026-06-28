@@ -19,7 +19,7 @@ import farray.{Ast, DecomposedInput, RecordColumns, Column}
   * `lower` and `planString` are the only entry points; everything else is nested inside them so a single `Quotes`
   * (`q`) is shared across all the codegen helpers — no path-dependent-type threading.
   */
-object JsonDecode:
+private[farray] object JsonDecode:
 
   /** the scanner kind for a field type — what the slot holds and how the column reads it. */
   private enum JKind { case JInt, JLong, JDouble, JString }

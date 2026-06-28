@@ -8,7 +8,7 @@ import scala.quoted.*
   * `Shape`/`Ctx`/`Stage` model, and none on any source format. The one place engine and decoders agree on how to read
   * a record's fields off a lambda.
   */
-object Ast:
+private[farray] object Ast:
   /** a field path into a product: `(column index, accessor name)` per hop. `p.a.x` → `List((iₐ,"a"),(iₓ,"x"))`;
     * a bare `p` → `Nil` (the param used whole).
     */

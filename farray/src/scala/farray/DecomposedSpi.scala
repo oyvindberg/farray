@@ -13,7 +13,7 @@ import scala.quoted.*
   *   - decoder → engine: per record, a [[RecordColumns]] handed back THROUGH `continue` — the decomposed column
   *     reads, which the engine assembles into its own `Shape` and rejoins to the shared optimizer.
   */
-final class DecomposedInput[Q <: Quotes & Singleton](using val q: Q)(
+private[farray] final class DecomposedInput[Q <: Quotes & Singleton](using val q: Q)(
     /** the record case-class type whose fields are scanned. */
     val srcElem: q.reflect.TypeRepr,
     /** the runtime byte source (already `self.base.asInstanceOf[ByteRecordSource]`). */
@@ -37,7 +37,7 @@ final class DecomposedInput[Q <: Quotes & Singleton](using val q: Q)(
 /** one `map`/`filter` stage flattened to a plain lambda + its role. `isPositiveFilter` marks a `filter` (not
   * `filterNot`) — the only kind eligible for the inline predicate-fail early-out.
   */
-final class StageLambda[Q <: Quotes & Singleton](using val q: Q)(
+private[farray] final class StageLambda[Q <: Quotes & Singleton](using val q: Q)(
     val lambda: q.reflect.Term,
     val isFilter: Boolean,
     val isPositiveFilter: Boolean
@@ -46,7 +46,7 @@ final class StageLambda[Q <: Quotes & Singleton](using val q: Q)(
 /** what the decoder hands the engine per record: one column read per record field (live or dead), in declaration
   * order. The engine wraps each into its `Shape` (memoizing String columns) and rebuilds the record only if needed.
   */
-final class RecordColumns[Q <: Quotes & Singleton](using val q: Q)(
+private[farray] final class RecordColumns[Q <: Quotes & Singleton](using val q: Q)(
     val columns: List[Column[Q]]
 )
 
@@ -54,7 +54,7 @@ final class RecordColumns[Q <: Quotes & Singleton](using val q: Q)(
   * String slice binds on first read). `isString` tells the engine to MEMOIZE (decode-once); a numeric is an already-
   * bound var and a dead field is a constant default, neither of which needs memoizing.
   */
-final class Column[Q <: Quotes & Singleton](using val q: Q)(
+private[farray] final class Column[Q <: Quotes & Singleton](using val q: Q)(
     val read: (q.reflect.Term => q.reflect.Term) => q.reflect.Term,
     val isString: Boolean
 )

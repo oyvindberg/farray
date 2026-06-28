@@ -87,9 +87,4 @@ public final class JsonBytes {
     // that won't be mistaken for a quote/backslash unless they actually are escapes.
     return pos + 2;
   }
-
-  /** Skip a string VALUE (pos at opening quote): returns position just past the closing quote. */
-  public static int skipString(byte[] buf, int pos, int end) {
-    return scanStringEnd(buf, pos + 1, end) + 1;
-  }
 }

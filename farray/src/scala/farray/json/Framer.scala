@@ -29,7 +29,7 @@ private enum Framed:
   * Working set = O(read block + the largest single record): the carry buffer grows only to hold one record that straddles reads, never the whole stream. A
   * record longer than `blockSize` triggers a one-time buffer growth.
   */
-class Framer(read: (Array[Byte], Int, Int) => Int, blockSize: Int, doClose: () => Unit) extends ByteRecordSource:
+private[json] class Framer(read: (Array[Byte], Int, Int) => Int, blockSize: Int, doClose: () => Unit) extends ByteRecordSource:
   private val bs: Int = math.max(64, blockSize)
   private var work: Array[Byte] = new Array[Byte](bs * 2) // carry tail + one fresh block
   private var dataEnd: Int = 0 // bytes valid in `work` are [0, dataEnd)

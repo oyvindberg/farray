@@ -8,7 +8,7 @@ import scala.quoted.*
   * decomposed-source contract to its implementation — today the NDJSON decoder (`farray.json.JsonDecode`); a future
   * columnar/protobuf decoder would dispatch here too (by the runtime source's type).
   */
-object RecordDecoder:
+private[farray] object RecordDecoder:
   /** lower the source to a per-record projection scanner that rejoins the shared optimizer via `in.continue`. */
   def lower(using q: Quotes)(in: DecomposedInput[q.type]): Expr[Unit] =
     farray.json.JsonDecode.lower(in)
