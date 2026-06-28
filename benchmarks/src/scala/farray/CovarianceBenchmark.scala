@@ -4,16 +4,14 @@ import org.openjdk.jmh.annotations.{Benchmark, Param, Setup}
 
 /** Quantifies the cost of UNION-TYPED / covariant access on FArray.
   *
-  * A statically-typed `FArray[Int | String]` cannot use the specialized, unboxed inline API
-  * (`apply`/`map`/`foldLeft` all `summonFrom` a `Repr[A]` that does not exist for a non-`AnyRef`
-  * union) — the only working element-read path is the boxed `IndexedSeq` view (`toIndexedSeq`,
-  * backed by `applyBoxed`). These benchmarks compare that boxed union path against the homogeneous,
-  * specialized `FArray[Int]` (unboxed `int[]`) and `FArray[String]` (`Object[]`) paths, so the
-  * boxing tax of union access is visible per-op.
+  * A statically-typed `FArray[Int | String]` cannot use the specialized, unboxed inline API (`apply`/`map`/`foldLeft` all `summonFrom` a `Repr[A]` that does
+  * not exist for a non-`AnyRef` union) — the only working element-read path is the boxed `IndexedSeq` view (`toIndexedSeq`, backed by `applyBoxed`). These
+  * benchmarks compare that boxed union path against the homogeneous, specialized `FArray[Int]` (unboxed `int[]`) and `FArray[String]` (`Object[]`) paths, so
+  * the boxing tax of union access is visible per-op.
   *
   *   - `unionBoxed` : FArray[Int | String] read through `toIndexedSeq` (the usable covariant path)
-  *   - `homInt`     : FArray[Int]    via the specialized unboxed API (baseline, no boxing)
-  *   - `homString`  : FArray[String] via the specialized Ref API (reference baseline)
+  *   - `homInt` : FArray[Int] via the specialized unboxed API (baseline, no boxing)
+  *   - `homString` : FArray[String] via the specialized Ref API (reference baseline)
   *
   * The union array is the literal Concat(IntArr int[], RefArr Object[]) you get from `ints ++ strs`.
   */

@@ -4,15 +4,13 @@ import org.junit.Test
 import org.junit.Assert.{assertEquals, assertTrue}
 import scala.compiletime.testing.typeChecks
 
-/** Research probe: does FArray's COVARIANCE actually work? Every claim below is backed by code that
-  * compiles and runs (or a `typeChecks` witness that it does NOT compile).
+/** Research probe: does FArray's COVARIANCE actually work? Every claim below is backed by code that compiles and runs (or a `typeChecks` witness that it does
+  * NOT compile).
   *
-  * Headline: covariance at the TYPE level is real (`a ++ b : FArray[Int | String]` infers and the
-  * value is structurally correct), but the SPECIALIZED, `inline` element API (`apply`, `head`, `map`,
-  * `foldLeft`, `foreach`, `iterator`, `toList`, …) does NOT compile for a non-`AnyRef` union element
-  * type, because each routes through `summonFrom { case IntRepr[A] … case RefRepr[A] … }` and there is
-  * no `Repr[Int | String]` given (`Int|String` is neither `Int` nor `<: AnyRef`). The boxed escape
-  * hatch is `xs.toSeq` / `xs.toIndexedSeq` (an `FArraySeq` that reads via `applyBoxed`).
+  * Headline: covariance at the TYPE level is real (`a ++ b : FArray[Int | String]` infers and the value is structurally correct), but the SPECIALIZED, `inline`
+  * element API (`apply`, `head`, `map`, `foldLeft`, `foreach`, `iterator`, `toList`, …) does NOT compile for a non-`AnyRef` union element type, because each
+  * routes through `summonFrom { case IntRepr[A] … case RefRepr[A] … }` and there is no `Repr[Int | String]` given (`Int|String` is neither `Int` nor
+  * `<: AnyRef`). The boxed escape hatch is `xs.toSeq` / `xs.toIndexedSeq` (an `FArraySeq` that reads via `applyBoxed`).
   */
 class CovarianceTest:
 
@@ -84,15 +82,15 @@ class CovarianceTest:
     // The cast to FArray[Int|String] itself compiles, but each specialized (inline, summonFrom-Repr)
     // op below does NOT. `typeChecks` needs a STATICALLY-known String, so each probe is a full literal.
     inline val P = """val c: FArray[Int | String] = FArray(1,2,3) ++ FArray("x","y"); """
-    assertTrue("apply must not compile",    !typeChecks(P + "val _ = c(0)"))
-    assertTrue("head must not compile",     !typeChecks(P + "val _ = c.head"))
-    assertTrue("last must not compile",     !typeChecks(P + "val _ = c.last"))
-    assertTrue("map must not compile",      !typeChecks(P + "val _ = c.map(_.toString)"))
+    assertTrue("apply must not compile", !typeChecks(P + "val _ = c(0)"))
+    assertTrue("head must not compile", !typeChecks(P + "val _ = c.head"))
+    assertTrue("last must not compile", !typeChecks(P + "val _ = c.last"))
+    assertTrue("map must not compile", !typeChecks(P + "val _ = c.map(_.toString)"))
     assertTrue("foldLeft must not compile", !typeChecks(P + "val _ = c.foldLeft(0)((n, _) => n)"))
-    assertTrue("foreach must not compile",  !typeChecks(P + "c.foreach(_ => ())"))
+    assertTrue("foreach must not compile", !typeChecks(P + "c.foreach(_ => ())"))
     assertTrue("iterator must not compile", !typeChecks(P + "val _ = c.iterator"))
-    assertTrue("toList must not compile",   !typeChecks(P + "val _ = c.toList"))
-    assertTrue("filter must not compile",   !typeChecks(P + "val _ = c.filter(_ => true)"))
+    assertTrue("toList must not compile", !typeChecks(P + "val _ = c.toList"))
+    assertTrue("filter must not compile", !typeChecks(P + "val _ = c.filter(_ => true)"))
     // sanity: the same ops DO compile on a homogeneous primitive FArray and on a Ref FArray:
     assertTrue(typeChecks("""val c = FArray(1,2,3); val _ = c(0); val _ = c.map(_+1); val _ = c.toList"""))
     assertTrue(typeChecks("""val c = FArray("a","b"); val _ = c(0); val _ = c.map(_.length); val _ = c.toList"""))
@@ -114,8 +112,8 @@ class CovarianceTest:
       val msg = errs.map(_.message).mkString(" | ")
       assertTrue(s"$label: friendly message, got: $msg", msg.contains("FArray: no element-kind specialization"))
       assertTrue(s"$label: not the raw summonFrom error, got: $msg", !msg.contains("cannot reduce summonFrom"))
-    assertFriendly("apply",    typeCheckErrors(P + "val _ = c(0)"))
-    assertFriendly("map",      typeCheckErrors(P + "val _ = c.map(_.toString)"))
+    assertFriendly("apply", typeCheckErrors(P + "val _ = c(0)"))
+    assertFriendly("map", typeCheckErrors(P + "val _ = c.map(_.toString)"))
     assertFriendly("foldLeft", typeCheckErrors(P + "val _ = c.foldLeft(0)((n, _) => n)"))
     assertFriendly("iterator", typeCheckErrors(P + "val _ = c.iterator"))
     assertFriendly("construct FArray.empty[union]", typeCheckErrors("""val _ = FArray.empty[Int | String]"""))
@@ -131,7 +129,7 @@ class CovarianceTest:
 
     // read every element (boxed applyBoxed: int[] ints box to Integer, Object[] Strings read directly):
     var i = 0
-    while i < seq.length do { val _ : Int | String = seq(i); i += 1 }
+    while i < seq.length do { val _: Int | String = seq(i); i += 1 }
     // map + foldLeft over the heterogeneous structure:
     assertEquals(List("1", "2", "3", "x", "y"), seq.map(_.toString).toList)
     val totalIntsPlusStrLens = seq.foldLeft(0)((n, x) => n + (x match { case i: Int => i; case s: String => s.length }))
@@ -156,7 +154,7 @@ class CovarianceTest:
       val s: String = asStr.toIndexedSeq.apply(0) // boxed read, then .asInstanceOf[String] inside FArraySeq
       assertTrue(s == null || s.length >= 0)
     catch case e: Throwable => threwOnRead = e.getClass.getName
-    // The CCE (if any) surfaces at the user's cast boundary, on read — not from FArray internals.
+      // The CCE (if any) surfaces at the user's cast boundary, on read — not from FArray internals.
     println(s"[covariance-probe] (FArray[Int] as FArray[String]).toIndexedSeq(0) read threw: $threwOnRead")
     assertEquals("java.lang.ClassCastException", threwOnRead)
 
