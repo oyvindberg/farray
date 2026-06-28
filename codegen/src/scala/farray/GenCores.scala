@@ -120,6 +120,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
     Kind("Ref", "Object", "AnyRef", "null", "L", None)
   )
 
+  /** the primitive kinds only (Int/Long/Double) — used e.g. for the Ref-element + primitive-accumulator folds. */
+  val primKinds: List[Kind] = opKinds.filter(_.isPrim)
+
   private val grow =
     "if (sp + 2 > stack.length) { val ns = stack.length * 2; stack = java.util.Arrays.copyOf(stack, ns); tail = java.util.Arrays.copyOf(tail, ns); isTail = java.util.Arrays.copyOf(isTail, ns) }"
 
@@ -788,16 +791,32 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line(
           s"reduceLeaf${dir}${K}Ref[AnyRef](xs, z.asInstanceOf[AnyRef], (acc, v) => ${comb("acc.asInstanceOf[Z]", wrapV(k))}.asInstanceOf[AnyRef]).asInstanceOf[Z]"
         )
+      // --- Ref input + PRIMITIVE accumulator (e.g. xs.foldLeft(0)((n, s) => n + s.length)): the acc stays an
+      //     unboxed primitive `${P}`. Realize the `RefTo${P}Fold` SAM (the element `v` is Object) and CALL the
+      //     shared unboxed leaf method. A COMMON reference workload, so it gets the unboxed acc (the leaf path
+      //     never boxes; only a genuine tree boxes, inside the leaf method's cold arm). NO inlined leaf loop. ---
+      def zPrimAccOverRefArm(p: Kind): Unit =
+        ee.line(
+          s"rz.wrap(reduceLeaf${dir}Ref${p.name}(xs, rz.unwrap(z), (acc, v) => rz.unwrap(${comb("rz.wrap(acc)", wrapV(k))})))"
+        )
       ee.open("summonFrom")
       if k.isPrim then {
         ee.open(s"case rz: ${K}Repr[Z] =>")
         zPrimArm()
         ee.close()
+      } else {
+        // Ref input: unboxed prim-accumulator arms (Int/Long/Double) before the generic Ref-acc / boxed arms.
+        primKinds.foreach { p =>
+          ee.open(s"case rz: ${p.name}Repr[Z] =>")
+          zPrimAccOverRefArm(p)
+          ee.close()
+        }
       }
       ee.open("case rz: RefRepr[Z] =>")
       zRefArm()
       ee.close()
-      // CROSS-prim Z (and prim Z over Ref input): the shared Ref-acc leaf method with a boxed accumulator.
+      // CROSS-prim Z (a prim Z over a DIFFERENT prim input, e.g. Long acc over Int input): the shared Ref-acc
+      // leaf method with a boxed accumulator. (Ref input's prim-acc cases are handled unboxed above.)
       ee.open("case _ =>")
       zBoxedArm()
       ee.close()
@@ -884,6 +903,22 @@ object GenCores extends BleepCodegenScript("GenCores") {
           if k.isPrim then emit(s"reduceLeaf${dir}${K}${K}", k, "", k.arr, s"Traversers.${K}To${K}Fold", s"Traversers.reduce${dir}${K}${K}(xs, z, f)", backward)
           // generic ref acc (every input kind).
           emit(s"reduceLeaf${dir}${K}Ref", k, "[Z <: AnyRef]", "Z", s"Traversers.${K}ToRefFold[Z]", s"Traversers.reduce${dir}${K}Ref[Z](xs, z, f)", backward)
+        }
+      }
+      // CROSS-kind: Ref ELEMENT folded into a PRIMITIVE accumulator (sum/count over Strings etc.). The hot
+      // Empty/One/leaf path keeps the acc UNBOXED (a primitive `${P}` local + the RefTo${P}Fold SAM). Only the
+      // COLD genuine-tree path (`case _`) boxes: it routes through the existing generic Ref-acc Java traverser
+      // (reduce${dir}RefRef) with the primitive acc boxed to its wrapper, then unboxes the result — boxing only
+      // on the rare tree, never per-element on a flat leaf.
+      primKinds.foreach { p =>
+        val P = p.name
+        val refK = opKinds.last // the Ref kind
+        List(false, true).foreach { backward =>
+          val dir = if backward then "Bwd" else "Fwd"
+          val box = p.prim.get.wrapper // java.lang.Integer / Long / Double
+          val treeCall =
+            s"${p.unbox(s"Traversers.reduce${dir}RefRef[$box](xs, ${p.box("z")}, (acc, v) => ${p.box(s"f.apply(${p.unbox("acc")}, v)")})")}"
+          emit(s"reduceLeaf${dir}Ref${P}", refK, "", p.arr, s"Traversers.RefTo${P}Fold", treeCall, backward)
         }
       }
       ee.result
@@ -2197,6 +2232,15 @@ object GenCores extends BleepCodegenScript("GenCores") {
       }
       e.open(s"public interface ${k.name}ToRefFold<Z>")
       e.line(s"Z apply(Z acc, $je v);")
+      e.close()
+    }
+    // CROSS-kind fold types: a Ref ELEMENT folded into a PRIMITIVE accumulator (e.g. xs.foldLeft(0)((n, s) =>
+    // n + s.length) — sum/count over Strings). `acc` stays an unboxed primitive; the element is Object. This is
+    // a COMMON reference workload, so it gets the unboxed acc (mirror of the prim-input + Ref-acc fold above).
+    primKinds.foreach { p =>
+      val jp = jelem(p)
+      e.open(s"public interface RefTo${p.name}Fold")
+      e.line(s"$jp apply($jp acc, Object v);")
       e.close()
     }
     e.blank()
