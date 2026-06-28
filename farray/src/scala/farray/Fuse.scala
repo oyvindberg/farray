@@ -78,6 +78,17 @@ final class Fuse[+A](private[farray] val base: AnyRef):
   inline def headOption: Option[A] = ${ FuseMacro.headOptionImpl[A]('this) }
   inline def head: A = ${ FuseMacro.headImpl[A]('this) }
 
+  /** A machine-checkable DESCRIPTION of the plan the macro built for this pipeline (not a real terminal — the
+   *  pipeline is analyzed, never executed). For a JSON source: which fields are scanned, which are decoded vs
+   *  kept as lazy string slices, the predicate/early-out set, whether the record is rebuilt, and the would-be
+   *  terminal. Tests assert on this structure rather than on brittle generated code or coincidentally-correct
+   *  output values. To include a field-reading TERMINAL's contribution, pass it: `…plan(_.foldLeft…)` is not
+   *  needed — instead append the terminal's projection as a `map` (e.g. test `…map(_.amount).plan`). */
+  inline def plan: String = ${ FuseMacro.planImpl[A]('this) }
+  /** plan of the pipeline AS IF it ended in a fold whose `op` reads the element — captures a terminal that
+   *  reads record fields directly (e.g. `Json.ndjson[Rec](b).stream.planFold((acc, r) => acc + r.amount)`). */
+  inline def planFold[Z](inline op: (Z, A) => Z): String = ${ FuseMacro.planFoldImpl[A, Z]('this, 'op) }
+
   // ---- multi-aggregate: run several aggregations in ONE fused pass, carrying one accumulator each. The
   //      aggregates' read fields are merged automatically (union computed, shared field once, survivor-gated). ----
   inline def agg[R1, R2](inline a1: Agg[A, R1], inline a2: Agg[A, R2]): (R1, R2) =

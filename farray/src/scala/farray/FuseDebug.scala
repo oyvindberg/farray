@@ -11,3 +11,4 @@ object FuseDebug:
   def showImpl[A: Type](expr: Expr[A])(using Quotes): Expr[String] =
     import quotes.reflect.*
     Expr(expr.asTerm.show(using Printer.TreeShortCode))
+

@@ -6,6 +6,7 @@ import farray.json.{NdjsonSource, JsonScanner}
 /** which terminal a fused pipeline ends in (the macro shares one lowering core across all of them). */
 enum TTag:
   case Run, Foreach, Fold, Count, Find, Exists, Forall, HeadOption, Head, IndexWhere, ReduceOpt, ExtremumBy, Agg
+  case Plan // not a real terminal: returns a String DESCRIPTION of the plan the macro built, for testing
 
 /**
  * Macro implementation for fused pipelines (see `Fuse` and `docs/fused-pipeline-design.md`).
@@ -48,6 +49,13 @@ object FuseMacro:
 
   def countImpl[A: Type](self: Expr[Fuse[A]])(using Quotes): Expr[Int] =
     '{ ${ core[A](self, TTag.Count, Nil) }.asInstanceOf[Int] }
+
+  // plan description (testing): TTag.Plan returns a String describing the built plan, never runs the loop.
+  def planImpl[A: Type](self: Expr[Fuse[A]])(using Quotes): Expr[String] =
+    '{ ${ core[A](self, TTag.Plan, Nil) }.asInstanceOf[String] }
+  // planFold: same, but the live-set also reflects a fold `op` that reads the element directly.
+  def planFoldImpl[A: Type, Z: Type](self: Expr[Fuse[A]], op: Expr[(Z, A) => Z])(using Quotes): Expr[String] =
+    '{ ${ core[A](self, TTag.Plan, List(op)) }.asInstanceOf[String] }
 
   def findImpl[A: Type](self: Expr[Fuse[A]], p: Expr[A => Boolean])(using Quotes): Expr[Option[A]] =
     '{ ${ core[A](self, TTag.Find, List(p)) }.asInstanceOf[Option[A]] }
@@ -870,6 +878,7 @@ object FuseMacro:
               case AggSpec.Fold(_, op, _)       => add2(op)
               case AggSpec.Count                => ()
             }
+          case TTag.Plan if args.nonEmpty => add2(args(0)) // planFold(op): treat like a fold over the element
           case _ => ()
       stages.foreach {
         case MapS(f)        => addFrom(f)
@@ -879,6 +888,22 @@ object FuseMacro:
       addTerminalLambdas()
       val liveSet = if wholeUse then fields.map(_._1).toSet else live.toSet
       (fields, liveSet)
+
+    // expose `wholeUse` (whether the record is materialized) separately for the plan description.
+    def jsonWholeUse(elemTpe: TypeRepr): Boolean =
+      productFields(elemTpe).getOrElse(Nil)
+      var whole = false
+      def chk(param: Symbol, b: Term): Unit = if collectPaths(b, param).contains(Nil) then whole = true
+      def add1(lam: Term): Unit = decomposeLambda(lam).foreach((p, b) => if p.termRef.widen =:= elemTpe then chk(p, b))
+      def add2(lam: Term): Unit = decomposeLambda2(lam).foreach((_, e, b) => if e.termRef.widen =:= elemTpe then chk(e, b))
+      stages.foreach { case MapS(f) => decomposeLambda(f).foreach((p, b) => chk(p, b)); case FilterS(p, _) => decomposeLambda(p).foreach((pr, b) => chk(pr, b)); case _ => () }
+      tag match
+        case TTag.Foreach | TTag.IndexWhere | TTag.Find | TTag.Exists | TTag.Forall | TTag.ExtremumBy => add1(args(0))
+        case TTag.Fold => add2(args(1)); case TTag.ReduceOpt => add2(args(0))
+        case TTag.Agg => parseAggList(args(0)).foreach { case AggSpec.Sum(f,_)=>add1(f); case AggSpec.Avg(f)=>add1(f); case AggSpec.Extremum(f,_,_,_)=>add1(f); case AggSpec.Fold(_,op,_)=>add2(op); case AggSpec.Count=>() }
+        case TTag.Plan if args.nonEmpty => add2(args(0))
+        case _ => ()
+      whole
 
     // the scanner kind for a field type — what the slot holds and how the column reads it.
     enum JKind { case JInt, JLong, JDouble, JString }
@@ -895,6 +920,32 @@ object FuseMacro:
       case JKind.JLong   => '{ 0L }.asTerm
       case JKind.JDouble => '{ 0.0 }.asTerm
       case JKind.JString => '{ null.asInstanceOf[String] }.asTerm
+
+    // A machine-checkable DESCRIPTION of the plan the macro built for a JSON pipeline — so tests assert on the
+    // STRUCTURE (which fields are scanned, decoded vs sliced, the predicate/early-out set, rebuild, terminal)
+    // rather than on brittle pretty-printed code or on output values that can be coincidentally right.
+    def jsonPlanString(elemTpe: TypeRepr): String =
+      val (fields, liveSet) = jsonLiveFields(elemTpe)
+      val whole = jsonWholeUse(elemTpe)
+      // a String live field is kept as a lazy (start,len) slice; a numeric live field is decoded to a value.
+      val live = fields.filter(f => liveSet.contains(f._1))
+      val decoded = live.collect { case (n, t) if jkindOf(t) != JKind.JString => n }
+      val sliced  = live.collect { case (n, t) if jkindOf(t) == JKind.JString => n }
+      // predicate fields = fields read by the LEADING positive filters (the early-out set).
+      val leadingFilters = stages.takeWhile { case FilterS(_, false) => true; case _ => false }.collect { case FilterS(p, false) => p }
+      val predNames = leadingFilters.flatMap(p => decomposeLambda(p).toList.flatMap((param, b) =>
+        collectPaths(b, param).flatMap(_.headOption.map(_._2)))).distinct
+      val projOnly = live.map(_._1).exists(n => !predNames.contains(n))
+      val earlyOut = leadingFilters.nonEmpty && predNames.nonEmpty && projOnly
+      val termName = if tag == TTag.Plan && args.nonEmpty then "Fold" else tag.toString // planFold reports Fold
+      // deterministic, sorted, compact:
+      def s(xs: Iterable[String]) = xs.toList.sorted.mkString("[", ",", "]")
+      s"JsonPlan(record=${elemTpe.typeSymbol.name}, terminal=$termName, " +
+        s"live=${s(liveSet)}, decoded=${s(decoded)}, sliced=${s(sliced)}, " +
+        s"predicate=${s(predNames)}, earlyOut=$earlyOut, rebuildsRecord=$whole)"
+
+    if tag == TTag.Plan then
+      return (if isJson then Expr(jsonPlanString(srcElem)) else Expr(s"InMemoryPlan(elem=${srcElem.typeSymbol.name}, terminal=$tag, stages=${stages.length})"))
 
     def loopOverJson(jsrc: Expr[NdjsonSource[?]], elemTpe: TypeRepr, ss: List[(Stage, Int)], ctx: Ctx): Expr[Unit] =
       val (fields, liveSet) = jsonLiveFields(elemTpe)
