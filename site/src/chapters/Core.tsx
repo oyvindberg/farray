@@ -42,9 +42,12 @@ export default function Core() {
       <h3>Build it however you like</h3>
 
       <p>
-        This is the trade. A bare array would be a hair quicker at a couple of things — a single indexed read
-        carries one type-check that <code>int[]</code> doesn't. In return you get a collection you can assemble
-        any way you please, in constant time, and you only pay for a flat array when you ask for one.
+        This is the trade. A bare array is a hair quicker at a single indexed read — one type-check that{" "}
+        <code>int[]</code> doesn't carry. In exchange it can't even compare or print itself:{" "}
+        <code>IArray(1, 2, 3).toString</code> is <code>[I@5a07e868</code> and <code>==</code> is identity.
+        FArray wraps the array in an object, so it gives that hair back and gets value <code>equals</code>,{" "}
+        <code>hashCode</code> and <code>toString</code> — and a collection you can assemble any way you please,
+        in constant time, paying for a flat array only when you ask for one.
       </p>
 
       <Complexity />
@@ -86,18 +89,6 @@ export default function Core() {
         cls="ListLikeScalingIntBenchmark"
         caption="FArray vs List, used identically as a cons-list — built by ::, summed and mapped by recursion. Swept to 100k. Tie on sum, win on build and mapSum."
       />
-
-      <h3>Why not just IArray?</h3>
-
-      <p>
-        One last reason the array has to be wrapped at all. A collection has to be able to compare and print
-        itself — <code>a == b</code> by contents, a <code>toString</code> you can read, a <code>hashCode</code>{" "}
-        that agrees with <code>List</code>'s. A bare array can't, and that's exactly what <code>IArray</code> is:{" "}
-        <code>IArray(1, 2, 3).toString</code> is <code>[I@5a07e868</code>, and <code>==</code> compares
-        identities. FArray's nodes each override <code>equals</code>, <code>hashCode</code> and{" "}
-        <code>toString</code>, so it behaves like a value — checked element-for-element against <code>List</code>{" "}
-        in the tests. Unboxed <em>and</em> a real collection; you don't have to choose.
-      </p>
     </section>
   );
 }
