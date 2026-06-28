@@ -242,7 +242,22 @@ object FuseMacro:
     val selfTerm = self.asTerm
     val aType = TypeRepr.of[A]
     val args = extraExprs.map(e => unwrap(e.asTerm))
-    val (srcTerm, srcElem, stages) = parse(selfTerm.underlyingArgument, Nil)
+    val (srcTerm, srcElem, stages0) = parse(selfTerm.underlyingArgument, Nil)
+
+    // --- algebraic rewrites on adjacent stages (sound for a pure pipeline; removes redundant per-element
+    //     machinery the JIT won't always eliminate). Collapses DIRECTLY adjacent take/take and drop/drop:
+    //       take(n).take(m) → take(min(n,m))   (positions are post-prior-take, so the tighter bound wins)
+    //       drop(n).drop(m) → drop(n+m)        (drop m more after dropping the first n)
+    //     The int args may be runtime Terms, so min/+ are emitted as terms. Other adjacencies are already
+    //     optimal (map.map fuses in one loop; filter.filter is nested ifs) or not commutative (take.drop). ---
+    def rewriteStages(ss: List[Stage]): List[Stage] = ss match
+      case TakeS(n) :: TakeS(m) :: rest =>
+        rewriteStages(TakeS('{ java.lang.Math.min(${ n.asExprOf[Int] }, ${ m.asExprOf[Int] }) }.asTerm) :: rest)
+      case DropS(n) :: DropS(m) :: rest =>
+        rewriteStages(DropS('{ ${ n.asExprOf[Int] } + ${ m.asExprOf[Int] } }.asTerm) :: rest)
+      case s :: rest => s :: rewriteStages(rest)
+      case Nil       => Nil
+    val stages = rewriteStages(stages0)
 
     // --- multi-aggregate spec (only for TTag.Agg): one per `Agg.xxx(...)` call in the agg(...) arg list ---
     enum AggSpec:
