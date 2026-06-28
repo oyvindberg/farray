@@ -101,7 +101,7 @@ object FuseMacro:
     final case class ZipS(that: Term, bTpe: TypeRepr, combine: Option[Term]) extends Stage // zip (None) / map2 (Some f)
 
     enum Kind:
-      case KInt, KLong, KDouble, KRef
+      case KInt, KLong, KDouble, KFloat, KShort, KByte, KChar, KBoolean, KRef
     // Specialize-or-fail, mirroring the eager API's `Repr` evidence (RefRepr requires A <: AnyRef): a primitive
     // kind needs the EXACT type; a reference kind needs `<: AnyRef`. Anything else (Any/AnyVal/Matchable, an
     // unbounded type param) can't be read unboxed — a primitive-backed FArray covariantly widened to such a
@@ -110,10 +110,15 @@ object FuseMacro:
       if t =:= TypeRepr.of[Int] then Kind.KInt
       else if t =:= TypeRepr.of[Long] then Kind.KLong
       else if t =:= TypeRepr.of[Double] then Kind.KDouble
+      else if t =:= TypeRepr.of[Float] then Kind.KFloat
+      else if t =:= TypeRepr.of[Short] then Kind.KShort
+      else if t =:= TypeRepr.of[Byte] then Kind.KByte
+      else if t =:= TypeRepr.of[Char] then Kind.KChar
+      else if t =:= TypeRepr.of[Boolean] then Kind.KBoolean
       else if t <:< TypeRepr.of[AnyRef] then Kind.KRef
       else
         report.errorAndAbort(
-          s"fuse: cannot specialize element type `${t.show}` — fused pipelines support Int, Long, Double, or a " +
+          s"fuse: cannot specialize element type `${t.show}` — fused pipelines support the JVM primitives or a " +
             s"reference type (`<: AnyRef`). A primitive-backed FArray widened to Any/AnyVal can't be read unboxed; " +
             s"use a concrete element type."
         )
@@ -197,6 +202,59 @@ object FuseMacro:
       Term.betaReduce(app).getOrElse(app)
     def applyLambda(fn: Term, arg: Term): Term = applyN(fn, List(arg))
 
+    /** If `body` is a LITERAL fixed-arity `FArray(e0, e1, …)` construction (which inline-expands to a Block that allocates a `${K}Arr` + backing array), return
+      * the element expressions `[e0, e1, …]` so a flatMap can splat them downstream with NO array allocation. The expanded shape (any leaf kind) is: Block(
+      * ValDef("out", new Array[K](n)) :: out.update(0,e0) :: out.update(1,e1) :: … , new ${K}Arr(out, n) ) wrapped in `Inlined`/`Typed`/`TypeApply(_,
+      * "$asInstanceOf$")`. Match it structurally (peel the wrappers, confirm the result is `new …Arr(<out>, _)`, then read the `<out>.update(i, e_i)` stores in
+      * index order). A non-literal body (variable `FArray`, a `range`/`tabulate`, an empty/1-elem special-case, …) returns None.
+      */
+    def literalArrayElems(body: Term): Option[List[Term]] =
+      // peel asInstanceOf / Typed / single-expr Inlined wrappers WITHOUT collapsing a stmt-bearing Block.
+      def peel(t: Term): Term = t match
+        case TypeApply(Select(inner, "$asInstanceOf$"), _)                          => peel(inner)
+        case TypeApply(Select(inner, "asInstanceOf"), _)                            => peel(inner)
+        case Typed(inner, _)                                                        => peel(inner)
+        case Inlined(_, Nil, inner)                                                 => peel(inner)
+        case Inlined(_, bindings, inner) if bindings.forall(_.isInstanceOf[ValDef]) => peel(inner)
+        case _                                                                      => t
+      peel(body) match
+        case Block(stmts, last) =>
+          // the result must be `new ${K}Arr(outIdent, lenLit)`; capture the `out` symbol. Covers every leaf:
+          //   - PRIMITIVE (IntArr/LongArr/DoubleArr): stores are `Typed(e, K)` — strip the ascription to `e`.
+          //   - REF (RefArr): stores are `(e: A).asInstanceOf[Object]` — strip the `.asInstanceOf[Object]` AND
+          //     the `Typed(_, A)` to recover the clean A-typed `e`. The downstream segment expects an A-typed
+          //     element, so the bare `e` (typed A by construction) re-splices correctly.
+          val leafArr = Set("IntArr", "LongArr", "DoubleArr", "RefArr")
+          val outName: Option[String] = peel(last) match
+            case Apply(Select(New(tp), "<init>"), List(outRef, _)) if leafArr.contains(tp.tpe.typeSymbol.name) =>
+              outRef match { case Ident(nm) => Some(nm); case _ => None }
+            case _ => None
+          outName.flatMap { nm =>
+            // collect `nm.update(idx, elem)` stores; require they are exactly indices 0..k-1 and that `nm` is a
+            // fresh `new Array[…](k)` local (so we are sure it is a self-contained literal, not an aliased array).
+            val sizeOpt: Option[Int] = stmts.collectFirst {
+              case ValDef(n, _, Some(rhs)) if n == nm =>
+                peel(rhs) match
+                  case Apply(TypeApply(Select(New(_), "<init>"), _), List(Literal(IntConstant(k)))) => k
+                  case Apply(Select(New(_), "<init>"), List(Literal(IntConstant(k))))               => k
+                  case _                                                                            => -1
+            }
+            // strip the store wrapper to the clean element expr: a prim `Typed(e, K)` ascription, or a Ref
+            // `(e: A).asInstanceOf[Object]` cast (peel the cast, then the `Typed(_, A)`).
+            def stripStore(t: Term): Term = t match
+              case TypeApply(Select(inner, "asInstanceOf"), _) => stripStore(inner)
+              case Typed(e, _)                                 => stripStore(e)
+              case _                                           => t
+            val updates: List[(Int, Term)] = stmts.collect {
+              case Apply(Select(Ident(n), "update"), List(Literal(IntConstant(idx)), elem)) if n == nm => (idx, stripStore(elem))
+            }
+            sizeOpt match
+              case Some(k) if k >= 0 && updates.length == k && updates.map(_._1).sorted == (0 until k).toList =>
+                Some(updates.sortBy(_._1).map(_._2))
+              case _ => None
+          }
+        case _ => None
+
     /** build the identity lambda `(a: A) => a` for element type `tpe` (used as the key of largest/smallest). */
     def identityLambda(tpe: TypeRepr): Term = tpe.asType match
       case '[a] => '{ (x: a) => x }.asTerm
@@ -228,10 +286,15 @@ object FuseMacro:
 
     /** read `src(idx)` unboxed at the given element kind (leaf fast-path lives inside `<kind>At`). */
     def readAtKind(elemTpe: TypeRepr, src: Expr[FBase], idx: Expr[Int]): Term = kindOf(elemTpe) match
-      case Kind.KInt    => '{ FArrayOps.intAt($src, $idx) }.asTerm
-      case Kind.KLong   => '{ FArrayOps.longAt($src, $idx) }.asTerm
-      case Kind.KDouble => '{ FArrayOps.doubleAt($src, $idx) }.asTerm
-      case Kind.KRef    => elemTpe.asType match { case '[b] => '{ FArrayOps.refAt($src, $idx).asInstanceOf[b] }.asTerm }
+      case Kind.KInt     => '{ FArrayOps.intAt($src, $idx) }.asTerm
+      case Kind.KLong    => '{ FArrayOps.longAt($src, $idx) }.asTerm
+      case Kind.KDouble  => '{ FArrayOps.doubleAt($src, $idx) }.asTerm
+      case Kind.KFloat   => '{ FArrayOps.floatAt($src, $idx) }.asTerm
+      case Kind.KShort   => '{ FArrayOps.shortAt($src, $idx) }.asTerm
+      case Kind.KByte    => '{ FArrayOps.byteAt($src, $idx) }.asTerm
+      case Kind.KChar    => '{ FArrayOps.charAt($src, $idx) }.asTerm
+      case Kind.KBoolean => '{ FArrayOps.booleanAt($src, $idx) }.asTerm
+      case Kind.KRef     => elemTpe.asType match { case '[b] => '{ FArrayOps.refAt($src, $idx).asInstanceOf[b] }.asTerm }
 
     /** the `(value, index)` pair for zipWithIndex; use the stdlib @specialized Tuple2 for a primitive element (Int/Long/Double) so it isn't boxed — exactly
       * like the eager zipWithIndex. Everything else boxes via a plain Tuple2 (correct for references and the rarer primitive kinds).
@@ -865,9 +928,21 @@ object FuseMacro:
           buildSegment(seg.map(_._1), srcShape(cur))(finalShape => ctx.consumeShape.get(finalShape))
         else buildSegment(seg.map(_._1), srcShape(cur))(finalShape => readShape(finalShape)(t => buildBody(rest, t, ctx)))
       case (FlatMapS(f, bTpe), _) :: rest =>
-        // open a nested loop over f(cur): everything downstream runs inside it.
-        val inner: Expr[FBase] = '{ ${ applyLambda(f, cur).asExpr }.asInstanceOf[FBase] }
-        loopOver(inner, kindOf(bTpe), bTpe, rest, ctx).asTerm
+        val innerBody = applyLambda(f, cur)
+        // FAST PATH: a literal `FArray(e0, e1, …)` flatMap body inline-expands to a Block that allocates a
+        // fresh `${K}Arr` (a `new Array` + element stores) PER ELEMENT. The JIT eliminates the `${K}Arr`
+        // wrapper but NOT the backing array (a small array read with a variable loop index is not scalar-
+        // replaceable on HotSpot) — so each such flatMap leaks one array/elem (measured: 1.68 MB/op, the C2
+        // flatMap floor). If the body is exactly that literal form, SPLAT the element exprs straight into the
+        // downstream segment — `buildBody(rest, e_k)` per element — with NO array, NO `${K}Arr`, NO inner loop.
+        // 0 alloc; measured ~3x faster than the array form on C2 (49k vs 16k ops/s) and beats eager.
+        literalArrayElems(innerBody) match
+          case Some(elems) =>
+            Block(elems.map(e => buildBody(rest, e, ctx)), '{ () }.asTerm)
+          case None =>
+            // general flatMap: open a nested loop over f(cur); everything downstream runs inside it.
+            val inner: Expr[FBase] = '{ ${ innerBody.asExpr }.asInstanceOf[FBase] }
+            loopOver(inner, kindOf(bTpe), bTpe, rest, ctx).asTerm
       case (CollectS(pf, bTpe), _) :: rest =>
         // inline the PartialFunction's match into the loop: each real case continues downstream, the synthetic
         // `case _ => default(x)` fallthrough becomes a skip. So collect is filter+map+match fused, no PF object.
@@ -945,31 +1020,110 @@ object FuseMacro:
         case None    => '{ $i < $len }
       def perElem(read: Term): Expr[Unit] =
         letBind(read)(x => buildBody(ss, x, ctx)).asExprOf[Unit]
-      // ONE indexed loop per kind via the `${kind}At` accessor — no `isInstanceOf[${K}Arr]` leaf fast-path.
-      // (The hybrid-traversal base makes `${kind}At` plenty fast on flat leaves; a separate agent owns that
-      // speed. The old fast-path also baked in a leaf-layout assumption that doesn't hold on every node.)
+      // A `${K}Arr` LEAF fast-path peeled INLINE ahead of the `${kind}At` fallback. Why it matters: a `flatMap`
+      // inner builds a fresh small `${K}Arr` PER ELEMENT; reading it back through `${kind}At` (an FBase-typed
+      // megamorphic call) makes the freshly-allocated array ESCAPE, so the JIT can't scalar-replace it — on
+      // HotSpot C2 (weaker escape analysis than GraalVM) this turns a no-alloc fused pass into a per-element
+      // allocation and craters it (measured ~13x slower than eager). Reading `leaf.arr(i)` from a CONCRETE
+      // `${K}Arr` is monomorphic and INLINE (no call boundary) so EA proves the array stays local → scalar-
+      // replaced, no alloc, on both JVMs. The `${kind}At` arm still serves genuine tree sources (Concat/Slice/…).
+      // NOTE (measured, do NOT "simplify" back): routing this through the SHARED `foreachLeaf${K}`/`scFwdLeaf${K}`
+      // driver (push each element through a `${K}Consumer`/`${K}Pred` SAM) is 1.7-2.8x SLOWER here — passing the
+      // fresh inner array INTO a shared method is itself an escape boundary that defeats scalar replacement on
+      // BOTH C2 and GraalVM. The inline leaf-match is the point. Loop bound is `a.length` (the backing array's),
+      // NOT leaf.length, so the JIT drops the per-element bounds check.
       elemTpe.asType match
         case '[se] =>
           k match
             case Kind.KInt =>
               '{
-                val s = $src; val len = s.length; var i = 0
-                while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.intAt(s, i) }.asTerm) }; i += 1 }
+                $src match
+                  case leaf: IntArr =>
+                    val a = leaf.arr; val len = a.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ a(i) }.asTerm) }; i += 1 }
+                  case s =>
+                    val len = s.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.intAt(s, i) }.asTerm) }; i += 1 }
               }
             case Kind.KLong =>
               '{
-                val s = $src; val len = s.length; var i = 0
-                while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.longAt(s, i) }.asTerm) }; i += 1 }
+                $src match
+                  case leaf: LongArr =>
+                    val a = leaf.arr; val len = a.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ a(i) }.asTerm) }; i += 1 }
+                  case s =>
+                    val len = s.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.longAt(s, i) }.asTerm) }; i += 1 }
               }
             case Kind.KDouble =>
               '{
-                val s = $src; val len = s.length; var i = 0
-                while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.doubleAt(s, i) }.asTerm) }; i += 1 }
+                $src match
+                  case leaf: DoubleArr =>
+                    val a = leaf.arr; val len = a.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ a(i) }.asTerm) }; i += 1 }
+                  case s =>
+                    val len = s.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.doubleAt(s, i) }.asTerm) }; i += 1 }
+              }
+            case Kind.KFloat =>
+              '{
+                $src match
+                  case leaf: FloatArr =>
+                    val a = leaf.arr; val len = a.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ a(i) }.asTerm) }; i += 1 }
+                  case s =>
+                    val len = s.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.floatAt(s, i) }.asTerm) }; i += 1 }
+              }
+            case Kind.KShort =>
+              '{
+                $src match
+                  case leaf: ShortArr =>
+                    val a = leaf.arr; val len = a.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ a(i) }.asTerm) }; i += 1 }
+                  case s =>
+                    val len = s.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.shortAt(s, i) }.asTerm) }; i += 1 }
+              }
+            case Kind.KByte =>
+              '{
+                $src match
+                  case leaf: ByteArr =>
+                    val a = leaf.arr; val len = a.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ a(i) }.asTerm) }; i += 1 }
+                  case s =>
+                    val len = s.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.byteAt(s, i) }.asTerm) }; i += 1 }
+              }
+            case Kind.KChar =>
+              '{
+                $src match
+                  case leaf: CharArr =>
+                    val a = leaf.arr; val len = a.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ a(i) }.asTerm) }; i += 1 }
+                  case s =>
+                    val len = s.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.charAt(s, i) }.asTerm) }; i += 1 }
+              }
+            case Kind.KBoolean =>
+              '{
+                $src match
+                  case leaf: BooleanArr =>
+                    val a = leaf.arr; val len = a.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ a(i) }.asTerm) }; i += 1 }
+                  case s =>
+                    val len = s.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.booleanAt(s, i) }.asTerm) }; i += 1 }
               }
             case Kind.KRef =>
               '{
-                val s = $src; val len = s.length; var i = 0
-                while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.refAt(s, i).asInstanceOf[se] }.asTerm) }; i += 1 }
+                $src match
+                  case leaf: RefArr =>
+                    val a = leaf.arr; val len = a.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ a(i).asInstanceOf[se] }.asTerm) }; i += 1 }
+                  case s =>
+                    val len = s.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.refAt(s, i).asInstanceOf[se] }.asTerm) }; i += 1 }
               }
 
     // ===== JSON source lowering: a per-record byte scanner whose record is a Tup of byte-sourced columns =====
@@ -1844,6 +1998,101 @@ object FuseMacro:
               else if o == 1 then new DoubleOne(out(0))
               else if o == cap then new DoubleArr(out, o)
               else new DoubleArr(java.util.Arrays.copyOf(out, o), o)
+            }.asTerm
+        case Kind.KFloat =>
+          if needsGrow then
+            '{
+              var out = new Array[Float](java.lang.Math.max(8, $n0)); var o = 0
+              ${ loop(v => '{ if o >= out.length then out = FArrayOps.ensureCapFloat(out, o + 1); out(o) = ${ v.asExprOf[Float] }; o += 1 }.asTerm) }
+              if o == 0 then (Empty.INSTANCE: FBase)
+              else if o == 1 then new FloatOne(out(0))
+              else if o == out.length then new FloatArr(out, o)
+              else new FloatArr(java.util.Arrays.copyOf(out, o), o)
+            }.asTerm
+          else
+            '{
+              val cap = ${ capExpr(n0, counters) }; val out = new Array[Float](cap); var o = 0
+              ${ loop(v => '{ out(o) = ${ v.asExprOf[Float] }; o += 1 }.asTerm) }
+              if o == 0 then (Empty.INSTANCE: FBase)
+              else if o == 1 then new FloatOne(out(0))
+              else if o == cap then new FloatArr(out, o)
+              else new FloatArr(java.util.Arrays.copyOf(out, o), o)
+            }.asTerm
+        case Kind.KShort =>
+          if needsGrow then
+            '{
+              var out = new Array[Short](java.lang.Math.max(8, $n0)); var o = 0
+              ${ loop(v => '{ if o >= out.length then out = FArrayOps.ensureCapShort(out, o + 1); out(o) = ${ v.asExprOf[Short] }; o += 1 }.asTerm) }
+              if o == 0 then (Empty.INSTANCE: FBase)
+              else if o == 1 then new ShortOne(out(0))
+              else if o == out.length then new ShortArr(out, o)
+              else new ShortArr(java.util.Arrays.copyOf(out, o), o)
+            }.asTerm
+          else
+            '{
+              val cap = ${ capExpr(n0, counters) }; val out = new Array[Short](cap); var o = 0
+              ${ loop(v => '{ out(o) = ${ v.asExprOf[Short] }; o += 1 }.asTerm) }
+              if o == 0 then (Empty.INSTANCE: FBase)
+              else if o == 1 then new ShortOne(out(0))
+              else if o == cap then new ShortArr(out, o)
+              else new ShortArr(java.util.Arrays.copyOf(out, o), o)
+            }.asTerm
+        case Kind.KByte =>
+          if needsGrow then
+            '{
+              var out = new Array[Byte](java.lang.Math.max(8, $n0)); var o = 0
+              ${ loop(v => '{ if o >= out.length then out = FArrayOps.ensureCapByte(out, o + 1); out(o) = ${ v.asExprOf[Byte] }; o += 1 }.asTerm) }
+              if o == 0 then (Empty.INSTANCE: FBase)
+              else if o == 1 then new ByteOne(out(0))
+              else if o == out.length then new ByteArr(out, o)
+              else new ByteArr(java.util.Arrays.copyOf(out, o), o)
+            }.asTerm
+          else
+            '{
+              val cap = ${ capExpr(n0, counters) }; val out = new Array[Byte](cap); var o = 0
+              ${ loop(v => '{ out(o) = ${ v.asExprOf[Byte] }; o += 1 }.asTerm) }
+              if o == 0 then (Empty.INSTANCE: FBase)
+              else if o == 1 then new ByteOne(out(0))
+              else if o == cap then new ByteArr(out, o)
+              else new ByteArr(java.util.Arrays.copyOf(out, o), o)
+            }.asTerm
+        case Kind.KChar =>
+          if needsGrow then
+            '{
+              var out = new Array[Char](java.lang.Math.max(8, $n0)); var o = 0
+              ${ loop(v => '{ if o >= out.length then out = FArrayOps.ensureCapChar(out, o + 1); out(o) = ${ v.asExprOf[Char] }; o += 1 }.asTerm) }
+              if o == 0 then (Empty.INSTANCE: FBase)
+              else if o == 1 then new CharOne(out(0))
+              else if o == out.length then new CharArr(out, o)
+              else new CharArr(java.util.Arrays.copyOf(out, o), o)
+            }.asTerm
+          else
+            '{
+              val cap = ${ capExpr(n0, counters) }; val out = new Array[Char](cap); var o = 0
+              ${ loop(v => '{ out(o) = ${ v.asExprOf[Char] }; o += 1 }.asTerm) }
+              if o == 0 then (Empty.INSTANCE: FBase)
+              else if o == 1 then new CharOne(out(0))
+              else if o == cap then new CharArr(out, o)
+              else new CharArr(java.util.Arrays.copyOf(out, o), o)
+            }.asTerm
+        case Kind.KBoolean =>
+          if needsGrow then
+            '{
+              var out = new Array[Boolean](java.lang.Math.max(8, $n0)); var o = 0
+              ${ loop(v => '{ if o >= out.length then out = FArrayOps.ensureCapBoolean(out, o + 1); out(o) = ${ v.asExprOf[Boolean] }; o += 1 }.asTerm) }
+              if o == 0 then (Empty.INSTANCE: FBase)
+              else if o == 1 then new BooleanOne(out(0))
+              else if o == out.length then new BooleanArr(out, o)
+              else new BooleanArr(java.util.Arrays.copyOf(out, o), o)
+            }.asTerm
+          else
+            '{
+              val cap = ${ capExpr(n0, counters) }; val out = new Array[Boolean](cap); var o = 0
+              ${ loop(v => '{ out(o) = ${ v.asExprOf[Boolean] }; o += 1 }.asTerm) }
+              if o == 0 then (Empty.INSTANCE: FBase)
+              else if o == 1 then new BooleanOne(out(0))
+              else if o == cap then new BooleanArr(out, o)
+              else new BooleanArr(java.util.Arrays.copyOf(out, o), o)
             }.asTerm
         case Kind.KRef =>
           if needsGrow then
