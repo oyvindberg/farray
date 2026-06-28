@@ -153,21 +153,27 @@
   val Fuse_this: Fuse[Int] = (new Fuse[Int](xs$proxy): Fuse[Int]).map[Int](((_$: Int) => _$.+(1)))
 
   ({
-    val src0: FBase = inline$base$i1[Int](Fuse_this).asInstanceOf[FBase]
-    val n0: Int = src0.length
-    var acc: Int = 0
-    val s: FBase = src0
-    val len: Int = s.length
-    var i: Int = 0
-    while (i.<(len)) {
-      val v: Int = FArrayOps.intAt(s, i)
-      val `v₂`: Int = v.+(1)
-      acc = acc.+(`v₂`)
-      i = i.+(1)
-    }
+    val `Fuse_this₂`: Fuse_this.type = Fuse_this
 
-    (acc: Int)
-  }.asInstanceOf[Int]: Int)
+    ({
+      val src0: FBase = inline$base$i1[Int](`Fuse_this₂`).asInstanceOf[FBase]
+      val n0: Int = src0.length
+      var acc: Int = 0
+
+      ({
+        val s: FBase = src0
+        val len: Int = s.length
+        var i: Int = 0
+        while (i.<(len)) {
+          val v: Int = FArrayOps.intAt(s, i)
+          val `v₂`: Int = v.+(1)
+          acc = acc.+(`v₂`)
+          i = i.+(1)
+        }
+        acc
+      }: Int)
+    }.asInstanceOf[Int]: Int)
+  }: Int)
 }
 
 ====================================================================================================
@@ -215,22 +221,31 @@
   val Fuse_this: Fuse[Int] = (new Fuse[Int](xs$proxy): Fuse[Int]).filter(((_$: Int) => _$.%(2).==(0)))
 
   ({
-    val src0: FBase = inline$base$i1[Int](Fuse_this).asInstanceOf[FBase]
-    val n0: Int = src0.length
-    var cnt: Int = 0
-    val s: FBase = src0
-    val len: Int = s.length
-    var i: Int = 0
-    while (i.<(len)) {
-      val v: Int = FArrayOps.intAt(s, i)
-      val `v₂`: Int = v.%(2)
-      val `v₃`: Boolean = `v₂`.==(0)
-      if (`v₃`) cnt = cnt.+(1) else ()
-      i = i.+(1)
-    }
+    val `Fuse_this₂`: Fuse_this.type = Fuse_this
 
-    (cnt: Int)
-  }.asInstanceOf[Int]: Int)
+    ({
+      val src0: FBase = inline$base$i1[Int](`Fuse_this₂`).asInstanceOf[FBase]
+      val n0: Int = src0.length
+      var c: Int = 0
+
+      ({
+        val s: FBase = src0
+        val len: Int = s.length
+        var i: Int = 0
+        while (i.<(len)) {
+          val v: Int = FArrayOps.intAt(s, i)
+          val `v₂`: Int = v.%(2)
+          val `v₃`: Boolean = `v₂`.==(0)
+          if (`v₃`) {
+            c = c.+(1)
+            ()
+          } else ()
+          i = i.+(1)
+        }
+        c
+      }: Int)
+    }.asInstanceOf[Int]: Int)
+  }: Int)
 }
 
 ====================================================================================================
@@ -278,20 +293,27 @@
   val Fuse_this: Fuse[String] = (new Fuse[String](xs$proxy): Fuse[String]).filter(((_$: String) => augmentString(_$).nonEmpty))
 
   ({
-    val src0: FBase = inline$base$i1[String](Fuse_this).asInstanceOf[FBase]
-    val n0: Int = src0.length
-    val s: FBase = src0
-    val len: Int = s.length
-    var i: Int = 0
-    while (i.<(len)) {
-      val v: String = FArrayOps.refAt(s, i).asInstanceOf[String]
-      val `v₂`: StringOps = augmentString(v)
-      val `v₃`: Boolean = `v₂`.nonEmpty
-      if (`v₃`) System.out.println(v) else ()
-      i = i.+(1)
-    }
-    ()
-  }.asInstanceOf[Unit]: Unit)
+    val `Fuse_this₂`: Fuse_this.type = Fuse_this
+
+    ({
+      val src0: FBase = inline$base$i1[String](`Fuse_this₂`).asInstanceOf[FBase]
+      val n0: Int = src0.length
+      val s: FBase = src0
+      val len: Int = s.length
+      var i: Int = 0
+      while (i.<(len)) {
+        val v: String = FArrayOps.refAt(s, i).asInstanceOf[String]
+        val `v₂`: StringOps = augmentString(v)
+        val `v₃`: Boolean = `v₂`.nonEmpty
+        if (`v₃`) {
+          System.out.println(v)
+          ()
+        } else ()
+        i = i.+(1)
+      }
+      ()
+    }.asInstanceOf[Unit]: Unit)
+  }: Unit)
 }
 
 ====================================================================================================
@@ -889,25 +911,32 @@
     val z$proxy: Int = IntIsIntegral.zero
 
     ({
-      val src0: FBase = inline$base$i1[Int](`Fuse_this₂`).asInstanceOf[FBase]
-      val n0: Int = src0.length
-      var acc: Int = z$proxy
-      val s: FBase = src0
-      val len: Int = s.length
-      var i: Int = 0
-      while (i.<(len)) {
-        val v: Int = FArrayOps.intAt(s, i)
-        val `v₂`: Int = v.%(2)
-        val `v₃`: Boolean = `v₂`.==(0)
-        if (`v₃`) {
-          val `v₄`: Int = v.*(10)
-          acc = IntIsIntegral.plus(acc, `v₄`)
-        } else ()
-        i = i.+(1)
-      }
+      val `Fuse_this₃`: Fuse_this.type = `Fuse_this₂`
 
-      (acc: Int)
-    }.asInstanceOf[Int]: Int)
+      ({
+        val src0: FBase = inline$base$i1[Int](`Fuse_this₃`).asInstanceOf[FBase]
+        val n0: Int = src0.length
+        var acc: Int = z$proxy
+
+        ({
+          val s: FBase = src0
+          val len: Int = s.length
+          var i: Int = 0
+          while (i.<(len)) {
+            val v: Int = FArrayOps.intAt(s, i)
+            val `v₂`: Int = v.%(2)
+            val `v₃`: Boolean = `v₂`.==(0)
+            if (`v₃`) {
+              val `v₄`: Int = v.*(10)
+              acc = IntIsIntegral.plus(acc, `v₄`)
+              ()
+            } else ()
+            i = i.+(1)
+          }
+          acc
+        }: Int)
+      }.asInstanceOf[Int]: Int)
+    }: Int)
   }: Int)
 }
 

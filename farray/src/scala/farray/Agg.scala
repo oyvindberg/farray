@@ -28,6 +28,9 @@ object Agg:
   def max1[A, B](f: A => B)(using Ordering[B]): Agg[A, B] = new Agg()
   /** the general aggregate: a seeded left fold over the (surviving) elements. */
   def fold[A, S](z: S)(step: (S, A) => S): Agg[A, S] = new Agg()
+  /** run `f` for its side effect on every (surviving) element; result is Unit. The single-aggregate base that
+   *  the standalone `foreach`/`toList`/`toSet`/… terminals desugar to. */
+  def foreach[A](f: A => Unit): Agg[A, Unit] = new Agg()
   /** mean of the projected field (sum / count, fused into one pass), or 0.0 if empty. */
   def avg[A](f: A => Double): Agg[A, Double] = new Agg()
 

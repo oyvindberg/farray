@@ -65,10 +65,13 @@ final class Fuse[+A](private[farray] val base: AnyRef):
 
   // ---- terminals (macros: rewrite the whole chain into one fused loop) ----
   inline def run: FArray[A] = ${ FuseMacro.runImpl[A]('this) }
-  inline def foreach(inline f: A => Unit): Unit = ${ FuseMacro.foreachImpl[A]('this, 'f) }
-  inline def foldLeft[Z](z: Z)(inline op: (Z, A) => Z): Z = ${ FuseMacro.foldLeftImpl[A, Z]('this, 'z, 'op) }
+  // foreach/foldLeft/count desugar to a single-aggregate `agg(...)`, sharing the Agg/AState terminal machinery
+  // (one accumulator carried above the loop, one step per element). Same generated loop as the old dedicated
+  // terminals; one lowering path instead of three.
+  inline def foreach(inline f: A => Unit): Unit = agg(Agg.foreach[A](f))
+  inline def foldLeft[Z](z: Z)(inline op: (Z, A) => Z): Z = agg(Agg.fold[A, Z](z)(op))
   /** number of elements surviving the whole pipeline. */
-  inline def count: Int = ${ FuseMacro.countImpl[A]('this) }
+  inline def count: Int = agg(Agg.count[A])
   /** number of elements matching `p` (one fused pass). */
   inline def count(inline p: A => Boolean): Int = filter(p).count
   // ---- short-circuit terminals: stop as soon as the answer is known (across flatMap nesting) ----

@@ -5,7 +5,7 @@ import farray.json.{NdjsonSource, JsonScanner}
 
 /** which terminal a fused pipeline ends in (the macro shares one lowering core across all of them). */
 enum TTag:
-  case Run, Foreach, Fold, Count, Find, Exists, Forall, HeadOption, Head, IndexWhere, Agg
+  case Run, Find, Exists, Forall, HeadOption, Head, IndexWhere, Agg
   case GroupReduce // group by key(a), combine value(a) per key with reduce → Map[K,B]; primitive-keyed, no boxing
   case Plan // not a real terminal: returns a String DESCRIPTION of the plan the macro built, for testing
 
@@ -33,11 +33,8 @@ object FuseMacro:
   def runImpl[A: Type](self: Expr[Fuse[A]])(using Quotes): Expr[FArray[A]] =
     '{ ${ core[A](self, TTag.Run, Nil) }.asInstanceOf[FArray[A]] }
 
-  def foreachImpl[A: Type](self: Expr[Fuse[A]], f: Expr[A => Unit])(using Quotes): Expr[Unit] =
-    '{ ${ core[A](self, TTag.Foreach, List(f)) }.asInstanceOf[Unit] }
-
-  def foldLeftImpl[A: Type, Z: Type](self: Expr[Fuse[A]], z: Expr[Z], op: Expr[(Z, A) => Z])(using Quotes): Expr[Z] =
-    '{ ${ core[A](self, TTag.Fold, List(z, op)) }.asInstanceOf[Z] }
+  // (foreach/foldLeft/count are NOT separate macro entry points — they desugar to a single-aggregate `agg(...)`
+  //  in Fuse.scala and flow through aggImpl, sharing the Agg/AState terminal machinery.)
 
   // multi-aggregate: `aggs` is `List(Agg.xxx(...), …)`; the macro reads each `Agg.xxx(...)` call off the AST,
   // carries one accumulator per aggregate in one loop, and returns a tuple `R` of the finished results.
@@ -48,8 +45,6 @@ object FuseMacro:
   def aggToImpl[A: Type, R: Type](self: Expr[Fuse[A]], aggs: Expr[List[Agg[A, Any]]], make: Expr[Any])(using Quotes): Expr[R] =
     '{ ${ core[A](self, TTag.Agg, List(aggs, make)) }.asInstanceOf[R] }
 
-  def countImpl[A: Type](self: Expr[Fuse[A]])(using Quotes): Expr[Int] =
-    '{ ${ core[A](self, TTag.Count, Nil) }.asInstanceOf[Int] }
 
   // primitive-keyed group-reduce: group by key(a), combine value(a) per key with reduce. One fused pass into an
   // open-addressing map (unboxed Int/Long key, primitive value array for prim B), materialized to Map[K,B].
@@ -294,6 +289,7 @@ object FuseMacro:
     enum AggSpec:
       case Sum(f: Term, bTpe: TypeRepr)                  // Σ f(a)
       case Count                                          // Σ 1
+      case Foreach(f: Term)                               // run f(a) for side effect → Unit
       case Extremum(f: Term, bTpe: TypeRepr, max: Boolean, bare: Boolean) // min/max f(a) → Option[B] (or B if bare)
       case Fold(z: Term, op: Term, sTpe: TypeRepr)        // seeded left fold
       case Avg(f: Term)                                   // mean of f(a): Double
@@ -325,6 +321,7 @@ object FuseMacro:
         case Apply(Apply(fn @ TypeApply(Select(_, "min1"), _), List(f)), _) => AggSpec.Extremum(unwrap(f), typeArgOf(fn, 1), false, true)
         case Apply(Apply(fn @ TypeApply(Select(_, "max1"), _), List(f)), _) => AggSpec.Extremum(unwrap(f), typeArgOf(fn, 1), true, true)
         case Apply(Apply(TypeApply(Select(_, "fold"), st), List(z)), List(op)) => AggSpec.Fold(unwrap(z), unwrap(op), st.last.tpe)
+        case Apply(TypeApply(Select(_, "foreach"), _), List(f))            => AggSpec.Foreach(unwrap(f))
         case Apply(fn @ TypeApply(Select(_, "avg"), _), List(f))           => AggSpec.Avg(unwrap(f))
         // topNBy/bottomNBy(n)(key)(using ord): Apply(Apply(Apply(TypeApply(Select,_,name), [A,B]),[n]),[key]),[ord]
         case Apply(Apply(Apply(fn @ TypeApply(Select(_, nm @ ("topNBy" | "bottomNBy")), _), List(n)), List(k)), List(ord)) =>
@@ -442,7 +439,15 @@ object FuseMacro:
     // (lazy: `decomposeLambda`/`collectPaths` are defined further down; this is forced only later, in
     //  continueShape/buildBody.)
     lazy val discardsElem: Boolean = tag match
-      case TTag.Count                => true
+      // `agg(Agg.count)` (what the standalone `count` desugars to) reads nothing → the trailing map's value is dead.
+      // Likewise `agg(Agg.foreach(p))` where the side-effect ignores its argument (the `isEmpty`/`nonEmpty`-style
+      // discard). Only when EVERY spec discards (a single Count, or a value-ignoring Foreach).
+      case TTag.Agg => parseAggList(args(0)) match
+        case List(AggSpec.Count)      => true
+        case List(AggSpec.Foreach(f)) => decomposeLambda(f) match
+          case Some((param, body)) => collectPaths(body, param).isEmpty
+          case None                => false
+        case _ => false
       case TTag.Exists | TTag.Forall =>
         decomposeLambda(args(0)) match
           case Some((param, body)) => collectPaths(body, param).isEmpty // predicate never reads its argument
@@ -927,9 +932,8 @@ object FuseMacro:
         def add1(lam: Term): Unit = decomposeLambda(lam).foreach((p, b) => if isRecordParam(p) then addFromBody(p, b))
         def add2(lam: Term): Unit = decomposeLambda2(lam).foreach((_, e, b) => if isRecordParam(e) then addFromBody(e, b)) // (acc, elem) => …
         tag match
-          case TTag.Foreach | TTag.IndexWhere => add1(args(0))                 // f / p over the element
+          case TTag.IndexWhere                => add1(args(0))                 // p over the element
           case TTag.Find | TTag.Exists | TTag.Forall => add1(args(0))
-          case TTag.Fold                      => add2(args(1))                 // op: (acc, elem) => …
           case TTag.GroupReduce               => add1(args(0)); add1(args(1)) // key + value read record fields (reduce doesn't)
           case TTag.Agg => addAggSpecs(parseAggList(args(0)))
           case TTag.Plan if args.nonEmpty =>
@@ -941,6 +945,7 @@ object FuseMacro:
         def addAggSpecs(specs: List[AggSpec]): Unit = specs.foreach {
           case AggSpec.Sum(f, _)            => add1(f)
           case AggSpec.Avg(f)               => add1(f)
+          case AggSpec.Foreach(f)           => add1(f)
           case AggSpec.Extremum(f, _, _, _) => add1(f)
           case AggSpec.Fold(_, op, _)       => add2(op)
           case AggSpec.TopN(k, _, _, _, _, _) => add1(k); wholeUse = true // topN RETAINS elements → whole record live
@@ -966,13 +971,12 @@ object FuseMacro:
       def add2(lam: Term): Unit = decomposeLambda2(lam).foreach((_, e, b) => if e.termRef.widen =:= elemTpe then chk(e, b))
       stages.foreach { case MapS(f) => decomposeLambda(f).foreach((p, b) => chk(p, b)); case FilterS(p, _) => decomposeLambda(p).foreach((pr, b) => chk(pr, b)); case _ => () }
       tag match
-        case TTag.Foreach | TTag.IndexWhere | TTag.Find | TTag.Exists | TTag.Forall => add1(args(0))
-        case TTag.Fold => add2(args(1))
+        case TTag.IndexWhere | TTag.Find | TTag.Exists | TTag.Forall => add1(args(0))
         case TTag.GroupReduce => add1(args(0)); add1(args(1))
         case TTag.Agg => aggSpecs(parseAggList(args(0)))
         case TTag.Plan if args.nonEmpty => decomposeLambda2(args(0)) match { case Some(_) => add2(args(0)); case None => aggSpecs(parseAggList(args(0))) }
         case _ => ()
-      def aggSpecs(specs: List[AggSpec]): Unit = specs.foreach { case AggSpec.Sum(f,_)=>add1(f); case AggSpec.Avg(f)=>add1(f); case AggSpec.Extremum(f,_,_,_)=>add1(f); case AggSpec.Fold(_,op,_)=>add2(op); case AggSpec.TopN(k,_,_,_,_,_)=>add1(k); whole=true; case AggSpec.Reduce(op,_,_)=>add2(op); whole=true; case AggSpec.ExtremumByElem(f,_,_,_)=>add1(f); whole=true; case AggSpec.Count=>() }
+      def aggSpecs(specs: List[AggSpec]): Unit = specs.foreach { case AggSpec.Sum(f,_)=>add1(f); case AggSpec.Avg(f)=>add1(f); case AggSpec.Foreach(f)=>add1(f); case AggSpec.Extremum(f,_,_,_)=>add1(f); case AggSpec.Fold(_,op,_)=>add2(op); case AggSpec.TopN(k,_,_,_,_,_)=>add1(k); whole=true; case AggSpec.Reduce(op,_,_)=>add2(op); whole=true; case AggSpec.ExtremumByElem(f,_,_,_)=>add1(f); whole=true; case AggSpec.Count=>() }
       whole
 
     // the scanner kind for a field type — what the slot holds and how the column reads it.
@@ -1269,26 +1273,6 @@ object FuseMacro:
       def loopS(consume: Term => Term)(consumeShape: Shape => Term): Expr[Unit] =
         drive(Ctx(consume, done, counters, Some(consumeShape)))
       tag match
-        case TTag.Count =>
-          '{ var cnt = 0; ${ loop(_ => '{ cnt += 1 }.asTerm) }; cnt }.asTerm
-        case TTag.Foreach =>
-          // shape-aware: `f`'s element param is decomposed → reads only the fields it touches, no product rebuild
-          // (e.g. `Json.ndjson[Rec](b).fuse.foreach(r => sink(r.amount))` must NOT rebuild the 20-field Rec).
-          val f = args(0)
-          '{ ${ loopS(v => applyLambda(f, v))(sh => fnOnShape(f, sh)(t => t)) }; () }.asTerm
-        case TTag.Fold =>
-          val z = args(0); val op = args(1)
-          // Z = op's result type (op: (Z, A) => Z). Using z's own type would over-narrow when the seed is more
-          // specific than Z — e.g. `foldLeft[Option[B]](None)(…)`, where z: None.type but acc must be Option[B].
-          val zTpe = op.tpe.widen.dealias match { case AppliedType(_, targs) => targs.last; case _ => z.tpe.widen }
-          zTpe.asType match
-            case '[zz] =>
-              // shape-aware: `op`'s element param is decomposed (reads only projected fields, no product rebuild);
-              // the `consume` fallback materializes for the rare non-segment path.
-              '{ var acc: zz = ${ z.asExprOf[zz] }
-                 ${ loopS(v => '{ acc = ${ applyN(op, List('{ acc }.asTerm, v)).asExprOf[zz] } }.asTerm)(
-                          sh => opOnShape(op, '{ acc }.asTerm, sh)(r => '{ acc = ${ r.asExprOf[zz] } }.asTerm)) }
-                 acc }.asTerm
         case TTag.Find =>
           // build with Option[Any] (no `A` inside the deep nested quote — keeps Type[A] evidence from leaking);
           // the entry method casts back to Option[A].
@@ -1343,6 +1327,10 @@ object FuseMacro:
             case AggSpec.Count =>
               '{ var c: Int = 0
                  ${ k(AState((_, next) => '{ c += 1; ${ next().asExprOf[Unit] } }.asTerm, '{ c }.asTerm)).asExpr } }.asTerm
+            case AggSpec.Foreach(f) =>
+              // run f for its side effect; shape-aware so f reads only the fields it touches (no product rebuild).
+              k(AState((sh, next) => fnOnShape(f, sh)(fv => '{ ${ fv.asExprOf[Unit] }; ${ next().asExprOf[Unit] } }.asTerm),
+                   '{ () }.asTerm))
             case AggSpec.Sum(f, bTpe) =>
               // UNBOXED for primitive field kinds: emit `acc + v` (iadd/ladd/dadd/fadd) directly, never the
               // generic Numeric.plus (which boxes both operands per element). Fall back to Numeric for other types.
