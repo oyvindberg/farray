@@ -1,12 +1,12 @@
-package farray.json
+package farray
 
 import scala.quoted.*
 
-/** Pure `quotes.reflect` AST helpers shared by the fusion engine (`FuseMacro`) and the JSON byte decoder
-  * (`JsonDecode`). These are tiny, stateless walks over `Term`/`TypeRepr` — lambda decomposition, product-field
-  * inspection, and field-path collection/substitution — with NO dependency on the fusion optimizer's `Shape`/`Ctx`/
-  * `Stage` model. Lives in `farray.json` (next to its only cross-package consumer) but is engine-neutral: it knows
-  * nothing about JSON either. The one place both sides agree on how to read a record's fields off a lambda.
+/** Pure `quotes.reflect` AST helpers shared by the fusion engine (`FuseMacro`) and the decomposed-source decoders
+  * (e.g. `farray.json.JsonDecode`). These are tiny, stateless walks over `Term`/`TypeRepr` — lambda decomposition,
+  * product-field inspection, and field-path collection/substitution — with NO dependency on the fusion optimizer's
+  * `Shape`/`Ctx`/`Stage` model, and none on any source format. The one place engine and decoders agree on how to read
+  * a record's fields off a lambda.
   */
 object Ast:
   /** a field path into a product: `(column index, accessor name)` per hop. `p.a.x` → `List((iₐ,"a"),(iₓ,"x"))`;

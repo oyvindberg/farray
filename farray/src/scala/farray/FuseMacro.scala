@@ -1,7 +1,6 @@
 package farray
 
 import scala.quoted.*
-import farray.json.ByteRecordSource
 
 /** which terminal a fused pipeline ends in (the macro shares one lowering core across all of them). */
 enum TTag:
@@ -240,12 +239,12 @@ object FuseMacro:
     // a decomposed PRODUCT (tuple / case class / named tuple): independent column shapes + how to rebuild the
     // whole value from them (only used if the product is ever materialized — used whole or emitted).
     final case class Tup(parts: List[Shape], rebuild: List[Term] => Term) extends Shape
-    type Path = farray.json.Ast.Path // a field path into a product: (column index, accessor name) per hop
+    type Path = Ast.Path // a field path into a product: (column index, accessor name) per hop
 
     val unit: Term = '{ () }.asTerm
 
-    // --- AST helpers (pure q.reflect walks live in farray.json.Ast, shared with the JSON decoder) ---
-    def unwrap(t: Term): Term = farray.json.Ast.unwrap(t)
+    // --- AST helpers (pure q.reflect walks live in `Ast`, shared with the decomposed-source decoder) ---
+    def unwrap(t: Term): Term = Ast.unwrap(t)
 
     def fuseElem(t: TypeRepr): TypeRepr = t.widen.dealias match
       case AppliedType(_, List(a)) => a
@@ -575,8 +574,6 @@ object FuseMacro:
         kTpe.asType match
           case '[kk] => '{ ${ a.asExprOf[kk] } == ${ b.asExprOf[kk] } }
 
-    // Is this a byte-backed JSON NDJSON source (`Json.ndjson[T](bytes).fuse…`) rather than an in-memory FArray?
-    // Detected by the source term's static type; if so we lower to a per-record scanner (see loopOverJson).
     // The RUNTIME source: read the value the `Fuse` wrapper already holds (`self.base`), NOT a re-splice of the
     // raw source expression. The source has already been evaluated once when the `Fuse` was constructed; splicing
     // the original (often INLINED, e.g. `FArray.fromIterable(...)`) tree a SECOND time emits a duplicate inlined
@@ -585,30 +582,29 @@ object FuseMacro:
     // bare local val). `srcTerm` is still used below for COMPILE-TIME type analysis only. `Fuse.base: AnyRef`.
     val selfBase: Expr[AnyRef] = '{ ${ self }.base }
 
-    // A decomposed BYTE-RECORD source (NDJSON today): the macro lowers to a per-record projection scanner driven by
-    // the `ByteRecordSource` contract (nextChunk/nextRecord/recordStart/recordEnd) — in-memory `NdjsonSource` and any
-    // future streaming byte source are the SAME path here, differing only in framing. Detected by subtyping against
-    // the contract. The element type `T` (the record case class) is still read off the `Fuse[T]` for field analysis.
-    val jsonSrc: Option[Expr[ByteRecordSource]] =
+    // A decomposed BYTE-RECORD source: the engine lowers it to a per-record projection scanner via the
+    // `ByteRecordSource` contract (nextChunk/nextRecord/recordStart/recordEnd), dispatched through `RecordDecoder`.
+    // Detected by subtyping against the contract; the element type `T` (the record case class) is read off `Fuse[T]`.
+    val decomposedSrc: Option[Expr[ByteRecordSource]] =
       if srcTerm.tpe.widen.dealias <:< TypeRepr.of[ByteRecordSource]
       then Some('{ $selfBase.asInstanceOf[ByteRecordSource] })
       else None
-    val isJson = jsonSrc.isDefined
+    val isDecomposed = decomposedSrc.isDefined
 
     // a streaming `Source[A]` source (covariant, so check by subtyping against `Source[Any]`). The chunk driver
     // wraps the in-memory element loop in an outer pull loop → constant memory over an incremental source.
     val streamSrc: Option[Expr[Source[?]]] =
-      if !isJson && srcTerm.tpe.widen.dealias <:< TypeRepr.of[Source[Any]]
+      if !isDecomposed && srcTerm.tpe.widen.dealias <:< TypeRepr.of[Source[Any]]
       then Some('{ $selfBase.asInstanceOf[Source[?]] })
       else None
     val isStream = streamSrc.isDefined
 
     // identity → hand back the source (only meaningful for Run, and only for an already-realized in-memory FArray).
-    if stages.isEmpty && tag == TTag.Run && !isJson && !isStream then return '{ $selfBase.asInstanceOf[FBase] }
+    if stages.isEmpty && tag == TTag.Run && !isDecomposed && !isStream then return '{ $selfBase.asInstanceOf[FBase] }
 
-    val srcK = if isJson then Kind.KRef else kindOf(srcElem)
+    val srcK = if isDecomposed then Kind.KRef else kindOf(srcElem)
     val outK = kindOf(aType)
-    val srcBase: Expr[FBase] = if isJson || isStream then '{ null.asInstanceOf[FBase] } else '{ $selfBase.asInstanceOf[FBase] }
+    val srcBase: Expr[FBase] = if isDecomposed || isStream then '{ null.asInstanceOf[FBase] } else '{ $selfBase.asInstanceOf[FBase] }
 
     val indexed: List[(Stage, Int)] = stages.zipWithIndex
     // stages needing an above-loop counter (take/drop = a clamped limit, zipWithIndex = a bare counter,
@@ -649,22 +645,20 @@ object FuseMacro:
     // the buffering stage's index + the stages downstream of it — the epilogue flushes its pending final run/window.
     val adjInfo: Option[(Int, List[(Stage, Int)])] =
       indexed.collectFirst { case (s, i) if isBufferStage(s) => i }.map(i => (i, indexed.drop(i + 1)))
-    // a JSON source has no static length (records are scanned, not indexed), so a Run/toList must grow the output
-    // like flatMap/scan. scanLeft emits one MORE element than its input, so the output can exceed source length.
-    // A JSON or streaming source has no static length, so a Run/toList must GROW the output (no `capExpr` bound).
-    val needsGrow: Boolean = hasFlatMap || hasScan || isJson || isStream
-    // v1 JSON scope guard: only map/filter stages over a JSON source (no zip/flatMap/take/drop/scan/distinct yet).
-    if isJson then
-      val unsupported = stages.find {
-        case MapS(_) | FilterS(_, _) => false
-        case _                       => true
-      }
-      unsupported.foreach(s =>
-        report.errorAndAbort(
-          s"fuse-json (v1): only `map` and `filter` stages are supported over a JSON source so far (got ${s.getClass.getSimpleName.stripSuffix("S")}). " +
-            "Project/filter then use a terminal (sum/fold/toList/count/foreach)."
+    // a decomposed or streaming source has no static length (records are scanned, not indexed), so a Run/toList must
+    // GROW the output (no `capExpr` bound) — like flatMap/scan. scanLeft also emits one MORE element than its input.
+    val needsGrow: Boolean = hasFlatMap || hasScan || isDecomposed || isStream
+    // v1 scope guard for a decomposed source: only map/filter stages so far (no zip/flatMap/take/drop/scan/distinct).
+    // The guard lives in the engine — the one place that knows the Stage ADT — so the decoder only ever sees map/filter.
+    if isDecomposed then
+      stages
+        .find { case MapS(_) | FilterS(_, _) => false; case _ => true }
+        .foreach(s =>
+          report.errorAndAbort(
+            s"fuse (decomposed source, v1): only `map` and `filter` stages are supported so far (got ${s.getClass.getSimpleName.stripSuffix("S")}). " +
+              "Project/filter then use a terminal (sum/fold/toList/count/foreach)."
+          )
         )
-      )
     // the scanLeft stage index + the stages downstream of it (run once with z as a prologue, then per element)
     val scanInfo: Option[(Int, List[(Stage, Int)])] =
       indexed.collectFirst { case (ScanLeftS(_, _, _), i) => i }.map(i => (i, indexed.drop(i + 1)))
@@ -769,7 +763,7 @@ object FuseMacro:
     /** the (label, type) of each field of a product type (case class / tuple / named tuple), else None. This is reflect's view of `Mirror.ProductOf` —
       * `caseFields` are the product's accessors in declaration order.
       */
-    def productFields(tpe: TypeRepr): Option[List[(String, TypeRepr)]] = farray.json.Ast.productFields(tpe)
+    def productFields(tpe: TypeRepr): Option[List[(String, TypeRepr)]] = Ast.productFields(tpe)
 
     /** reconstruct a product value of `tpe` from its field values (companion `apply`, e.g. `C(...)` / tuple). */
     def mkProduct(tpe: TypeRepr, vs: List[Term]): Term =
@@ -784,15 +778,15 @@ object FuseMacro:
 
     // --- AST shape detection / substitution ---
     /** a 2-param lambda `(p0, p1) => body` → (p0 sym, p1 sym, body). Used to decompose a fold/reduce `op`. */
-    def decomposeLambda2(t: Term): Option[(Symbol, Symbol, Term)] = farray.json.Ast.decomposeLambda2(t)
-    def decomposeLambda(t: Term): Option[(Symbol, Term)] = farray.json.Ast.decomposeLambda(t)
-    def fieldAccess(inner: Term, name: String): Option[Int] = farray.json.Ast.fieldAccess(inner, name)
-    def isFieldSelect(t: Term): Option[(Term, Int, String)] = farray.json.Ast.isFieldSelect(t)
-    def isProductCtor(t: Term): Option[(TypeRepr, List[Term])] = farray.json.Ast.isProductCtor(t)
-    def projPath(t: Term): Option[(Symbol, Path)] = farray.json.Ast.projPath(t)
-    def collectPaths(body: Term, param: Symbol): List[Path] = farray.json.Ast.collectPaths(body, param)
-    def substParam(body: Term, param: Symbol, repl: Term): Term = farray.json.Ast.substParam(body, param, repl)
-    def substPaths(body: Term, param: Symbol, refs: Map[Path, Term]): Term = farray.json.Ast.substPaths(body, param, refs)
+    def decomposeLambda2(t: Term): Option[(Symbol, Symbol, Term)] = Ast.decomposeLambda2(t)
+    def decomposeLambda(t: Term): Option[(Symbol, Term)] = Ast.decomposeLambda(t)
+    def fieldAccess(inner: Term, name: String): Option[Int] = Ast.fieldAccess(inner, name)
+    def isFieldSelect(t: Term): Option[(Term, Int, String)] = Ast.isFieldSelect(t)
+    def isProductCtor(t: Term): Option[(TypeRepr, List[Term])] = Ast.isProductCtor(t)
+    def projPath(t: Term): Option[(Symbol, Path)] = Ast.projPath(t)
+    def collectPaths(body: Term, param: Symbol): List[Path] = Ast.collectPaths(body, param)
+    def substParam(body: Term, param: Symbol, repl: Term): Term = Ast.substParam(body, param, repl)
+    def substPaths(body: Term, param: Symbol, refs: Map[Path, Term]): Term = Ast.substPaths(body, param, refs)
 
     /** navigate a shape down a field path to the leaf column (no intermediate product is materialized). */
     def navigate(cur: Shape, path: Path): Shape = path match
@@ -975,7 +969,7 @@ object FuseMacro:
       else if tail.isEmpty && ctx.consumeShape.isDefined then
         // shape-aware terminal (fold/reduce/agg): hand the decomposed shape so the terminal's lambdas project
         // only the fields they read — NEVER materialize the whole product (which would read dead placeholder
-        // columns: the `{ null; …; 0.0 }` rebuild bug on a JSON record fed to agg with no leading filter).
+        // columns: the `{ null; …; 0.0 }` rebuild bug on a decomposed record fed to agg with no leading filter).
         buildSegment(seg.map(_._1), shape)(fs => ctx.consumeShape.get(fs))
       else buildSegment(seg.map(_._1), shape)(fs => readShape(fs)(t => buildBody(tail, t, ctx)))
 
@@ -1337,31 +1331,14 @@ object FuseMacro:
         finally src.close()
       }
 
-    // ===== JSON source lowering: a per-record byte scanner whose record is a Tup of byte-sourced columns =====
-    // The downstream (filter/map/sink/DCE/terminal) is the UNCHANGED optimizer — it consumes the Tup via
-    // continueShape, exactly like zipWithIndex/collect. Only the SOURCE read changes from `a(i)` to a scan-pass.
-
-    // ── JSON byte-source bridge: build the SPI input the byte decoder (farray.json.JsonDecode) consumes, then
-    //    dispatch to it. The decoder owns all byte mechanics + the projection/early-out analysis; the engine owns
-    //    the Shape rejoin (the `continue` callback) and the v1 stage-scope guard. Nothing JSON-shaped beyond this. ──
-
-    // v1 scope: only map/filter stages over a JSON source (the decoder supports no others yet). The guard stays in
-    // the engine — it's the one place that knows the Stage ADT; by the time the decoder sees `stageLambdas`, they're
-    // guaranteed map/filter.
-    if isJson then
-      stages
-        .find { case MapS(_) | FilterS(_, _) => false; case _ => true }
-        .foreach(s =>
-          report.errorAndAbort(
-            s"fuse-json (v1): only `map` and `filter` stages are supported over a JSON source so far (got ${s.getClass.getSimpleName.stripSuffix("S")}). " +
-              "Project/filter then use a terminal (sum/fold/toList/count/foreach)."
-          )
-        )
-
-    import farray.json.{JsonLowerInput, StageLambda, JsonRecordColumns}
+    // ── DECOMPOSED-SOURCE bridge: a byte-record source lowers to a per-record scanner whose record is a Tup of
+    //    on-demand columns. The downstream (filter/map/sink/DCE/terminal) is the UNCHANGED optimizer — it consumes the
+    //    Tup via continueShape, exactly like zipWithIndex/collect; only the SOURCE read changes from `a(i)` to a
+    //    scan-pass. The engine builds the SPI input + owns the Shape rejoin (`continue`); the decoder owns the byte
+    //    mechanics + the projection/early-out analysis. ──
 
     // the pipeline's map/filter stage lambdas (in order), flattened for the decoder's live-field + early-out analysis.
-    def jsonStageLambdas: List[StageLambda[quotes.type]] = stages.collect {
+    def stageLambdasOfPipeline: List[StageLambda[quotes.type]] = stages.collect {
       case MapS(f)         => StageLambda[quotes.type](f, isFilter = false, isPositiveFilter = false)
       case FilterS(p, neg) => StageLambda[quotes.type](p, isFilter = true, isPositiveFilter = !neg)
     }
@@ -1369,7 +1346,7 @@ object FuseMacro:
     // the terminal's record-reading lambdas, pre-decomposed to (param, body) and filtered to the RECORD param (a map
     // that changed the element type means the terminal reads the MAPPED value, not the record — those fields were
     // already declared by the map). Mirrors the old `addTerminalLambdas` SELECTION, but collecting rather than folding.
-    def jsonTerminalReaders: (List[(Symbol, Term)], Boolean) =
+    def terminalRecordReadersOfPipeline: (List[(Symbol, Term)], Boolean) =
       val readers = scala.collection.mutable.ListBuffer.empty[(Symbol, Term)]
       var whole = false
       def isRecordParam(p: Symbol): Boolean = p.termRef.widen =:= srcElem
@@ -1396,23 +1373,23 @@ object FuseMacro:
       (readers.toList, whole)
 
     // the terminal's display name for the plan string (planFold reports Fold, planAgg reports Agg).
-    def jsonTerminalName: String =
+    def terminalDisplayName: String =
       if tag == TTag.Plan && args.nonEmpty then (if decomposeLambda2(args(0)).isDefined then "Fold" else "Agg") else tag.toString
 
     // assemble the SPI input. `continue` is the engine-owned rejoin: turn the decoder's decomposed columns into a
     // Shape (memoizing String columns) and run the shared downstream optimizer. `c`/`notDone` are only meaningful for
     // the real loop; the Plan terminal passes a trivial Ctx (planString ignores src/notDone/continue).
-    def jsonInput(src: Expr[ByteRecordSource], c: Ctx): JsonLowerInput[quotes.type] =
-      val (readers, whole) = jsonTerminalReaders
+    def decoderInput(src: Expr[ByteRecordSource], c: Ctx): DecomposedInput[quotes.type] =
+      val (readers, whole) = terminalRecordReadersOfPipeline
       val notDone: Expr[Boolean] = c.done match { case Some(d) => '{ ! ${ d.read } }; case None => '{ true } }
-      val continue: JsonRecordColumns[quotes.type] => Expr[Unit] = cols =>
+      val continue: RecordColumns[quotes.type] => Expr[Unit] = cols =>
         val parts: List[Shape] = cols.columns.map(col => if col.isString then memoScalar(k => col.read(k)) else Sc(k => col.read(k)))
         continueShape(Tup(parts, vs => mkProduct(srcElem, vs)), indexed, c).asExprOf[Unit]
-      JsonLowerInput[quotes.type](srcElem, src, notDone, jsonStageLambdas, readers, whole, jsonTerminalName, continue)
+      DecomposedInput[quotes.type](srcElem, src, notDone, stageLambdasOfPipeline, readers, whole, terminalDisplayName, continue)
 
     if tag == TTag.Plan then
-      return jsonSrc match
-        case Some(js) => Expr(farray.json.JsonDecode.planString(jsonInput(js, Ctx(t => t, None, Map.empty))))
+      return decomposedSrc match
+        case Some(js) => Expr(RecordDecoder.planString(decoderInput(js, Ctx(t => t, None, Map.empty))))
         case None     => Expr(s"InMemoryPlan(elem=${srcElem.typeSymbol.name}, terminal=$tag, stages=${stages.length})")
 
     // --- declare loop-state vars (above the loop), then assemble the terminal body ---
@@ -1741,8 +1718,8 @@ object FuseMacro:
     def assemble(src0: Expr[FBase], n0: Expr[Int], done: Option[Done], counters: Map[Int, Slot]): Term =
       def ctx(consume: Term => Term) = Ctx(consume, done, counters)
       def drive(c: Ctx): Expr[Unit] =
-        (jsonSrc, streamSrc) match
-          case (Some(js), _) => farray.json.JsonDecode.lower(jsonInput(js, c))
+        (decomposedSrc, streamSrc) match
+          case (Some(js), _) => RecordDecoder.lower(decoderInput(js, c))
           case (_, Some(ss)) => withEpilogue(c, withScanPrologue(c, loopOverSource(ss, srcK, srcElem, indexed, c)))
           case _             => withEpilogue(c, withScanPrologue(c, loopOver(src0, srcK, srcElem, indexed, c)))
       def loop(consume: Term => Term): Expr[Unit] = drive(ctx(consume))
@@ -1954,7 +1931,7 @@ object FuseMacro:
             case AggSpec.Reduce(op, bTpe, bare) =>
               // seeded reduce op(acc, a): the first element seeds acc (no zero); thereafter acc = op(acc, a). acc is
               // typed B (the op's result type; B >: A so the element seeds it). reduce combines whole elements, so we
-              // read the element shape whole (wholeUse already set for JSON). `bare` (reduce1) returns B, else Option[B].
+              // read the element shape whole (wholeUse already set for a decomposed source). `bare` (reduce1) returns B, else Option[B].
               bTpe.asType match
                 case '[bb] =>
                   '{
@@ -2025,7 +2002,7 @@ object FuseMacro:
         case TTag.GroupReduce =>
           // group by key(a), combine value(a) per key with reduce → Map[K,B]. ONE fused pass into an
           // open-addressing map (UNBOXED Int key via IntKeyMap; other key kinds via a boxed HashMap fallback).
-          // key/value lambdas are decomposed against the element Shape (unboxed, projection-aware over JSON too);
+          // key/value lambdas are decomposed against the element Shape (unboxed, projection-aware over a decomposed source too);
           // `reduce` is inlined (applyN) at the merge — no SAM stored, no per-element closure.
           val key = args(0); val value = args(1); val reduce = args(2)
           def resultTpe(lam: Term, n: Int): TypeRepr = lam.tpe.widen.dealias match
@@ -2107,8 +2084,8 @@ object FuseMacro:
     def assembleOut(src0: Expr[FBase], n0: Expr[Int], counters: Map[Int, Slot], ctx: (Term => Term) => Ctx): Term =
       def loop(consume: Term => Term): Expr[Unit] =
         val c = ctx(consume)
-        (jsonSrc, streamSrc) match
-          case (Some(js), _) => farray.json.JsonDecode.lower(jsonInput(js, c))
+        (decomposedSrc, streamSrc) match
+          case (Some(js), _) => RecordDecoder.lower(decoderInput(js, c))
           case (_, Some(ss)) => withEpilogue(c, withScanPrologue(c, loopOverSource(ss, srcK, srcElem, indexed, c)))
           case _             => withEpilogue(c, withScanPrologue(c, loopOver(src0, srcK, srcElem, indexed, c)))
       outK match
@@ -2285,9 +2262,9 @@ object FuseMacro:
             }.asTerm
 
     // --- final assembly: bind source + length once, then state vars, then the loop nest ---
-    // A JSON or streaming source has no FBase and no static length; n0 is just an initial output-capacity hint
+    // A decomposed or streaming source has no FBase and no static length; n0 is just an initial output-capacity hint
     // (both always use the growable `needsGrow` assembly), so a fixed estimate is fine.
-    if isJson || isStream then
+    if isDecomposed || isStream then
       '{
         val src0: FBase = null.asInstanceOf[FBase]; val n0: Int = 16
         ${ withDone(done => declareSlots(counterStages, Map.empty)(counters => assemble('src0, 'n0, done, counters))).asExpr }

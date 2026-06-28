@@ -1,8 +1,9 @@
 package farray.json
 
 import scala.quoted.*
+import farray.{Ast, DecomposedInput, RecordColumns, Column}
 
-/** The JSON byte decoder, lifted ENTIRELY out of the fusion engine. Given a [[JsonLowerInput]] — the record type,
+/** The JSON byte decoder, lifted ENTIRELY out of the fusion engine. Given a [[DecomposedInput]] — the record type,
   * the runtime [[ByteRecordSource]], the pipeline's field-reading lambdas, and the engine's `continue` callback — it
   * emits a per-record projection scanner: only the live fields are scanned (projection pushdown / dead-column
   * elimination), a leading filter is evaluated at the byte level and the record abandoned if it fails (predicate
@@ -10,7 +11,7 @@ import scala.quoted.*
   * object is allocated for reduce/project pipelines.
   *
   * It speaks to the engine ONLY through the SPI: it never names the engine's `Shape`/`Tup`/`Ctx`/`Stage`/
-  * `continueShape`. Per record it produces a [[JsonRecordColumns]] (Shape-free column reads) and hands it to
+  * `continueShape`. Per record it produces a [[RecordColumns]] (Shape-free column reads) and hands it to
   * `in.continue`, which the engine turns into its own decomposed `Shape` and rejoins to the shared optimizer. The
   * byte primitives (`skipValue`/`keyEquals`/`scanStringEnd`/`readIntAt`/…) live in [[JsonScanner]]; the pure AST
   * walks (`collectPaths`/`decomposeLambda`/…) live in [[Ast]].
@@ -28,7 +29,7 @@ object JsonDecode:
     * columns and handed to the engine's continuation; the framer behind the contract owns boundary stitching, so
     * this loop only ever sees complete, contiguous frames.
     */
-  def lower(using q: Quotes)(in: JsonLowerInput[q.type]): Expr[Unit] =
+  def lower(using q: Quotes)(in: DecomposedInput[q.type]): Expr[Unit] =
     import q.reflect.*
 
     def jkindOf(t: TypeRepr): JKind =
@@ -154,12 +155,12 @@ object JsonDecode:
       withSlots(buf, liveFs, Nil) { slots =>
         val byIdx = slots.map(s => s.idx -> s).toMap
         // the engine's continuation gets one column per field (live → slot read; dead → typed default).
-        val columns: List[JsonColumn[q.type]] = fields.zipWithIndex.map { case ((_, ftpe), i) =>
+        val columns: List[Column[q.type]] = fields.zipWithIndex.map { case ((_, ftpe), i) =>
           byIdx.get(i) match
-            case Some(s) => JsonColumn[q.type](s.read, isString = s.jk == JKind.JString)
-            case None    => val d = defaultOf(ftpe); JsonColumn[q.type](k => k(d), isString = false)
+            case Some(s) => Column[q.type](s.read, isString = s.jk == JKind.JString)
+            case None    => val d = defaultOf(ftpe); Column[q.type](k => k(d), isString = false)
         }
-        def continueDownstream: Expr[Unit] = in.continue(JsonRecordColumns[q.type](columns))
+        def continueDownstream: Expr[Unit] = in.continue(RecordColumns[q.type](columns))
 
         // ---- PREDICATE-FAIL EARLY-OUT ----
         // the LEADING run of positive filters can be evaluated DURING the scan, the moment their fields are captured;
@@ -230,7 +231,7 @@ object JsonDecode:
   /** the record fields + the live set (fields any stage/terminal lambda reads). `forcesWholeRecord` (topN/reduce/…)
     * or a whole-param use makes every field live.
     */
-  private def liveFields(using q: Quotes)(in: JsonLowerInput[q.type]): (List[(String, q.reflect.TypeRepr)], Set[String]) =
+  private def liveFields(using q: Quotes)(in: DecomposedInput[q.type]): (List[(String, q.reflect.TypeRepr)], Set[String]) =
     import q.reflect.*
     val fields = Ast
       .productFields(in.srcElem)
@@ -254,7 +255,7 @@ object JsonDecode:
   /** a machine-checkable DESCRIPTION of the plan the decoder built — tests assert on the STRUCTURE (which fields are
     * scanned, decoded vs sliced, the predicate/early-out set, rebuild, terminal) rather than on brittle code/values.
     */
-  def planString(using q: Quotes)(in: JsonLowerInput[q.type]): String =
+  def planString(using q: Quotes)(in: DecomposedInput[q.type]): String =
     import q.reflect.*
     val (fields, liveSet) = liveFields(in)
     def jks(t: TypeRepr): JKind =
