@@ -112,16 +112,24 @@ object GenCores extends BleepCodegenScript("GenCores") {
     def unbox(v: String): String = prim match { case Some(b) => b.from(v); case None => s"($v).asInstanceOf[$arr]" }
   }
 
-  // Start with the common numeric kinds + reference; add rows here to cover more primitives.
+  // Every JVM primitive kind + reference. The ops (map/foldLeft/filter/scan/…) specialize over ALL of these.
   val opKinds: List[Kind] = List(
     Kind("Int", "Int", "Int", "0", "I", Some(Box("java.lang.Integer", "Int"))),
     Kind("Long", "Long", "Long", "0L", "J", Some(Box("java.lang.Long", "Long"))),
     Kind("Double", "Double", "Double", "0.0", "D", Some(Box("java.lang.Double", "Double"))),
+    Kind("Float", "Float", "Float", "0.0f", "F", Some(Box("java.lang.Float", "Float"))),
+    Kind("Short", "Short", "Short", "0", "S", Some(Box("java.lang.Short", "Short"))),
+    Kind("Byte", "Byte", "Byte", "0", "B", Some(Box("java.lang.Byte", "Byte"))),
+    Kind("Char", "Char", "Char", "'\\u0000'", "C", Some(Box("java.lang.Character", "Char"))),
+    Kind("Boolean", "Boolean", "Boolean", "false", "Z", Some(Box("java.lang.Boolean", "Boolean"))),
     Kind("Ref", "Object", "AnyRef", "null", "L", None)
   )
 
-  /** the primitive kinds only (Int/Long/Double) — used e.g. for the Ref-element + primitive-accumulator folds. */
+  /** the primitive kinds only — used e.g. for the Ref-element + primitive-accumulator folds. */
   val primKinds: List[Kind] = opKinds.filter(_.isPrim)
+
+  /** primitive kinds that have a `scala.math.Numeric` (so sum/product/scan-of-numeric work). Char/Boolean do not. */
+  val numericKinds: List[Kind] = opKinds.filter(k => k.isPrim && k.name != "Char" && k.name != "Boolean")
 
   private val grow =
     "if (sp + 2 > stack.length) { val ns = stack.length * 2; stack = java.util.Arrays.copyOf(stack, ns); tail = java.util.Arrays.copyOf(tail, ns); isTail = java.util.Arrays.copyOf(isTail, ns) }"
@@ -719,7 +727,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
           Out.Scalar("acc")
         )
     def productSpec(k: Kind): Trav = {
-      val one = k.name match { case "Long" => "1L"; case "Double" => "1.0"; case _ => "1" }
+      val one = k.name match { case "Long" => "1L"; case "Double" => "1.0"; case "Float" => "1.0f"; case _ => "1" }
       if k.prim.isDefined then
         Trav(k, Dir.Fwd, Body(e => s"acc *= $e", rawArray = true), List(Acc("acc", k.arr, one)), Exit.Never, Out.Scalar("acc.asInstanceOf[B]"))
       else
@@ -1273,17 +1281,22 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // unboxed acc is boxed to B (== the input kind at runtime for a prim FArray) only at the boundary.
     def sumProductSurface(k: Kind, combine: (String, String) => String, seed: String, isProduct: Boolean): String = {
       val K = k.name
-      if !k.isPrim then {
-        // Ref input: cold cross-kind Reduce (acc is B, a Numeric object). Route through the SAME generic
-        // Ref-acc shared leaf method (reduceLeafFwdRefRef) with the accumulator BOXED to AnyRef — NO inlined
-        // leaf loop. `num` is the Numeric[B]; the element v is Object, wrapped to A then cast to B.
+      // Non-NUMERIC kinds (Ref input, and the prim kinds with no Numeric — Char/Boolean): route through the
+      // generic Numeric path (`num.plus`/`num.times` on B). The surface requires `Numeric[B]`, so a Char/Boolean
+      // `sum` never actually compiles at the use site — but the codegen branch must still typecheck, and this
+      // boxed-acc form does. (For Ref it's the real, cold path.)
+      if !k.isPrim || !numericKinds.exists(_.name == K) then {
         val numOp = if isProduct then "num.times" else "num.plus"
         val refSeed = if isProduct then "num.one" else "num.zero"
-        return s"reduceLeafFwdRefRef[AnyRef](xs, ($refSeed).asInstanceOf[AnyRef], (acc, v) => $numOp(acc.asInstanceOf[B], r.wrap(v.asInstanceOf[A]).asInstanceOf[B]).asInstanceOf[AnyRef]).asInstanceOf[B]"
+        val toB = if k.isPrim then s"${k.box("v")}.asInstanceOf[B]" else s"r.wrap(v.asInstanceOf[A]).asInstanceOf[B]"
+        return s"reduceLeafFwd${K}Ref[AnyRef](xs, ($refSeed).asInstanceOf[AnyRef], (acc, v) => $numOp(acc.asInstanceOf[B], $toB).asInstanceOf[AnyRef]).asInstanceOf[B]"
       }
-      // realize the unboxed `${K}To${K}Fold` SAM (acc stays a primitive) and CALL the shared leaf method —
-      // NO inlined leaf loop. The leaf method peels Empty/One/leaf and routes trees through Traversers.
-      s"reduceLeafFwd${K}${K}(xs, $seed, (acc, v) => ${combine("acc", "v")}).asInstanceOf[B]"
+      // NUMERIC prim: realize the unboxed `${K}To${K}Fold` SAM (acc stays a primitive) and CALL the shared leaf
+      // method — NO inlined leaf loop. The leaf method peels Empty/One/leaf and routes trees through Traversers.
+      // Short/Byte arithmetic WIDENS to Int in Scala (`short + short: Int`), so narrow the combine back to the
+      // SAM's element type for those kinds.
+      val narrow = (e: String) => K match { case "Short" => s"($e).toShort"; case "Byte" => s"($e).toByte"; case _ => e }
+      s"reduceLeafFwd${K}${K}(xs, $seed, (acc, v) => ${narrow(combine("acc", "v"))}).asInstanceOf[B]"
     }
     // count: Reduce whose combine folds a predicate into an Int. Only the Int input kind has a usable unboxed
     // self-kind shared leaf method (reduceLeafFwdIntInt); other prim inputs (Long/Double) and Ref would need
@@ -1302,7 +1315,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val countV = dispatchA(k => countSurface(k))
     val sumV = dispatchA(k => sumProductSurface(k, (acc, e) => s"$acc + $e", k.dflt, isProduct = false))
     val productV = {
-      def one(k: Kind) = k.name match { case "Long" => "1L"; case "Double" => "1.0"; case _ => "1" }
+      def one(k: Kind) = k.name match { case "Long" => "1L"; case "Double" => "1.0"; case "Float" => "1.0f"; case _ => "1" }
       dispatchA(k => sumProductSurface(k, (acc, e) => s"$acc * $e", one(k), isProduct = true))
     }
     // HYBRID Scan surface (design §2.1/§5): summon the input kind I (outer) AND the accumulator kind Z (= B,
@@ -1588,8 +1601,12 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // tuples. For primitive×primitive we name the stdlib @specialized Tuple2 directly (Tuple2$mcXY$sp), which
     // stores the two values unboxed — Scala 3 no longer picks it itself, so a uniform-int zip never boxes the
     // elements into Integers; only the tuple object is allocated.
+    // Scala only @specializes Tuple2 over Int/Long/Double/Char/Boolean (I/J/D/C/Z); Short/Byte/Float (S/B/F)
+    // have NO `Tuple2$mc..$sp`, so those prims must use the plain boxed Tuple2 (the tuple element boxes — a Scala
+    // stdlib limitation, not ours).
+    def tupleSpec(k: Kind): Boolean = Set("I", "J", "D", "C", "Z").contains(k.specCh)
     def mkT(ka: Kind, kb: Kind, v1: String, v2: String): String =
-      if (ka.isPrim && kb.isPrim) s"new scala.Tuple2$$mc${ka.specCh}${kb.specCh}$$sp($v1, $v2)"
+      if (ka.isPrim && kb.isPrim && tupleSpec(ka) && tupleSpec(kb)) s"new scala.Tuple2$$mc${ka.specCh}${kb.specCh}$$sp($v1, $v2)"
       else s"new scala.Tuple2(${ka.box(v1)}, ${kb.box(v2)})"
     val zipV = withErr(
       "summonFrom {\n" + opKinds
@@ -1605,8 +1622,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
       "A"
     )
     def mkTIdx(ka: Kind, v: String, idx: String): String =
-      if (ka.isPrim) s"new scala.Tuple2$$mc${ka.specCh}I$$sp($v, $idx)"
-      else s"new scala.Tuple2($v, ${opKinds.head.box(idx)})" // index is Int
+      if (ka.isPrim && tupleSpec(ka)) s"new scala.Tuple2$$mc${ka.specCh}I$$sp($v, $idx)"
+      else s"new scala.Tuple2(${ka.box(v)}, ${opKinds.head.box(idx)})" // index is Int
     val zipIdxV = withErr(
       "summonFrom {\n" + opKinds
         .map { ka =>
@@ -2241,12 +2258,15 @@ object GenCores extends BleepCodegenScript("GenCores") {
   // For Ref input the element is Object: RefToRefFold<Z> { Z apply(Z acc, Object v); }.
 
   /** The Java element type for an input Kind (Int/Long/Double -> primitives; Ref -> Object). */
-  private def jelem(k: Kind): String = k.name match {
-    case "Int"    => "int"
-    case "Long"   => "long"
-    case "Double" => "double"
-    case _        => "Object"
-  }
+  /** the Java element type for a Kind: each primitive's `jt` (int/long/double/float/short/byte/char/boolean); Ref -> Object. */
+  private def jelem(k: Kind): String =
+    prims.find(_.name == k.name).map(_.jt).getOrElse("Object")
+
+  /** read a single boxed `Object` (from a deep non-leaf base's applyBoxed) cast to the element's Java type. For a
+    * primitive, cast to the wrapper and unbox via its `${jt}Value()`; for Ref the element IS Object (pass-through). */
+  private def fromBoxedK(k: Kind, expr: String): String = prims.find(_.name == k.name) match
+    case Some(p) => s"((${p.boxed}) $expr).${p.jt}Value()"
+    case None    => expr
 
   /** All reduce traversers (input-kind × Z-acc × direction) plus the fold function types. The prim self-kind unboxed fold (`${I}To${I}Fold`) is emitted only
     * for primitive input kinds; every input kind gets the generic ref-acc fold (`${I}ToRefFold<Z>`).
@@ -2732,13 +2752,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
     */
   private def emitMainWalk(e: Emit, spec: WalkSpec, backward: Boolean): Unit = {
     val K = spec.K
-    // the Java element type for this input kind (Pad filler / Updated leaf-array element type).
-    val je = K match {
-      case "Int"    => "int"
-      case "Long"   => "long"
-      case "Double" => "double"
-      case _        => "Object"
-    }
+    // the Java element type for this input kind (Pad filler / Updated leaf-array element type): each primitive's
+    // jt; Ref -> Object.
+    val je = prims.find(_.name == K).map(_.jt).getOrElse("Object")
     // grow the single FBase[] child stack; a deferred Append/Prepend element rides as a ${K}One node.
     def ensureStack(): Unit = {
       e.open("if (stack == null)")
@@ -2919,12 +2935,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val recur = if refAcc then s"reduce${other}${K}Ref" else s"reduce${other}${K}${K}"
     // Read a single boxed Object from a deep (non-leaf) base, cast to the element type. For prims the cast
     // unboxes via the boxed wrapper's value method; for Ref the element IS Object (pass-through).
-    def fromBoxed(expr: String): String = k.name match {
-      case "Int"    => s"((Integer) $expr).intValue()"
-      case "Long"   => s"((Long) $expr).longValue()"
-      case "Double" => s"((Double) $expr).doubleValue()"
-      case _        => expr
-    }
+    def fromBoxed(expr: String): String = fromBoxedK(k, expr)
 
     // a WHOLE-leaf run: loop on `a.length`, NOT leaf.length. HotSpot can prove the bound matches the array it
     // indexes (a JVM fact) and drops the per-element bounds check on `a[i]`, vectorizing the load — `leaf.length`
@@ -3059,12 +3070,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       e.line(s"out[o] = f.apply($elem);")
       e.line("o += 1;")
     }
-    def fromBoxed(expr: String): String = ki.name match {
-      case "Int"    => s"((Integer) $expr).intValue()"
-      case "Long"   => s"((Long) $expr).longValue()"
-      case "Double" => s"((Double) $expr).doubleValue()"
-      case _        => expr
-    }
+    def fromBoxed(expr: String): String = fromBoxedK(ki, expr)
     // a WHOLE-leaf run on a.length (HotSpot drops the bounds check — see the reduce leaf note). The cursor `o`
     // advances ascending in BOTH directions; only the READ index walks descending for the Bwd build.
     def runLeaf(arr: String): Unit = e.scope {
@@ -3169,12 +3175,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       e.line("o += 1;")
       e.close()
     }
-    def fromBoxed(expr: String): String = k.name match {
-      case "Int"    => s"((Integer) $expr).intValue()"
-      case "Long"   => s"((Long) $expr).longValue()"
-      case "Double" => s"((Double) $expr).doubleValue()"
-      case _        => expr
-    }
+    def fromBoxed(expr: String): String = fromBoxedK(k, expr)
     // a WHOLE-leaf run on a.length. The READ index walks descending for the Bwd filter; the cursor advances asc.
     def runLeaf(arr: String): Unit = e.scope {
       e.line(s"$je[] a = $arr;")
@@ -3280,12 +3281,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       e.line("ob += 1;")
       e.close()
     }
-    def fromBoxed(expr: String): String = k.name match {
-      case "Int"    => s"((Integer) $expr).intValue()"
-      case "Long"   => s"((Long) $expr).longValue()"
-      case "Double" => s"((Double) $expr).doubleValue()"
-      case _        => expr
-    }
+    def fromBoxed(expr: String): String = fromBoxedK(k, expr)
     def runLeaf(arr: String): Unit = e.scope {
       e.line(s"$je[] a = $arr;")
       if !backward then {
@@ -3386,12 +3382,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val other = if backward then "Fwd" else "Bwd"
     val sig = s"static void foreach${dir}${K}(FBase root, ${K}Consumer f)"
     val recur = s"foreach${other}${K}"
-    def fromBoxed(expr: String): String = k.name match {
-      case "Int"    => s"((Integer) $expr).intValue()"
-      case "Long"   => s"((Long) $expr).longValue()"
-      case "Double" => s"((Double) $expr).doubleValue()"
-      case _        => expr
-    }
+    def fromBoxed(expr: String): String = fromBoxedK(k, expr)
     // a WHOLE-leaf run on a.length (HotSpot drops the bounds check — see the reduce leaf note).
     def runLeaf(arr: String): Unit = e.scope {
       e.line(s"$je[] a = $arr;")
@@ -3502,12 +3493,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val recur = s"scan${dir}${if rev == "Rev" then "" else "Rev"}${K}${if refAcc then "Ref" else K}"
     // read the running acc (the previously-written output slot) — governed by the WRITE convention, NOT visit dir.
     val prevAcc = if !writeBackward then (if refAcc then "(Z) out[o - 1]" else "out[o - 1]") else (if refAcc then "(Z) out[o + 1]" else "out[o + 1]")
-    def fromBoxed(expr: String): String = k.name match {
-      case "Int"    => s"((Integer) $expr).intValue()"
-      case "Long"   => s"((Long) $expr).longValue()"
-      case "Double" => s"((Double) $expr).doubleValue()"
-      case _        => expr
-    }
+    def fromBoxed(expr: String): String = fromBoxedK(k, expr)
     // write one scanned element from a raw input element expr. Governed by the WRITE convention (writeBackward),
     // NOT the visit direction: scanLeft advances o up; scanRight advances o down — regardless of visit order.
     def writeElem(elem: String): Unit =
@@ -3619,12 +3605,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val clampParam = if backward then "end" else "from"
     val sig = s"static int sc${dir}${K}(FBase root, int $clampParam, int cum, ${K}Pred p)"
     val recur = s"sc${other}${K}"
-    def fromBoxed(expr: String): String = k.name match {
-      case "Int"    => s"((Integer) $expr).intValue()"
-      case "Long"   => s"((Long) $expr).longValue()"
-      case "Double" => s"((Double) $expr).doubleValue()"
-      case _        => expr
-    }
+    def fromBoxed(expr: String): String = fromBoxedK(k, expr)
     // Scan a run of `count` elements whose backing array is `arr` with the run's FIRST element at array index
     // `base`. The run's global indices are [cum, cum+count) (Fwd) / (cum-count, cum] descending (Bwd). On a hit
     // `return` the global index (abandon the stack); else advance `cum` past the run. The predicate-in-condition
@@ -4192,8 +4173,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |}
        |""".stripMargin
 
-  /** Ops-kinds (Int/Long/Double/Ref) for the per-kind lazy nodes that carry a primitive payload. */
-  private val padKinds = List(("Int", "int", "Integer"), ("Long", "long", "Long"), ("Double", "double", "Double"), ("Ref", "Object", ""))
+  /** Kinds for the per-kind lazy nodes that carry a payload: EVERY prim kind + Ref. */
+  private val padKinds: List[(String, String, String)] = prims.map(p => (p.name, p.jt, p.boxed)) :+ ("Ref", "Object", "")
 
   /** Kinds with a `${K}One` singleton: EVERY prim leaf kind + Ref. Every length-1 FArray is one of these, so a length-1 leaf/append/prepend/slice of any prim
     * kind canonicalizes to its own-kind One with no boxing.
@@ -4299,12 +4280,17 @@ object GenCores extends BleepCodegenScript("GenCores") {
     * element). `rev` flips order for ReverseNode.
     */
   private def hashing: String = {
-    def eh(p: Prim, e: String): String = p.name match
+    // the element-hash expression for a kind by NAME (the single source of truth for every node shape). Matches
+    // scala.runtime.Statics.##: Int/Short/Byte/Char hash to their widened value; Long/Double/Float/Boolean/Ref
+    // use the dedicated hashers.
+    def ehName(name: String, e: String): String = name match
       case "Long"    => s"scala.runtime.Statics.longHash($e)"
       case "Double"  => s"scala.runtime.Statics.doubleHash($e)"
       case "Float"   => s"scala.runtime.Statics.floatHash($e)"
       case "Boolean" => s"($e ? 1231 : 1237)"
+      case "Ref"     => s"scala.runtime.Statics.anyHash($e)"
       case _         => e // Int/Short/Byte/Char: ## is the (widened) value
+    def eh(p: Prim, e: String): String = ehName(p.name, e)
     val leafFill = prims
       .map(p =>
         s"""       |        if (node instanceof ${p.name}Arr a) { if (rev) for (int i = a.length - 1; i >= 0; i--) hs[pos++] = ${eh(
@@ -4331,33 +4317,19 @@ object GenCores extends BleepCodegenScript("GenCores") {
       .mkString("\n")
     val padFill = padKinds
       .map { case (name, _, _) =>
-        val fh = name match
-          case "Long"   => "scala.runtime.Statics.longHash(pad.filler)"
-          case "Double" => "scala.runtime.Statics.doubleHash(pad.filler)"
-          case "Ref"    => "scala.runtime.Statics.anyHash(pad.filler)"
-          case _        => "pad.filler"
+        val fh = ehName(name, "pad.filler")
         s"""       |        if (node instanceof ${name}Pad pad) { int extra = pad.length - pad.base.length; if (rev) { for (int i = 0; i < extra; i++) hs[pos++] = $fh; return fill(pad.base, true, hs, pos); } else { pos = fill(pad.base, false, hs, pos); for (int i = 0; i < extra; i++) hs[pos++] = $fh; return pos; } }"""
       }
       .mkString("\n")
     val updatedFill = padKinds
       .map { case (name, _, _) =>
-        val eh2 = name match
-          case "Long"   => "scala.runtime.Statics.longHash(u.elem)"
-          case "Double" => "scala.runtime.Statics.doubleHash(u.elem)"
-          case "Ref"    => "scala.runtime.Statics.anyHash(u.elem)"
-          case _        => "u.elem"
+        val eh2 = ehName(name, "u.elem")
         s"""       |        if (node instanceof ${name}Updated u) { int start = pos; pos = fill(u.base, rev, hs, pos); hs[rev ? (start + u.length - 1 - u.index) : (start + u.index)] = $eh2; return pos; }"""
       }
       .mkString("\n")
     val oneFill = oneKinds
       .map { case (name, _, _) =>
-        val eh2 = name match
-          case "Long"    => "scala.runtime.Statics.longHash(o.elem)"
-          case "Double"  => "scala.runtime.Statics.doubleHash(o.elem)"
-          case "Float"   => "scala.runtime.Statics.floatHash(o.elem)"
-          case "Boolean" => "(o.elem ? 1231 : 1237)"
-          case "Ref"     => "scala.runtime.Statics.anyHash(o.elem)"
-          case _         => "o.elem"
+        val eh2 = ehName(name, "o.elem")
         s"""       |        if (node instanceof ${name}One o) { hs[pos] = $eh2; return pos + 1; }"""
       }
       .mkString("\n")
