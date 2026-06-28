@@ -42,7 +42,7 @@ export default function Snippet({ name, hideFull }: Props) {
         {canFull && (
           <label className="snippet__toggle">
             <input type="checkbox" checked={showFull} onChange={(e) => setShowFull(e.target.checked)} />
-            entire file
+            {data.fullLabel ?? "entire file"}
           </label>
         )}
         <button className="snippet__copy" onClick={copy} type="button">

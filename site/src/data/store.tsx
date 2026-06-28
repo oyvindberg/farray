@@ -5,6 +5,7 @@ export interface SnippetData {
   name: string; file: string; lang: string;
   code: string; html: string;
   full: string | null; fullHtml: string | null;
+  fullLabel?: string;
 }
 
 interface Store {

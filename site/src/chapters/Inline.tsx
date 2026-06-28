@@ -1,5 +1,4 @@
 import Snippet from "../components/Snippet";
-import GeneratedCode from "../components/GeneratedCode";
 
 export default function Inline() {
   return (
@@ -15,23 +14,23 @@ export default function Inline() {
 
       <p>
         The mechanism is Scala 3's <code>summonFrom</code>: a compile-time match on which <code>Repr</code>{" "}
-        evidence exists for the element type. Here is the actual generated <code>map</code> — one outer branch
-        per input kind, one inner branch per result kind. It's a big, dumb, beautiful cross-product, and you'll
-        never see most of it.
+        evidence exists for the element type. The generated <code>map</code> is one outer branch per input kind
+        and, nested inside, one per result kind. Here's the shape of it — when the kinds line up (the common
+        case) the branch is a one-liner into a specialized leaf method; when they don't, it's a generic loop.
+        Toggle <em>all 81 branches</em> if you want to see the full cross-product you'll never write:
       </p>
 
-      <GeneratedCode name="map-dispatch-real" summary="The real map dispatch — generated, input-kind × result-kind" />
+      <Snippet name="map-dispatch-real" />
 
-      <p>
-        When the input and result kinds line up — the overwhelmingly common case — the branch is a one-liner
-        that calls a static, specialized leaf method. That method is where the loop actually lives:
-      </p>
+      <p>That leaf method is where the loop actually lives:</p>
 
       <Snippet name="map-leaf" hideFull />
 
       <p>
         A genuine <code>while</code>-loop over <code>int[]</code>, and <code>f</code> is an{" "}
-        <code>IntToIntFn</code> — a specialized SAM, not a boxed <code>Function1</code>. Now watch what happens
+        <code>IntToIntFn</code> — a specialized SAM, not a boxed <code>Function1</code>. The <code>IntArr</code>{" "}
+        case is the fast path; a tree input falls through the <code>case _</code> to the shared traverser — the
+        one direction-aware walk every op reuses. Now watch what happens
         at a concrete <code>FArray[Int]</code> call site. The compiler knows <code>A = Int</code>, so{" "}
         <code>summonFrom</code> keeps the <code>IntRepr</code> branch and deletes the other eighty. So this:
       </p>
@@ -40,10 +39,11 @@ export default function Inline() {
 
       <p>
         compiles, at that line, to a single resolved leaf call — the eighty branches gone, your lambda lifted
-        into one specialized SAM and handed to the loop:
+        into one specialized SAM and handed to the loop. (That's the lowering with the opaque-type bookkeeping
+        elided; toggle <em>raw expansion</em> for the verbatim tree.) Read it as three names:
       </p>
 
-      <Snippet name="map-generated" hideFull />
+      <Snippet name="map-generated" />
 
       <p>Three things are worth pointing at, because together they are the entire pitch:</p>
 

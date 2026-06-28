@@ -111,6 +111,52 @@ function dedent(lines) {
   return lines.map((l) => l.slice(min)).join("\n").replace(/^\n+|\n+$/g, "");
 }
 
+// Strip the opaque-type `$proxy` bookkeeping (provably dead-code-eliminated — the golden header says so),
+// so the default view shows the loop, not the encoding. The verbatim version stays behind the toggle.
+function stripProxy(code) {
+  const lines = code.split("\n");
+  const kept = [];
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i].trim();
+    if (/^val [\w$]*\$proxy: FArray\$package \{$/.test(t)) {
+      while (i < lines.length && lines[i].trim() !== "}]") i++; // skip the multiline proxy-type decl
+      continue;
+    }
+    if (/^val FArray\$package\$_this/.test(t)) continue;
+    if (/^val \w*\$proxy:.*\$asInstanceOf\$/.test(t)) continue; // `val xs$proxy = ints.$asInstanceOf$[…]`
+    kept.push(lines[i]);
+  }
+  let s = kept.join("\n");
+  s = s.replace(/(\w+)\$proxy/g, "$1"); // xs$proxy -> xs, a$proxy -> a
+  s = s.replace(/\.\$asInstanceOf\$\[(?:[^[\]]|\[[^\]]*\])*\]/g, ""); // drop opaque-boundary casts (1-level nesting)
+  s = s.replace(/\(\(\{/g, "{").replace(/\}: FBase\): FArray\[\w+\]\)/g, "}"); // collapse the wrapper ascription
+  let out = dedent(s.split("\n")).replace(/\n{3,}/g, "\n\n");
+  // drop a redundant outermost brace pair if everything is wrapped in one
+  const ol = out.split("\n");
+  if (ol[0].trim() === "{" && ol[ol.length - 1].trim() === "}") out = dedent(ol.slice(1, -1));
+  return out.trim();
+}
+
+// Reduce the 81-branch dispatch to one representative path, shown verbatim with honest elisions: the
+// matching-kind fast path (-> mapLeafIntInt), one cross-kind loop, and the Ref path.
+function firstOuterBranch(code) {
+  const L = code.split("\n");
+  const find = (re) => L.find((l) => re.test(l));
+  return [
+    L[0], // signature + outer `summonFrom {`
+    find(/case r: IntRepr\[A\] => summonFrom \{/),
+    find(/case rb: IntRepr\[B\] =>/), //  Int -> Int : the static leaf method
+    find(/case rb: LongRepr\[B\] =>/), // Int -> Long: a generic out-loop (one per mismatched kind)
+    "          // … DoubleRepr[B] … BooleanRepr[B]: the same loop, one per result kind",
+    find(/case rb: RefRepr\[B\] =>/),
+    "        }",
+    "    // … LongRepr[A], DoubleRepr[A], … RefRepr[A]: eight more input kinds — 81 branches in all",
+    "    case _ => /* friendly \"specialize, or fail to compile\" error */",
+    "  }",
+    "}",
+  ].join("\n");
+}
+
 function buildSnippets() {
   const files = [];
   for (const root of SOURCE_ROOTS) {
@@ -161,8 +207,17 @@ function buildSnippets() {
   ];
   for (const g of GOLDENS) {
     const path = resolve(REPO, g.file);
-    const code = readFileSync(path, "utf8").replace(/^\n+|\n+$/g, "");
-    out[g.name] = { name: g.name, file: g.file, lang: "scala", code, html: hl(code, "scala"), full: null, fullHtml: null };
+    const raw = readFileSync(path, "utf8").replace(/^\n+|\n+$/g, "");
+    if (g.name === "map-generated") {
+      // default to the proxy-stripped loop; the verbatim expansion is one toggle away
+      const short = stripProxy(raw);
+      out[g.name] = {
+        name: g.name, file: g.file, lang: "scala",
+        code: short, html: hl(short, "scala"), full: raw, fullHtml: hl(raw, "scala"), fullLabel: "raw expansion",
+      };
+    } else {
+      out[g.name] = { name: g.name, file: g.file, lang: "scala", code: raw, html: hl(raw, "scala"), full: null, fullHtml: null };
+    }
   }
 
   // Schematic illustrations — not extracted from a single file (the real hierarchy is ~60 generated Java
@@ -190,7 +245,15 @@ function buildSnippets() {
   ];
   for (const e of EXTRACTS) {
     const code = extractBraceDef(genOps, e.sig);
-    out[e.name] = { name: e.name, file: e.file, lang: "scala", code, html: hl(code, "scala"), full: null, fullHtml: null };
+    if (e.name === "map-dispatch-real") {
+      const short = firstOuterBranch(code);
+      out[e.name] = {
+        name: e.name, file: e.file, lang: "scala",
+        code: short, html: hl(short, "scala"), full: code, fullHtml: hl(code, "scala"), fullLabel: "all 81 branches",
+      };
+    } else {
+      out[e.name] = { name: e.name, file: e.file, lang: "scala", code, html: hl(code, "scala"), full: null, fullHtml: null };
+    }
   }
 
   writeFileSync(resolve(OUT, "snippets.json"), JSON.stringify(out, null, 2));
