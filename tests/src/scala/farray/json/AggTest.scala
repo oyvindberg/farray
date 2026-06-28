@@ -71,6 +71,15 @@ class AggTest:
     val f = xs.fuse.filter(_.a > 2).aggTo(AggTest.Summary.apply)(Agg.sum(_.a), Agg.count, Agg.max(_.b))
     assertEquals(AggTest.Summary(7, 2, Some(40)), f)
 
+  /** min1/max1: non-Option result for a known-non-empty input (so a case-class field can be a plain primitive). */
+  @Test def min1_max1_bare(): Unit =
+    val (mn, mx) = xs.fuse.agg(Agg.min1(_.a), Agg.max1(_.b))
+    assertEquals(1, mn); assertEquals(40, mx) // plain Int, not Option
+    val s = xs.fuse.aggTo(AggTest.Stats.apply)(Agg.sum(_.a), Agg.max1(_.b))
+    assertEquals(AggTest.Stats(10, 40), s)
+    org.junit.Assert.assertThrows(classOf[NoSuchElementException], () =>
+      FArray.empty[Rec].fuse.agg(Agg.min1(_.a), Agg.count))
+
   /** sum/max over PRIMITIVE fields must be UNBOXED — fold a large input many times and assert it doesn't
    *  allocate per element (a boxing regression would allocate millions of wrappers). */
   @Test def primitiveAggs_dont_box(): Unit =
@@ -90,3 +99,4 @@ end AggTest
 object AggTest:
   final case class Rec(a: Int, b: Int, c: Double)
   final case class Summary(total: Int, n: Int, top: Option[Int])
+  final case class Stats(total: Int, top: Int) // plain (non-Option) field via max1

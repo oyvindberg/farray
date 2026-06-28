@@ -22,6 +22,10 @@ object Agg:
    *  must be typed `Option[B]`.) */
   def min[A, B](f: A => B)(using Ordering[B]): Agg[A, Option[B]] = new Agg()
   def max[A, B](f: A => B)(using Ordering[B]): Agg[A, Option[B]] = new Agg()
+  /** like `min`/`max` but for a KNOWN-NON-EMPTY input: the result is `B`, not `Option[B]` (so a case-class
+   *  field can be a plain primitive). Throws `NoSuchElementException` if the pipeline is empty. */
+  def min1[A, B](f: A => B)(using Ordering[B]): Agg[A, B] = new Agg()
+  def max1[A, B](f: A => B)(using Ordering[B]): Agg[A, B] = new Agg()
   /** the general aggregate: a seeded left fold over the (surviving) elements. */
   def fold[A, S](z: S)(step: (S, A) => S): Agg[A, S] = new Agg()
   /** mean of the projected field (sum / count, fused into one pass), or 0.0 if empty. */

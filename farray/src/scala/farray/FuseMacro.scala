@@ -230,7 +230,7 @@ object FuseMacro:
     enum AggSpec:
       case Sum(f: Term, bTpe: TypeRepr)                  // Σ f(a)
       case Count                                          // Σ 1
-      case Extremum(f: Term, bTpe: TypeRepr, max: Boolean) // min/max f(a) → Option[B]
+      case Extremum(f: Term, bTpe: TypeRepr, max: Boolean, bare: Boolean) // min/max f(a) → Option[B] (or B if bare)
       case Fold(z: Term, op: Term, sTpe: TypeRepr)        // seeded left fold
       case Avg(f: Term)                                   // mean of f(a): Double
     def parseAggList(t: Term): List[AggSpec] =
@@ -252,8 +252,10 @@ object FuseMacro:
         case Apply(Apply(fn @ TypeApply(Select(_, "sum"), _), List(f)), _) => AggSpec.Sum(unwrap(f), typeArgOf(fn, 1))
         case Apply(fn @ TypeApply(Select(_, "sum"), _), List(f))           => AggSpec.Sum(unwrap(f), typeArgOf(fn, 1))
         case TypeApply(Select(_, "count"), _)                              => AggSpec.Count
-        case Apply(Apply(fn @ TypeApply(Select(_, "min"), _), List(f)), _) => AggSpec.Extremum(unwrap(f), typeArgOf(fn, 1), false)
-        case Apply(Apply(fn @ TypeApply(Select(_, "max"), _), List(f)), _) => AggSpec.Extremum(unwrap(f), typeArgOf(fn, 1), true)
+        case Apply(Apply(fn @ TypeApply(Select(_, "min"), _), List(f)), _)  => AggSpec.Extremum(unwrap(f), typeArgOf(fn, 1), false, false)
+        case Apply(Apply(fn @ TypeApply(Select(_, "max"), _), List(f)), _)  => AggSpec.Extremum(unwrap(f), typeArgOf(fn, 1), true, false)
+        case Apply(Apply(fn @ TypeApply(Select(_, "min1"), _), List(f)), _) => AggSpec.Extremum(unwrap(f), typeArgOf(fn, 1), false, true)
+        case Apply(Apply(fn @ TypeApply(Select(_, "max1"), _), List(f)), _) => AggSpec.Extremum(unwrap(f), typeArgOf(fn, 1), true, true)
         case Apply(Apply(TypeApply(Select(_, "fold"), st), List(z)), List(op)) => AggSpec.Fold(unwrap(z), unwrap(op), st.last.tpe)
         case Apply(fn @ TypeApply(Select(_, "avg"), _), List(f))           => AggSpec.Avg(unwrap(f))
         case other => report.errorAndAbort(s"fuse: unsupported agg — use Agg.sum/count/min/max/avg/fold. Got:\n${other.show(using Printer.TreeStructure)}")
@@ -1215,16 +1217,18 @@ object FuseMacro:
               '{ var s: Double = 0.0; var c: Int = 0
                  ${ k(AState((sh, next) => fnOnShape(f, sh)(fv => '{ s = s + ${ fv.asExprOf[Double] }; c += 1; ${ next().asExprOf[Unit] } }.asTerm),
                       '{ if c == 0 then 0.0 else s / c }.asTerm)).asExpr } }.asTerm
-            case AggSpec.Extremum(f, bTpe, isMax) =>
+            case AggSpec.Extremum(f, bTpe, isMax, bare) =>
               // UNBOXED for primitive field kinds: emit `kk > best` / `kk < best` directly (if_icmp/dcmp), never
-              // the generic Ordering.gt/lt (which boxes). Fall back to Ordering for other types.
+              // the generic Ordering.gt/lt (which boxes). Fall back to Ordering for other types. `bare` (min1/max1)
+              // returns B directly (throws on empty); otherwise Option[B].
               bTpe.asType match
                 case '[bb] =>
                   '{ var best: bb = null.asInstanceOf[bb]; var seen: Boolean = false
                      ${ k(AState((sh, next) => fnOnShape(f, sh)(fv => '{ val kk: bb = ${ fv.asExprOf[bb] }
                                  if !seen || ${ ordWins(bTpe, '{ kk }.asTerm, '{ best }.asTerm, isMax) } then { best = kk; seen = true }
                                  ${ next().asExprOf[Unit] } }.asTerm),
-                          '{ if seen then Some(best) else None }.asTerm)).asExpr } }.asTerm
+                          if bare then '{ if seen then best else throw new java.util.NoSuchElementException("min1/max1 of empty fused pipeline") }.asTerm
+                          else '{ if seen then Some(best) else None }.asTerm)).asExpr } }.asTerm
             case AggSpec.Fold(z, op, sTpe) =>
               sTpe.asType match
                 case '[ss] =>

@@ -166,7 +166,16 @@ object JsonDemo:
         bench = Some(Bench("fuse 2.47× faster, near-zero allocation vs 1.4 MB/op",
           List(
             ("fuse (rejected records stop at `key`)", "1212 ops/s", "0.17 B/op"),
-            ("jsoniter — narrow codec {key, payload}", "491 ops/s", "1 432 000 B/op")))))
+            ("jsoniter — narrow codec {key, payload}", "491 ops/s", "1 432 000 B/op"))))),
+      Example(
+        "Multi-aggregate — three SQL aggregates, ONE pass, into a case class",
+        """`SELECT sum(amount), count(*), max(score) WHERE status = 'active'` — `agg` runs all three in a single
+          |fused scan, carrying one (UNBOXED) accumulator each. The columns the aggregates read are MERGED
+          |automatically: `amount`, `status`, and `score` are scanned (3 of 20 fields), each once; `count` reads
+          |nothing extra. `aggTo(Stats.apply)` returns a case class, not a tuple. No `Event` is built; the
+          |`sum`/`max` use `dadd`/`dcmp`, not the boxing `Numeric`/`Ordering`.""".stripMargin,
+        "Json.ndjson[Event](src).fuse.filter(_.status == \"active\")\n  .aggTo(Stats.apply)(Agg.sum(_.amount), Agg.count, Agg.max1(_.score))",
+        clean(j_agg))
     )
 
   // ════════════════════════════════════ records + jsoniter source ════════════════════════════════════════
@@ -177,6 +186,8 @@ object JsonDemo:
       name: String, category: String, region: String, status: String,
       country: String, device: String, source: String, label: String)
   final case class Wide(key: Int, f1: Int, f2: Int, f3: Double, payload: String)
+  /** the case-class result of the multi-aggregate example. */
+  final case class Stats(revenue: Double, n: Int, peak: Double)
 
   val sample: Array[Byte] =
     ("""{"id":1,"ts":1700000001,"userId":42,"sessionId":7,"amount":250.50,"score":88.0,"lat":59.9,"lon":10.7,"age":34,"rank":2,"count":5,"flags":1,"name":"Ada","category":"books","region":"eu","status":"active","country":"NO","device":"ios","source":"web","label":"vip"}
@@ -244,6 +255,9 @@ object JsonDemo:
   private inline def j_cat: String   = FuseDebug.show(Json.ndjson[Event](sample).fuse.filter(_.amount > 150).map(_.category).toList)
   private inline def j_count: String = FuseDebug.show(Json.ndjson[Event](sample).fuse.filter(_.status == "active").map(_.category).count)
   private inline def j_wide: String  = FuseDebug.show(Json.ndjson[Wide](wideSample).fuse.filter(_.key > 90).map(_.payload).count)
+  private inline def j_agg: String   = FuseDebug.show(
+    Json.ndjson[Event](sample).fuse.filter(_.status == "active")
+      .aggTo(Stats.apply)(farray.Agg.sum(_.amount), farray.Agg.count, farray.Agg.max1(_.score)))
 
   /** strip the dead `$proxy`/`Fuse_this` preamble and opacity-cast noise so the loop reads cleanly. */
   private def clean(code: String): String =
@@ -323,6 +337,7 @@ object JsonDemo:
   private def highlightScala(s: String): String =
     var h = esc(s)
     for kw <- List("filter", "foldLeft", "fuse", "ndjson", "map", "toList", "count", "headOption", "sum", "run",
+                   "aggTo", "agg", "Agg",
                    "def", "val", "var", "while", "if", "then", "else", "new", "given") do
       h = raw"(?<![A-Za-z_.])($kw)(?![A-Za-z0-9_])".r.replaceAllIn(h, m => s"""<span class="kw">${m.group(1)}</span>""")
     h.replace("//", """<span class="cm">//""").linesIterator.map(l => if l.contains("<span class=\"cm\">") then l + "</span>" else l).mkString("\n")
