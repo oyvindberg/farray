@@ -131,6 +131,33 @@ class FSetTest:
     assertEquals(u.toList, u.toList)
     assertEquals((ra union rb).toList.sorted, u.toList)
 
+  @Test def merge_materialize_str(): Unit =
+    // the Ref merge core (cached-hash sort-merge). Ref iterates in hash order, so compare as SETS.
+    val a = FSet("apple", "banana", "cherry", "fig"); val b = FSet("cherry", "date", "fig", "kiwi")
+    val ra = Set("apple", "banana", "cherry", "fig"); val rb = Set("cherry", "date", "fig", "kiwi")
+    assertEquals("union",     ra union rb,                              (a ++ b).materialize.toList.toSet)
+    assertEquals("intersect", ra intersect rb,                         (a & b).materialize.toList.toSet)
+    assertEquals("diff",      ra diff rb,                               (a &~ b).materialize.toList.toSet)
+    assertEquals("xor",       (ra union rb) diff (ra intersect rb),     (a ^ b).materialize.toList.toSet)
+    // HASH-COLLISION tie-group: "Aa" and "BB" share hashCode 2112 — drives the .equals-within-tie-group path.
+    assertEquals(2112, "Aa".hashCode); assertEquals(2112, "BB".hashCode)
+    val c = FSet("Aa", "BB"); val d = FSet("BB", "Cc")
+    assertEquals("collide ∪", Set("Aa", "BB", "Cc"), (c ++ d).materialize.toList.toSet)
+    assertEquals("collide ∩", Set("BB"),             (c & d).materialize.toList.toSet)
+    assertEquals("collide ∖", Set("Aa"),             (c &~ d).materialize.toList.toSet)
+    assertEquals("collide ^", Set("Aa", "Cc"),       (c ^ d).materialize.toList.toSet)
+    // large (Hash-leaf) Ref merge, and chained algebra
+    val big1 = FSet.fromArray((0 until 100).map("k" + _).toArray)
+    val big2 = FSet.fromArray((50 until 150).map("k" + _).toArray)
+    assertEquals((0 until 150).map("k" + _).toSet, (big1 ++ big2).materialize.toList.toSet)
+    assertEquals((50 until 100).map("k" + _).toSet, (big1 & big2).materialize.toList.toSet)
+    assertEquals((0 until 50).map("k" + _).toSet,  (big1 &~ big2).materialize.toList.toSet)
+    // materialized === / setHashCode over a Ref merge result, shape-independent (merged union vs fresh build)
+    val merged = (big1 ++ big2).materialize
+    val direct = FSet.fromArray((0 until 150).map("k" + _).toArray)
+    assertTrue(merged === direct)
+    assertEquals(merged.setHashCode, direct.setHashCode)
+
   @Test def merge_materialize_long(): Unit =
     val a = FSet(10L, 5L, 7L); val b = FSet(7L, 1L)
     assertEquals(List(1L, 5L, 7L, 10L), (a ++ b).materialize.toList)
