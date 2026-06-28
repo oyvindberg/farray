@@ -2,15 +2,13 @@ package farray
 
 import scala.quoted.*
 
-/** Pure `quotes.reflect` AST helpers shared by the fusion engine (`FuseMacro`) and the decomposed-source decoders
-  * (e.g. `farray.json.JsonDecode`). These are tiny, stateless walks over `Term`/`TypeRepr` — lambda decomposition,
-  * product-field inspection, and field-path collection/substitution — with NO dependency on the fusion optimizer's
-  * `Shape`/`Ctx`/`Stage` model, and none on any source format. The one place engine and decoders agree on how to read
-  * a record's fields off a lambda.
+/** Pure `quotes.reflect` AST helpers shared by the fusion engine (`FuseMacro`) and the decomposed-source decoders (e.g. `farray.json.JsonDecode`). These are
+  * tiny, stateless walks over `Term`/`TypeRepr` — lambda decomposition, product-field inspection, and field-path collection/substitution — with NO dependency
+  * on the fusion optimizer's `Shape`/`Ctx`/`Stage` model, and none on any source format. The one place engine and decoders agree on how to read a record's
+  * fields off a lambda.
   */
 private[farray] object Ast:
-  /** a field path into a product: `(column index, accessor name)` per hop. `p.a.x` → `List((iₐ,"a"),(iₓ,"x"))`;
-    * a bare `p` → `Nil` (the param used whole).
+  /** a field path into a product: `(column index, accessor name)` per hop. `p.a.x` → `List((iₐ,"a"),(iₓ,"x"))`; a bare `p` → `Nil` (the param used whole).
     */
   type Path = List[(Int, String)]
 
@@ -42,8 +40,8 @@ private[farray] object Ast:
       case Select(inner, name) => fieldAccess(inner, name).map(i => (inner, i, name))
       case _                   => None
 
-  /** a CANONICAL product construction `C(a, b, …)` / `(a, b)` / `new C(…)` → (product type, field args). Only the
-    * product's OWN apply/constructor counts (not an arbitrary factory returning C), so args == fields.
+  /** a CANONICAL product construction `C(a, b, …)` / `(a, b)` / `new C(…)` → (product type, field args). Only the product's OWN apply/constructor counts (not
+    * an arbitrary factory returning C), so args == fields.
     */
   def isProductCtor(using q: Quotes)(t: q.reflect.Term): Option[(q.reflect.TypeRepr, List[q.reflect.Term])] =
     import q.reflect.*
@@ -67,7 +65,7 @@ private[farray] object Ast:
   def projPath(using q: Quotes)(t: q.reflect.Term): Option[(q.reflect.Symbol, Path)] =
     import q.reflect.*
     t match
-      case id: Ident => Some((id.symbol, Nil))
+      case id: Ident           => Some((id.symbol, Nil))
       case Select(inner, name) =>
         (projPath(inner), fieldAccess(inner, name)) match
           case (Some((s, p)), Some(idx)) => Some((s, p :+ (idx, name)))

@@ -3,31 +3,27 @@ package farray.json
 import scala.quoted.*
 import farray.{Ast, DecomposedInput, RecordColumns, Column}
 
-/** The JSON byte decoder, lifted ENTIRELY out of the fusion engine. Given a [[DecomposedInput]] — the record type,
-  * the runtime [[ByteRecordSource]], the pipeline's field-reading lambdas, and the engine's `continue` callback — it
-  * emits a per-record projection scanner: only the live fields are scanned (projection pushdown / dead-column
-  * elimination), a leading filter is evaluated at the byte level and the record abandoned if it fails (predicate
-  * pushdown), a projected String is decoded lazily only for survivors (compute-for-survivors), and no per-record
-  * object is allocated for reduce/project pipelines.
+/** The JSON byte decoder, lifted ENTIRELY out of the fusion engine. Given a [[DecomposedInput]] — the record type, the runtime [[ByteRecordSource]], the
+  * pipeline's field-reading lambdas, and the engine's `continue` callback — it emits a per-record projection scanner: only the live fields are scanned
+  * (projection pushdown / dead-column elimination), a leading filter is evaluated at the byte level and the record abandoned if it fails (predicate pushdown),
+  * a projected String is decoded lazily only for survivors (compute-for-survivors), and no per-record object is allocated for reduce/project pipelines.
   *
-  * It speaks to the engine ONLY through the SPI: it never names the engine's `Shape`/`Tup`/`Ctx`/`Stage`/
-  * `continueShape`. Per record it produces a [[RecordColumns]] (Shape-free column reads) and hands it to
-  * `in.continue`, which the engine turns into its own decomposed `Shape` and rejoins to the shared optimizer. The
-  * byte primitives (`skipValue`/`keyEquals`/`scanStringEnd`/`readIntAt`/…) live in [[JsonScanner]]; the pure AST
-  * walks (`collectPaths`/`decomposeLambda`/…) live in [[Ast]].
+  * It speaks to the engine ONLY through the SPI: it never names the engine's `Shape`/`Tup`/`Ctx`/`Stage`/ `continueShape`. Per record it produces a
+  * [[RecordColumns]] (Shape-free column reads) and hands it to `in.continue`, which the engine turns into its own decomposed `Shape` and rejoins to the shared
+  * optimizer. The byte primitives (`skipValue`/`keyEquals`/`scanStringEnd`/`readIntAt`/…) live in [[JsonScanner]]; the pure AST walks
+  * (`collectPaths`/`decomposeLambda`/…) live in [[Ast]].
   *
-  * `lower` and `planString` are the only entry points; everything else is nested inside them so a single `Quotes`
-  * (`q`) is shared across all the codegen helpers — no path-dependent-type threading.
+  * `lower` and `planString` are the only entry points; everything else is nested inside them so a single `Quotes` (`q`) is shared across all the codegen
+  * helpers — no path-dependent-type threading.
   */
 private[farray] object JsonDecode:
 
   /** the scanner kind for a field type — what the slot holds and how the column reads it. */
   private enum JKind { case JInt, JLong, JDouble, JString }
 
-  /** drive the [[ByteRecordSource]] contract — an OUTER chunk loop (`nextChunk`) wrapping an INNER record loop
-    * (`nextRecord`), both `done`-gated, in `try/finally close()`. Each complete record is decoded to its live-field
-    * columns and handed to the engine's continuation; the framer behind the contract owns boundary stitching, so
-    * this loop only ever sees complete, contiguous frames.
+  /** drive the [[ByteRecordSource]] contract — an OUTER chunk loop (`nextChunk`) wrapping an INNER record loop (`nextRecord`), both `done`-gated, in
+    * `try/finally close()`. Each complete record is decoded to its live-field columns and handed to the engine's continuation; the framer behind the contract
+    * owns boundary stitching, so this loop only ever sees complete, contiguous frames.
     */
   def lower(using q: Quotes)(in: DecomposedInput[q.type]): Expr[Unit] =
     import q.reflect.*
@@ -46,11 +42,19 @@ private[farray] object JsonDecode:
       case JKind.JDouble => '{ 0.0 }.asTerm
       case JKind.JString => '{ null.asInstanceOf[String] }.asTerm
 
-    /** a live field's mutable scan slots: the lazy value read (the `v` var, or a String decode), a `seen` flag, a
-      * `fill(valuePos, end): newPos` quote the scan-pass runs when this field's key matches, and `rawRead` — the
-      * DIRECT value term used to evaluate a leading predicate inline (the slots are already bound, no `letBind`).
+    /** a live field's mutable scan slots: the lazy value read (the `v` var, or a String decode), a `seen` flag, a `fill(valuePos, end): newPos` quote the
+      * scan-pass runs when this field's key matches, and `rawRead` — the DIRECT value term used to evaluate a leading predicate inline (the slots are already
+      * bound, no `letBind`).
       */
-    final case class JSlot(idx: Int, name: String, jk: JKind, read: (Term => Term) => Term, seen: Expr[Boolean], fill: (Expr[Int], Expr[Int]) => Expr[Int], rawRead: Term)
+    final case class JSlot(
+        idx: Int,
+        name: String,
+        jk: JKind,
+        read: (Term => Term) => Term,
+        seen: Expr[Boolean],
+        fill: (Expr[Int], Expr[Int]) => Expr[Int],
+        rawRead: Term
+    )
 
     val (fields, liveSet) = liveFields(in)
     val liveFs = fields.zipWithIndex.filter { case ((n, _), _) => liveSet.contains(n) }
@@ -59,7 +63,7 @@ private[farray] object JsonDecode:
     // declare the live fields' slot vars (nested quotes), bind their scan/read, and hand the slot list to `k`.
     def withSlots(buf: Expr[Array[Byte]], rem: List[((String, TypeRepr), Int)], acc: List[JSlot])(k: List[JSlot] => Term): Term =
       rem match
-        case Nil => k(acc.reverse)
+        case Nil                        => k(acc.reverse)
         case ((name, tpe), idx) :: rest =>
           jkindOf(tpe) match
             // numeric fills decode the value into the slot var + the new position into `pNext` — NO tuple returned
@@ -68,8 +72,15 @@ private[farray] object JsonDecode:
               '{
                 var v: Int = 0; var pNext: Int = 0; var seen: Boolean = false
                 ${
-                  val s = JSlot(idx, name, JKind.JInt, kk => kk('{ v }.asTerm), '{ seen },
-                    (p, end) => '{ v = JsonScanner.readIntAt($buf, $p, $end); pNext = JsonScanner.numEnd; seen = true; pNext }, '{ v }.asTerm)
+                  val s = JSlot(
+                    idx,
+                    name,
+                    JKind.JInt,
+                    kk => kk('{ v }.asTerm),
+                    '{ seen },
+                    (p, end) => '{ v = JsonScanner.readIntAt($buf, $p, $end); pNext = JsonScanner.numEnd; seen = true; pNext },
+                    '{ v }.asTerm
+                  )
                   withSlots(buf, rest, s :: acc)(k).asExpr
                 }
               }.asTerm
@@ -77,8 +88,15 @@ private[farray] object JsonDecode:
               '{
                 var v: Long = 0L; var pNext: Int = 0; var seen: Boolean = false
                 ${
-                  val s = JSlot(idx, name, JKind.JLong, kk => kk('{ v }.asTerm), '{ seen },
-                    (p, end) => '{ v = JsonScanner.readLongAt($buf, $p, $end); pNext = JsonScanner.numEnd; seen = true; pNext }, '{ v }.asTerm)
+                  val s = JSlot(
+                    idx,
+                    name,
+                    JKind.JLong,
+                    kk => kk('{ v }.asTerm),
+                    '{ seen },
+                    (p, end) => '{ v = JsonScanner.readLongAt($buf, $p, $end); pNext = JsonScanner.numEnd; seen = true; pNext },
+                    '{ v }.asTerm
+                  )
                   withSlots(buf, rest, s :: acc)(k).asExpr
                 }
               }.asTerm
@@ -86,8 +104,15 @@ private[farray] object JsonDecode:
               '{
                 var v: Double = 0.0; var pNext: Int = 0; var seen: Boolean = false
                 ${
-                  val s = JSlot(idx, name, JKind.JDouble, kk => kk('{ v }.asTerm), '{ seen },
-                    (p, end) => '{ v = JsonScanner.readDoubleAt($buf, $p, $end); pNext = JsonScanner.numEnd; seen = true; pNext }, '{ v }.asTerm)
+                  val s = JSlot(
+                    idx,
+                    name,
+                    JKind.JDouble,
+                    kk => kk('{ v }.asTerm),
+                    '{ seen },
+                    (p, end) => '{ v = JsonScanner.readDoubleAt($buf, $p, $end); pNext = JsonScanner.numEnd; seen = true; pNext },
+                    '{ v }.asTerm
+                  )
                   withSlots(buf, rest, s :: acc)(k).asExpr
                 }
               }.asTerm
@@ -97,17 +122,30 @@ private[farray] object JsonDecode:
               '{
                 var st: Int = 0; var ln: Int = 0; var seen: Boolean = false
                 ${
-                  val s = JSlot(idx, name, JKind.JString, kk => kk('{ JsonScanner.decodeLatin1($buf, st, ln) }.asTerm), '{ seen },
+                  val s = JSlot(
+                    idx,
+                    name,
+                    JKind.JString,
+                    kk => kk('{ JsonScanner.decodeLatin1($buf, st, ln) }.asTerm),
+                    '{ seen },
                     (p, end) => '{ val vs = $p + 1; val ve = JsonScanner.scanStringEnd($buf, vs, $end); st = vs; ln = ve - vs; seen = true; ve + 1 },
-                    '{ JsonScanner.decodeLatin1($buf, st, ln) }.asTerm)
+                    '{ JsonScanner.decodeLatin1($buf, st, ln) }.asTerm
+                  )
                   withSlots(buf, rest, s :: acc)(k).asExpr
                 }
               }.asTerm
 
     // the one-pass key-dispatch scan over a record's fields (compact NDJSON fast path). `earlyPred` = the leading-
     // filter check folded in: the moment its fields are all captured, evaluate it; on failure `reject` + stop.
-    def scanRecord(buf: Expr[Array[Byte]], lineStart: Expr[Int], lineEnd: Expr[Int], slots: List[JSlot], keyRefs: Map[String, Expr[Array[Byte]]],
-        earlyPred: Option[(Expr[Boolean], Expr[Boolean])], reject: Expr[Unit]): Expr[Unit] =
+    def scanRecord(
+        buf: Expr[Array[Byte]],
+        lineStart: Expr[Int],
+        lineEnd: Expr[Int],
+        slots: List[JSlot],
+        keyRefs: Map[String, Expr[Array[Byte]]],
+        earlyPred: Option[(Expr[Boolean], Expr[Boolean])],
+        reject: Expr[Unit]
+    ): Expr[Unit] =
       def dispatch(ks: Expr[Int], ke: Expr[Int], p: Expr[Int]): Expr[Int] =
         slots.foldRight[Expr[Int]]('{ JsonScanner.skipValue($buf, $p, $lineEnd) }) { (s, elseB) =>
           '{ if ! ${ s.seen } && JsonScanner.keyEquals($buf, $ks, $ke, ${ keyRefs(s.name) }) then ${ s.fill(p, lineEnd) } else $elseB }
@@ -199,7 +237,7 @@ private[farray] object JsonDecode:
     // bind each live field's wanted-key bytes to a val ABOVE the loop (interned once) for zero-alloc per-record compares.
     def withKeyRefs(rem: List[((String, TypeRepr), Int)], acc: Map[String, Expr[Array[Byte]]])(k: Map[String, Expr[Array[Byte]]] => Expr[Unit]): Expr[Unit] =
       rem match
-        case Nil => k(acc)
+        case Nil                    => k(acc)
         case ((name, _), _) :: rest =>
           '{
             val keyBytes: Array[Byte] = JsonScanner.internKey(${ Expr(name) })
@@ -228,8 +266,8 @@ private[farray] object JsonDecode:
     }
 
   // ── live-field analysis (projection pushdown) — shared by `lower` and `planString` ──────────────────────────
-  /** the record fields + the live set (fields any stage/terminal lambda reads). `forcesWholeRecord` (topN/reduce/…)
-    * or a whole-param use makes every field live.
+  /** the record fields + the live set (fields any stage/terminal lambda reads). `forcesWholeRecord` (topN/reduce/…) or a whole-param use makes every field
+    * live.
     */
   private def liveFields(using q: Quotes)(in: DecomposedInput[q.type]): (List[(String, q.reflect.TypeRepr)], Set[String]) =
     import q.reflect.*
@@ -252,8 +290,8 @@ private[farray] object JsonDecode:
     (fields, liveSet)
 
   // ── plan description (testing) ───────────────────────────────────────────────────────────────────────────────
-  /** a machine-checkable DESCRIPTION of the plan the decoder built — tests assert on the STRUCTURE (which fields are
-    * scanned, decoded vs sliced, the predicate/early-out set, rebuild, terminal) rather than on brittle code/values.
+  /** a machine-checkable DESCRIPTION of the plan the decoder built — tests assert on the STRUCTURE (which fields are scanned, decoded vs sliced, the
+    * predicate/early-out set, rebuild, terminal) rather than on brittle code/values.
     */
   def planString(using q: Quotes)(in: DecomposedInput[q.type]): String =
     import q.reflect.*

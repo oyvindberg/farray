@@ -10,19 +10,19 @@ import farray.json.{Rec, FatRec, Json}
 
 /** THE kill-or-prove experiment (docs/json-parser-research.md §5.6): the fused-JSON macro vs the field's parsers.
   *
-  * Query: over NDJSON of 20-field records, `filter(amount > t).map(amount).sum` (aggregate, the zero-alloc headline)
-  * and `filter(amount > t).map(category)` (projection + lazy string).
+  * Query: over NDJSON of 20-field records, `filter(amount > t).map(amount).sum` (aggregate, the zero-alloc headline) and `filter(amount > t).map(category)`
+  * (projection + lazy string).
   *
   * Contenders:
-  *   - fuseMacro : the PRODUCT — the fuse optimizer drives a per-record byte scanner: reads 1-2 of 20 fields, skips
-  *     the rest by the byte, lazy string decode, predicate early-out, no per-record object.
+  *   - fuseMacro : the PRODUCT — the fuse optimizer drives a per-record byte scanner: reads 1-2 of 20 fields, skips the rest by the byte, lazy string decode,
+  *     predicate early-out, no per-record object.
   *   - jsoniterFull : jsoniter parses the FULL 20-field Rec, then filter/map in Scala (the common baseline).
-  *   - jsoniterNarrow: jsoniter parses a NARROW record (only the read fields), skipping the rest — jsoniter's own best
-  *     projection. The FAIREST baseline (still decodes every key + byte-walks skips).
+  *   - jsoniterNarrow: jsoniter parses a NARROW record (only the read fields), skipping the rest — jsoniter's own best projection. The FAIREST baseline (still
+  *     decodes every key + byte-walks skips).
   *   - jsoniterReaderManual / jawn / jackson : other points on the spectrum.
   *
-  * Success criterion: fuseMacro throughput >= jsoniterNarrow (target >=1.3x), and near-zero alloc on the sum variant
-  * (run with -prof gc). Selectivity ~25% here (amount > 150, amounts in [0,298.5]).
+  * Success criterion: fuseMacro throughput >= jsoniterNarrow (target >=1.3x), and near-zero alloc on the sum variant (run with -prof gc). Selectivity ~25% here
+  * (amount > 150, amounts in [0,298.5]).
   */
 @State(Scope.Thread)
 @Warmup(iterations = 5, time = 1, timeUnit = TimeUnit.SECONDS)

@@ -1367,7 +1367,7 @@ object FuseMacro:
         case TTag.IndexWhere | TTag.Find | TTag.Exists | TTag.Forall => add1(args(0))
         case TTag.GroupReduce                                        => add1(args(0)); add1(args(1))
         case TTag.Agg                                                => addAggSpecs(parseAggList(args(0)))
-        case TTag.Plan if args.nonEmpty =>
+        case TTag.Plan if args.nonEmpty                              =>
           decomposeLambda2(args(0)) match { case Some(_) => add2(args(0)); case None => addAggSpecs(parseAggList(args(0))) }
         case _ => ()
       (readers.toList, whole)

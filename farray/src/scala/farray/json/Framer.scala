@@ -2,10 +2,9 @@ package farray.json
 
 import farray.ByteRecordSource
 
-/** The result of scanning the working buffer for the next record — `Framer`'s internal verdict. Making "unfinished
-  * record" a FIRST-CLASS value (`Partial`) instead of an offset to remember is what keeps the boundary logic in
-  * exactly one place (`Framer.nextRecord`): the byte reader below knows nothing about records, the engine above never
-  * sees a `Partial`. Private to this file — it is not part of any public contract.
+/** The result of scanning the working buffer for the next record — `Framer`'s internal verdict. Making "unfinished record" a FIRST-CLASS value (`Partial`)
+  * instead of an offset to remember is what keeps the boundary logic in exactly one place (`Framer.nextRecord`): the byte reader below knows nothing about
+  * records, the engine above never sees a `Partial`. Private to this file — it is not part of any public contract.
   */
 private enum Framed:
   /** a complete `\n`-terminated record occupies `[start, end)` in the working buffer (end = the `\n`, exclusive). */

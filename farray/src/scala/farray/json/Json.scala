@@ -15,12 +15,13 @@ import farray.{Fuse, ByteRecordSource}
   * Scope (v1): flat case-class records with Int/Long/Double/String fields, compact one-line-per-record NDJSON, EITHER in an in-memory buffer (`Json.ndjson`) OR
   * streamed in constant memory from an `InputStream`/file (`Json.ndjsonStream`/`ndjsonFile` — same scanner, records straddling block boundaries stitched by the
   * framer); the `filter`/`map` stages and the field-reading terminals (`sum`/`fold`/`reduce`/ `agg`/`toList`/`count`/`foreach`/`find`/`exists`/`forall`/
-  * `indexWhere`). Nested objects/arrays and `zip`/`flatMap`/`collect`/`takeWhile`/`distinct` over the JSON source are not yet supported (a clear compile error).
+  * `indexWhere`). Nested objects/arrays and `zip`/`flatMap`/`collect`/`takeWhile`/`distinct` over the JSON source are not yet supported (a clear compile
+  * error).
   */
 final class NdjsonSource[T](
-    val backing: Array[Byte],
-    val from: Int,
-    val until: Int
+    private val backing: Array[Byte],
+    private val from: Int,
+    private val until: Int
 ) extends ByteRecordSource:
   /** Start the fused pipeline over this source. Named `stream` (not `fuse`) to signal at the call site that the data is a byte SOURCE consumed record-by-record
     * — `Json.ndjson[T](bytes).stream.filter(…).map(…)` — not an in-memory `FArray` (which uses `.fuse`). The macro reads `T`'s fields + the downstream
@@ -34,11 +35,12 @@ final class NdjsonSource[T](
   // ── ByteRecordSource: the in-memory case is the trivial one-chunk framer. The whole buffer IS the one chunk;
   //    `nextRecord` walks newline-framed records from `from` to `until`. No carry buffer, no Partial — every record
   //    is already complete and contiguous. This is the parity anchor for the extraction (zero behaviour change).
+  private var chunkServed: Boolean = false
+  private var cursor: Int = from // start of the NEXT record to frame
+  private var recStart: Int = from
+  private var recEnd: Int = from
+  // ── ByteRecordSource contract (the only public surface) ──
   def buf: Array[Byte] = backing
-  var chunkServed: Boolean = false
-  var cursor: Int = from // start of the NEXT record to frame
-  var recStart: Int = from
-  var recEnd: Int = from
   def recordStart: Int = recStart
   def recordEnd: Int = recEnd
   def nextChunk(): Boolean =
