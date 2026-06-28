@@ -20,6 +20,26 @@ import { createHighlighter } from "shiki";
 // Highlight at BUILD time with Shiki (TextMate grammars -> accurate Scala/Java). Theme tuned to the
 // page's deep code island; the resulting HTML ships in snippets.json, so the client highlights nothing.
 const THEME = "vitesse-dark";
+
+// Schematic of the core, faithful to the real FBase `permits` clause but collapsed across element kinds.
+const NODE_TREE = `// An FArray[A] is one of these. Each carrying-data node exists once per element
+// kind (Int, Long, Double, … , Ref) — generated, not hand-written.
+sealed abstract class FBase
+
+// leaves — the data actually lives here:
+final class IntArr(arr: Array[Int])                       extends FBase  // a real int[]  (also Long/Double/…/Ref)
+final class IntOne(value: Int)                            extends FBase  // a single element
+case object Empty                                         extends FBase
+
+// lazy structural nodes — O(1) to build; they just point at their children:
+final class Concat(left: FBase, right: FBase)             extends FBase  // ++
+final class IntAppend(base: FBase, elem: Int)             extends FBase  // :+
+final class IntPrepend(elem: Int, base: FBase)            extends FBase  // +:
+final class SliceNode(base: FBase, off: Int, len: Int)    extends FBase  // take / drop / slice
+final class ReverseNode(base: FBase)                      extends FBase  // reverse
+final class IntPad(base: FBase, fill: Int, len: Int)      extends FBase  // padTo
+final class IntUpdated(base: FBase, i: Int, elem: Int)    extends FBase  // updated
+final class RangeNode(start: Int, step: Int, count: Int)  extends FBase  // FArray.range — elements never built`;
 const highlighter = await createHighlighter({ themes: [THEME], langs: ["scala", "java"] });
 const hl = (code, lang) =>
   code == null ? null : highlighter.codeToHtml(code, { lang, theme: THEME });
@@ -124,6 +144,20 @@ function buildSnippets() {
     const path = resolve(REPO, g.file);
     const code = readFileSync(path, "utf8").replace(/^\n+|\n+$/g, "");
     out[g.name] = { name: g.name, file: g.file, lang: "scala", code, html: hl(code, "scala"), full: null, fullHtml: null };
+  }
+
+  // Schematic illustrations — not extracted from a single file (the real hierarchy is ~60 generated Java
+  // classes, one per shape × element kind), so they carry a label instead of a path. Kept faithful to the
+  // real FBase `permits` clause, collapsed across element kinds.
+  const ILLUSTRATIONS = {
+    "node-tree": {
+      file: "the core — schematic (the real hierarchy is generated Java, one final class per shape × kind)",
+      lang: "scala",
+      code: NODE_TREE,
+    },
+  };
+  for (const [name, v] of Object.entries(ILLUSTRATIONS)) {
+    out[name] = { name, file: v.file, lang: v.lang, code: v.code, html: hl(v.code, v.lang), full: null, fullHtml: null };
   }
 
   writeFileSync(resolve(OUT, "snippets.json"), JSON.stringify(out, null, 2));

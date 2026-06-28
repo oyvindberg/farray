@@ -86,6 +86,13 @@ export default function Intro() {
       </p>
 
       <GeneratedCode name="fuse-collect-generated" summary="zip + collect, fused into one loop" />
+
+      <p>
+        None of this is a runtime trick. It's the Scala 3 macro system — <code>inline</code>, quotes, and{" "}
+        <code>summonFrom</code> — doing real work at compile time: reading the call chain off the syntax tree,
+        eliminating the columns nobody reads, and emitting a specialized loop. Having metaprogramming this
+        capable on tap is, frankly, a little phenomenal. We'll get into how the macro pulls it off further down.
+      </p>
     </section>
   );
 }

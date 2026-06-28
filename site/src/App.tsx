@@ -1,5 +1,6 @@
 import { DataProvider, useStore } from "./data/store";
 import Intro from "./chapters/Intro";
+import Core from "./chapters/Core";
 
 function Hero() {
   return (
@@ -41,6 +42,7 @@ export default function App() {
         <Status />
         <main>
           <Intro />
+          <Core />
         </main>
         <Footer />
       </div>

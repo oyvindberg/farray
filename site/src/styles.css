@@ -105,6 +105,21 @@ main { margin-top: 76px; }
 }
 .snippet__code pre.shiki code { font-family: inherit; }
 
+/* ----- complexity table ----- */
+table.cx { border-collapse: collapse; width: 100%; font-size: 15px; }
+table.cx th {
+  text-align: left; font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.09em; text-transform: uppercase;
+  color: var(--ink-faint); font-weight: 500; padding: 6px 14px 9px; border-bottom: 1px solid var(--hair-strong);
+}
+table.cx td { padding: 9px 14px; border-bottom: 1px solid var(--hair); vertical-align: baseline; }
+table.cx td.cx-op { font-family: var(--mono); font-size: 13px; color: var(--ink); white-space: nowrap; }
+table.cx td.cx-cost { font-family: var(--mono); font-size: 13px; color: var(--ink-soft); white-space: nowrap; }
+table.cx td.cx-cost--free { color: var(--emerald); font-weight: 600; }
+table.cx td.cx-b { color: var(--ink-soft); }
+@media (max-width: 680px) {
+  table.cx td.cx-b, table.cx th.cx-b { display: none; }
+}
+
 /* ----- generated-code reveal ----- */
 .gen { margin: 0 0 28px; }
 .gen__toggle {
