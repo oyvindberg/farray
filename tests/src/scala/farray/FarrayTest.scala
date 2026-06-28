@@ -1586,6 +1586,48 @@ class FListTest:
     )
     Snapshots.check("fused-pipeline.snap", sb.toString)
 
+  // The EXACT 14-stage pipeline from LongMixedPipelineIntBenchmark.farrayFused, lowered. This golden
+  // is what the website's "show the generated code" panel displays next to the benchmark figure.
+  @Test def test_fuse_long_pipeline_snapshot: Unit =
+    val ints = FArray(3, 14, 15, 92, 65, 35, 89, 79, 32, 38, 46, 26)
+    val zipSrc = ints.map(_ + 100)
+    Snapshots.check(
+      "fuse-long-pipeline.snap",
+      FuseDebug.show(
+        ints.fuse
+          .flatMap(x => FArray(x, x + 1))
+          .filter(_ % 3 != 0)
+          .map(_ * 2)
+          .flatMap(x => FArray(x, x ^ 5))
+          .filter(_ % 2 == 0)
+          .map(_ - 7)
+          .zip(zipSrc)
+          .map((a, b) => a + b)
+          .zipWithIndex
+          .filter((v, i) => (v + i) % 4 != 0)
+          .map((v, i) => v - i)
+          .flatMap(x => FArray(x, x + 3))
+          .filter(_ > 0)
+          .foldLeft(0)(_ + _)
+      )
+    )
+
+  // A compact showcase that fuses zip AND collect together: the PartialFunction is matched inline (no
+  // PartialFunction object), reading the zipped column in lock-step (no pair allocated).
+  @Test def test_fuse_collect_zip_snapshot: Unit =
+    val ints = FArray(3, 14, 15, 92, 65, 35, 89, 79)
+    val ys = ints.map(_ * 10)
+    Snapshots.check(
+      "fuse-collect-zip.snap",
+      FuseDebug.show(
+        ints.fuse
+          .zip(ys)
+          .collect { case (a, b) if (a + b) % 2 == 0 => a * b }
+          .map(_ + 1)
+          .run
+      )
+    )
+
   @Test def test_hashCode_matchesList(): Unit =
     def chk(name: String, fa: FArray[Any], l: List[Any]): Unit =
       assertEquals(name, l.hashCode.toLong, fa.hashCode.toLong)

@@ -2,11 +2,13 @@ package farray
 
 import scala.reflect.ClassTag
 
+//start:opaque-type
 /** `FArray` — opaque type over the sealed core hierarchy [[FBase]]. Every lambda-taking op is `inline` with an `inline` function param and applies the lambda
   * through the specialized `foldLeft`/`foreach`/ `map`/`filter`/`take`/`drop` machinery — so the function inlines and primitives stay unboxed, exactly like
   * `map`. Only inherently-materializing structures (the Map/Set behind `groupBy`/`distinct`, the sort order) box; the user's lambda never does.
   */
 opaque type FArray[+A] <: AnyRef = FBase
+//stop:opaque-type
 
 object FArray:
 
