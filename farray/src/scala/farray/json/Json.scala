@@ -17,10 +17,10 @@ import farray.Fuse
   * streaming chunk sources, and `zip`/`flatMap`/`collect`/`takeWhile`/`distinct` over the JSON source are not yet supported (a clear compile error if used).
   */
 final class NdjsonSource[T](
-    private[farray] val buf: Array[Byte],
+    private[farray] val backing: Array[Byte],
     private[farray] val from: Int,
     private[farray] val until: Int
-):
+) extends ByteRecordSource:
   /** Start the fused pipeline over this source. Named `stream` (not `fuse`) to signal at the call site that the data is a byte SOURCE consumed record-by-record
     * — `Json.ndjson[T](bytes).stream.filter(…).map(…)` — not an in-memory `FArray` (which uses `.fuse`). The macro reads `T`'s fields + the downstream
     * `filter`/`map` accesses and generates the per-record projection scanner.
@@ -29,6 +29,29 @@ final class NdjsonSource[T](
 
   /** alias for `stream` (the in-memory verb), for readers who already know `.fuse`. */
   inline def fuse: Fuse[T] = new Fuse[T](this)
+
+  // ── ByteRecordSource: the in-memory case is the trivial one-chunk framer. The whole buffer IS the one chunk;
+  //    `nextRecord` walks newline-framed records from `from` to `until`. No carry buffer, no Partial — every record
+  //    is already complete and contiguous. This is the parity anchor for the extraction (zero behaviour change).
+  def buf: Array[Byte] = backing
+  private var chunkServed: Boolean = false
+  private var cursor: Int = from // start of the NEXT record to frame
+  private var recStart: Int = from
+  private var recEnd: Int = from
+  def recordStart: Int = recStart
+  def recordEnd: Int = recEnd
+  def nextChunk(): Boolean =
+    if chunkServed then false
+    else { chunkServed = true; cursor = from; true }
+  def nextRecord(): Boolean =
+    if cursor >= until then false
+    else
+      recStart = cursor
+      var e = cursor
+      while e < until && backing(e) != '\n' do e += 1
+      recEnd = e // exclusive end at the '\n' (or `until`)
+      cursor = e + 1 // skip the '\n' for the next record
+      true
 
 object Json:
   /** wrap an in-memory NDJSON byte buffer as a projectable SOURCE of `T` records — start a pipeline with `.stream`:

@@ -1,7 +1,7 @@
 package farray
 
 import scala.quoted.*
-import farray.json.{NdjsonSource, JsonScanner}
+import farray.json.{NdjsonSource, ByteRecordSource, JsonScanner}
 
 /** which terminal a fused pipeline ends in (the macro shares one lowering core across all of them). */
 enum TTag:
@@ -589,10 +589,13 @@ object FuseMacro:
     // bare local val). `srcTerm` is still used below for COMPILE-TIME type analysis only. `Fuse.base: AnyRef`.
     val selfBase: Expr[AnyRef] = '{ ${ self }.base }
 
-    val jsonSrc: Option[Expr[NdjsonSource[?]]] =
-      // match on the type SYMBOL (NdjsonSource is invariant in T, so NdjsonSource[Rec] is not <:< NdjsonSource[Any]).
-      if srcTerm.tpe.widen.dealias.typeSymbol == TypeRepr.of[NdjsonSource[Any]].typeSymbol
-      then Some('{ $selfBase.asInstanceOf[NdjsonSource[?]] })
+    // A decomposed BYTE-RECORD source (NDJSON today): the macro lowers to a per-record projection scanner driven by
+    // the `ByteRecordSource` contract (nextChunk/nextRecord/recordStart/recordEnd) — in-memory `NdjsonSource` and any
+    // future streaming byte source are the SAME path here, differing only in framing. Detected by subtyping against
+    // the contract. The element type `T` (the record case class) is still read off the `Fuse[T]` for field analysis.
+    val jsonSrc: Option[Expr[ByteRecordSource]] =
+      if srcTerm.tpe.widen.dealias <:< TypeRepr.of[ByteRecordSource]
+      then Some('{ $selfBase.asInstanceOf[ByteRecordSource] })
       else None
     val isJson = jsonSrc.isDefined
 
@@ -1528,13 +1531,14 @@ object FuseMacro:
     if tag == TTag.Plan then
       return (if isJson then Expr(jsonPlanString(srcElem)) else Expr(s"InMemoryPlan(elem=${srcElem.typeSymbol.name}, terminal=$tag, stages=${stages.length})"))
 
-    def loopOverJson(jsrc: Expr[NdjsonSource[?]], elemTpe: TypeRepr, ss: List[(Stage, Int)], ctx: Ctx): Expr[Unit] =
+    def loopOverJson(jsrc: Expr[ByteRecordSource], elemTpe: TypeRepr, ss: List[(Stage, Int)], ctx: Ctx): Expr[Unit] =
       val (fields, liveSet) = jsonLiveFields(elemTpe)
       val liveFields = fields.zipWithIndex.filter { case ((n, _), _) => liveSet.contains(n) }
       // per live field: the slot vars (mutable) + how a column reads it. We declare slots inside the per-record
       // block and reference them from the Tup columns, so they dominate the reads (hygiene-safe).
       // We build the whole per-record body via one continuation so symbols stay in scope.
-      val doneCond: Expr[Boolean] = ctx.done match { case Some(d) => d.read; case None => '{ false } }
+      // short-circuit gate: a downstream take/find sets `done`; we must stop pulling records AND chunks.
+      val notDone: Expr[Boolean] = ctx.done match { case Some(d) => '{ ! ${ d.read } }; case None => '{ true } }
       // bind each live field's wanted-key bytes to a val ABOVE the loop (interned once), so the per-record scan
       // references them with zero allocation. Thread the refs to jsonRecord.
       def withKeyRefs(rem: List[((String, TypeRepr), Int)], acc: Map[String, Expr[Array[Byte]]])(k: Map[String, Expr[Array[Byte]]] => Expr[Unit]): Expr[Unit] =
@@ -1545,19 +1549,23 @@ object FuseMacro:
               val keyBytes: Array[Byte] = JsonScanner.internKey(${ Expr(name) })
               ${ withKeyRefs(rest, acc + (name -> '{ keyBytes }))(k) }
             }
+      // Drive the ByteRecordSource contract: an OUTER chunk loop (nextChunk) wrapping an INNER record loop
+      // (nextRecord), both `done`-gated, in try/finally close(). The per-record body — jsonRecord — is UNTOUCHED;
+      // it already takes (buf, start, end), so it neither knows nor cares whether the frame came from a single
+      // in-memory buffer or a streaming chunk. The framer behind nextChunk/nextRecord owns boundary stitching.
       '{
         val src = $jsrc
-        val buf: Array[Byte] = src.buf
-        val until: Int = src.until
         ${
           withKeyRefs(liveFields, Map.empty) { keyRefs =>
             '{
-              var lineStart: Int = src.from
-              while lineStart < until && ! $doneCond do
-                var lineEnd = lineStart
-                while lineEnd < until && buf(lineEnd) != '\n' do lineEnd += 1
-                ${ jsonRecord('buf, 'lineStart, 'lineEnd, fields, liveFields, keyRefs, ss, ctx).asExprOf[Unit] }
-                lineStart = lineEnd + 1
+              try
+                while src.nextChunk() && $notDone do
+                  val buf: Array[Byte] = src.buf
+                  while src.nextRecord() && $notDone do
+                    val recStart: Int = src.recordStart
+                    val recEnd: Int = src.recordEnd
+                    ${ jsonRecord('buf, 'recStart, 'recEnd, fields, liveFields, keyRefs, ss, ctx).asExprOf[Unit] }
+              finally src.close()
             }
           }
         }
