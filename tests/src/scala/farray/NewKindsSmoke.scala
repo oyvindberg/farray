@@ -57,4 +57,27 @@ class NewKindsSmoke {
     assertEquals((ls ++ ls).reverse.hashCode, (xs ++ xs).reverse.toList.hashCode)
   }
 
+
+  @Test def fuseFloatKind(): Unit = {
+    val xf = FArray.tabulate(12)(i => i.toFloat)
+    val lf = List.tabulate(12)(i => i.toFloat)
+    assertEquals(
+      lf.flatMap(x => List(x, x + 1.0f)).filter(_ % 2.0f == 0.0f).map(_ * 2.0f).foldLeft(0.0f)(_ + _),
+      xf.fuse.flatMap(x => FArray(x, x + 1.0f)).filter(_ % 2.0f == 0.0f).map(_ * 2.0f).foldLeft(0.0f)(_ + _), 0.001f)
+    assertEquals(lf.map(_ + 1.0f), xf.fuse.map(_ + 1.0f).run.toList)
+  }
+  @Test def fuseCharKind(): Unit = {
+    val xc = FArray('a', 'b', 'c', 'd')
+    val lc = List('a', 'b', 'c', 'd')
+    assertEquals(
+      lc.flatMap(c => List(c, c.toUpper)).map(_.toInt).sum,
+      xc.fuse.flatMap(c => FArray(c, c.toUpper)).map(_.toInt).foldLeft(0)(_ + _))
+    assertEquals(lc.filter(_ != 'b').map(_.toUpper), xc.fuse.filter(_ != 'b').map(_.toUpper).run.toList)
+  }
+  @Test def fuseBooleanKind(): Unit = {
+    val xb = FArray(true, false, true, true, false)
+    val lb = List(true, false, true, true, false)
+    assertEquals(lb.count(identity), xb.fuse.filter(identity).count)
+    assertEquals(lb.map(!_), xb.fuse.map(!_).run.toList)
+  }
 }

@@ -101,7 +101,7 @@ object FuseMacro:
     final case class ZipS(that: Term, bTpe: TypeRepr, combine: Option[Term]) extends Stage // zip (None) / map2 (Some f)
 
     enum Kind:
-      case KInt, KLong, KDouble, KRef
+      case KInt, KLong, KDouble, KFloat, KShort, KByte, KChar, KBoolean, KRef
     // Specialize-or-fail, mirroring the eager API's `Repr` evidence (RefRepr requires A <: AnyRef): a primitive
     // kind needs the EXACT type; a reference kind needs `<: AnyRef`. Anything else (Any/AnyVal/Matchable, an
     // unbounded type param) can't be read unboxed — a primitive-backed FArray covariantly widened to such a
@@ -110,10 +110,15 @@ object FuseMacro:
       if t =:= TypeRepr.of[Int] then Kind.KInt
       else if t =:= TypeRepr.of[Long] then Kind.KLong
       else if t =:= TypeRepr.of[Double] then Kind.KDouble
+      else if t =:= TypeRepr.of[Float] then Kind.KFloat
+      else if t =:= TypeRepr.of[Short] then Kind.KShort
+      else if t =:= TypeRepr.of[Byte] then Kind.KByte
+      else if t =:= TypeRepr.of[Char] then Kind.KChar
+      else if t =:= TypeRepr.of[Boolean] then Kind.KBoolean
       else if t <:< TypeRepr.of[AnyRef] then Kind.KRef
       else
         report.errorAndAbort(
-          s"fuse: cannot specialize element type `${t.show}` — fused pipelines support Int, Long, Double, or a " +
+          s"fuse: cannot specialize element type `${t.show}` — fused pipelines support the JVM primitives or a " +
             s"reference type (`<: AnyRef`). A primitive-backed FArray widened to Any/AnyVal can't be read unboxed; " +
             s"use a concrete element type."
         )
@@ -283,10 +288,15 @@ object FuseMacro:
 
     /** read `src(idx)` unboxed at the given element kind (leaf fast-path lives inside `<kind>At`). */
     def readAtKind(elemTpe: TypeRepr, src: Expr[FBase], idx: Expr[Int]): Term = kindOf(elemTpe) match
-      case Kind.KInt    => '{ FArrayOps.intAt($src, $idx) }.asTerm
-      case Kind.KLong   => '{ FArrayOps.longAt($src, $idx) }.asTerm
-      case Kind.KDouble => '{ FArrayOps.doubleAt($src, $idx) }.asTerm
-      case Kind.KRef    => elemTpe.asType match { case '[b] => '{ FArrayOps.refAt($src, $idx).asInstanceOf[b] }.asTerm }
+      case Kind.KInt     => '{ FArrayOps.intAt($src, $idx) }.asTerm
+      case Kind.KLong    => '{ FArrayOps.longAt($src, $idx) }.asTerm
+      case Kind.KDouble  => '{ FArrayOps.doubleAt($src, $idx) }.asTerm
+      case Kind.KFloat   => '{ FArrayOps.floatAt($src, $idx) }.asTerm
+      case Kind.KShort   => '{ FArrayOps.shortAt($src, $idx) }.asTerm
+      case Kind.KByte    => '{ FArrayOps.byteAt($src, $idx) }.asTerm
+      case Kind.KChar    => '{ FArrayOps.charAt($src, $idx) }.asTerm
+      case Kind.KBoolean => '{ FArrayOps.booleanAt($src, $idx) }.asTerm
+      case Kind.KRef     => elemTpe.asType match { case '[b] => '{ FArrayOps.refAt($src, $idx).asInstanceOf[b] }.asTerm }
 
     /** the `(value, index)` pair for zipWithIndex; use the stdlib @specialized Tuple2 for a primitive element (Int/Long/Double) so it isn't boxed — exactly
       * like the eager zipWithIndex. Everything else boxes via a plain Tuple2 (correct for references and the rarer primitive kinds).
@@ -1056,6 +1066,56 @@ object FuseMacro:
                   case s =>
                     val len = s.length; var i = 0
                     while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.doubleAt(s, i) }.asTerm) }; i += 1 }
+              }
+            case Kind.KFloat =>
+              '{
+                $src match
+                  case leaf: FloatArr =>
+                    val a = leaf.arr; val len = a.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ a(i) }.asTerm) }; i += 1 }
+                  case s =>
+                    val len = s.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.floatAt(s, i) }.asTerm) }; i += 1 }
+              }
+            case Kind.KShort =>
+              '{
+                $src match
+                  case leaf: ShortArr =>
+                    val a = leaf.arr; val len = a.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ a(i) }.asTerm) }; i += 1 }
+                  case s =>
+                    val len = s.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.shortAt(s, i) }.asTerm) }; i += 1 }
+              }
+            case Kind.KByte =>
+              '{
+                $src match
+                  case leaf: ByteArr =>
+                    val a = leaf.arr; val len = a.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ a(i) }.asTerm) }; i += 1 }
+                  case s =>
+                    val len = s.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.byteAt(s, i) }.asTerm) }; i += 1 }
+              }
+            case Kind.KChar =>
+              '{
+                $src match
+                  case leaf: CharArr =>
+                    val a = leaf.arr; val len = a.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ a(i) }.asTerm) }; i += 1 }
+                  case s =>
+                    val len = s.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.charAt(s, i) }.asTerm) }; i += 1 }
+              }
+            case Kind.KBoolean =>
+              '{
+                $src match
+                  case leaf: BooleanArr =>
+                    val a = leaf.arr; val len = a.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ a(i) }.asTerm) }; i += 1 }
+                  case s =>
+                    val len = s.length; var i = 0
+                    while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.booleanAt(s, i) }.asTerm) }; i += 1 }
               }
             case Kind.KRef =>
               '{
@@ -1940,6 +2000,101 @@ object FuseMacro:
               else if o == 1 then new DoubleOne(out(0))
               else if o == cap then new DoubleArr(out, o)
               else new DoubleArr(java.util.Arrays.copyOf(out, o), o)
+            }.asTerm
+        case Kind.KFloat =>
+          if needsGrow then
+            '{
+              var out = new Array[Float](java.lang.Math.max(8, $n0)); var o = 0
+              ${ loop(v => '{ if o >= out.length then out = FArrayOps.ensureCapFloat(out, o + 1); out(o) = ${ v.asExprOf[Float] }; o += 1 }.asTerm) }
+              if o == 0 then (Empty.INSTANCE: FBase)
+              else if o == 1 then new FloatOne(out(0))
+              else if o == out.length then new FloatArr(out, o)
+              else new FloatArr(java.util.Arrays.copyOf(out, o), o)
+            }.asTerm
+          else
+            '{
+              val cap = ${ capExpr(n0, counters) }; val out = new Array[Float](cap); var o = 0
+              ${ loop(v => '{ out(o) = ${ v.asExprOf[Float] }; o += 1 }.asTerm) }
+              if o == 0 then (Empty.INSTANCE: FBase)
+              else if o == 1 then new FloatOne(out(0))
+              else if o == cap then new FloatArr(out, o)
+              else new FloatArr(java.util.Arrays.copyOf(out, o), o)
+            }.asTerm
+        case Kind.KShort =>
+          if needsGrow then
+            '{
+              var out = new Array[Short](java.lang.Math.max(8, $n0)); var o = 0
+              ${ loop(v => '{ if o >= out.length then out = FArrayOps.ensureCapShort(out, o + 1); out(o) = ${ v.asExprOf[Short] }; o += 1 }.asTerm) }
+              if o == 0 then (Empty.INSTANCE: FBase)
+              else if o == 1 then new ShortOne(out(0))
+              else if o == out.length then new ShortArr(out, o)
+              else new ShortArr(java.util.Arrays.copyOf(out, o), o)
+            }.asTerm
+          else
+            '{
+              val cap = ${ capExpr(n0, counters) }; val out = new Array[Short](cap); var o = 0
+              ${ loop(v => '{ out(o) = ${ v.asExprOf[Short] }; o += 1 }.asTerm) }
+              if o == 0 then (Empty.INSTANCE: FBase)
+              else if o == 1 then new ShortOne(out(0))
+              else if o == cap then new ShortArr(out, o)
+              else new ShortArr(java.util.Arrays.copyOf(out, o), o)
+            }.asTerm
+        case Kind.KByte =>
+          if needsGrow then
+            '{
+              var out = new Array[Byte](java.lang.Math.max(8, $n0)); var o = 0
+              ${ loop(v => '{ if o >= out.length then out = FArrayOps.ensureCapByte(out, o + 1); out(o) = ${ v.asExprOf[Byte] }; o += 1 }.asTerm) }
+              if o == 0 then (Empty.INSTANCE: FBase)
+              else if o == 1 then new ByteOne(out(0))
+              else if o == out.length then new ByteArr(out, o)
+              else new ByteArr(java.util.Arrays.copyOf(out, o), o)
+            }.asTerm
+          else
+            '{
+              val cap = ${ capExpr(n0, counters) }; val out = new Array[Byte](cap); var o = 0
+              ${ loop(v => '{ out(o) = ${ v.asExprOf[Byte] }; o += 1 }.asTerm) }
+              if o == 0 then (Empty.INSTANCE: FBase)
+              else if o == 1 then new ByteOne(out(0))
+              else if o == cap then new ByteArr(out, o)
+              else new ByteArr(java.util.Arrays.copyOf(out, o), o)
+            }.asTerm
+        case Kind.KChar =>
+          if needsGrow then
+            '{
+              var out = new Array[Char](java.lang.Math.max(8, $n0)); var o = 0
+              ${ loop(v => '{ if o >= out.length then out = FArrayOps.ensureCapChar(out, o + 1); out(o) = ${ v.asExprOf[Char] }; o += 1 }.asTerm) }
+              if o == 0 then (Empty.INSTANCE: FBase)
+              else if o == 1 then new CharOne(out(0))
+              else if o == out.length then new CharArr(out, o)
+              else new CharArr(java.util.Arrays.copyOf(out, o), o)
+            }.asTerm
+          else
+            '{
+              val cap = ${ capExpr(n0, counters) }; val out = new Array[Char](cap); var o = 0
+              ${ loop(v => '{ out(o) = ${ v.asExprOf[Char] }; o += 1 }.asTerm) }
+              if o == 0 then (Empty.INSTANCE: FBase)
+              else if o == 1 then new CharOne(out(0))
+              else if o == cap then new CharArr(out, o)
+              else new CharArr(java.util.Arrays.copyOf(out, o), o)
+            }.asTerm
+        case Kind.KBoolean =>
+          if needsGrow then
+            '{
+              var out = new Array[Boolean](java.lang.Math.max(8, $n0)); var o = 0
+              ${ loop(v => '{ if o >= out.length then out = FArrayOps.ensureCapBoolean(out, o + 1); out(o) = ${ v.asExprOf[Boolean] }; o += 1 }.asTerm) }
+              if o == 0 then (Empty.INSTANCE: FBase)
+              else if o == 1 then new BooleanOne(out(0))
+              else if o == out.length then new BooleanArr(out, o)
+              else new BooleanArr(java.util.Arrays.copyOf(out, o), o)
+            }.asTerm
+          else
+            '{
+              val cap = ${ capExpr(n0, counters) }; val out = new Array[Boolean](cap); var o = 0
+              ${ loop(v => '{ out(o) = ${ v.asExprOf[Boolean] }; o += 1 }.asTerm) }
+              if o == 0 then (Empty.INSTANCE: FBase)
+              else if o == 1 then new BooleanOne(out(0))
+              else if o == cap then new BooleanArr(out, o)
+              else new BooleanArr(java.util.Arrays.copyOf(out, o), o)
             }.asTerm
         case Kind.KRef =>
           if needsGrow then
