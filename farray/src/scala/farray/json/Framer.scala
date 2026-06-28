@@ -2,11 +2,12 @@ package farray.json
 
 import farray.ByteRecordSource
 
-/** The result of scanning the working buffer for the next record — the typed source↔framer seam (idea 1). Making "unfinished record" a FIRST-CLASS value
-  * (`Partial`) instead of an offset to remember is what lets the boundary logic live in exactly one place (`Framer`): the byte reader below it knows nothing
-  * about records, the macro above it never sees a `Partial`.
+/** The result of scanning the working buffer for the next record — `Framer`'s internal verdict. Making "unfinished
+  * record" a FIRST-CLASS value (`Partial`) instead of an offset to remember is what keeps the boundary logic in
+  * exactly one place (`Framer.nextRecord`): the byte reader below knows nothing about records, the engine above never
+  * sees a `Partial`. Private to this file — it is not part of any public contract.
   */
-enum Framed:
+private enum Framed:
   /** a complete `\n`-terminated record occupies `[start, end)` in the working buffer (end = the `\n`, exclusive). */
   case Record(start: Int, end: Int)
 
@@ -29,21 +30,22 @@ enum Framed:
   * record longer than `blockSize` triggers a one-time buffer growth.
   */
 class Framer(read: (Array[Byte], Int, Int) => Int, blockSize: Int, doClose: () => Unit) extends ByteRecordSource:
-  val bs: Int = math.max(64, blockSize)
-  var work: Array[Byte] = new Array[Byte](bs * 2) // carry tail + one fresh block
-  var dataEnd: Int = 0 // bytes valid in `work` are [0, dataEnd)
-  var pos: Int = 0 // next unframed byte
-  var recStart: Int = 0
-  var recEnd: Int = 0
-  var eof: Boolean = false // the reader returned -1
-  var closed: Boolean = false
+  private val bs: Int = math.max(64, blockSize)
+  private var work: Array[Byte] = new Array[Byte](bs * 2) // carry tail + one fresh block
+  private var dataEnd: Int = 0 // bytes valid in `work` are [0, dataEnd)
+  private var pos: Int = 0 // next unframed byte
+  private var recStart: Int = 0
+  private var recEnd: Int = 0
+  private var eof: Boolean = false // the reader returned -1
+  private var closed: Boolean = false
 
+  // ── ByteRecordSource contract (the only public surface) ──
   def buf: Array[Byte] = work
   def recordStart: Int = recStart
   def recordEnd: Int = recEnd
 
   /** scan `[pos, dataEnd)` for the next record terminator → a `Framed` verdict (no buffer mutation). */
-  def scan(): Framed =
+  private def scan(): Framed =
     if pos >= dataEnd then (if eof then Framed.End else Framed.NeedMore)
     else
       var e = pos
@@ -55,7 +57,7 @@ class Framer(read: (Array[Byte], Int, Int) => Int, blockSize: Int, doClose: () =
   /** read one more block, FIRST compacting any pending tail (`[pos, dataEnd)`) to the front so an unfinished record becomes contiguous with the new bytes —
     * growing `work` if a single record is larger than the buffer.
     */
-  def refill(): Unit =
+  private def refill(): Unit =
     val tail = dataEnd - pos
     if pos > 0 then { System.arraycopy(work, pos, work, 0, tail); pos = 0; dataEnd = tail }
     if dataEnd + bs > work.length then work = java.util.Arrays.copyOf(work, math.max(work.length * 2, dataEnd + bs))

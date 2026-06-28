@@ -1,6 +1,6 @@
 package farray.json
 
-import farray.Fuse
+import farray.{Fuse, ByteRecordSource}
 
 /** Entry point for the fused JSON projection parser.
   *
