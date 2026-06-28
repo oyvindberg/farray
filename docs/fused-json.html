@@ -42,16 +42,94 @@ footer .nav{color:var(--acc);text-decoration:none;font-weight:600;white-space:no
     val src = source
     val buf: Array[Byte] = src.buf
     val until: Int = src.until
-    val keyBytes: Array[Byte] = JsonScanner.internKey("amount")
+    val keyBytes: Array[Byte] = JsonScanner.internKey("id")
+    val keyBytes₂: Array[Byte] = JsonScanner.internKey("ts")
+    val keyBytes₃: Array[Byte] = JsonScanner.internKey("userId")
+    val keyBytes₄: Array[Byte] = JsonScanner.internKey("sessionId")
+    val keyBytes₅: Array[Byte] = JsonScanner.internKey("amount")
+    val keyBytes₆: Array[Byte] = JsonScanner.internKey("score")
+    val keyBytes₇: Array[Byte] = JsonScanner.internKey("lat")
+    val keyBytes₈: Array[Byte] = JsonScanner.internKey("lon")
+    val keyBytes₉: Array[Byte] = JsonScanner.internKey("age")
+    val keyBytes₁₀: Array[Byte] = JsonScanner.internKey("rank")
+    val keyBytes₁₁: Array[Byte] = JsonScanner.internKey("count")
+    val keyBytes₁₂: Array[Byte] = JsonScanner.internKey("flags")
+    val keyBytes₁₃: Array[Byte] = JsonScanner.internKey("name")
+    val keyBytes₁₄: Array[Byte] = JsonScanner.internKey("category")
+    val keyBytes₁₅: Array[Byte] = JsonScanner.internKey("region")
+    val keyBytes₁₆: Array[Byte] = JsonScanner.internKey("status")
+    val keyBytes₁₇: Array[Byte] = JsonScanner.internKey("country")
+    val keyBytes₁₈: Array[Byte] = JsonScanner.internKey("device")
+    val keyBytes₁₉: Array[Byte] = JsonScanner.internKey("source")
+    val keyBytes₂₀: Array[Byte] = JsonScanner.internKey("label")
     var lineStart: Int = src.from
     while (lineStart &lt; (until) &amp;&amp; (true)) {
       var lineEnd: Int = lineStart
       while (lineEnd &lt; (until) &amp;&amp; (buf(lineEnd) != ('\n'))) lineEnd = lineEnd + (1)
-      var v: Double = 0.0
+      var v: Long = 0L
       var pNext: Int = 0
       var seen: Boolean = false
+      var v₂: Long = 0L
+      var pNext₂: Int = 0
+      var seen₂: Boolean = false
+      var v₃: Long = 0L
+      var pNext₃: Int = 0
+      var seen₃: Boolean = false
+      var v₄: Long = 0L
+      var pNext₄: Int = 0
+      var seen₄: Boolean = false
+      var v₅: Double = 0.0
+      var pNext₅: Int = 0
+      var seen₅: Boolean = false
+      var v₆: Double = 0.0
+      var pNext₆: Int = 0
+      var seen₆: Boolean = false
+      var v₇: Double = 0.0
+      var pNext₇: Int = 0
+      var seen₇: Boolean = false
+      var v₈: Double = 0.0
+      var pNext₈: Int = 0
+      var seen₈: Boolean = false
+      var v₉: Int = 0
+      var pNext₉: Int = 0
+      var seen₉: Boolean = false
+      var v₁₀: Int = 0
+      var pNext₁₀: Int = 0
+      var seen₁₀: Boolean = false
+      var v₁₁: Int = 0
+      var pNext₁₁: Int = 0
+      var seen₁₁: Boolean = false
+      var v₁₂: Int = 0
+      var pNext₁₂: Int = 0
+      var seen₁₂: Boolean = false
+      var st: Int = 0
+      var ln: Int = 0
+      var seen₁₃: Boolean = false
+      var st₂: Int = 0
+      var ln₂: Int = 0
+      var seen₁₄: Boolean = false
+      var st₃: Int = 0
+      var ln₃: Int = 0
+      var seen₁₅: Boolean = false
+      var st₄: Int = 0
+      var ln₄: Int = 0
+      var seen₁₆: Boolean = false
+      var st₅: Int = 0
+      var ln₅: Int = 0
+      var seen₁₇: Boolean = false
+      var st₆: Int = 0
+      var ln₆: Int = 0
+      var seen₁₈: Boolean = false
+      var st₇: Int = 0
+      var ln₇: Int = 0
+      var seen₁₉: Boolean = false
+      var st₈: Int = 0
+      var ln₈: Int = 0
+      var seen₂₀: Boolean = false
+      var rejected: Boolean = false
       var p: Int = lineStart + (1)
       var open: Boolean = buf(lineStart) == ('{')
+      var predChecked: Boolean = false
       while (open) if (buf(p) == ('}')) open = false else {
         val ks: Int = p + (1)
         val ke: Int = {
@@ -60,15 +138,200 @@ footer .nav{color:var(--acc);text-decoration:none;font-weight:600;white-space:no
           val len: Int = ke.-(ks)
           len == (keyBytes.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes, 0, len))
         }: Boolean))) {
-          v = JsonScanner.readDoubleAt(buf, ke + (2), lineEnd)
+          v = JsonScanner.readLongAt(buf, ke + (2), lineEnd)
           pNext = (inline$numEndTL.get()(0): Int)
           seen = true
           pNext
+        } else if (seen₂.unary_! &amp;&amp; (({
+          val len₂: Int = ke.-(ks)
+          len₂ == (keyBytes₂.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₂, 0, len₂))
+        }: Boolean))) {
+          v₂ = JsonScanner.readLongAt(buf, ke + (2), lineEnd)
+          pNext₂ = (inline$numEndTL.get()(0): Int)
+          seen₂ = true
+          pNext₂
+        } else if (seen₃.unary_! &amp;&amp; (({
+          val len₃: Int = ke.-(ks)
+          len₃ == (keyBytes₃.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₃, 0, len₃))
+        }: Boolean))) {
+          v₃ = JsonScanner.readLongAt(buf, ke + (2), lineEnd)
+          pNext₃ = (inline$numEndTL.get()(0): Int)
+          seen₃ = true
+          pNext₃
+        } else if (seen₄.unary_! &amp;&amp; (({
+          val len₄: Int = ke.-(ks)
+          len₄ == (keyBytes₄.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₄, 0, len₄))
+        }: Boolean))) {
+          v₄ = JsonScanner.readLongAt(buf, ke + (2), lineEnd)
+          pNext₄ = (inline$numEndTL.get()(0): Int)
+          seen₄ = true
+          pNext₄
+        } else if (seen₅.unary_! &amp;&amp; (({
+          val len₅: Int = ke.-(ks)
+          len₅ == (keyBytes₅.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₅, 0, len₅))
+        }: Boolean))) {
+          v₅ = JsonScanner.readDoubleAt(buf, ke + (2), lineEnd)
+          pNext₅ = (inline$numEndTL.get()(0): Int)
+          seen₅ = true
+          pNext₅
+        } else if (seen₆.unary_! &amp;&amp; (({
+          val len₆: Int = ke.-(ks)
+          len₆ == (keyBytes₆.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₆, 0, len₆))
+        }: Boolean))) {
+          v₆ = JsonScanner.readDoubleAt(buf, ke + (2), lineEnd)
+          pNext₆ = (inline$numEndTL.get()(0): Int)
+          seen₆ = true
+          pNext₆
+        } else if (seen₇.unary_! &amp;&amp; (({
+          val len₇: Int = ke.-(ks)
+          len₇ == (keyBytes₇.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₇, 0, len₇))
+        }: Boolean))) {
+          v₇ = JsonScanner.readDoubleAt(buf, ke + (2), lineEnd)
+          pNext₇ = (inline$numEndTL.get()(0): Int)
+          seen₇ = true
+          pNext₇
+        } else if (seen₈.unary_! &amp;&amp; (({
+          val len₈: Int = ke.-(ks)
+          len₈ == (keyBytes₈.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₈, 0, len₈))
+        }: Boolean))) {
+          v₈ = JsonScanner.readDoubleAt(buf, ke + (2), lineEnd)
+          pNext₈ = (inline$numEndTL.get()(0): Int)
+          seen₈ = true
+          pNext₈
+        } else if (seen₉.unary_! &amp;&amp; (({
+          val len₉: Int = ke.-(ks)
+          len₉ == (keyBytes₉.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₉, 0, len₉))
+        }: Boolean))) {
+          v₉ = JsonScanner.readIntAt(buf, ke + (2), lineEnd)
+          pNext₉ = (inline$numEndTL.get()(0): Int)
+          seen₉ = true
+          pNext₉
+        } else if (seen₁₀.unary_! &amp;&amp; (({
+          val len₁₀: Int = ke.-(ks)
+          len₁₀ == (keyBytes₁₀.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₁₀, 0, len₁₀))
+        }: Boolean))) {
+          v₁₀ = JsonScanner.readIntAt(buf, ke + (2), lineEnd)
+          pNext₁₀ = (inline$numEndTL.get()(0): Int)
+          seen₁₀ = true
+          pNext₁₀
+        } else if (seen₁₁.unary_! &amp;&amp; (({
+          val len₁₁: Int = ke.-(ks)
+          len₁₁ == (keyBytes₁₁.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₁₁, 0, len₁₁))
+        }: Boolean))) {
+          v₁₁ = JsonScanner.readIntAt(buf, ke + (2), lineEnd)
+          pNext₁₁ = (inline$numEndTL.get()(0): Int)
+          seen₁₁ = true
+          pNext₁₁
+        } else if (seen₁₂.unary_! &amp;&amp; (({
+          val len₁₂: Int = ke.-(ks)
+          len₁₂ == (keyBytes₁₂.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₁₂, 0, len₁₂))
+        }: Boolean))) {
+          v₁₂ = JsonScanner.readIntAt(buf, ke + (2), lineEnd)
+          pNext₁₂ = (inline$numEndTL.get()(0): Int)
+          seen₁₂ = true
+          pNext₁₂
+        } else if (seen₁₃.unary_! &amp;&amp; (({
+          val len₁₃: Int = ke.-(ks)
+          len₁₃ == (keyBytes₁₃.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₁₃, 0, len₁₃))
+        }: Boolean))) {
+          val vs: Int = ke + (2) + (1)
+          val ve: Int = {
+          }
+          st = vs
+          ln = ve.-(vs)
+          seen₁₃ = true
+          ve + (1)
+        } else if (seen₁₄.unary_! &amp;&amp; (({
+          val len₁₄: Int = ke.-(ks)
+          len₁₄ == (keyBytes₁₄.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₁₄, 0, len₁₄))
+        }: Boolean))) {
+          val vs₂: Int = ke + (2) + (1)
+          val ve₂: Int = {
+          }
+          st₂ = vs₂
+          ln₂ = ve₂.-(vs₂)
+          seen₁₄ = true
+          ve₂ + (1)
+        } else if (seen₁₅.unary_! &amp;&amp; (({
+          val len₁₅: Int = ke.-(ks)
+          len₁₅ == (keyBytes₁₅.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₁₅, 0, len₁₅))
+        }: Boolean))) {
+          val vs₃: Int = ke + (2) + (1)
+          val ve₃: Int = {
+          }
+          st₃ = vs₃
+          ln₃ = ve₃.-(vs₃)
+          seen₁₅ = true
+          ve₃ + (1)
+        } else if (seen₁₆.unary_! &amp;&amp; (({
+          val len₁₆: Int = ke.-(ks)
+          len₁₆ == (keyBytes₁₆.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₁₆, 0, len₁₆))
+        }: Boolean))) {
+          val vs₄: Int = ke + (2) + (1)
+          val ve₄: Int = {
+          }
+          st₄ = vs₄
+          ln₄ = ve₄.-(vs₄)
+          seen₁₆ = true
+          ve₄ + (1)
+        } else if (seen₁₇.unary_! &amp;&amp; (({
+          val len₁₇: Int = ke.-(ks)
+          len₁₇ == (keyBytes₁₇.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₁₇, 0, len₁₇))
+        }: Boolean))) {
+          val vs₅: Int = ke + (2) + (1)
+          val ve₅: Int = {
+          }
+          st₅ = vs₅
+          ln₅ = ve₅.-(vs₅)
+          seen₁₇ = true
+          ve₅ + (1)
+        } else if (seen₁₈.unary_! &amp;&amp; (({
+          val len₁₈: Int = ke.-(ks)
+          len₁₈ == (keyBytes₁₈.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₁₈, 0, len₁₈))
+        }: Boolean))) {
+          val vs₆: Int = ke + (2) + (1)
+          val ve₆: Int = {
+          }
+          st₆ = vs₆
+          ln₆ = ve₆.-(vs₆)
+          seen₁₈ = true
+          ve₆ + (1)
+        } else if (seen₁₉.unary_! &amp;&amp; (({
+          val len₁₉: Int = ke.-(ks)
+          len₁₉ == (keyBytes₁₉.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₁₉, 0, len₁₉))
+        }: Boolean))) {
+          val vs₇: Int = ke + (2) + (1)
+          val ve₇: Int = {
+          }
+          st₇ = vs₇
+          ln₇ = ve₇.-(vs₇)
+          seen₁₉ = true
+          ve₇ + (1)
+        } else if (seen₂₀.unary_! &amp;&amp; (({
+          val len₂₀: Int = ke.-(ks)
+          len₂₀ == (keyBytes₂₀.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₂₀, 0, len₂₀))
+        }: Boolean))) {
+          val vs₈: Int = ke + (2) + (1)
+          val ve₈: Int = {
+          }
+          st₈ = vs₈
+          ln₈ = ve₈.-(vs₈)
+          seen₂₀ = true
+          ve₈ + (1)
         } else JsonScanner.skipValue(buf, ke + (2), lineEnd)
-        if (seen) open = false else if (buf(p) == (',')) p = p + (1) else open = false
+        if (!predChecked &amp;&amp; (seen₅)) {
+          predChecked = true
+          if (v₅ &gt; (150).unary_!) {
+            rejected = true
+            open = false
+          } else ()
+        } else ()
+        if (open) if (seen &amp;&amp; (seen₂) &amp;&amp; (seen₃) &amp;&amp; (seen₄) &amp;&amp; (seen₅) &amp;&amp; (seen₆) &amp;&amp; (seen₇) &amp;&amp; (seen₈) &amp;&amp; (seen₉) &amp;&amp; (seen₁₀) &amp;&amp; (seen₁₁) &amp;&amp; (seen₁₂) &amp;&amp; (seen₁₃) &amp;&amp; (seen₁₄) &amp;&amp; (seen₁₅) &amp;&amp; (seen₁₆) &amp;&amp; (seen₁₇) &amp;&amp; (seen₁₈) &amp;&amp; (seen₁₉) &amp;&amp; (seen₂₀)) open = false else if (buf(p) == (',')) p = p + (1) else open = false else ()
       }
-      val v₂: Boolean = v &gt; (150)
-      if (v₂) acc = acc + (v) else ()
+      if (!rejected) {
+        val v₁₃: Boolean = v₅ &gt; (150)
+        if (v₁₃) acc = acc + (v₅) else ()
+      } else ()
       lineStart = lineEnd + (1)
     }
     (acc: Double)
@@ -96,18 +359,90 @@ footer .nav{color:var(--acc);text-decoration:none;font-weight:600;white-space:no
 <p class="cap">you write</p><pre class="scala">Json.ndjson[Event](src).fuse.filter(_.amount &gt; 150).map(_.category).toList</pre>
 <p class="cap">the macro emits</p><pre class="gen">      val buf: Array[Byte] = src.buf
       val until: Int = src.until
-      val keyBytes: Array[Byte] = JsonScanner.internKey("amount")
-      val keyBytes₂: Array[Byte] = JsonScanner.internKey("category")
+      val keyBytes: Array[Byte] = JsonScanner.internKey("id")
+      val keyBytes₂: Array[Byte] = JsonScanner.internKey("ts")
+      val keyBytes₃: Array[Byte] = JsonScanner.internKey("userId")
+      val keyBytes₄: Array[Byte] = JsonScanner.internKey("sessionId")
+      val keyBytes₅: Array[Byte] = JsonScanner.internKey("amount")
+      val keyBytes₆: Array[Byte] = JsonScanner.internKey("score")
+      val keyBytes₇: Array[Byte] = JsonScanner.internKey("lat")
+      val keyBytes₈: Array[Byte] = JsonScanner.internKey("lon")
+      val keyBytes₉: Array[Byte] = JsonScanner.internKey("age")
+      val keyBytes₁₀: Array[Byte] = JsonScanner.internKey("rank")
+      val keyBytes₁₁: Array[Byte] = JsonScanner.internKey("count")
+      val keyBytes₁₂: Array[Byte] = JsonScanner.internKey("flags")
+      val keyBytes₁₃: Array[Byte] = JsonScanner.internKey("name")
+      val keyBytes₁₄: Array[Byte] = JsonScanner.internKey("category")
+      val keyBytes₁₅: Array[Byte] = JsonScanner.internKey("region")
+      val keyBytes₁₆: Array[Byte] = JsonScanner.internKey("status")
+      val keyBytes₁₇: Array[Byte] = JsonScanner.internKey("country")
+      val keyBytes₁₈: Array[Byte] = JsonScanner.internKey("device")
+      val keyBytes₁₉: Array[Byte] = JsonScanner.internKey("source")
+      val keyBytes₂₀: Array[Byte] = JsonScanner.internKey("label")
       var lineStart: Int = src.from
       while (lineStart &lt; (until) &amp;&amp; (true)) {
         var lineEnd: Int = lineStart
         while (lineEnd &lt; (until) &amp;&amp; (buf(lineEnd) != ('\n'))) lineEnd = lineEnd + (1)
-        var v: Double = 0.0
+        var v: Long = 0L
         var pNext: Int = 0
         var seen: Boolean = false
+        var v₂: Long = 0L
+        var pNext₂: Int = 0
+        var seen₂: Boolean = false
+        var v₃: Long = 0L
+        var pNext₃: Int = 0
+        var seen₃: Boolean = false
+        var v₄: Long = 0L
+        var pNext₄: Int = 0
+        var seen₄: Boolean = false
+        var v₅: Double = 0.0
+        var pNext₅: Int = 0
+        var seen₅: Boolean = false
+        var v₆: Double = 0.0
+        var pNext₆: Int = 0
+        var seen₆: Boolean = false
+        var v₇: Double = 0.0
+        var pNext₇: Int = 0
+        var seen₇: Boolean = false
+        var v₈: Double = 0.0
+        var pNext₈: Int = 0
+        var seen₈: Boolean = false
+        var v₉: Int = 0
+        var pNext₉: Int = 0
+        var seen₉: Boolean = false
+        var v₁₀: Int = 0
+        var pNext₁₀: Int = 0
+        var seen₁₀: Boolean = false
+        var v₁₁: Int = 0
+        var pNext₁₁: Int = 0
+        var seen₁₁: Boolean = false
+        var v₁₂: Int = 0
+        var pNext₁₂: Int = 0
+        var seen₁₂: Boolean = false
         var st: Int = 0
         var ln: Int = 0
-        var seen₂: Boolean = false
+        var seen₁₃: Boolean = false
+        var st₂: Int = 0
+        var ln₂: Int = 0
+        var seen₁₄: Boolean = false
+        var st₃: Int = 0
+        var ln₃: Int = 0
+        var seen₁₅: Boolean = false
+        var st₄: Int = 0
+        var ln₄: Int = 0
+        var seen₁₆: Boolean = false
+        var st₅: Int = 0
+        var ln₅: Int = 0
+        var seen₁₇: Boolean = false
+        var st₆: Int = 0
+        var ln₆: Int = 0
+        var seen₁₈: Boolean = false
+        var st₇: Int = 0
+        var ln₇: Int = 0
+        var seen₁₉: Boolean = false
+        var st₈: Int = 0
+        var ln₈: Int = 0
+        var seen₂₀: Boolean = false
         var rejected: Boolean = false
         var p: Int = lineStart + (1)
         var open: Boolean = buf(lineStart) == ('{')
@@ -120,7 +455,7 @@ footer .nav{color:var(--acc);text-decoration:none;font-weight:600;white-space:no
             val len: Int = ke.-(ks)
             len == (keyBytes.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes, 0, len))
           }: Boolean))) {
-            v = JsonScanner.readDoubleAt(buf, ke + (2), lineEnd)
+            v = JsonScanner.readLongAt(buf, ke + (2), lineEnd)
             pNext = (inline$numEndTL.get()(0): Int)
             seen = true
             pNext
@@ -128,29 +463,194 @@ footer .nav{color:var(--acc);text-decoration:none;font-weight:600;white-space:no
             val len₂: Int = ke.-(ks)
             len₂ == (keyBytes₂.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₂, 0, len₂))
           }: Boolean))) {
+            v₂ = JsonScanner.readLongAt(buf, ke + (2), lineEnd)
+            pNext₂ = (inline$numEndTL.get()(0): Int)
+            seen₂ = true
+            pNext₂
+          } else if (seen₃.unary_! &amp;&amp; (({
+            val len₃: Int = ke.-(ks)
+            len₃ == (keyBytes₃.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₃, 0, len₃))
+          }: Boolean))) {
+            v₃ = JsonScanner.readLongAt(buf, ke + (2), lineEnd)
+            pNext₃ = (inline$numEndTL.get()(0): Int)
+            seen₃ = true
+            pNext₃
+          } else if (seen₄.unary_! &amp;&amp; (({
+            val len₄: Int = ke.-(ks)
+            len₄ == (keyBytes₄.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₄, 0, len₄))
+          }: Boolean))) {
+            v₄ = JsonScanner.readLongAt(buf, ke + (2), lineEnd)
+            pNext₄ = (inline$numEndTL.get()(0): Int)
+            seen₄ = true
+            pNext₄
+          } else if (seen₅.unary_! &amp;&amp; (({
+            val len₅: Int = ke.-(ks)
+            len₅ == (keyBytes₅.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₅, 0, len₅))
+          }: Boolean))) {
+            v₅ = JsonScanner.readDoubleAt(buf, ke + (2), lineEnd)
+            pNext₅ = (inline$numEndTL.get()(0): Int)
+            seen₅ = true
+            pNext₅
+          } else if (seen₆.unary_! &amp;&amp; (({
+            val len₆: Int = ke.-(ks)
+            len₆ == (keyBytes₆.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₆, 0, len₆))
+          }: Boolean))) {
+            v₆ = JsonScanner.readDoubleAt(buf, ke + (2), lineEnd)
+            pNext₆ = (inline$numEndTL.get()(0): Int)
+            seen₆ = true
+            pNext₆
+          } else if (seen₇.unary_! &amp;&amp; (({
+            val len₇: Int = ke.-(ks)
+            len₇ == (keyBytes₇.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₇, 0, len₇))
+          }: Boolean))) {
+            v₇ = JsonScanner.readDoubleAt(buf, ke + (2), lineEnd)
+            pNext₇ = (inline$numEndTL.get()(0): Int)
+            seen₇ = true
+            pNext₇
+          } else if (seen₈.unary_! &amp;&amp; (({
+            val len₈: Int = ke.-(ks)
+            len₈ == (keyBytes₈.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₈, 0, len₈))
+          }: Boolean))) {
+            v₈ = JsonScanner.readDoubleAt(buf, ke + (2), lineEnd)
+            pNext₈ = (inline$numEndTL.get()(0): Int)
+            seen₈ = true
+            pNext₈
+          } else if (seen₉.unary_! &amp;&amp; (({
+            val len₉: Int = ke.-(ks)
+            len₉ == (keyBytes₉.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₉, 0, len₉))
+          }: Boolean))) {
+            v₉ = JsonScanner.readIntAt(buf, ke + (2), lineEnd)
+            pNext₉ = (inline$numEndTL.get()(0): Int)
+            seen₉ = true
+            pNext₉
+          } else if (seen₁₀.unary_! &amp;&amp; (({
+            val len₁₀: Int = ke.-(ks)
+            len₁₀ == (keyBytes₁₀.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₁₀, 0, len₁₀))
+          }: Boolean))) {
+            v₁₀ = JsonScanner.readIntAt(buf, ke + (2), lineEnd)
+            pNext₁₀ = (inline$numEndTL.get()(0): Int)
+            seen₁₀ = true
+            pNext₁₀
+          } else if (seen₁₁.unary_! &amp;&amp; (({
+            val len₁₁: Int = ke.-(ks)
+            len₁₁ == (keyBytes₁₁.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₁₁, 0, len₁₁))
+          }: Boolean))) {
+            v₁₁ = JsonScanner.readIntAt(buf, ke + (2), lineEnd)
+            pNext₁₁ = (inline$numEndTL.get()(0): Int)
+            seen₁₁ = true
+            pNext₁₁
+          } else if (seen₁₂.unary_! &amp;&amp; (({
+            val len₁₂: Int = ke.-(ks)
+            len₁₂ == (keyBytes₁₂.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₁₂, 0, len₁₂))
+          }: Boolean))) {
+            v₁₂ = JsonScanner.readIntAt(buf, ke + (2), lineEnd)
+            pNext₁₂ = (inline$numEndTL.get()(0): Int)
+            seen₁₂ = true
+            pNext₁₂
+          } else if (seen₁₃.unary_! &amp;&amp; (({
+            val len₁₃: Int = ke.-(ks)
+            len₁₃ == (keyBytes₁₃.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₁₃, 0, len₁₃))
+          }: Boolean))) {
             val vs: Int = ke + (2) + (1)
             val ve: Int = {
             }
             st = vs
             ln = ve.-(vs)
-            seen₂ = true
+            seen₁₃ = true
             ve + (1)
+          } else if (seen₁₄.unary_! &amp;&amp; (({
+            val len₁₄: Int = ke.-(ks)
+            len₁₄ == (keyBytes₁₄.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₁₄, 0, len₁₄))
+          }: Boolean))) {
+            val vs₂: Int = ke + (2) + (1)
+            val ve₂: Int = {
+            }
+            st₂ = vs₂
+            ln₂ = ve₂.-(vs₂)
+            seen₁₄ = true
+            ve₂ + (1)
+          } else if (seen₁₅.unary_! &amp;&amp; (({
+            val len₁₅: Int = ke.-(ks)
+            len₁₅ == (keyBytes₁₅.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₁₅, 0, len₁₅))
+          }: Boolean))) {
+            val vs₃: Int = ke + (2) + (1)
+            val ve₃: Int = {
+            }
+            st₃ = vs₃
+            ln₃ = ve₃.-(vs₃)
+            seen₁₅ = true
+            ve₃ + (1)
+          } else if (seen₁₆.unary_! &amp;&amp; (({
+            val len₁₆: Int = ke.-(ks)
+            len₁₆ == (keyBytes₁₆.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₁₆, 0, len₁₆))
+          }: Boolean))) {
+            val vs₄: Int = ke + (2) + (1)
+            val ve₄: Int = {
+            }
+            st₄ = vs₄
+            ln₄ = ve₄.-(vs₄)
+            seen₁₆ = true
+            ve₄ + (1)
+          } else if (seen₁₇.unary_! &amp;&amp; (({
+            val len₁₇: Int = ke.-(ks)
+            len₁₇ == (keyBytes₁₇.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₁₇, 0, len₁₇))
+          }: Boolean))) {
+            val vs₅: Int = ke + (2) + (1)
+            val ve₅: Int = {
+            }
+            st₅ = vs₅
+            ln₅ = ve₅.-(vs₅)
+            seen₁₇ = true
+            ve₅ + (1)
+          } else if (seen₁₈.unary_! &amp;&amp; (({
+            val len₁₈: Int = ke.-(ks)
+            len₁₈ == (keyBytes₁₈.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₁₈, 0, len₁₈))
+          }: Boolean))) {
+            val vs₆: Int = ke + (2) + (1)
+            val ve₆: Int = {
+            }
+            st₆ = vs₆
+            ln₆ = ve₆.-(vs₆)
+            seen₁₈ = true
+            ve₆ + (1)
+          } else if (seen₁₉.unary_! &amp;&amp; (({
+            val len₁₉: Int = ke.-(ks)
+            len₁₉ == (keyBytes₁₉.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₁₉, 0, len₁₉))
+          }: Boolean))) {
+            val vs₇: Int = ke + (2) + (1)
+            val ve₇: Int = {
+            }
+            st₇ = vs₇
+            ln₇ = ve₇.-(vs₇)
+            seen₁₉ = true
+            ve₇ + (1)
+          } else if (seen₂₀.unary_! &amp;&amp; (({
+            val len₂₀: Int = ke.-(ks)
+            len₂₀ == (keyBytes₂₀.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₂₀, 0, len₂₀))
+          }: Boolean))) {
+            val vs₈: Int = ke + (2) + (1)
+            val ve₈: Int = {
+            }
+            st₈ = vs₈
+            ln₈ = ve₈.-(vs₈)
+            seen₂₀ = true
+            ve₈ + (1)
           } else JsonScanner.skipValue(buf, ke + (2), lineEnd)
-          if (!predChecked &amp;&amp; (seen)) {
+          if (!predChecked &amp;&amp; (seen₅)) {
             predChecked = true
-            if (v &gt; (150).unary_!) {
+            if (v₅ &gt; (150).unary_!) {
               rejected = true
               open = false
             } else ()
           } else ()
-          if (open) if (seen &amp;&amp; (seen₂)) open = false else if (buf(p) == (',')) p = p + (1) else open = false else ()
+          if (open) if (seen &amp;&amp; (seen₂) &amp;&amp; (seen₃) &amp;&amp; (seen₄) &amp;&amp; (seen₅) &amp;&amp; (seen₆) &amp;&amp; (seen₇) &amp;&amp; (seen₈) &amp;&amp; (seen₉) &amp;&amp; (seen₁₀) &amp;&amp; (seen₁₁) &amp;&amp; (seen₁₂) &amp;&amp; (seen₁₃) &amp;&amp; (seen₁₄) &amp;&amp; (seen₁₅) &amp;&amp; (seen₁₆) &amp;&amp; (seen₁₇) &amp;&amp; (seen₁₈) &amp;&amp; (seen₁₉) &amp;&amp; (seen₂₀)) open = false else if (buf(p) == (',')) p = p + (1) else open = false else ()
         }
         if (!rejected) {
-          val v₂: Boolean = v &gt; (150)
-          if (v₂) {
-            val v₃: String = {
+          val v₁₃: Boolean = v₅ &gt; (150)
+          if (v₁₃) {
+            val v₁₄: String = {
             }
-            b.+=(v₃)
+            b.+=(v₁₄)
             ()
           } else ()
         } else ()
@@ -322,16 +822,26 @@ final case class Narrow(amount: Double, category: String)
     val src = source
     val buf: Array[Byte] = src.buf
     val until: Int = src.until
-    val keyBytes: Array[Byte] = JsonScanner.internKey("status")
+    val keyBytes: Array[Byte] = JsonScanner.internKey("amount")
+    val keyBytes₂: Array[Byte] = JsonScanner.internKey("score")
+    val keyBytes₃: Array[Byte] = JsonScanner.internKey("status")
     var lineStart: Int = src.from
     while (lineStart &lt; (until) &amp;&amp; (true)) {
       var lineEnd: Int = lineStart
       while (lineEnd &lt; (until) &amp;&amp; (buf(lineEnd) != ('\n'))) lineEnd = lineEnd + (1)
+      var v: Double = 0.0
+      var pNext: Int = 0
+      var seen₂: Boolean = false
+      var v₂: Double = 0.0
+      var pNext₂: Int = 0
+      var seen₃: Boolean = false
       var st: Int = 0
       var ln: Int = 0
-      var seen₂: Boolean = false
+      var seen₄: Boolean = false
+      var rejected: Boolean = false
       var p: Int = lineStart + (1)
       var open: Boolean = buf(lineStart) == ('{')
+      var predChecked: Boolean = false
       while (open) if (buf(p) == ('}')) open = false else {
         val ks: Int = p + (1)
         val ke: Int = {
@@ -340,48 +850,54 @@ final case class Narrow(amount: Double, category: String)
           val len: Int = ke.-(ks)
           len == (keyBytes.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes, 0, len))
         }: Boolean))) {
+          v = JsonScanner.readDoubleAt(buf, ke + (2), lineEnd)
+          pNext = (inline$numEndTL.get()(0): Int)
+          seen₂ = true
+          pNext
+        } else if (seen₃.unary_! &amp;&amp; (({
+          val len₂: Int = ke.-(ks)
+          len₂ == (keyBytes₂.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₂, 0, len₂))
+        }: Boolean))) {
+          v₂ = JsonScanner.readDoubleAt(buf, ke + (2), lineEnd)
+          pNext₂ = (inline$numEndTL.get()(0): Int)
+          seen₃ = true
+          pNext₂
+        } else if (seen₄.unary_! &amp;&amp; (({
+          val len₃: Int = ke.-(ks)
+          len₃ == (keyBytes₃.length) &amp;&amp; (java.util.Arrays.equals(buf, ks, ke, keyBytes₃, 0, len₃))
+        }: Boolean))) {
           val vs: Int = ke + (2) + (1)
           val ve: Int = {
           }
           st = vs
           ln = ve.-(vs)
-          seen₂ = true
+          seen₄ = true
           ve + (1)
         } else JsonScanner.skipValue(buf, ke + (2), lineEnd)
-        if (seen₂) open = false else if (buf(p) == (',')) p = p + (1) else open = false
-      }
-      val v: String = {
-      }
-      val v₂: Boolean = v == ("active")
-      if (v₂) {
-        val v₃: Double = {
-          null
-          null
-          null
-          null
-          null
-          null
-          null
-          0.0
-        }
-        acc = acc + (v₃)
-        c = c + (1)
-        val v₄: Double = {
-          null
-          null
-          null
-          null
-          null
-          null
-          null
-          0.0
-        }
-        val kk: Double = v₄
-        if (!seen || (kk &gt; (best))) {
-          best = kk
-          seen = true
+        if (!predChecked &amp;&amp; (seen₄)) {
+          predChecked = true
+          if ({
+          } == ("active").unary_!) {
+            rejected = true
+            open = false
+          } else ()
         } else ()
-        ()
+        if (open) if (seen₂ &amp;&amp; (seen₃) &amp;&amp; (seen₄)) open = false else if (buf(p) == (',')) p = p + (1) else open = false else ()
+      }
+      if (!rejected) {
+        val v₃: String = {
+        }
+        val v₄: Boolean = v₃ == ("active")
+        if (v₄) {
+          acc = acc + (v)
+          c = c + (1)
+          val kk: Double = v₂
+          if (!seen || (kk &gt; (best))) {
+            best = kk
+            seen = true
+          } else ()
+          ()
+        } else ()
       } else ()
       lineStart = lineEnd + (1)
     }

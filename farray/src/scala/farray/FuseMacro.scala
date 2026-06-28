@@ -1144,8 +1144,10 @@ object FuseMacro:
         case TTag.Count =>
           '{ var cnt = 0; ${ loop(_ => '{ cnt += 1 }.asTerm) }; cnt }.asTerm
         case TTag.Foreach =>
+          // shape-aware: `f`'s element param is decomposed → reads only the fields it touches, no product rebuild
+          // (e.g. `Json.ndjson[Rec](b).fuse.foreach(r => sink(r.amount))` must NOT rebuild the 20-field Rec).
           val f = args(0)
-          '{ ${ loop(v => applyLambda(f, v)) }; () }.asTerm
+          '{ ${ loopS(v => applyLambda(f, v))(sh => fnOnShape(f, sh)(t => t)) }; () }.asTerm
         case TTag.Fold =>
           val z = args(0); val op = args(1)
           // Z = op's result type (op: (Z, A) => Z). Using z's own type would over-narrow when the seed is more
@@ -1167,14 +1169,17 @@ object FuseMacro:
              ${ loop(v => '{ if ${ applyLambda(p, v).asExprOf[Boolean] } then { res = Some(${ v.asExpr }); ${ d.set } } }.asTerm) }
              res }.asTerm
         case TTag.Exists =>
+          // shape-aware: decompose `p`'s element param → reads only the predicate's fields, no rebuild.
           val p = args(0); val d = done.get
           '{ var res = false
-             ${ loop(v => '{ if ${ applyLambda(p, v).asExprOf[Boolean] } then { res = true; ${ d.set } } }.asTerm) }
+             ${ loopS(v => '{ if ${ applyLambda(p, v).asExprOf[Boolean] } then { res = true; ${ d.set } } }.asTerm)(
+                      sh => fnOnShape(p, sh)(b => '{ if ${ b.asExprOf[Boolean] } then { res = true; ${ d.set } } }.asTerm)) }
              res }.asTerm
         case TTag.Forall =>
           val p = args(0); val d = done.get
           '{ var res = true
-             ${ loop(v => '{ if !${ applyLambda(p, v).asExprOf[Boolean] } then { res = false; ${ d.set } } }.asTerm) }
+             ${ loopS(v => '{ if !${ applyLambda(p, v).asExprOf[Boolean] } then { res = false; ${ d.set } } }.asTerm)(
+                      sh => fnOnShape(p, sh)(b => '{ if !${ b.asExprOf[Boolean] } then { res = false; ${ d.set } } }.asTerm)) }
              res }.asTerm
         case TTag.HeadOption =>
           val d = done.get
@@ -1188,9 +1193,11 @@ object FuseMacro:
              res.getOrElse(throw new java.util.NoSuchElementException("head of empty fused pipeline")) }.asTerm
         case TTag.IndexWhere =>
           // bare `var idx` + position counter — no (value, index) pair is built; stop at the first match.
+          // shape-aware: decompose `p`'s element param → reads only the predicate's fields, no product rebuild.
           val p = args(0); val d = done.get
           '{ var idx: Int = -1; var c: Int = 0
-             ${ loop(v => '{ if ${ applyLambda(p, v).asExprOf[Boolean] } then { idx = c; ${ d.set } }; c = c + 1 }.asTerm) }
+             ${ loopS(v => '{ if ${ applyLambda(p, v).asExprOf[Boolean] } then { idx = c; ${ d.set } }; c = c + 1 }.asTerm)(
+                      sh => fnOnShape(p, sh)(b => '{ if ${ b.asExprOf[Boolean] } then { idx = c; ${ d.set } }; c = c + 1 }.asTerm)) }
              idx }.asTerm
         case TTag.ReduceOpt =>
           // one seeded accumulator (no per-element Option); a single Some(acc) at the end. acc's type = op's

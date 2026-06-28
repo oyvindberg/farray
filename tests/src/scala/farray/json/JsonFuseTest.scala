@@ -134,6 +134,10 @@ class JsonFuseTest:
     // find directly on the source
     val found = Json.ndjson[Rec](buf).fuse.find(_.amount > 290)
     assertEquals(jsoniterRecs.find(_.amount > 290).map(_.amount), found.map(_.amount))
+    // exists / forall / indexWhere directly on the source (shape-aware: read only `amount`, no Rec rebuild)
+    assertEquals(jsoniterRecs.exists(_.amount > 290), Json.ndjson[Rec](buf).fuse.exists(_.amount > 290))
+    assertEquals(jsoniterRecs.forall(_.amount >= 0), Json.ndjson[Rec](buf).fuse.forall(_.amount >= 0))
+    assertEquals(jsoniterRecs.indexWhere(_.amount > 290), Json.ndjson[Rec](buf).fuse.indexWhere(_.amount > 290))
 
   /** predicate-fail early-out correctness: a selective filter then a projection of a different field. The
    *  early-out must abandon rejected records without affecting the result (boundary cases: all-reject, all-pass).
