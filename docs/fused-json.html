@@ -68,11 +68,7 @@ footer .nav{color:var(--acc);text-decoration:none;font-weight:600;white-space:no
         if (seen) open = false else if (buf(p) == (',')) p = p + (1) else open = false
       }
       val v₂: Boolean = v &gt; (150)
-      if (v₂) acc = {
-        val _$10: Double = acc
-        val _$11: Double = v
-        _$10 + (_$11)
-      } else ()
+      if (v₂) acc = acc + (v) else ()
       lineStart = lineEnd + (1)
     }
     (acc: Double)

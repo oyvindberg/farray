@@ -68,6 +68,25 @@ class JsonFuseTest:
     assertEquals(3, n)       // 3 even numbers survive
     assertEquals(0, calls)   // but the map function was never invoked — its result is dead for count
 
+  /** fold-op decomposition: `foldLeft((acc, r) => acc + r.field)` reads only the projected column — it does NOT
+   *  rebuild the product or compute the other (dead) fields. A call-count on a dead field proves it. */
+  @Test def inMemory_foldOp_decomposes_product(): Unit =
+    var deadCalls = 0
+    def dead(x: Int): Int = { deadCalls += 1; x * 99 } // a field nobody reads in the fold
+    val sumA = farray.FArray(1, 2, 3, 4)
+      .fuse.map(x => JsonFuseTest.Pair(x, dead(x)))     // build a product whose `b` calls `dead`
+      .foldLeft(0)((acc, p) => acc + p.a)                // fold reads ONLY `a`
+    assertEquals(1 + 2 + 3 + 4, sumA)
+    assertEquals(0, deadCalls)                           // `b`/`dead` never computed — dead column eliminated
+
+  /** but a WHOLE-record use in the fold op (a method call) must still materialize and run correctly. */
+  @Test def inMemory_foldOp_wholeRecord_rebuilds_correctly(): Unit =
+    val got = farray.FArray(1, 2, 3)
+      .fuse.map(x => JsonFuseTest.Pair(x, x * 10))
+      .foldLeft(0)((acc, r) => acc + r.combined)         // .combined is a method → whole record needed
+    val ref = List(1, 2, 3).map(x => JsonFuseTest.Pair(x, x * 10)).foldLeft(0)((acc, r) => acc + r.combined)
+    assertEquals(ref, got)
+
   /** discard-DCE extended to nonEmpty/isEmpty (which desugar to exists(_ => true)): `map(f).nonEmpty` and
    *  `map(f).isEmpty` ignore the mapped value, so `f` is dead and must not run. */
   @Test def inMemory_mapNonEmpty_skips_map(): Unit =
@@ -117,3 +136,9 @@ class JsonFuseTest:
     assertEquals(ref, got)
 
 end JsonFuseTest
+
+object JsonFuseTest:
+  /** a top-level product for the fold-decomposition tests: `a`/`b` are fields, `combined` is a method that
+   *  forces the whole record. (Must be top-level — a case class inside a lambda isn't supported by fuse.) */
+  final case class Pair(a: Int, b: Int):
+    def combined: Int = a + b

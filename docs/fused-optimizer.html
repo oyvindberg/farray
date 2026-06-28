@@ -129,10 +129,7 @@ footer .nav{color:var(--acc);text-decoration:none;font-weight:600;white-space:no
           val v₃: Boolean = v₂ == (0)
           if (v₃) {
             val v₄: Int = inline$expensive(v)
-            acc = {
-              val acc₂: Int = acc
-              IntIsIntegral.plus(acc₂, v₄)
-            }
+            acc = IntIsIntegral.plus(acc, v₄)
           } else ()
           i = i + (1)
         }
@@ -144,10 +141,7 @@ footer .nav{color:var(--acc);text-decoration:none;font-weight:600;white-space:no
           val v₇: Boolean = v₆ == (0)
           if (v₇) {
             val v₈: Int = inline$expensive(v₅)
-            acc = {
-              val acc₃: Int = acc
-              IntIsIntegral.plus(acc₃, v₈)
-            }
+            acc = IntIsIntegral.plus(acc, v₈)
           } else ()
           i₂ = i₂ + (1)
         }

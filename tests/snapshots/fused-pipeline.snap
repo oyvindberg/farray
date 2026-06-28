@@ -220,10 +220,7 @@
       while (i.<(len)) {
         val v: Int = a.apply(i)
         val `v₂`: Int = v.+(1)
-        acc = {
-          val _$: Int = acc
-          _$.+(`v₂`)
-        }
+        acc = acc.+(`v₂`)
         i = i.+(1)
       }
     } else {
@@ -231,10 +228,7 @@
       while (`i₂`.<(len)) {
         val `v₃`: Int = FArrayOps.intAt(s, `i₂`)
         val `v₄`: Int = `v₃`.+(1)
-        acc = {
-          val `_$₂`: Int = acc
-          `_$₂`.+(`v₄`)
-        }
+        acc = acc.+(`v₄`)
         `i₂` = `i₂`.+(1)
       }
     }
@@ -1279,10 +1273,7 @@
           val `v₃`: Boolean = `v₂`.==(0)
           if (`v₃`) {
             val `v₄`: Int = v.*(10)
-            acc = {
-              val `acc₂`: Int = acc
-              IntIsIntegral.plus(`acc₂`, `v₄`)
-            }
+            acc = IntIsIntegral.plus(acc, `v₄`)
           } else ()
           i = i.+(1)
         }
@@ -1294,10 +1285,7 @@
           val `v₇`: Boolean = `v₆`.==(0)
           if (`v₇`) {
             val `v₈`: Int = `v₅`.*(10)
-            acc = {
-              val `acc₃`: Int = acc
-              IntIsIntegral.plus(`acc₃`, `v₈`)
-            }
+            acc = IntIsIntegral.plus(acc, `v₈`)
           } else ()
           `i₂` = `i₂`.+(1)
         }

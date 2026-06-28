@@ -117,7 +117,11 @@ object FuseMacro:
     case object DropWhileSpec extends CSpec                  // dropWhile: a `var dropping = true`
     case object DistinctSpec extends CSpec                   // distinct/distinctBy: a `seen` HashSet
     final case class ScanSpec(z: Term, zTpe: TypeRepr) extends CSpec // scanLeft: a `var acc: Z = z`
-    final case class Ctx(consume: Term => Term, done: Option[Done], counters: Map[Int, Slot])
+    // `consume` takes a MATERIALIZED element. `consumeShape`, when present, takes the element's decomposed Shape
+    // instead — so a terminal whose lambda projects fields (e.g. `foldLeft((acc, r) => acc + r.amount)`) reads
+    // only the columns it touches and never rebuilds the whole product (DCE/sink reaching the terminal's lambda).
+    final case class Ctx(consume: Term => Term, done: Option[Done], counters: Map[Int, Slot],
+                         consumeShape: Option[Shape => Term] = None)
 
     // The value flowing through a pure map/filter segment, decomposed into independent columns. A `Sc`'s `read`
     // is CPS: it binds the column to a fresh val on FIRST read (memoized, so no recomputation) and yields the
@@ -176,6 +180,16 @@ object FuseMacro:
     def letBind(value: Term)(cont: Term => Term): Term =
       value.tpe.widen.asType match
         case '[t] => '{ val v: t = ${ value.asExprOf[t] }; ${ cont('v.asTerm).asExprOf[Unit] } }.asTerm
+
+    /** like `letBind` but the body produces a VALUE (not a statement): the result type is whatever the
+     *  continuation builds (e.g. a fold accumulator value), not Unit. Used by the shape-aware fold/reduce path
+     *  for a whole-product use. */
+    def letBindV(value: Term)(cont: Term => Term): Term =
+      value.tpe.widen.asType match
+        case '[t] =>
+          '{ val v: t = ${ value.asExprOf[t] }; ${ resultExpr(cont('v.asTerm)) } }.asTerm
+    /** wrap a Term as an Expr of its own widened type (so a quote can splice it without forcing Unit). */
+    def resultExpr(t: Term): Expr[Any] = t.tpe.widen.asType match { case '[r] => t.asExprOf[r] }
 
     /** read `src(idx)` unboxed at the given element kind (leaf fast-path lives inside `<kind>At`). */
     def readAtKind(elemTpe: TypeRepr, src: Expr[FBase], idx: Expr[Int]): Term = kindOf(elemTpe) match
@@ -332,6 +346,11 @@ object FuseMacro:
         case None => Apply(Select(New(Inferred(tpe)), tpe.typeSymbol.primaryConstructor), vs)
 
     // --- AST shape detection / substitution ---
+    /** a 2-param lambda `(p0, p1) => body` → (p0 sym, p1 sym, body). Used to decompose a fold/reduce `op`. */
+    def decomposeLambda2(t: Term): Option[(Symbol, Symbol, Term)] = unwrap(t) match
+      case Lambda(List(vd0, vd1), body) => Some((vd0.symbol, vd1.symbol, body))
+      case _                            => None
+
     def decomposeLambda(t: Term): Option[(Symbol, Term)] = unwrap(t) match
       case Lambda(List(vd), body) => Some((vd.symbol, body))
       case _                      => None
@@ -507,6 +526,36 @@ object FuseMacro:
         case Some((param, body)) => checkNoLocalCaseClass(body); readShape(interp(body, param, cur, scala.collection.mutable.Map.empty))(fin)
         case None                => readShape(cur)(ct => fin(applyLambda(p, ct)))
 
+    /** apply a fold/reduce `op: (Z, A) => Z` to the running accumulator `accT` and the element SHAPE, decomposing
+     *  the element param so `op`'s body reads only the fields it projects (no whole-product rebuild for a body
+     *  like `acc + r.amount`). `k(result)` consumes the new accumulator value (typically `acc = result`, Unit).
+     *  Falls back to materialize-then-apply for a non-2-param op. */
+    def opOnShape(op: Term, accT: Term, cur: Shape)(k: Term => Term): Term = decomposeLambda2(op) match
+      case Some((accSym, elemSym, body0)) =>
+        checkNoLocalCaseClass(body0)
+        // substitute the acc param with accT (acc is a scalar var, not decomposable), then decompose the element
+        // param's field accesses against `cur`. substColumns materializes only on whole-param use (r.method()).
+        val body = substParam(body0, accSym, accT)
+        fnOnShape2(body, elemSym, cur)(k)
+      case None => readShape(cur)(ct => k(applyN(op, List(accT, ct))))
+
+    /** decompose `param`'s field accesses in `body` against `cur` (no rebuild unless `param` is used whole),
+     *  then hand the resulting expression to `k`. Like `substColumns` but the continuation result is unconstrained
+     *  (not forced to Unit), so it can build a value (a new accumulator) rather than a statement. */
+    def fnOnShape2(body: Term, param: Symbol, cur: Shape)(k: Term => Term): Term =
+      val paths = collectPaths(body, param)
+      if paths.contains(Nil) then
+        // whole-param use → materialize once. A trivial result (an already-bound Ident/Literal — e.g. a scalar
+        // element used whole, like `acc + a`) needs no fresh val; bind only a non-trivial product rebuild.
+        readShape(cur)(ct => if trivial(ct) then k(substParam(body, param, ct))
+                             else letBindV(ct)(r => k(substParam(body, param, r))))
+      else readPaths(cur, paths, Map.empty)(refs => k(substPaths(body, param, refs)))
+
+    /** apply a 1-param `f: A => B` to the element SHAPE, decomposing the param (no rebuild for `r => r.field`). */
+    def fnOnShape(f: Term, cur: Shape)(k: Term => Term): Term = decomposeLambda(f) match
+      case Some((param, body)) => checkNoLocalCaseClass(body); fnOnShape2(body, param, cur)(k)
+      case None                => readShape(cur)(ct => k(applyLambda(f, ct)))
+
     /** lower a contiguous map/filter run; columns sink past filters automatically (lazy memoized reads). */
     def buildSegment(ss: List[Stage], cur: Shape)(k: Shape => Term): Term = ss match
       case Nil                  => k(cur)
@@ -567,7 +616,9 @@ object FuseMacro:
 
     // --- per-element body: map/filter/take/drop/flatMap chain, ending in `ctx.consume` ---
     def buildBody(ss: List[(Stage, Int)], cur: Term, ctx: Ctx): Term = ss match
-      case Nil => ctx.consume(cur)
+      case Nil => ctx.consumeShape match
+        case Some(cs) => cs(srcShape(cur)) // shape-aware terminal directly on the source element
+        case None     => ctx.consume(cur)
       case (MapS(_) | FilterS(_, _), _) :: _ =>
         val (seg, rest) = ss.span { case (MapS(_), _) => true; case (FilterS(_, _), _) => true; case _ => false }
         // when this is the last segment AND the terminal discards the element (count), DON'T materialize the
@@ -576,6 +627,10 @@ object FuseMacro:
         // value isn't forced. DCE/compute-for-survivors extended to the terminal.
         if rest.isEmpty && discardsElem then
           buildSegment(seg.map(_._1), srcShape(cur))(_ => ctx.consume(unit))
+        else if rest.isEmpty && ctx.consumeShape.isDefined then
+          // shape-aware terminal (fold/reduce/extremumBy): hand the decomposed shape to the terminal's lambda
+          // so it reads only the fields it projects — no whole-product rebuild for `(acc, r) => acc + r.field`.
+          buildSegment(seg.map(_._1), srcShape(cur))(finalShape => ctx.consumeShape.get(finalShape))
         else
           buildSegment(seg.map(_._1), srcShape(cur))(finalShape => readShape(finalShape)(t => buildBody(rest, t, ctx)))
       case (FlatMapS(f, bTpe), _) :: rest =>
@@ -972,11 +1027,15 @@ object FuseMacro:
 
     def assemble(src0: Expr[FBase], n0: Expr[Int], done: Option[Done], counters: Map[Int, Slot]): Term =
       def ctx(consume: Term => Term) = Ctx(consume, done, counters)
-      def loop(consume: Term => Term): Expr[Unit] =
-        val c = ctx(consume)
+      def drive(c: Ctx): Expr[Unit] =
         jsonSrc match
           case Some(js) => loopOverJson(js, srcElem, indexed, c)
           case None     => withScanPrologue(c, loopOver(src0, srcK, srcElem, indexed, c))
+      def loop(consume: Term => Term): Expr[Unit] = drive(ctx(consume))
+      // shape-aware driver: the terminal consumes the element's decomposed Shape (so `op`/`f` projects columns
+      // without rebuilding the product). `consume` is a materialize-then-apply fallback for non-segment paths.
+      def loopS(consume: Term => Term)(consumeShape: Shape => Term): Expr[Unit] =
+        drive(Ctx(consume, done, counters, Some(consumeShape)))
       tag match
         case TTag.Count =>
           '{ var cnt = 0; ${ loop(_ => '{ cnt += 1 }.asTerm) }; cnt }.asTerm
@@ -990,8 +1049,11 @@ object FuseMacro:
           val zTpe = op.tpe.widen.dealias match { case AppliedType(_, targs) => targs.last; case _ => z.tpe.widen }
           zTpe.asType match
             case '[zz] =>
+              // shape-aware: `op`'s element param is decomposed (reads only projected fields, no product rebuild);
+              // the `consume` fallback materializes for the rare non-segment path.
               '{ var acc: zz = ${ z.asExprOf[zz] }
-                 ${ loop(v => '{ acc = ${ applyN(op, List('{ acc }.asTerm, v)).asExprOf[zz] } }.asTerm) }
+                 ${ loopS(v => '{ acc = ${ applyN(op, List('{ acc }.asTerm, v)).asExprOf[zz] } }.asTerm)(
+                          sh => opOnShape(op, '{ acc }.asTerm, sh)(r => '{ acc = ${ r.asExprOf[zz] } }.asTerm)) }
                  acc }.asTerm
         case TTag.Find =>
           // build with Option[Any] (no `A` inside the deep nested quote — keeps Type[A] evidence from leaking);
