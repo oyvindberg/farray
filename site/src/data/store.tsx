@@ -8,10 +8,16 @@ export interface SnippetData {
   fullLabel?: string;
 }
 
+/** A single @Benchmark method's verbatim source, parsed at build time from the real .scala file. */
+export interface BenchSource { code: string; html: string }
+/** class name -> method name -> its source. Keyed exactly like the JMH benchmark identifiers. */
+export type BenchSources = Record<string, Record<string, BenchSource>>;
+
 interface Store {
   charts: Chart[];
   scorecard: Scorecard | null;
   snippets: Record<string, SnippetData>;
+  benchSources: BenchSources;
   ready: boolean;
   error: string | null;
 }
@@ -22,14 +28,16 @@ const BASE = import.meta.env.BASE_URL; // "./" in build, "/" in dev — keeps fe
 export function DataProvider({ children }: { children: ReactNode }) {
   const [bench, setBench] = useState<Slim[] | null>(null);
   const [snippets, setSnippets] = useState<Record<string, SnippetData> | null>(null);
+  const [benchSources, setBenchSources] = useState<BenchSources | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([
       fetch(`${BASE}data/bench.json`).then((r) => r.json()),
       fetch(`${BASE}data/snippets.json`).then((r) => r.json()),
+      fetch(`${BASE}data/bench-sources.json`).then((r) => r.json()),
     ])
-      .then(([b, s]) => { setBench(b); setSnippets(s); })
+      .then(([b, s, bs]) => { setBench(b); setSnippets(s); setBenchSources(bs); })
       .catch((e) => setError(String(e)));
   }, []);
 
@@ -39,10 +47,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
       charts,
       scorecard: bench ? buildScorecard(charts) : null,
       snippets: snippets ?? {},
-      ready: !!bench && !!snippets,
+      benchSources: benchSources ?? {},
+      ready: !!bench && !!snippets && !!benchSources,
       error,
     };
-  }, [bench, snippets, error]);
+  }, [bench, snippets, benchSources, error]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

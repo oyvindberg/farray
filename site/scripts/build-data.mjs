@@ -82,6 +82,7 @@ function buildBench() {
   }
   writeFileSync(resolve(OUT, "bench.json"), JSON.stringify(slim));
   console.log(`bench.json: ${slim.length} entries (${skipped} non-ops/s skipped)`);
+  return slim;
 }
 
 // ---------------------------------------------------------------- snippets.json
@@ -286,5 +287,111 @@ function buildSnippets() {
   console.log(`snippets.json: ${Object.keys(out).length} snippets [${Object.keys(out).join(", ")}]`);
 }
 
-buildBench();
+// ---------------------------------------------------------------- bench-sources.json
+// Parse the REAL .scala benchmark files and extract every `@Benchmark def …` body verbatim, keyed
+// by enclosing class then method. This is the exact source that compiles and runs under JMH, so the
+// "what was measured" reveal on every chart is the truth, not a hand-written stand-in. (lihaoyi's
+// `sourcecode` only captures expression text at a single call site — it can't bulk-extract every
+// @Benchmark body without rewriting each benchmark and breaking JMH's `def` signatures — so we parse.)
+const BENCH_ROOT = "benchmarks/src/scala/farray";
+const leadingWs = (line) => line.match(/^(\s*)/)[1].length;
+
+// Bracket-depth delta of one line, ignoring brackets inside strings/char-literals/comments.
+// `st` carries cross-line state for block comments and triple-quoted strings.
+function scanDepth(line, st) {
+  let delta = 0;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i], c2 = line[i + 1];
+    if (st.inBlockComment) { if (c === "*" && c2 === "/") { st.inBlockComment = false; i++; } continue; }
+    if (st.inTriple) { if (c === '"' && c2 === '"' && line[i + 2] === '"') { st.inTriple = false; i += 2; } continue; }
+    if (c === "/" && c2 === "/") break; // line comment runs to EOL
+    if (c === "/" && c2 === "*") { st.inBlockComment = true; i++; continue; }
+    if (c === '"' && c2 === '"' && line[i + 2] === '"') { st.inTriple = true; i += 2; continue; }
+    if (c === '"') { // double-quoted string
+      i++;
+      while (i < line.length && line[i] !== '"') { if (line[i] === "\\") i++; i++; }
+      continue;
+    }
+    if (c === "'") { // char literal: 'x' or '\n'
+      const j = line[i + 1] === "\\" ? i + 3 : i + 2;
+      if (line[j] === "'") { i = j; continue; }
+      // not a char literal — fall through (treat ' as ordinary)
+    }
+    if (c === "(" || c === "[" || c === "{") delta++;
+    else if (c === ")" || c === "]" || c === "}") delta--;
+  }
+  return delta;
+}
+
+// Extract every @Benchmark method from one file's text -> { cls: { method: code } }.
+function extractFromFile(text) {
+  const lines = text.split("\n");
+  const classRe = /^\s*(?:final )?class (\w+)/;
+  const out = {}; // cls -> { method -> code }
+  let currentClass = null;
+  let i = 0;
+  while (i < lines.length) {
+    const cm = lines[i].match(classRe);
+    if (cm) { currentClass = cm[1]; i++; continue; }
+    if (!currentClass || !/@Benchmark\b/.test(lines[i])) { i++; continue; }
+
+    const start = i; // include the @Benchmark annotation line
+    let defIdx = i;
+    while (defIdx < lines.length && !/\bdef\b/.test(lines[defIdx])) defIdx++;
+    const nm = lines[defIdx]?.match(/\bdef\s+(\w+)/);
+    if (!nm) { i++; continue; }
+    const method = nm[1];
+    const defIndent = leadingWs(lines[defIdx]);
+
+    // Capture from the annotation through the end of the body. Body ends when, at bracket-depth 0
+    // and past the `def`, the next non-blank line is indented no deeper than the `def` (significant
+    // indentation, dot-chains AND `{…}` blocks all fall out of this single rule).
+    const st = { inBlockComment: false, inTriple: false };
+    let depth = 0, k = start;
+    const captured = [];
+    for (; k < lines.length; k++) {
+      captured.push(lines[k]);
+      depth += scanDepth(lines[k], st);
+      if (k < defIdx) continue; // still on the annotation line(s)
+      if (depth > 0 || st.inBlockComment || st.inTriple) continue;
+      let n = k + 1;
+      while (n < lines.length && lines[n].trim() === "") n++;
+      if (n >= lines.length) break;
+      if (leadingWs(lines[n]) > defIndent) continue; // body continues
+      break; // body complete
+    }
+    const code = dedent(captured);
+    (out[currentClass] ??= {})[method] = code;
+    i = k + 1;
+  }
+  return out;
+}
+
+function buildBenchSources(benchClasses) {
+  const files = walk(resolve(REPO, BENCH_ROOT), []);
+  const byClass = {}; // cls -> { method -> { code, html } }
+  let methodCount = 0;
+  for (const file of files) {
+    const extracted = extractFromFile(readFileSync(file, "utf8"));
+    for (const [cls, methods] of Object.entries(extracted)) {
+      const dst = (byClass[cls] ??= {});
+      for (const [method, code] of Object.entries(methods)) {
+        if (dst[method]) continue; // first definition wins (none collide in practice)
+        dst[method] = { code, html: hl(code, "scala") };
+        methodCount++;
+      }
+    }
+  }
+  writeFileSync(resolve(OUT, "bench-sources.json"), JSON.stringify(byClass));
+  console.log(`bench-sources.json: ${methodCount} methods across ${Object.keys(byClass).length} classes`);
+
+  // Coverage: every benchmark class that shows up in bench.json should have extracted source.
+  const missing = [...benchClasses].filter((c) => !byClass[c]).sort();
+  if (missing.length) console.warn(`  ⚠ ${missing.length} bench.json class(es) with NO source: ${missing.join(", ")}`);
+  else console.log(`  ✓ all ${benchClasses.size} bench.json classes have source`);
+}
+
+const slim = buildBench();
 buildSnippets();
+const benchClasses = new Set(slim.map((e) => e.b.split(".").at(-2)));
+buildBenchSources(benchClasses);

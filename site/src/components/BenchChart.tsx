@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useStore } from "../data/store";
 import { useTheme } from "../theme";
+import BenchSource from "./BenchSource";
 import {
   bandColor, edgeColor, lc, nf, nfAxis, ours, verdictAt, type Chart,
 } from "../data/bench";
@@ -134,6 +135,7 @@ function Card({ chart, title }: { chart: Chart; title?: string }) {
           </div>
         )}
       </div>
+      <BenchSource cls={chart.cls} op={chart.op} />
     </div>
   );
 }

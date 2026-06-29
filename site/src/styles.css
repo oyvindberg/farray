@@ -196,6 +196,32 @@ table.cx td.cx-b { color: var(--ink-soft); }
   font-family: var(--mono); font-size: 12px; line-height: 1.6; overflow-x: auto; max-height: 560px; overflow-y: auto;
 }
 
+/* ----- per-chart "what was measured" reveal (the @Benchmark source for every variant) ----- */
+.bsrc { margin-top: 9px; }
+.bsrc__toggle {
+  display: flex; align-items: baseline; gap: 7px; width: 100%; text-align: left; cursor: pointer;
+  font-family: var(--mono); font-size: 11px; color: var(--ink-faint); background: transparent;
+  border: 0; border-top: 1px solid var(--hair); padding: 7px 2px 0; transition: color 0.12s;
+}
+.bsrc__toggle:hover { color: var(--ink); }
+.bsrc__chevron { color: var(--emerald); font-size: 10px; }
+.bsrc__meta { margin-left: auto; color: var(--ink-faint); font-size: 10.5px; white-space: nowrap; }
+.bsrc__body { margin-top: 8px; display: flex; flex-direction: column; gap: 10px; }
+.bsrc__one {
+  border: 1px solid var(--hair-strong); border-radius: 8px; overflow: hidden; background: var(--code-bg);
+}
+.bsrc__name {
+  display: flex; align-items: center; gap: 7px; padding: 6px 11px; font-family: var(--mono); font-size: 11px;
+  color: var(--ink-soft); background: var(--panel); border-bottom: 1px solid var(--hair);
+}
+.bsrc__name--me { color: var(--ink); font-weight: 700; }
+.bsrc__name i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.bsrc__name code { margin-left: auto; color: var(--ink-faint); font-size: 10px; white-space: nowrap; }
+.bsrc__one .snippet__code pre.shiki {
+  margin: 0 !important; padding: 11px 13px !important; background: var(--code-bg) !important;
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.55; overflow-x: auto; max-height: 420px; overflow-y: auto;
+}
+
 /* ----- figures + bench cards ----- */
 .figure { margin: 4px 0 30px; }
 .figure__cap {
