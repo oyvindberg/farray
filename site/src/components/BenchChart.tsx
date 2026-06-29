@@ -3,7 +3,7 @@ import { useStore } from "../data/store";
 import { useTheme } from "../theme";
 import BenchSource from "./BenchSource";
 import {
-  bandColor, edgeColor, lc, nf, nfAxis, ours, verdictAt, type Chart,
+  bandColor, edgeColor, kindOf, lc, nf, nfAxis, ours, verdictAt, type Chart,
 } from "../data/bench";
 
 // geometry — ported from bench_report.py
@@ -67,6 +67,11 @@ export function Card({ chart, title }: { chart: Chart; title?: string }) {
     <div className={`bcard bcard--${chart.agg}`} style={frame ? { borderTopColor: frame } : undefined}>
       <div className="bcard__head">
         <h4>{title ?? chart.title}</h4>
+        {kindOf(chart.cls) && (
+          <span className={`bcard__kind bcard__kind--${kindOf(chart.cls)}`}>
+            {kindOf(chart.cls) === "int" ? "primitive" : "reference"}
+          </span>
+        )}
         {chart.w + chart.t + chart.l > 0 && (
           <span className={`bcard__wl bcard__wl--${chart.agg}`}>
             <b className="w">{chart.w}</b>·<b className="t">{chart.t}</b>·<b className="l">{chart.l}</b>

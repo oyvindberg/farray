@@ -59,9 +59,17 @@ export interface Chart {
 }
 
 function niceTitle(cls: string, op: string): string {
-  let nice = cls.replace("Benchmark", "").replace("Bench", "");
-  for (const p of ["Int", "Str", "Long"]) if (nice.startsWith(p)) { nice = nice.slice(p.length); break; }
+  // drop Benchmark/Bench tail and the element-kind suffix — the kind moves to a colored chip.
+  const nice = cls.replace(/Benchmark$|Bench$/, "").replace(/(Int|Long|Str)$/, "");
   return nice + (op ? ` · ${op}` : "");
+}
+
+// element kind of a benchmark class, for the per-chart Int/reference color chip.
+export function kindOf(cls: string): "int" | "ref" | null {
+  const base = cls.replace(/Benchmark$|Bench$/, "");
+  if (/(Int|Long)$/.test(base)) return "int";
+  if (/Str$/.test(base)) return "ref";
+  return null;
 }
 
 export function buildCharts(data: Slim[]): Chart[] {

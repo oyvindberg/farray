@@ -13,6 +13,10 @@
   --emerald-bright: #16a34a;
   --emerald-tint: #f1faf4;
   --red: #c2362b;
+  --kind-int: #3b6ea5;
+  --kind-int-bg: rgba(59, 110, 165, 0.12);
+  --kind-ref: #a8742f;
+  --kind-ref-bg: rgba(168, 116, 47, 0.12);
   --hair: #ececea;
   --hair-strong: #dadad6;
   --inline-code-bg: #f0f0ed;
@@ -37,6 +41,10 @@
   --emerald-bright: #34d27a;
   --emerald-tint: rgba(52, 210, 122, 0.1);
   --red: #ec6a5e;
+  --kind-int: #7fb0e6;
+  --kind-int-bg: rgba(127, 176, 230, 0.15);
+  --kind-ref: #dcb06a;
+  --kind-ref-bg: rgba(220, 176, 106, 0.15);
   --hair: #262b31;
   --hair-strong: #353b43;
   --inline-code-bg: #23282e;
@@ -261,6 +269,12 @@ table.cx td.cx-b { color: var(--ink-soft); }
 .bcard--win, .bcard--loss, .bcard--mix { border-top: 1px solid var(--hair); }
 .bcard__head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 7px; }
 .bcard__head h4 { font-family: var(--mono); margin: 0; font-size: 12px; font-weight: 600; letter-spacing: -0.01em; color: var(--ink); }
+.bcard__kind {
+  flex: none; font-family: var(--mono); font-size: 8.5px; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase; padding: 2px 8px; border-radius: 999px;
+}
+.bcard__kind--int { color: var(--kind-int); background: var(--kind-int-bg); }
+.bcard__kind--ref { color: var(--kind-ref); background: var(--kind-ref-bg); }
 .bcard__wl {
   margin-left: auto; font-family: var(--mono); font-size: 10.5px; font-weight: 600; display: inline-flex; gap: 4px;
   flex: none; font-variant-numeric: tabular-nums; color: var(--ink-faint);

@@ -52,7 +52,7 @@ export default function Intro() {
       <SideBySide
         snippet="fuse-pipeline"
         cls="LongMixedPipelineIntBenchmark"
-        title="14-stage pipeline · Int"
+        title="14-stage pipeline"
         caption={
           <>
             The identical transform across every collection, swept from empty to 100k elements. Hover any size
