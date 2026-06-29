@@ -53,7 +53,7 @@ function layout(chart: Chart) {
   return { groups, gw, frame };
 }
 
-function Card({ chart, title }: { chart: Chart; title?: string }) {
+export function Card({ chart, title }: { chart: Chart; title?: string }) {
   const { groups, frame } = useMemo(() => layout(chart), [chart]);
   const [hover, setHover] = useState<number | null>(null);
   const dark = useTheme().theme === "dark";

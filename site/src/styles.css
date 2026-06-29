@@ -237,6 +237,13 @@ table.cx td.cx-b { color: var(--ink-soft); }
 .bench-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 16px; }
 .bench-grid--solo { grid-template-columns: minmax(0, 460px); }
 .bench-grid--bare { grid-template-columns: 1fr; gap: 0; }
+/* Int | String pairs, one row per op */
+.bench-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+.bench-pair__gap {
+  display: flex; align-items: center; justify-content: center; font-family: var(--mono); font-size: 11px;
+  color: var(--ink-faint); border: 1px dashed var(--hair-strong); border-radius: 10px; min-height: 120px;
+}
+@media (max-width: 680px) { .bench-pair { grid-template-columns: 1fr; } }
 .bench-grid--loading { font-family: var(--mono); color: var(--ink-faint); font-size: 13px; }
 
 /* side-by-side "boom": break out wider than the prose column */

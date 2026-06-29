@@ -1,5 +1,6 @@
 import Snippet from "../components/Snippet";
 import BenchChart from "../components/BenchChart";
+import BenchPair from "../components/BenchPair";
 import Complexity from "../components/Complexity";
 
 export default function Combinators() {
@@ -47,7 +48,7 @@ export default function Combinators() {
 
       <BenchChart
         cls="SlicingIntBenchmark"
-        caption="Structural ops on Int — slice, span, splitAt, grouped, sliding. Lazy nodes mean FArray produces these without copying; against the collections that must materialize each piece the gap runs from a couple× to, for grouped, thousands×. Hover any bar; open “source” to see the exact benchmark."
+        caption="Structural ops — slice, span, splitAt, grouped, sliding. Lazy nodes mean FArray produces these without copying; against the collections that must materialize each piece the gap runs from a couple× to, for grouped, thousands×. (Shown on Int, but structural ops touch no elements, so the String numbers are identical — there's nothing to box.)"
       />
 
       <h3>It keeps up with List at List's own game</h3>
@@ -66,20 +67,21 @@ export default function Combinators() {
         it's a dead heat; on the cons-build it's about twice as quick.
       </p>
 
-      <BenchChart
-        cls="ListLikeScalingIntBenchmark"
-        caption="FArray vs List, used identically as a cons-list — built by ::, summed and mapped by recursion. Swept to 100k. Tie on sum, win on build and mapSum."
+      <BenchPair
+        int="ListLikeScalingIntBenchmark"
+        str="ListLikeScalingStrBenchmark"
+        caption="FArray used as a cons-list — built by ::, summed and mapped by recursion — versus List, Int beside String. On Int it wins the build and the maps; on String it's a dead heat with List throughout. References were never boxed, so there's no gap to open: keeping pace with the cons-list at its own game is the whole win."
       />
 
       <p>
-        One last elementwise number, because it's the one you'd bet against. Sorting is the op where a raw
-        array should win outright — and FArray's sort runs directly on the materialized primitive array (a
-        run-detecting mergesort, no boxed indices), so it edges even <code>IArray</code>:
+        One last pair, because it's the one you'd bet against. Sorting is where a raw array should win outright —
+        FArray sorts directly on the materialized array (a run-detecting mergesort, no boxed indices):
       </p>
 
-      <BenchChart
-        cls="SortIntBenchmark"
-        caption="Sorting Int. FArray beats IArray on sortWith (~2.2×) and sortBy (~1.9×) and ties it on sorted — and leaves the boxing collections far behind."
+      <BenchPair
+        int="SortIntBenchmark"
+        str="SortStrBenchmark"
+        caption="sortBy / sortWith / sorted, Int beside String. On Int the unboxed mergesort edges IArray (~1.9–2.2×) and buries the boxing collections. On String there's no unboxing to win, so it ties IArray on sortWith and sorted — and still takes sortBy outright."
       />
     </section>
   );

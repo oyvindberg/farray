@@ -1,5 +1,5 @@
 import Snippet from "../components/Snippet";
-import BenchChart from "../components/BenchChart";
+import BenchPair from "../components/BenchPair";
 
 export default function Inline() {
   return (
@@ -88,11 +88,15 @@ export default function Inline() {
         as the surrounding method grows and the JIT's inlining budget runs out.
       </p>
 
-      <p>And the point of all that machinery, measured — <code>map</code> over a million ints:</p>
+      <p>
+        And the point of all that machinery, measured — <code>map</code> over a million elements, Int beside
+        String. This is also where to be honest: unboxing is a <em>primitive</em> headline.
+      </p>
 
-      <BenchChart
-        cls="MapIntBenchmark"
-        caption="map over Int, swept to 100k. FArray ties IArray — a bare int[] — and runs ~10× past fs2.Chunk, ~11× past Vector, ~27× past List, every one of which boxes the element. As fast as the array, with the whole collection on top."
+      <BenchPair
+        int="MapIntBenchmark"
+        str="MapStrBenchmark"
+        caption="map, swept to 100k. On Int (left) FArray ties a bare int[] and runs ~10–27× past the collections that box the element — List, Vector, both Chunks. On String (right) there's nothing to unbox, so it just ties IArray and the field clusters close. No penalty, no fireworks — references were never boxed to begin with."
       />
     </section>
   );
