@@ -156,7 +156,7 @@ interface Props {
 export default function BenchChart({ cls, op, caption, title, bare }: Props) {
   const { charts, ready } = useStore();
   const matches = useMemo(
-    () => charts.filter((c) => (c.cls === cls || c.cls.endsWith(cls)) && (op == null || c.op === op)),
+    () => charts.filter((c) => c.cls === cls && (op == null || c.op === op)),
     [charts, cls, op],
   );
   if (!ready) return <div className="bench-grid bench-grid--loading">measuring…</div>;

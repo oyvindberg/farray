@@ -16,7 +16,7 @@ export default function BenchPair({ int: intCls, str: strCls, caption }: Props) 
   const { charts, ready } = useStore();
   if (!ready) return <div className="bench-grid bench-grid--loading">measuring…</div>;
 
-  const pick = (cls: string) => charts.filter((c) => c.cls === cls || c.cls.endsWith(cls));
+  const pick = (cls: string) => charts.filter((c) => c.cls === cls);
   const ic = pick(intCls);
   const sc = pick(strCls);
   if (!ic.length && !sc.length) {
