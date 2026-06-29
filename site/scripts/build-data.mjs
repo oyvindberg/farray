@@ -243,6 +243,7 @@ function buildSnippets() {
   const EXTRACTS = [
     { name: "map-dispatch-real", sig: /inline def mapImpl\[A, B\]/, file: "farray/FArrayOps.scala · generated · inline def mapImpl" },
     { name: "map-leaf", sig: /^\s*def mapLeafIntInt\(/, file: "farray/FArrayOps.scala · generated · def mapLeafIntInt" },
+    { name: "map-leaf-ref", sig: /^\s*def mapLeafIntRef\[RO/, file: "farray/FArrayOps.scala · generated · def mapLeafIntRef" },
   ];
   for (const e of EXTRACTS) {
     const code = extractBraceDef(genOps, e.sig);
@@ -255,6 +256,16 @@ function buildSnippets() {
     } else {
       out[e.name] = { name: e.name, file: e.file, lang: "scala", code, html: hl(code, "scala"), full: null, fullHtml: null };
     }
+  }
+
+  // The generated forward tree-walk (Java), for map Int -> Ref — the one shared, compiled-once traverser.
+  const GEN_TRAV = resolve(REPO, ".bleep/generated-sources/farray/farray.GenCores/farray/Traversers.java");
+  if (existsSync(GEN_TRAV)) {
+    const trav = extractBraceDef(readFileSync(GEN_TRAV, "utf8"), /static <RO> int buildFwdIntRef\(/);
+    out["map-traverser"] = {
+      name: "map-traverser", file: "farray/Traversers.java · generated · buildFwdIntRef (map Int → Ref)",
+      lang: "java", code: trav, html: hl(trav, "java"), full: null, fullHtml: null,
+    };
   }
 
   // The opaque type + a few of its extension methods, assembled from VERBATIM lines of FArray.scala

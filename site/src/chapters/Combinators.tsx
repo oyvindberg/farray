@@ -45,6 +45,11 @@ export default function Combinators() {
         reasserts itself the moment you compute.
       </p>
 
+      <BenchChart
+        cls="SlicingIntBenchmark"
+        caption="Structural ops on Int — slice, span, splitAt, grouped, sliding. Lazy nodes mean FArray produces these without copying; against the collections that must materialize each piece the gap runs from a couple× to, for grouped, thousands×. Hover any bar; open “source” to see the exact benchmark."
+      />
+
       <h3>It keeps up with List at List's own game</h3>
 
       <p>
@@ -64,6 +69,17 @@ export default function Combinators() {
       <BenchChart
         cls="ListLikeScalingIntBenchmark"
         caption="FArray vs List, used identically as a cons-list — built by ::, summed and mapped by recursion. Swept to 100k. Tie on sum, win on build and mapSum."
+      />
+
+      <p>
+        One last elementwise number, because it's the one you'd bet against. Sorting is the op where a raw
+        array should win outright — and FArray's sort runs directly on the materialized primitive array (a
+        run-detecting mergesort, no boxed indices), so it edges even <code>IArray</code>:
+      </p>
+
+      <BenchChart
+        cls="SortIntBenchmark"
+        caption="Sorting Int. FArray beats IArray on sortWith (~2.2×) and sortBy (~1.9×) and ties it on sorted — and leaves the boxing collections far behind."
       />
     </section>
   );

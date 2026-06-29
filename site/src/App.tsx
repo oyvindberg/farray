@@ -6,6 +6,7 @@ import Core from "./chapters/Core";
 import Syntax from "./chapters/Syntax";
 import Combinators from "./chapters/Combinators";
 import Inline from "./chapters/Inline";
+import Closing from "./chapters/Closing";
 
 function Hero() {
   return (
@@ -53,6 +54,7 @@ export default function App() {
             <Syntax />
             <Combinators />
             <Inline />
+            <Closing />
           </main>
           <Footer />
         </div>

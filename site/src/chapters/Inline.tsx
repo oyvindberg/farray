@@ -1,4 +1,5 @@
 import Snippet from "../components/Snippet";
+import BenchChart from "../components/BenchChart";
 
 export default function Inline() {
   return (
@@ -86,6 +87,13 @@ export default function Inline() {
         that down. The specialization lives in the call site instead of the signature, which is why it holds even
         as the surrounding method grows and the JIT's inlining budget runs out.
       </p>
+
+      <p>And the point of all that machinery, measured — <code>map</code> over a million ints:</p>
+
+      <BenchChart
+        cls="MapIntBenchmark"
+        caption="map over Int, swept to 100k. FArray ties IArray — a bare int[] — and runs ~10× past fs2.Chunk, ~11× past Vector, ~27× past List, every one of which boxes the element. As fast as the array, with the whole collection on top."
+      />
     </section>
   );
 }
