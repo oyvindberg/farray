@@ -32,6 +32,9 @@ abstract class IntSetInputs extends CommonParams {
   var ecMutA: EcIntSet = _; var ecMutB: EcIntSet = _; var ecMutC: EcIntSet = _ // Eclipse mutable IntHashSet
   var ecImmA: ImmutableIntSet = _; var ecImmB: ImmutableIntSet = _ // Eclipse IMMUTABLE int set
   var roarA: RoaringBitmap = _; var roarB: RoaringBitmap = _; var roarC: RoaringBitmap = _ // RoaringBitmap
+  // a structurally-equal COPY of A (for equals) and a HALF of A ⊆ A (for subsetOf)
+  var fsetACopy: FSetMaterialized[Int] = _; var sSetACopy: Set[Int] = _; var fuACopy: FuIntSet = _; var immBitACopy: BitSet = _
+  var fsetHalf: FSetMaterialized[Int] = _; var sSetHalf: Set[Int] = _; var fuHalf: FuIntSet = _; var immBitHalf: BitSet = _
 
   @Setup
   def setup(): Unit = {
@@ -50,5 +53,8 @@ abstract class IntSetInputs extends CommonParams {
     ecMutA = new EcIntSet(); ecMutA.addAll(arrA*); ecMutB = new EcIntSet(); ecMutB.addAll(arrB*); ecMutC = new EcIntSet(); ecMutC.addAll(arrC*)
     ecImmA = IntSets.immutable.`with`(arrA*); ecImmB = IntSets.immutable.`with`(arrB*)
     roarA = RoaringBitmap.bitmapOf(arrA*); roarB = RoaringBitmap.bitmapOf(arrB*); roarC = RoaringBitmap.bitmapOf(arrC*)
+    fsetACopy = FSet.fromArray(arrA); sSetACopy = arrA.toSet; fuACopy = new FuIntSet(arrA); immBitACopy = BitSet(arrA*)
+    val half = arrA.take(scala.math.max(1, size / 2))
+    fsetHalf = FSet.fromArray(half); sSetHalf = half.toSet; fuHalf = new FuIntSet(half); immBitHalf = BitSet(half*)
   }
 }

@@ -28,6 +28,9 @@ abstract class StrSetInputs extends CommonParams {
   var ecA: UnifiedSet[String] = _; var ecB: UnifiedSet[String] = _; var ecC: UnifiedSet[String] = _ // Eclipse UnifiedSet
   var fuA: FuObjSet[String] = _; var fuB: FuObjSet[String] = _; var fuC: FuObjSet[String] = _ // fastutil
   var hppcA: HppcObjSet[String] = _; var hppcB: HppcObjSet[String] = _; var hppcC: HppcObjSet[String] = _ // HPPC
+  // a structurally-equal COPY of A (for equals) and a HALF of A ⊆ A (for subsetOf)
+  var fsetACopy: FSetMaterialized[String] = _; var sSetACopy: Set[String] = _; var smSetACopy: SMHashSet[String] = _; var fuACopy: FuObjSet[String] = _
+  var fsetHalf: FSetMaterialized[String] = _; var sSetHalf: Set[String] = _; var fuHalf: FuObjSet[String] = _
 
   @Setup
   def setup(): Unit = {
@@ -46,5 +49,8 @@ abstract class StrSetInputs extends CommonParams {
     ecA = UnifiedSet.newSetWith(arrA*); ecB = UnifiedSet.newSetWith(arrB*); ecC = UnifiedSet.newSetWith(arrC*)
     fuA = new FuObjSet[String](arrA); fuB = new FuObjSet[String](arrB); fuC = new FuObjSet[String](arrC)
     hppcA = HppcObjSet.from(arrA*); hppcB = HppcObjSet.from(arrB*); hppcC = HppcObjSet.from(arrC*)
+    fsetACopy = FSet.fromArray(arrA); sSetACopy = arrA.toSet; smSetACopy = SMHashSet(arrA*); fuACopy = new FuObjSet[String](arrA)
+    val half = arrA.take(scala.math.max(1, size / 2))
+    fsetHalf = FSet.fromArray(half); sSetHalf = half.toSet; fuHalf = new FuObjSet[String](half)
   }
 }
