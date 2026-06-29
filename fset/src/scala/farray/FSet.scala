@@ -36,19 +36,22 @@ object FSet:
   inline def from[A](it: IterableOnce[A]): FSetMaterialized[A] = FSetOps.fromImpl[A](it)
   inline def fromIterable[A](it: Iterable[A]): FSetMaterialized[A] = FSetOps.fromImpl[A](it)
 
-  // ---- predicate / range factories → an INFINITE (membership-only) set (§2.5). No size/iterator/materialize. ----
-  def range(lo: Int, hi: Int): FSetInfinite[Int] = if lo > hi then SEmpty.INSTANCE else new SIntRange(lo, hi)
-  def range(lo: Long, hi: Long): FSetInfinite[Long] = if lo > hi then SEmpty.INSTANCE else new SLongRange(lo, hi)
+  // ---- BOUNDED range factories → an FSetFinite (kind carried by the INVARIANT type, so `.materialize` works
+  // directly — no Conversion/ascription). A bounded range is finite; `.materialize` enumerates it (cap-guarded
+  // for a pathologically huge bounded range). `range` = [lo,hi] (closed); `until` = [lo,hi); `rangeOpen` = (lo,hi);
+  // for integers open/closed canonicalizes to a closed leaf (no successor gap). ----
+  def range(lo: Int, hi: Int): FSetFinite[Int] = if lo > hi then SEmpty.INSTANCE else new SIntRange(lo, hi)
+  def range(lo: Long, hi: Long): FSetFinite[Long] = if lo > hi then SEmpty.INSTANCE else new SLongRange(lo, hi)
+  def until(lo: Int, hi: Int): FSetFinite[Int] = if hi.toLong <= lo.toLong then SEmpty.INSTANCE else new SIntRange(lo, hi - 1)
+  def until(lo: Long, hi: Long): FSetFinite[Long] = if hi <= lo then SEmpty.INSTANCE else new SLongRange(lo, hi - 1)
+  def rangeOpen(lo: Int, hi: Int): FSetFinite[Int] = if hi.toLong <= lo.toLong + 1L then SEmpty.INSTANCE else new SIntRange(lo + 1, hi - 1)
+  def rangeOpen(lo: Long, hi: Long): FSetFinite[Long] = if hi <= lo + 1L then SEmpty.INSTANCE else new SLongRange(lo + 1, hi - 1)
+
+  // ---- UNBOUNDED (domain-edge / co-finite) predicate factories → an INFINITE (membership-only, contravariant)
+  // set: contains only, no size/iterator/materialize. This is where contravariance actually pays off. ----
   def above(k: Int): FSetInfinite[Int] = if k == Int.MaxValue then SEmpty.INSTANCE else new SIntRange(k + 1, Int.MaxValue)
   def below(k: Int): FSetInfinite[Int] = if k == Int.MinValue then SEmpty.INSTANCE else new SIntRange(Int.MinValue, k - 1)
   def universalInt: FSetInfinite[Int] = new SIntRange(Int.MinValue, Int.MaxValue)
-  // open / half-open ranges. For INTEGERS open vs closed canonicalizes to a closed [lo,hi] (no successor gap),
-  // so these are factory sugar: `range` = [lo,hi] (closed); `until` = [lo,hi); `rangeOpen` = (lo,hi). (Reference
-  // ranges, which are densely ordered and so need real inclusive/exclusive endpoint flags, are a future leaf.)
-  def until(lo: Int, hi: Int): FSetInfinite[Int] = if hi.toLong <= lo.toLong then SEmpty.INSTANCE else new SIntRange(lo, hi - 1)
-  def until(lo: Long, hi: Long): FSetInfinite[Long] = if hi <= lo then SEmpty.INSTANCE else new SLongRange(lo, hi - 1)
-  def rangeOpen(lo: Int, hi: Int): FSetInfinite[Int] = if hi.toLong <= lo.toLong + 1L then SEmpty.INSTANCE else new SIntRange(lo + 1, hi - 1)
-  def rangeOpen(lo: Long, hi: Long): FSetInfinite[Long] = if hi <= lo + 1L then SEmpty.INSTANCE else new SLongRange(lo + 1, hi - 1)
 
   // ---- FSet (top): membership + lazy algebra. Inherited by every finite subtype (and reached by an
   // FSetInfinite via the Conversion). The opaque receiver flows into the SBase-typed impl at the boundary. ----

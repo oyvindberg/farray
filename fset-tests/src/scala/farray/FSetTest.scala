@@ -191,29 +191,26 @@ class FSetTest:
     assertTrue(rs.contains("k0")); assertFalse(rs.contains("nope"))
 
   @Test def finite_and_ranges(): Unit =
-    // a bounded range, viewed as an FSet[Int] (so the element kind is carried for the arg-less materialize),
-    // is finite → `.finite` gives Some, and it materializes (enumerates) to its elements.
-    val r: FSet[Int] = FSet.range(1, 1000)
-    assertTrue(r.contains(500)); assertFalse(r.contains(0))
-    assertTrue(r.finite.isDefined)
-    assertEquals(1000, r.finite.get.materialize.size)
-    assertEquals((1 to 1000).toList, r.finite.get.materialize.toList)
-    // open / half-open canonicalize for ints
-    val u10: FSet[Int] = FSet.until(1, 10); assertEquals((1 to 9).toList, u10.finite.get.materialize.toList) // [1,10)
-    val o10: FSet[Int] = FSet.rangeOpen(1, 10); assertEquals((2 to 9).toList, o10.finite.get.materialize.toList) // (1,10)
-    val em: FSet[Int] = FSet.until(5, 5); assertEquals(0, em.finite.get.materialize.size) // [5,5) is empty
-    // huge / co-finite sets are NOT finite → `.finite` is None (isFinite is kind-agnostic, works on bare FSetInfinite)
+    // a BOUNDED range is FSetFinite (the invariant type carries Int), so it materializes DIRECTLY — no
+    // ascription, no Conversion workaround.
+    assertTrue(FSet.range(1, 1000).contains(500)); assertFalse(FSet.range(1, 1000).contains(0))
+    assertEquals(1000, FSet.range(1, 1000).materialize.size)
+    assertEquals((1 to 1000).toList, FSet.range(1, 1000).materialize.toList)
+    assertEquals((1 to 9).toList, FSet.until(1, 10).materialize.toList) // [1,10)
+    assertEquals((2 to 9).toList, FSet.rangeOpen(1, 10).materialize.toList) // (1,10)
+    assertEquals(0, FSet.until(5, 5).materialize.size) // [5,5) is empty
+    // UNBOUNDED predicates stay FSetInfinite (membership-only); `.finite` on a possibly-infinite FSet → None
     assertTrue(FSet.above(5).finite.isEmpty)
     assertTrue(FSet.universalInt.finite.isEmpty)
     val evens = FSet(2, 4, 6)
     val notEvens = evens.complement
     assertTrue(notEvens.finite.isEmpty)
-    // finiteness distributes: union of two bounded ranges (as FSet[Int]) is finite + materializes
-    val u: FSet[Int] = (FSet.range(1, 100): FSet[Int]) ++ FSet.range(1000, 1100)
+    // a union of two bounded ranges is an FSet[Int] (A carried) — finite + materializes; no ascription
+    val u = FSet.range(1, 100) ++ FSet.range(1000, 1100)
     assertTrue(u.finite.isDefined)
     assertEquals(201, u.finite.get.materialize.size)
     // finite ∪ infinite is NOT finite
-    val mixed: FSet[Int] = (FSet.range(1, 100): FSet[Int]) ++ FSet.above(5)
+    val mixed = FSet.range(1, 100) ++ FSet.above(5)
     assertTrue(mixed.finite.isEmpty)
     // a normal materialized set is finite
     assertTrue(FSet(1, 2, 3).finite.isDefined)
