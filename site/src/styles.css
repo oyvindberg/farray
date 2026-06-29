@@ -370,6 +370,25 @@ table.score .sc-total { font-weight: 700; }
 }
 .chapter a:hover, .page__lede a:hover, .ex a:hover, .page p a:hover { color: var(--emerald-bright); }
 
+/* fuse "what we beat" caption + JSON benchmark tables */
+.page .fuse-cap--rival { color: var(--kind-ref); }
+.btab-wrap { margin: 16px 0 6px; overflow-x: auto; }
+.btab { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
+.btab th {
+  text-align: right; font-weight: 500; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--ink-faint); padding: 4px 12px 6px; border-bottom: 1px solid var(--hair-strong); white-space: nowrap;
+}
+.btab th:first-child { text-align: left; }
+.btab td { padding: 6px 12px; border-bottom: 1px solid var(--hair); color: var(--ink-soft); white-space: nowrap; }
+.btab td:first-child { white-space: normal; }
+.btab__num { text-align: right; font-variant-numeric: tabular-nums; }
+.btab__win td { color: var(--ink); font-weight: 600; background: var(--emerald-tint); }
+.btab__tro { color: var(--emerald); margin-right: 6px; }
+.page .btab__head {
+  font-family: var(--serif); font-style: italic; color: var(--emerald); font-size: 15px; margin: 10px 0 0;
+  max-width: none;
+}
+
 /* ----- responsive + a11y ----- */
 @media (max-width: 680px) {
   .wrap { padding: 0 18px 80px; }

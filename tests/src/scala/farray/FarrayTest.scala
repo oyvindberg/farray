@@ -1652,6 +1652,24 @@ class FListTest:
     // 5 · decomposition reaches the fold's lambda — Stat never built; loop is acc + x*100
     Snapshots.check("fuse-opt-fold.snap", FuseDebug.show(ints.fuse.map(x => Stat(x, x * 100, x * 1000)).foldLeft(0)((acc, s) => acc + s.score)))
 
+  // The five fused-JSON demos for the website's "Fused JSON" page — the SAME optimizer over byte ranges.
+  // Mirrors farray.json.JsonDemo's pipelines (Event/Wide/Stats live there), regenerated to current codegen.
+  @Test def test_fuse_json_snapshots: Unit =
+    import farray.json.{Json, JsonDemo}
+    val src = JsonDemo.sample
+    val wsrc = JsonDemo.wideSample
+    Snapshots.check("fuse-json-sum.snap",
+      FuseDebug.show(Json.ndjson[JsonDemo.Event](src).stream.filter(_.amount > 150).map(_.amount).foldLeft(0.0)(_ + _)))
+    Snapshots.check("fuse-json-cat.snap",
+      FuseDebug.show(Json.ndjson[JsonDemo.Event](src).stream.filter(_.amount > 150).map(_.category).toList))
+    Snapshots.check("fuse-json-count.snap",
+      FuseDebug.show(Json.ndjson[JsonDemo.Event](src).stream.filter(_.status == "active").map(_.category).count))
+    Snapshots.check("fuse-json-wide.snap",
+      FuseDebug.show(Json.ndjson[JsonDemo.Wide](wsrc).stream.filter(_.key > 90).map(_.payload).count))
+    Snapshots.check("fuse-json-agg.snap",
+      FuseDebug.show(Json.ndjson[JsonDemo.Event](src).stream.filter(_.status == "active")
+        .aggTo(JsonDemo.Stats.apply)(farray.Agg.sum(_.amount), farray.Agg.count, farray.Agg.max1(_.score))))
+
   @Test def test_hashCode_matchesList(): Unit =
     def chk(name: String, fa: FArray[Any], l: List[Any]): Unit =
       assertEquals(name, l.hashCode.toLong, fa.hashCode.toLong)

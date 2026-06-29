@@ -1,0 +1,87 @@
+{
+  val NdjsonSource_this: NdjsonSource[Event] = (new NdjsonSource[Event](src, 0, src.length): NdjsonSource[Event])
+  val Fuse_this: Fuse[String] = (new Fuse[Event](NdjsonSource_this): Fuse[Event]).filter(((_$: Event) => _$.status.==("active"))).map[String](((_$: Event) => _$.category))
+
+  ({
+    val `Fuse_this₂`: Fuse_this.type = Fuse_this
+
+    ({
+      val src0: FBase = null.asInstanceOf[FBase]
+      val n0: Int = 16
+      var c: Int = 0
+
+      ({
+        val `src₂`: ByteRecordSource = inline$base$i1[String](`Fuse_this₂`).asInstanceOf[ByteRecordSource]
+        val keyBytes: Array[Byte] = JsonScanner.internKey("category")
+        val `keyBytes₂`: Array[Byte] = JsonScanner.internKey("status")
+        try while (`src₂`.nextChunk().&&(true)) while (`src₂`.nextRecord().&&(true)) {
+          val buf: Array[Byte] = `src₂`.buf
+          val recStart: Int = `src₂`.recordStart
+          val recEnd: Int = `src₂`.recordEnd
+          var st: Int = 0
+          var ln: Int = 0
+          var seen: Boolean = false
+          var `st₂`: Int = 0
+          var `ln₂`: Int = 0
+          var `seen₂`: Boolean = false
+          var rejected: Boolean = false
+          var p: Int = recStart.+(1)
+          var open: Boolean = buf.apply(recStart).==('{')
+          var predChecked: Boolean = false
+          while (open) if (buf.apply(p).==('}')) open = false else {
+            val ks: Int = p.+(1)
+            val ke: Int = (JsonBytes.scanStringEnd(buf, ks, recEnd): Int)
+            p = if (seen.unary_!.&&(({
+              val len: Int = ke.-(ks)
+              len.==(keyBytes.length).&&(java.util.Arrays.equals(buf, ks, ke, keyBytes, 0, len))
+            }: Boolean))) {
+              val vs: Int = ke.+(2).+(1)
+              val ve: Int = (JsonBytes.scanStringEnd(buf, vs, recEnd): Int)
+              st = vs
+              ln = ve.-(vs)
+              seen = true
+              ve.+(1)
+            } else if (`seen₂`.unary_!.&&(({
+              val `len₂`: Int = ke.-(ks)
+              `len₂`.==(`keyBytes₂`.length).&&(java.util.Arrays.equals(buf, ks, ke, `keyBytes₂`, 0, `len₂`))
+            }: Boolean))) {
+              val `vs₂`: Int = ke.+(2).+(1)
+              val `ve₂`: Int = (JsonBytes.scanStringEnd(buf, `vs₂`, recEnd): Int)
+              `st₂` = `vs₂`
+              `ln₂` = `ve₂`.-(`vs₂`)
+              `seen₂` = true
+              `ve₂`.+(1)
+            } else JsonScanner.skipValue(buf, ke.+(2), recEnd)
+            if (predChecked.unary_!.&&(`seen₂`)) {
+              predChecked = true
+              if ({
+                val start$proxy: Int = `st₂`
+                val len$proxy: Int = `ln₂`
+
+                (new String(buf, start$proxy, len$proxy, java.nio.charset.StandardCharsets.ISO_8859_1): String)
+              }.==("active").unary_!) {
+                rejected = true
+                open = false
+              } else ()
+            } else ()
+            if (open) if (seen.&&(`seen₂`)) open = false else if (buf.apply(p).==(',')) p = p.+(1) else open = false else ()
+          }
+          if (rejected.unary_!) {
+            val v: String = {
+              val start$proxy: Int = `st₂`
+              val len$proxy: Int = `ln₂`
+
+              (new String(buf, start$proxy, len$proxy, java.nio.charset.StandardCharsets.ISO_8859_1): String)
+            }
+            val `v₂`: Boolean = v.==("active")
+            if (`v₂`) {
+              c = c.+(1)
+              ()
+            } else ()
+          } else ()
+        } finally `src₂`.close()
+        c
+      }: Int)
+    }.asInstanceOf[Int]: Int)
+  }: Int)
+}

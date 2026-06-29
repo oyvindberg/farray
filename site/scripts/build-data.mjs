@@ -177,6 +177,52 @@ function fuseLoop(code) {
   return dedent(out);
 }
 
+// Make a generated block read like normal Scala (ports farray.json.JsonDemo.clean's surface rewrites):
+// method-form operators back to infix, drop backticks, `.apply(`→`(`, `.update(`→`.set(`, `x.unary_!`→`!x`.
+function polish(s) {
+  return s
+    .replace(/`/g, "")
+    .replaceAll(".+(", " + (").replaceAll(".-(", " - (").replaceAll(".*(", " * (").replaceAll(".%(", " % (")
+    .replaceAll(".<(", " < (").replaceAll(".>(", " > (").replaceAll(".==(", " == (").replaceAll(".!=(", " != (")
+    .replaceAll(".&&(", " && (").replaceAll(".||(", " || (")
+    .replaceAll(".apply(", "(").replaceAll(".update(", ".set(")
+    .replace(/(\w+)\.unary_!/g, "!$1");
+}
+
+// The JSON scanners nest a few dead wrapper blocks; mirror JsonDemo.clean — drop the proxy/placeholder
+// preamble (down to the first real accumulator/statement), strip noise, balance, then polish.
+function cleanJson(code) {
+  const lines = code.split("\n");
+  const isPreamble = (l) => {
+    const t = l.trim().replace(/`/g, "");
+    return t === "" || t === "{" || t === "({" ||
+      t.startsWith("val NdjsonSource_this") || t.startsWith("val Fuse_this") ||
+      t.includes("val src0: FBase = null") || t.includes("val n0: Int = 16") ||
+      t.includes("$proxy") || t.includes("FArray$package") || t.startsWith("type FArray") || t === "}]";
+  };
+  let i = 0;
+  while (i < lines.length && isPreamble(lines[i])) i++;
+  const body = lines.slice(i).filter((l) => {
+    const t = l.trim();
+    return !(
+      l.includes("$proxy") || l.includes("asInstanceOf$") || l.includes("FArray$package") ||
+      t.startsWith("type FArray") || t === "}]" || t === "" ||
+      l.includes("val src0: FBase = null") || l.includes("val n0: Int = 16")
+    );
+  }).map((l) => l
+    .replace(/\.asInstanceOf\[[^\]]*(?:\[[^\]]*\])?\]/g, "")
+    .replace(/inline\$(buf|until|from)\$i1\([^)]*\)/g, "src.$1"));
+  // we dropped the outer wrapper openers, so the body has more closers than openers; pop the trailing
+  // dangling closer-lines until it balances (keeps top-level accumulators and the real inner block).
+  const net = (ls) => ls.join("").split("").reduce((d, c) => d + (c === "{" || c === "(" ? 1 : c === "}" || c === ")" ? -1 : 0), 0);
+  while (net(body) < 0 && body.length) {
+    const t = body[body.length - 1].trim();
+    if (t[0] === "}" || t[0] === ")") body.pop();
+    else break;
+  }
+  return polish(dedent(body));
+}
+
 function buildSnippets() {
   const files = [];
   for (const root of SOURCE_ROOTS) {
@@ -246,22 +292,67 @@ function buildSnippets() {
   for (const key of FUSE_OPT) {
     const file = `tests/snapshots/fuse-opt-${key}.snap`;
     const raw = readFileSync(resolve(REPO, file), "utf8").replace(/^\n+|\n+$/g, "");
-    const short = fuseLoop(raw);
+    const short = polish(fuseLoop(raw));
     out[`fuse-opt-${key}`] = {
       name: `fuse-opt-${key}`, file, lang: "scala",
       code: short, html: hl(short, "scala"), full: raw, fullHtml: hl(raw, "scala"), fullLabel: "full expansion",
     };
   }
-  // the "you write" pipeline for each demo (verbatim from the snapshot test).
+  // The fused-JSON scanners for the "Fused JSON" page — the per-record byte scanner the macro emits,
+  // cleaned to the runtime loop (proxy/placeholder noise dropped) with the verbatim expansion behind a toggle.
+  const FUSE_JSON = ["sum", "cat", "count", "wide", "agg"];
+  for (const key of FUSE_JSON) {
+    const file = `tests/snapshots/fuse-json-${key}.snap`;
+    const raw = readFileSync(resolve(REPO, file), "utf8").replace(/^\n+|\n+$/g, "");
+    const short = cleanJson(raw);
+    out[`fuse-json-${key}`] = {
+      name: `fuse-json-${key}`, file, lang: "scala",
+      code: short, html: hl(short, "scala"), full: raw, fullHtml: hl(raw, "scala"), fullLabel: "full expansion",
+    };
+  }
+  // the "you write" pipeline for each demo (verbatim from the snapshot tests / JsonDemo).
   const FUSE_OPT_SRC = {
     "fuse-src-oneloop": "xs.fuse.map(_ + 1).filter(_ % 2 == 0).map(_ * 2).run",
     "fuse-src-dce": "xs.fuse.map(x => (x % 3, x * 7, x * 13)).filter(_._1 == 0).map(_._2).run",
     "fuse-src-sink": "xs.fuse.map(x => (x % 2, expensive(x))).filter(_._1 == 0).map(_._2).sum",
     "fuse-src-cse": "xs.fuse.map(x => (x*x + 1, x*x + 2)).map(t => t._1 + t._2).run",
     "fuse-src-fold": "xs.fuse.map(x => Stat(x, x * 100, x * 1000)).foldLeft(0)((acc, s) => acc + s.score)",
+    "fuse-src-jsum": "Json.ndjson[Event](src).stream.filter(_.amount > 150).map(_.amount).foldLeft(0.0)(_ + _)",
+    "fuse-src-jcat": "Json.ndjson[Event](src).stream.filter(_.amount > 150).map(_.category).toList",
+    "fuse-src-jcount": 'Json.ndjson[Event](src).stream.filter(_.status == "active").map(_.category).count',
+    "fuse-src-jwide": "Json.ndjson[Wide](src).stream.filter(_.key > 90).map(_.payload).count",
+    "fuse-src-jagg":
+      'Json.ndjson[Event](src).stream.filter(_.status == "active")\n  .aggTo(Stats.apply)(Agg.sum(_.amount), Agg.count, Agg.max1(_.score))',
   };
   for (const [name, code] of Object.entries(FUSE_OPT_SRC)) {
     out[name] = { name, file: "you write", lang: "scala", code, html: hl(code, "scala"), full: null, fullHtml: null };
+  }
+  // the rival code each fuse-JSON table beats (verbatim from JsonDemo).
+  const RIVALS = {
+    "rival-sum":
+      `// jsoniter-scala — hand-written reader, the strongest baseline (no object, folds into a var):
+val len = in.readKeyAsCharBuf()                 // still decodes EVERY key into a char[] + hashes it
+if in.isCharBufEqualsTo(len, "amount") then     // …then compares — even for the 19 fields we skip
+  amount = in.readDouble()
+else in.skip()                                  // walks the value's bytes; no predicate early-out
+
+// jawn — typelevel's well-regarded parser. No projection: it builds the WHOLE AST per record.
+val j = JParser.parseFromByteBuffer(ByteBuffer.wrap(buf, start, len)).get   // JObject of all 20 fields,
+val a = j.get("amount").asDouble                                            // every value boxed as a JValue
+
+// Jackson — databind tree model. Same story: a full JsonNode tree per record, then read one field.
+val node = mapper.readTree(buf, start, len)     // builds & boxes all 20 fields,
+val a = node.get("amount").asDouble             // to read exactly one`,
+    "rival-cat":
+      `// a case class with ONLY the read fields; the macro-generated codec skips the rest.
+final case class Narrow(amount: Double, category: String)
+given JsonValueCodec[Narrow] = JsonCodecMaker.make
+// per line:
+val r = readFromSubArray[Narrow](buf, start, end)   // allocates a Narrow object every record,
+if r.amount > 150 then r.category                   // and decodes \`category\` for ALL survivors`,
+  };
+  for (const [name, code] of Object.entries(RIVALS)) {
+    out[name] = { name, file: "what we beat", lang: "scala", code, html: hl(code, "scala"), full: null, fullHtml: null };
   }
 
   // Schematic illustrations — not extracted from a single file (the real hierarchy is ~60 generated Java
