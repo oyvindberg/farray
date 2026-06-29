@@ -42,6 +42,13 @@ object FSet:
   def above(k: Int): FSetInfinite[Int] = if k == Int.MaxValue then SEmpty.INSTANCE else new SIntRange(k + 1, Int.MaxValue)
   def below(k: Int): FSetInfinite[Int] = if k == Int.MinValue then SEmpty.INSTANCE else new SIntRange(Int.MinValue, k - 1)
   def universalInt: FSetInfinite[Int] = new SIntRange(Int.MinValue, Int.MaxValue)
+  // open / half-open ranges. For INTEGERS open vs closed canonicalizes to a closed [lo,hi] (no successor gap),
+  // so these are factory sugar: `range` = [lo,hi] (closed); `until` = [lo,hi); `rangeOpen` = (lo,hi). (Reference
+  // ranges, which are densely ordered and so need real inclusive/exclusive endpoint flags, are a future leaf.)
+  def until(lo: Int, hi: Int): FSetInfinite[Int] = if hi.toLong <= lo.toLong then SEmpty.INSTANCE else new SIntRange(lo, hi - 1)
+  def until(lo: Long, hi: Long): FSetInfinite[Long] = if hi <= lo then SEmpty.INSTANCE else new SLongRange(lo, hi - 1)
+  def rangeOpen(lo: Int, hi: Int): FSetInfinite[Int] = if hi.toLong <= lo.toLong + 1L then SEmpty.INSTANCE else new SIntRange(lo + 1, hi - 1)
+  def rangeOpen(lo: Long, hi: Long): FSetInfinite[Long] = if hi <= lo + 1L then SEmpty.INSTANCE else new SLongRange(lo + 1, hi - 1)
 
   // ---- FSet (top): membership + lazy algebra. Inherited by every finite subtype (and reached by an
   // FSetInfinite via the Conversion). The opaque receiver flows into the SBase-typed impl at the boundary. ----
@@ -69,6 +76,10 @@ object FSet:
     // materialize: fold the lazy algebra into one leaf (memoized). Throws at runtime if the tree laundered an
     // infinite leaf in (e.g. finite ∪ above(k)); a directly-infinite set is an FSetInfinite and can't reach here.
     inline def materialize: FSetMaterialized[A] = FSetOps.materializeImpl[A](xs)
+    // finite view: Some if this set is provably finite (every leaf a materialized set or a bounded range;
+    // no complement / over-cap range), so it can be `.materialize`d safely — None if it might be infinite.
+    inline def finite: Option[FSetFinite[A]] =
+      if FSetOps.isFiniteImpl[A](xs) then Some(xs.asInstanceOf[FSetFinite[A]]) else None
 
   // ---- FSetMaterialized: the enumerable face — size / iterate / transform / value-equality / ordered ----
   extension [A](xs: FSetMaterialized[A])
@@ -99,6 +110,9 @@ object FSetInfinite:
   extension [A](xs: FSetInfinite[A])
     inline def contains(elem: A): Boolean = FSetOps.containsImpl[A](xs, elem)
     inline def apply(elem: A): Boolean = FSetOps.containsImpl[A](xs, elem)
+    // a statically-infinite set may actually be finite (a BOUNDED range) — recover the finite view if so.
+    inline def finite: Option[FSetFinite[A]] =
+      if FSetOps.isFiniteImpl[A](xs) then Some(xs.asInstanceOf[FSetFinite[A]]) else None
     def union(that: FSet[A]): FSet[A] = new SUnion(xs, that)
     def intersect(that: FSet[A]): FSet[A] = new SInter(xs, that)
     def diff(that: FSet[A]): FSet[A] = new SDiff(xs, that)

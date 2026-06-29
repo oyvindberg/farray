@@ -721,6 +721,16 @@ object GenSets extends BleepCodegenScript("GenSets") {
         ee.close()
         ee.line("if (parts.isEmpty) SEmpty.INSTANCE else parts.get(0)")
         ee.close()
+        // enumerate a bounded range [lo,hi] into a sorted prim array (the caller / materialize cap-guards span).
+        if k.name == "Int" || k.name == "Long" then {
+          ee.open(s"def rangeArr$K(lo: $P, hi: $P): Array[$P] =")
+          ee.line("val n = (hi.toLong - lo.toLong + 1L).toInt")
+          ee.line(s"val a = new Array[$P](n)")
+          ee.line("var i = 0")
+          ee.line("while (i < n) { a(i) = lo + i; i += 1 }")
+          ee.line("a")
+          ee.close()
+        }
         // materialize: fold + memoize. A leaf returns itself; Inter/Diff/Xor merge their materialized children;
         // Union uses the iterative spine collapse above (StackOverflow-safe for deep incl chains).
         ee.open(s"def materialize$K(node: SBase): SBase = node match")
@@ -742,7 +752,11 @@ object GenSets extends BleepCodegenScript("GenSets") {
         algebra("SInter", "n", "mergeInter", 1)
         algebra("SDiff", "d", "mergeDiff", 2)
         algebra("SXor", "x", "mergeXor", 3)
-        ee.line("""case _ => throw new UnsupportedOperationException("cannot materialize/enumerate an infinite or predicate set (range/above/below/universal/complement) — only contains is defined")""")
+        // a BOUNDED range is finite → enumerate it (a contiguous range routes to a bitmap); an over-cap range
+        // (above/below/universal) stays membership-only and throws — it cannot be enumerated.
+        if k.name == "Int" || k.name == "Long" then
+          ee.line(s"""case r: S${K}Range => { val s = r.hi.toLong - r.lo.toLong; if (s < 0L || s >= (1L << 20)) throw new UnsupportedOperationException("range too large to enumerate (> 2^20) — membership-only") else wrap$K(rangeArr$K(r.lo, r.hi)) }""")
+        ee.line("""case _ => throw new UnsupportedOperationException("cannot materialize/enumerate an infinite or predicate set (above/below/universal/complement) — only contains is defined")""")
         ee.close()
       }
       // ---- Int dense-bitmap helpers (Step 2): density router + bitmap build + bit-iteration extraction.
@@ -1321,6 +1335,23 @@ object GenSets extends BleepCodegenScript("GenSets") {
        |${indent1(sizeHelpers)}
        |${indent1(traversalHelpers)}
        |${indent1(valueHelpers)}
+       |
+       |  // FSetFinite support: a set is "finite" (safely enumerable/materializable) iff every leaf is a
+       |  // materialized leaf OR a bounded range with span < 2^20; complement / over-cap ranges / unknown
+       |  // predicates are infinite. Conservative all-children check — correct for the naive enumerate-then-merge
+       |  // materialize (it would over-enumerate a `hugeRange ∩ smallSet`, which a predicate-distributing
+       |  // materialize could do; that's the NEXT-STEP). Kind-agnostic (walks the shared algebra nodes).
+       |  def isFinite(node: SBase): Boolean = node match {
+       |    case _: SMaterialized => true
+       |    case r: SIntRange  => { val s = r.hi.toLong - r.lo.toLong; s >= 0L && s < (1L << 20) }
+       |    case r: SLongRange => { val s = r.hi - r.lo; s >= 0L && s < (1L << 20) }
+       |    case u: SUnion => isFinite(u.left) && isFinite(u.right)
+       |    case n: SInter => isFinite(n.left) && isFinite(n.right)
+       |    case d: SDiff  => isFinite(d.left) && isFinite(d.right)
+       |    case x: SXor   => isFinite(x.left) && isFinite(x.right)
+       |    case _ => false
+       |  }
+       |  inline def isFiniteImpl[A](xs: SBase): Boolean = isFinite(xs)
        |
        |  inline def emptyImpl[A]: SBase = $emptyV
        |  inline def fromValues1[A](a: A): SBase = $fromValues1
