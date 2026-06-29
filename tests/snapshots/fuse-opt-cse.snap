@@ -1,0 +1,47 @@
+{
+  val $proxy: FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  } = FArray$package.$asInstanceOf$[FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  }]
+  val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
+  val Fuse_this: Fuse[Int] = (new Fuse[Int](xs$proxy): Fuse[Int]).map[Tuple2[Int, Int]](((x: Int) => Tuple2.apply[Int, Int](x.*(x).+(1), x.*(x).+(2)))).map[Int](((t: Tuple2[Int, Int]) => t._1.+(t._2)))
+
+  ({
+    val src0: FBase = inline$base$i1[Int](Fuse_this).asInstanceOf[FBase]
+    val n0: Int = src0.length
+    val cap: Int = n0
+    val out: Array[Int] = new Array[Int](cap)
+    var o: Int = 0
+    src0 match {
+      case leaf: IntArr =>
+        val a: Array[Int] = leaf.arr
+        val len: Int = a.length
+        var i: Int = 0
+        while (i.<(len)) {
+          val v: Int = a.apply(i)
+          val `v₂`: Int = v.*(v)
+          val `v₃`: Int = `v₂`.+(1)
+          val `v₄`: Int = `v₂`.+(2)
+          val `v₅`: Int = `v₃`.+(`v₄`)
+          out.update(o, `v₅`)
+          o = o.+(1)
+          i = i.+(1)
+        }
+      case s =>
+        val `len₂`: Int = s.length
+        var `i₂`: Int = 0
+        while (`i₂`.<(`len₂`)) {
+          val `v₆`: Int = FArrayOps.intAt(s, `i₂`)
+          val `v₇`: Int = `v₆`.*(`v₆`)
+          val `v₈`: Int = `v₇`.+(1)
+          val `v₉`: Int = `v₇`.+(2)
+          val `v₁₀`: Int = `v₈`.+(`v₉`)
+          out.update(o, `v₁₀`)
+          o = o.+(1)
+          `i₂` = `i₂`.+(1)
+        }
+    }
+    if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(out.apply(0)) else if (o.==(cap)) new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o)
+  }.asInstanceOf[FArray[Int]]: FArray[Int])
+}

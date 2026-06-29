@@ -1,0 +1,59 @@
+{
+  val $proxy: FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  } = FArray$package.$asInstanceOf$[FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  }]
+  val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
+  val Fuse_this: Fuse[Int] = (new Fuse[Int](xs$proxy): Fuse[Int]).map[Tuple2[Int, Int]](((x: Int) => Tuple2.apply[Int, Int](x.%(2), expensive(x)))).filter(((_$: Tuple2[Int, Int]) => _$._1.==(0))).map[Int](((_$: Tuple2[Int, Int]) => _$._2))
+
+  ({
+    val `Fuse_this₂`: Fuse_this.type = Fuse_this
+    val z$proxy: Int = IntIsIntegral.zero
+
+    ({
+      val `Fuse_this₃`: Fuse_this.type = `Fuse_this₂`
+
+      ({
+        val src0: FBase = inline$base$i1[Int](`Fuse_this₃`).asInstanceOf[FBase]
+        val n0: Int = src0.length
+        var acc: Int = z$proxy
+
+        ({
+          src0 match {
+            case leaf: IntArr =>
+              val a: Array[Int] = leaf.arr
+              val len: Int = a.length
+              var i: Int = 0
+              while (i.<(len)) {
+                val v: Int = a.apply(i)
+                val `v₂`: Int = v.%(2)
+                val `v₃`: Boolean = `v₂`.==(0)
+                if (`v₃`) {
+                  val `v₄`: Int = expensive(v)
+                  acc = IntIsIntegral.plus(acc, `v₄`)
+                  ()
+                } else ()
+                i = i.+(1)
+              }
+            case s =>
+              val `len₂`: Int = s.length
+              var `i₂`: Int = 0
+              while (`i₂`.<(`len₂`)) {
+                val `v₅`: Int = FArrayOps.intAt(s, `i₂`)
+                val `v₆`: Int = `v₅`.%(2)
+                val `v₇`: Boolean = `v₆`.==(0)
+                if (`v₇`) {
+                  val `v₈`: Int = expensive(`v₅`)
+                  acc = IntIsIntegral.plus(acc, `v₈`)
+                  ()
+                } else ()
+                `i₂` = `i₂`.+(1)
+              }
+          }
+          acc
+        }: Int)
+      }.asInstanceOf[Int]: Int)
+    }: Int)
+  }: Int)
+}

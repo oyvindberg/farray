@@ -91,7 +91,8 @@ export default function Intro() {
         None of this is a runtime trick. It's the Scala 3 macro system — <code>inline</code>, quotes, and{" "}
         <code>summonFrom</code> — doing real work at compile time: reading the call chain off the syntax tree,
         eliminating the columns nobody reads, and emitting a specialized loop. Having metaprogramming this
-        capable on tap is, frankly, a little phenomenal. We'll get into how the macro pulls it off further down.
+        capable on tap is, frankly, a little phenomenal. There's a whole page on{" "}
+        <a href="#/fusion">how the macro pulls it off</a> — dead-column elimination, the survivor sink, the lot.
       </p>
     </section>
   );

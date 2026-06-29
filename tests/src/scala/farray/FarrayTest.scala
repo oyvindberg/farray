@@ -8,6 +8,7 @@ import scala.collection.BuildFrom
 case class P2(a: Int, b: Int)
 case class Inner(x: Int, y: Int)
 case class Outer(inner: Inner, z: Int)
+case class Stat(id: Int, score: Int, weight: Int) // fused-optimizer fold-decomposition demo
 case class Box[T](v: T, n: Int) // GENERIC case class (type-arg threading in mkProduct)
 case class Rec(base: Int, label: String, extra: Int) // mixed Int/String/Int fields
 object Cx: // top-level helpers (opaque method-call columns)
@@ -1634,6 +1635,22 @@ class FListTest:
   @Test def test_map_inline_snapshot: Unit =
     val ints = FArray(3, 14, 15, 92, 65, 35)
     Snapshots.check("map-inline.snap", FuseDebug.show(ints.map(_ + 1)))
+
+  // The five fuse-optimizer demos for the website's "intro to fusion" page — each the verbatim lowering of
+  // the pipeline above it. Mirrors farray.json.JsonDemo's optimizer section, regenerated to current codegen.
+  @Test def test_fuse_optimizer_snapshots: Unit =
+    val ints = FArray(3, 14, 15, 92, 65, 35, 89, 79)
+    def expensive(x: Int): Int = { var s = x; var k = 0; while (k < 24) { s = s * 1103515245 + 12345; k += 1 }; s }
+    // 1 · one loop, no closures
+    Snapshots.check("fuse-opt-oneloop.snap", FuseDebug.show(ints.fuse.map(_ + 1).filter(_ % 2 == 0).map(_ * 2).run))
+    // 2 · dead-column elimination — column 2 (x*13) is read by nobody and never built
+    Snapshots.check("fuse-opt-dce.snap", FuseDebug.show(ints.fuse.map(x => (x % 3, x * 7, x * 13)).filter(_._1 == 0).map(_._2).run))
+    // 3 · compute-for-survivors — expensive(x) lands inside the filter's `if`
+    Snapshots.check("fuse-opt-sink.snap", FuseDebug.show(ints.fuse.map(x => (x % 2, expensive(x))).filter(_._1 == 0).map(_._2).sum))
+    // 4 · common-subexpression elimination — x*x bound once, reused
+    Snapshots.check("fuse-opt-cse.snap", FuseDebug.show(ints.fuse.map(x => (x * x + 1, x * x + 2)).map(t => t._1 + t._2).run))
+    // 5 · decomposition reaches the fold's lambda — Stat never built; loop is acc + x*100
+    Snapshots.check("fuse-opt-fold.snap", FuseDebug.show(ints.fuse.map(x => Stat(x, x * 100, x * 1000)).foldLeft(0)((acc, s) => acc + s.score)))
 
   @Test def test_hashCode_matchesList(): Unit =
     def chk(name: String, fa: FArray[Any], l: List[Any]): Unit =

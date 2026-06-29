@@ -158,6 +158,25 @@ function firstOuterBranch(code) {
   ].join("\n");
 }
 
+// From a FuseDebug.show golden, keep just the `({ … })` block the macro actually emits — i.e. drop the
+// `$proxy`/`Fuse_this` marker preamble (dead-code-eliminated at runtime) and show the loop.
+function fuseLoop(code) {
+  const lines = code.split("\n");
+  const start = lines.findIndex((l) => l.trim() === "({");
+  if (start < 0) return code;
+  let depth = 0, started = false;
+  const out = [];
+  for (let j = start; j < lines.length; j++) {
+    out.push(lines[j]);
+    for (const ch of lines[j]) {
+      if (ch === "{") { depth++; started = true; }
+      else if (ch === "}") depth--;
+    }
+    if (started && depth === 0) break;
+  }
+  return dedent(out);
+}
+
 function buildSnippets() {
   const files = [];
   for (const root of SOURCE_ROOTS) {
@@ -219,6 +238,30 @@ function buildSnippets() {
     } else {
       out[g.name] = { name: g.name, file: g.file, lang: "scala", code: raw, html: hl(raw, "scala"), full: null, fullHtml: null };
     }
+  }
+
+  // The fuse-optimizer demos for the "intro to fusion" page: each shows the emitted loop by default
+  // (the marker preamble stripped) with the verbatim expansion one toggle away.
+  const FUSE_OPT = ["oneloop", "dce", "sink", "cse", "fold"];
+  for (const key of FUSE_OPT) {
+    const file = `tests/snapshots/fuse-opt-${key}.snap`;
+    const raw = readFileSync(resolve(REPO, file), "utf8").replace(/^\n+|\n+$/g, "");
+    const short = fuseLoop(raw);
+    out[`fuse-opt-${key}`] = {
+      name: `fuse-opt-${key}`, file, lang: "scala",
+      code: short, html: hl(short, "scala"), full: raw, fullHtml: hl(raw, "scala"), fullLabel: "full expansion",
+    };
+  }
+  // the "you write" pipeline for each demo (verbatim from the snapshot test).
+  const FUSE_OPT_SRC = {
+    "fuse-src-oneloop": "xs.fuse.map(_ + 1).filter(_ % 2 == 0).map(_ * 2).run",
+    "fuse-src-dce": "xs.fuse.map(x => (x % 3, x * 7, x * 13)).filter(_._1 == 0).map(_._2).run",
+    "fuse-src-sink": "xs.fuse.map(x => (x % 2, expensive(x))).filter(_._1 == 0).map(_._2).sum",
+    "fuse-src-cse": "xs.fuse.map(x => (x*x + 1, x*x + 2)).map(t => t._1 + t._2).run",
+    "fuse-src-fold": "xs.fuse.map(x => Stat(x, x * 100, x * 1000)).foldLeft(0)((acc, s) => acc + s.score)",
+  };
+  for (const [name, code] of Object.entries(FUSE_OPT_SRC)) {
+    out[name] = { name, file: "you write", lang: "scala", code, html: hl(code, "scala"), full: null, fullHtml: null };
   }
 
   // Schematic illustrations — not extracted from a single file (the real hierarchy is ~60 generated Java
