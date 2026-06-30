@@ -1189,26 +1189,49 @@ object GenSets extends BleepCodegenScript("GenSets") {
         // every kind enumerates the SAME way: materialize to a leaf (prim → unboxed sorted merge; Ref →
         // cached-hash sort-merge) and walk its asArr — unboxed, each element once (hash-ordered for Ref).
         def setup(): Unit = ee.line(s"val arr = asArr$K(materialize$K(node))")
-        ee.open(s"def foreachLeaf$K(node: SBase, f: SetTraversers.${K}Consumer): Unit =")
-        setup(); ee.line("var i = 0")
-        ee.open("while (i < arr.length)"); ee.line("f.accept(arr(i))"); ee.line("i += 1"); ee.close()
-        ee.close()
-        ee.open(s"def forallLeaf$K(node: SBase, p: SetTraversers.${K}Pred): Boolean =")
-        setup(); ee.line("var i = 0; var ok = true")
-        ee.open("while (i < arr.length && ok)"); ee.line("if (!p.test(arr(i))) ok = false"); ee.line("i += 1"); ee.close()
-        ee.line("ok")
-        ee.close()
-        ee.open(s"def existsLeaf$K(node: SBase, p: SetTraversers.${K}Pred): Boolean =")
-        setup(); ee.line("var i = 0; var found = false")
-        ee.open("while (i < arr.length && !found)"); ee.line("if (p.test(arr(i))) found = true"); ee.line("i += 1"); ee.close()
-        ee.line("found")
-        ee.close()
-        // count: number of elements satisfying p.
-        ee.open(s"def countLeaf$K(node: SBase, p: SetTraversers.${K}Pred): Int =")
-        setup(); ee.line("var i = 0; var c = 0")
-        ee.open("while (i < arr.length)"); ee.line("if (p.test(arr(i))) c += 1"); ee.line("i += 1"); ee.close()
-        ee.line("c")
-        ee.close()
+        // one walk per op. For INT, a dense node is a bitmap → iterate the long[] words directly (numberOfTrailingZeros
+        // loop, like BitSet) with NO array materialization; sparse Int + all other kinds walk asArr. `e` is the element.
+        def walk(name: String, sig: String, ret: String, accum: String, perElem: String, contCond: String, result: String): Unit = {
+          val cc = if contCond.nonEmpty then s" && $contCond" else ""
+          ee.open(s"def ${name}Leaf$K(node: SBase, $sig): $ret =")
+          if accum.nonEmpty then ee.line(accum)
+          if k.name == "Int" then {
+            ee.open("materializeInt(node) match")
+            ee.open("case b: SIntBitmap =>")
+            ee.line("val ws = b.words; val bs = b.base; var wi = 0")
+            ee.open(s"while (wi < ws.length$cc)")
+            ee.line("var bits = ws(wi)")
+            ee.open(s"while (bits != 0L$cc)")
+            ee.line("val e = bs + (wi << 6) + java.lang.Long.numberOfTrailingZeros(bits)")
+            ee.line(perElem)
+            ee.line("bits &= bits - 1L")
+            ee.close()
+            ee.line("wi += 1")
+            ee.close()
+            ee.closeOpen("case m =>")
+            ee.line("val arr = asArrInt(m); var i = 0")
+            ee.open(s"while (i < arr.length$cc)")
+            ee.line("val e = arr(i)")
+            ee.line(perElem)
+            ee.line("i += 1")
+            ee.close()
+            ee.close()
+            ee.close()
+          } else {
+            ee.line(s"val arr = asArr$K(materialize$K(node)); var i = 0")
+            ee.open(s"while (i < arr.length$cc)")
+            ee.line("val e = arr(i)")
+            ee.line(perElem)
+            ee.line("i += 1")
+            ee.close()
+          }
+          if result.nonEmpty then ee.line(result)
+          ee.close()
+        }
+        walk("foreach", s"f: SetTraversers.${K}Consumer", "Unit", "", "f.accept(e)", "", "")
+        walk("forall", s"p: SetTraversers.${K}Pred", "Boolean", "var ok = true", "if (!p.test(e)) ok = false", "ok", "ok")
+        walk("exists", s"p: SetTraversers.${K}Pred", "Boolean", "var found = false", "if (p.test(e)) found = true", "!found", "found")
+        walk("count", s"p: SetTraversers.${K}Pred", "Int", "var c = 0", "if (p.test(e)) c += 1", "", "c")
         // filter: keep elements satisfying p, build the same-kind leaf. Prim: the kept slice of the sorted arr
         // stays sorted+distinct → wrap directly (no re-sort). Ref: the kept subset is still distinct → re-hash+
         // sort+wrap via buildSortedRef (its dedup is a no-op on an already-distinct input).
@@ -1300,15 +1323,23 @@ object GenSets extends BleepCodegenScript("GenSets") {
         // (asArr is sorted for prims); Ref = compare the two element HashSets.
         if k.isPrim then {
           ee.open(s"def setEq$K(a: SBase, b: SBase): Boolean = (a, b) match")
+          // two bitmaps of equal sets share a base (= (min>>6)<<6) and word array → compare words, no extraction.
+          if k.name == "Int" then ee.line("case (ab: SIntBitmap, bb: SIntBitmap) => ab.base == bb.base && java.util.Arrays.equals(ab.words, bb.words)")
           ee.line(s"case (_: SMaterialized, _: SMaterialized) => java.util.Arrays.equals(asArr$K(a), asArr$K(b))")
           ee.line(s"case _ => $throwMsg")
           ee.close()
         } else {
+          // UNBOXED: equal sets ⟺ same size AND a ⊆ b. Stream a's hash-sorted elements against b's O(1) probe —
+          // no boxed HashSet build (the old collectElems walk was the lone Ref op left boxed, 10x slow on equals).
           ee.open("def setEqRef(a: SBase, b: SBase): Boolean = (a, b) match")
-          ee.open("case (_: SMaterialized, _: SMaterialized) =>")
-          ee.line("val sa = scala.collection.mutable.HashSet.empty[Object]; collectElemsRef(a, sa)")
-          ee.line("val sb = scala.collection.mutable.HashSet.empty[Object]; collectElemsRef(b, sb)")
-          ee.line("sa == sb")
+          ee.open("case (am: SMaterialized, bm: SMaterialized) =>")
+          ee.line("if (am.size() != bm.size()) false")
+          ee.open("else")
+          ee.line("val aa = asArrRef(a)")
+          ee.line("var i = 0; var ok = true")
+          ee.line("while (i < aa.length && ok) { if (!containsLeafRef(b, aa(i))) ok = false; i += 1 }")
+          ee.line("ok")
+          ee.close()
           ee.close()
           ee.line(s"case _ => $throwMsg")
           ee.close()
