@@ -95,5 +95,5 @@ else:
     json.dump(new, open(dst, "w"))
     print(f"  full suite: merged {len(new)} results from {len(files)} shards")
 PY
-BENCH_SUBJECT=fset python3 scripts/bench_report.py docs/set-bench-results.json docs/set-index.html
+python3 scripts/setbench_report.py docs/set-bench-results.json docs/set-index.html
 echo "✔ Done → docs/set-index.html  (publish: git add docs/ && git commit && git push)"
