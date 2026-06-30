@@ -1106,7 +1106,8 @@ object GenSets extends BleepCodegenScript("GenSets") {
     // subsetOf(b): every element of `a` is in `b`. Materializes `a` (the receiver) and streams it against
     // `b`'s membership (contains distributes over a lazy `b`, no materialize). A query op (no materialized guard).
     val subsetOfV = dispatchA(k =>
-      s"{ val arr = asArr${k.name}(materialize${k.name}(a)); var i = 0; var ok = true; while (i < arr.length && ok) { if (!containsLeaf${k.name}(b, arr(i))) ok = false; i += 1 }; ok }"
+      if k.name == "Int" then "subsetOfInt(a, b)"
+      else s"{ val arr = asArr${k.name}(materialize${k.name}(a)); var i = 0; var ok = true; while (i < arr.length && ok) { if (!containsLeaf${k.name}(b, arr(i))) ok = false; i += 1 }; ok }"
     )
 
     // min / max — O(1) on the materialized sorted leaf (prim natural order). Ref needs an Ordering (FSortedSet),
@@ -1342,6 +1343,23 @@ object GenSets extends BleepCodegenScript("GenSets") {
         // across leaf shapes (Sorted vs Hash) because it folds the canonical element set.
         ee.open(s"def setHash$K(node: SBase): Int = node match")
         if k.isPrim then {
+          if k.name == "Int" then {
+            // bitmap word-path: sum the per-element mixes straight from the set bits (no asArr extraction).
+            ee.open("case b: SIntBitmap =>")
+            ee.line("val ws = b.words; val bs = b.base")
+            ee.line("var h = 0; var wi = 0")
+            ee.open("while (wi < ws.length)")
+            ee.line("var bits = ws(wi)")
+            ee.open("while (bits != 0L)")
+            ee.line("val t = java.lang.Long.numberOfTrailingZeros(bits)")
+            ee.line(s"h += ${slotHash(k, "(bs + (wi << 6) + t)")}")
+            ee.line("bits &= bits - 1L")
+            ee.close()
+            ee.line("wi += 1")
+            ee.close()
+            ee.line("h + b.card")
+            ee.close()
+          }
           ee.open("case _: SMaterialized =>")
           ee.line(s"val arr = asArr$K(node)")
           ee.line("var h = 0; var i = 0")
@@ -1406,6 +1424,28 @@ object GenSets extends BleepCodegenScript("GenSets") {
           ee.close()
         }
       }
+      // subsetOf(a ⊆ b): two bitmaps → WORD-CONTAINMENT (every set bit of a is set in b, base-aligned) in
+      // O(span_a/64); otherwise materialize a and probe each element against b (b stays lazy).
+      ee.open("def subsetOfInt(a: SBase, b: SBase): Boolean =")
+      ee.line("val am = materializeInt(a)")
+      ee.open("if (am.isInstanceOf[SIntBitmap])")
+      ee.line("val bm = materializeInt(b)")
+      ee.open("if (bm.isInstanceOf[SIntBitmap])")
+      ee.line("val ab = am.asInstanceOf[SIntBitmap]; val bb = bm.asInstanceOf[SIntBitmap]")
+      ee.line("val aw = ab.words; val bw = bb.words; val delta = ((ab.base.toLong - bb.base.toLong) >> 6).toInt")
+      ee.line("var wi = 0; var ok = true")
+      ee.open("while (wi < aw.length && ok)")
+      ee.line("val w = aw(wi)")
+      ee.line("if (w != 0L) { val bj = wi + delta; if (bj < 0 || bj >= bw.length || (w & ~bw(bj)) != 0L) ok = false }")
+      ee.line("wi += 1")
+      ee.close()
+      ee.line("return ok")
+      ee.close()
+      ee.close()
+      ee.line("val arr = asArrInt(am); var i = 0; var ok2 = true")
+      ee.line("while (i < arr.length && ok2) { if (!containsLeafInt(b, arr(i))) ok2 = false; i += 1 }")
+      ee.line("ok2")
+      ee.close()
       ee.result
     }
 
