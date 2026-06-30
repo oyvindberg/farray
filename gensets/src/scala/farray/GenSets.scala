@@ -1329,15 +1329,30 @@ object GenSets extends BleepCodegenScript("GenSets") {
           ee.line(s"case _ => $throwMsg")
           ee.close()
         } else {
-          // UNBOXED: equal sets ⟺ same size AND a ⊆ b. Stream a's hash-sorted elements against b's O(1) probe —
-          // no boxed HashSet build (the old collectElems walk was the lone Ref op left boxed, 10x slow on equals).
+          // UNBOXED: both leaves are HASH-SORTED, so equal sets have identical sorted-hash sequences. Two-pointer
+          // over the STORED hashes (no per-element hashCode/mix/slot-probe) — at a hash mismatch reject; inside an
+          // equal-hash tie-group verify the elements match as sets via .equals. (The old collectElems walk built
+          // two boxed HashSets — 10x slow; this is the lone remaining Ref op being un-boxed.)
           ee.open("def setEqRef(a: SBase, b: SBase): Boolean = (a, b) match")
           ee.open("case (am: SMaterialized, bm: SMaterialized) =>")
           ee.line("if (am.size() != bm.size()) false")
           ee.open("else")
-          ee.line("val aa = asArrRef(a)")
+          ee.line("val aA = asArrRef(a); val aH = hashesOfRef(a); val bA = asArrRef(b); val bH = hashesOfRef(b)")
           ee.line("var i = 0; var ok = true")
-          ee.line("while (i < aa.length && ok) { if (!containsLeafRef(b, aa(i))) ok = false; i += 1 }")
+          ee.open("while (i < aA.length && ok)")
+          ee.line("if (aH(i) != bH(i)) ok = false")
+          ee.open("else")
+          ee.line("var j = i + 1; while (j < aA.length && aH(j) == aH(i)) j += 1")
+          ee.line("var k = i")
+          ee.open("while (k < j && ok)")
+          ee.line("val v = aA(k); var found = false; var m = i")
+          ee.line("while (m < j && !found) { if (bA(m).equals(v)) found = true; m += 1 }")
+          ee.line("if (!found) ok = false")
+          ee.line("k += 1")
+          ee.close()
+          ee.line("i = j")
+          ee.close()
+          ee.close()
           ee.line("ok")
           ee.close()
           ee.close()
