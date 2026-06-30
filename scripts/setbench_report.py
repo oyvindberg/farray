@@ -375,7 +375,28 @@ table.ratio td.rsubj,table.ratio th.rsubjh{{background:#ecfdf3;font-weight:750;c
 table.ratio td.rwin{{background:#ecfdf3;color:#15803d}} table.ratio td.rloss{{background:#fef2f2;color:#b91c1c}}
 table.ratio td.rtie{{color:#64748b}} table.ratio td.rna{{color:#cbd5e1}}
 h2.rh{{margin:22px 0 4px;font-size:16px}} .rnote{{color:#64748b;font-size:11px;margin-bottom:10px}}
-</style></head><body><div class="wrap">
+/* ---- dark mode (toggled via .dark on <html>); chart cards keep the light theme so the SVGs stay legible ---- */
+.theme-btn{{position:fixed;top:14px;right:16px;z-index:99;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:9px;padding:6px 10px;font-size:15px;line-height:1;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.18)}}
+html.dark{{--bg:#0b1220;--ink:#e6edf6;--mut:#94a3b8;--line:#1e2a44;--fa:#34d399}}
+html.dark body{{background:radial-gradient(1200px 500px at 80% -10%,#0c1c14 0,var(--bg) 55%) fixed}}
+html.dark .card{{--ink:#1f2430;--mut:#7a8699;--line:#eceef2}}
+html.dark .theme-btn{{background:#0f1830;color:#e6edf6;border-color:#27344e}}
+html.dark .sc-w{{background:#14532d;color:#86efac}} html.dark .sc-t{{background:#1e293b;color:#cbd5e1}} html.dark .sc-l{{background:#5c1620;color:#fca5a5}}
+html.dark table.score{{background:#0f1830;box-shadow:0 1px 3px rgba(0,0,0,.5)}}
+html.dark table.score th{{background:#16213c;color:#9fb0c9}}
+html.dark table.score tr.me{{background:#10271c}}
+html.dark table.score td{{border-color:#1e2a44}}
+html.dark table.score td.sc-mid{{color:#8595ad}} html.dark table.score td.sc-na{{color:#3a475e}}
+html.dark table.score .sc-total{{border-left-color:#27344e}}
+html.dark .scorenote,html.dark .sub{{color:#94a3b8}}
+html.dark table.ratio th{{background:#16213c;color:#9fb0c9}}
+html.dark table.ratio th,html.dark table.ratio td{{border-color:#1e2a44}}
+html.dark table.ratio td.rop{{color:#cbd5e1}} html.dark table.ratio td.rsz{{color:#64748b}}
+html.dark table.ratio td.rsubj,html.dark table.ratio th.rsubjh{{background:#0e2a1d;color:#34d399}}
+html.dark table.ratio td.rwin{{background:#0e2a1d;color:#6ee7b7}} html.dark table.ratio td.rloss{{background:#3a1417;color:#fca5a5}}
+html.dark table.ratio td.rtie{{color:#94a3b8}} html.dark table.ratio td.rna{{color:#3a475e}}
+html.dark h2.rh{{color:#e6edf6}} html.dark .rnote{{color:#94a3b8}}
+</style><script>(function(){{var t=localStorage.getItem('fsetTheme');document.documentElement.classList.toggle('dark',t?t==='dark':true)}})()</script></head><body><button class="theme-btn" id="tg" onclick="var d=document.documentElement.classList.toggle('dark');localStorage.setItem('fsetTheme',d?'dark':'light');this.textContent=d?'☀':'🌙'">🌙</button><script>document.getElementById('tg').textContent=document.documentElement.classList.contains('dark')?'☀':'🌙'</script><div class="wrap">
 <div class="hero"><h1><b>{lc(SUBJECT)[0]}</b> — benchmark suite</h1>
 <div class="scorebar"><div class="sc-w">{W_} win</div><div class="sc-t">{T_} tie</div><div class="sc-l">{L_} loss</div></div></div>
 <div class="sub">grouped bars per benchmark · x = size or swept parameter · bar heights normalised <b>within each size</b> (relative comparison, not absolute throughput) · FArray = bold emerald, competitors muted · band behind each size + card frame tinted by verdict (green win · gray tie · red loss) vs the best competitor · hover a size to compare numbers{(' · '+str(skipped)+' non-ops/s skipped') if skipped else ''}</div>

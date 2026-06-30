@@ -10,4 +10,5 @@ sbt-build
 bleep-site/docs
 .vscode
 docs/parts/
+docs/setparts/
 .claude/
