@@ -507,6 +507,21 @@ object GenSets extends BleepCodegenScript("GenSets") {
         val arrT = if k.name == "Ref" then "Object" else k.arr
         ee.open(s"def buildSorted$K(raw: Array[$arrT], len: Int): SBase =")
         ee.line("if (len == 0) return SEmpty.INSTANCE")
+        if k.name == "Int" then {
+          // dense-Int FAST build: one min/max pass, then set bits DIRECTLY into a bitmap (O(n), no O(n log n)
+          // sort — and the bits dedup for free). Sparse/wide falls through to the sort path → Sorted/Hash.
+          ee.line("var mn = raw(0); var mx = raw(0); var di = 1")
+          ee.line("while (di < len) { val v = raw(di); if (v < mn) mn = v; if (v > mx) mx = v; di += 1 }")
+          ee.line("val dspan = mx.toLong - mn.toLong + 1L")
+          ee.open("if (len > 16 && dspan <= 64L * len && dspan <= (1L << 20))")
+          ee.line("val dbase = (mn >> 6) << 6")
+          ee.line("val dnw = ((mx - dbase) >>> 6) + 1")
+          ee.line("val dwords = new Array[Long](dnw)")
+          ee.line("var bi = 0; while (bi < len) { val bb = raw(bi) - dbase; dwords(bb >>> 6) |= (1L << bb); bi += 1 }")
+          ee.line("var dcard = 0; var dwi = 0; while (dwi < dnw) { dcard += java.lang.Long.bitCount(dwords(dwi)); dwi += 1 }")
+          ee.line("return new SIntBitmap(dbase, dcard, dwords)")
+          ee.close()
+        }
         if k.isPrim then {
           // sort the first `len` slots in place, then unique-compact dropping equal neighbours.
           ee.line("java.util.Arrays.sort(raw, 0, len)")
@@ -1235,9 +1250,8 @@ object GenSets extends BleepCodegenScript("GenSets") {
         // filter: keep elements satisfying p, build the same-kind leaf. Prim: the kept slice of the sorted arr
         // stays sorted+distinct → wrap directly (no re-sort). Ref: the kept subset is still distinct → re-hash+
         // sort+wrap via buildSortedRef (its dedup is a no-op on an already-distinct input).
-        ee.open(s"def filterLeaf$K(node: SBase, p: SetTraversers.${K}Pred): SBase =")
-        setup()
-        if k.isPrim then {
+        // shared array-filter body (operates on a local `arr`): keep p-passing elements, build the same-kind leaf.
+        def primFilterBody(): Unit = {
           val P = k.arr
           ee.line(s"val out = new Array[$P](arr.length)")
           ee.line("var i = 0; var w = 0")
@@ -1249,15 +1263,47 @@ object GenSets extends BleepCodegenScript("GenSets") {
           ee.line("if (w == 0) SEmpty.INSTANCE")
           ee.line(s"else if (w == 1) new S${K}One(out(0))")
           ee.line(s"else { val trimmed = java.util.Arrays.copyOf(out, w); if (w <= 16) new S${K}Sorted(trimmed) else buildHash$K(trimmed) }")
-        } else {
-          ee.line("val out = new Array[Object](arr.length)")
-          ee.line("var i = 0; var w = 0")
-          ee.open("while (i < arr.length)")
-          ee.line("val v = arr(i)")
-          ee.line("if (p.test(v)) { out(w) = v; w += 1 }")
-          ee.line("i += 1")
+        }
+        ee.open(s"def filterLeaf$K(node: SBase, p: SetTraversers.${K}Pred): SBase =")
+        if k.name == "Int" then {
+          // materialize ONCE; a bitmap leaf is word-filtered directly (test p per set bit, build result words —
+          // no extract, no sort; down-convert if the kept subset turns sparse). Other leaves take the array path.
+          ee.line("val mz = materializeInt(node)")
+          ee.open("mz match")
+          ee.open("case b: SIntBitmap =>")
+          ee.line("val ws = b.words; val bs = b.base")
+          ee.line("val fout = new Array[Long](ws.length)")
+          ee.line("var fwi = 0; var fcard = 0")
+          ee.open("while (fwi < ws.length)")
+          ee.line("var bits = ws(fwi); var rb = 0L")
+          ee.open("while (bits != 0L)")
+          ee.line("val t = java.lang.Long.numberOfTrailingZeros(bits)")
+          ee.line("if (p.test(bs + (fwi << 6) + t)) { rb |= (1L << t); fcard += 1 }")
+          ee.line("bits &= bits - 1L")
           ee.close()
-          ee.line(s"buildSorted$K(out, w)")
+          ee.line("fout(fwi) = rb; fwi += 1")
+          ee.close()
+          ee.line("if (fcard == 0) SEmpty.INSTANCE")
+          ee.line("else if (fcard.toLong * 32 >= (ws.length.toLong << 6)) new SIntBitmap(bs, fcard, fout)")
+          ee.line("else wrapInt(bitmapToArr(new SIntBitmap(bs, fcard, fout)))")
+          ee.closeOpen("case _ =>")
+          ee.line("val arr = asArrInt(mz)")
+          primFilterBody()
+          ee.close()
+          ee.close()
+        } else {
+          setup()
+          if k.isPrim then primFilterBody()
+          else {
+            ee.line("val out = new Array[Object](arr.length)")
+            ee.line("var i = 0; var w = 0")
+            ee.open("while (i < arr.length)")
+            ee.line("val v = arr(i)")
+            ee.line("if (p.test(v)) { out(w) = v; w += 1 }")
+            ee.line("i += 1")
+            ee.close()
+            ee.line(s"buildSorted$K(out, w)")
+          }
         }
         ee.close()
       }
