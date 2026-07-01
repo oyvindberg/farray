@@ -96,27 +96,35 @@ export default function Inline() {
 
       <p>
         And the point of all that machinery, measured — <code>map</code> over a million elements, Int beside
-        String. This is also where to be honest: unboxing is a <em>primitive</em> headline.
+        String. This is also where to be honest, because on its own <code>map</code> is no rout:
       </p>
 
       <BenchPair
         int="MapIntBenchmark"
         str="MapStrBenchmark"
-        caption="map, swept to 100k. On Int (left) FArray ties a bare int[] and runs ~10–27× past the collections that box the element — List, Vector, both Chunks. On String (right) there's nothing to unbox, so it just ties IArray and the field clusters close. No penalty, no fireworks — references were never boxed to begin with."
+        caption="map, swept to 100k. On Int (left) FArray edges a bare int[] and runs ~6–32× past everything that boxes the element — List, Vector, both Chunks. On String (right) there's nothing to unbox, so the gap closes to nothing: FArray ties IArray, and fs2/zio Chunk actually edge it by a few percent. When boxing isn't on the table, the wrapper and the SAM aren't free."
       />
 
-      <h3>The consequence: put eight of them in one method</h3>
+      <h3>We're here for the crushes</h3>
 
       <p>
-        That last sentence — the specialization lives in the call site, not the signature — has a consequence
-        you can measure. Write eight <code>map</code>s with eight <em>distinct</em> lambdas in one method, and
-        IArray funnels all of them into its one shared <code>Array.map</code>. That call site now sees eight
-        different <code>Function1</code> types, well past the JIT's ≥3-type megamorphic threshold, so it stops
-        devirtualising: every element pays a real virtual <code>apply</code>, and on <code>Int</code> it
-        re-boxes through <code>Integer</code> on the way out. The bigger the method, the more distinct lambdas
-        crowd that one site, the worse it gets. FArray has no shared site to poison — each lambda was already
-        spliced into its own specialized loop at compile time, so eight maps are just eight tight{" "}
-        <code>int[]</code> loops, indifferent to how many of them you wrote.
+        Read those two charts honestly and it's a modest win on <code>Int</code> and a modest loss on{" "}
+        <code>String</code>. That's the texture of a <em>micro</em>-benchmark — one operation over one array, in
+        isolation, where a lone <code>Array.map</code> is a call the JIT already inlines to perfection and the
+        opaque wrapper plus the specialized SAM are pure overhead it doesn't carry. FArray isn't built to win
+        those by a percent. It's built for what happens the moment the benchmark stops being a micro-benchmark —
+        and it doesn't take much.
+      </p>
+
+      <p>
+        Take that very same <code>map</code> and write eight of them, eight <em>distinct</em> lambdas, in one
+        method. IArray funnels all of them into its one shared <code>Array.map</code>, and that call site now
+        sees eight different <code>Function1</code> types — well past the JIT's ≥3-type megamorphic threshold,
+        so it stops devirtualising: every element pays a real virtual <code>apply</code>, and on{" "}
+        <code>Int</code> it re-boxes through <code>Integer</code> on the way out. The bigger the method, the
+        more distinct lambdas crowd that one site, the worse it gets. FArray has no shared site to poison — each
+        lambda was already spliced into its own specialized loop at compile time, so eight maps are just eight
+        tight <code>int[]</code> loops, indifferent to how many of them you wrote.
       </p>
 
       <BenchPair
