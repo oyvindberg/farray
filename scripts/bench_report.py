@@ -29,11 +29,17 @@ XPRIORITY = ("size", "numChunks", "chunkCount", "numLeaves", "n", "innerSize", "
 
 def lc(v):    return KNOWN.get(v, (v, "#cbd5e1"))
 def ours(v):  return v.startswith("farray")
+
+# Internal probe benchmarks: they exist to validate a design decision (JIT pollution, loop shapes,
+# fuse-vs-eager, covariance cost), not to race competitors — several are pathological BY DESIGN.
+# They render in their own section but are EXCLUDED from the headline W/T/L.
+DIAGNOSTIC_MARKERS = ("FuseProbe", "FoldRefPolluted", "TraversalShape", "ArrLenFold", "Covariance")
+def is_diagnostic(c): return any(m in c for m in DIAGNOSTIC_MARKERS)
 def section(c):
+    if is_diagnostic(c): return "Diagnostics"
     if c.startswith("ListLike"): return "ListLike"
-    if c.startswith("Str"): return "String"
-    if c.startswith(("Int", "Long")): return "Primitive"
-    return "Diagnostics"
+    if "Str" in c: return "String"
+    return "Primitive"
 
 def main(json_path, out_path):
     data = json.load(open(json_path))
@@ -191,7 +197,9 @@ def main(json_path, out_path):
             f'<div class="cw">{"".join(svg)}<div class="tip"></div></div></div>')
         cid += 1
 
-    W_, T_, L_ = (sum(c) for c in zip(*sec_wtl.values()))
+    # headline W/T/L: Diagnostics excluded — those cells are probes (often pathological by design),
+    # not competitor races. The Diagnostics section still shows its own tally, labeled as such.
+    W_, T_, L_ = (sum(c) for c in zip(*(v for s, v in sec_wtl.items() if s != "Diagnostics")))
 
     # ---- score leaderboard: per-structure GEOMETRIC mean of (best throughput / structure throughput) ----
     # In every (benchmark, size) cell the FASTEST structure present = 1.00; each structure's ratio =
@@ -209,7 +217,8 @@ def main(json_path, out_path):
             best = max(s for _, s in present)           # fastest structure in this cell = 1.00
             for v, s in present:
                 lr = math.log(best / s)                 # log-ratio (>= 0), summed for the geometric mean
-                for col in (sec, "TOTAL"):
+                # Diagnostics cells get their own column but stay out of TOTAL (probe benchmarks).
+                for col in ((sec,) if sec == "Diagnostics" else (sec, "TOTAL")):
                     a = sc_sum.setdefault((v, col), [0.0, 0]); a[0] += lr; a[1] += 1
     def sc_get(v, col):
         a = sc_sum.get((v, col)); return math.exp(a[0] / a[1]) if a and a[1] else None
@@ -243,8 +252,9 @@ def main(json_path, out_path):
     def sechtml(sec):
         if not cards[sec]: return ""
         sw, st, sl = sec_wtl[sec]
+        note = ' · internal probes, not counted in the headline' if sec == "Diagnostics" else ''
         return (f'<h2>{sec} <span class="secwtl"><b class="gw">{sw}</b> win · {st} tie · '
-                f'<b class="gl">{sl}</b> loss</span></h2>'
+                f'<b class="gl">{sl}</b> loss{note}</span></h2>'
                 f'<div class="grid">{"".join(cards[sec])}</div>')
 
     html = f"""<!doctype html><html><head><meta charset="utf8"><title>FArray benchmarks</title>
