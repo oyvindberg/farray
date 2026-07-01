@@ -1780,27 +1780,62 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // sorted has an Ordering, which IS a Comparator -> for Ref hand it straight to Arrays.sort (1 compare per
     // comparison; the lt-comparator would do up to 2). Primitives keep the unboxed natural mergesort.
     // natural primitive orderings -> hand the materialised array straight to java.util.Arrays.sort
-    // (dual-pivot, no boxing). Stability is irrelevant for primitives. Double is excluded: the implicit
-    // Ordering[Double] is IEEE (NaN handling differs from Arrays.sort's total order), so it keeps the mergesort.
-    val sortedNat = Map("Int" -> "scala.math.Ordering.Int", "Long" -> "scala.math.Ordering.Long")
+    // (dual-pivot, no boxing). Stability is irrelevant for primitives. Double/Float route on TotalOrdering
+    // (compare == java.lang.Double.compare == Arrays.sort's total order; the DEFAULT implicit
+    // DeprecatedDoubleOrdering extends it) — only a genuine IeeeOrdering keeps the mergesort.
+    val sortedNatCond = Map(
+      "Int" -> "ord.asInstanceOf[AnyRef] eq scala.math.Ordering.Int",
+      "Long" -> "ord.asInstanceOf[AnyRef] eq scala.math.Ordering.Long",
+      "Short" -> "ord.asInstanceOf[AnyRef] eq scala.math.Ordering.Short",
+      "Byte" -> "ord.asInstanceOf[AnyRef] eq scala.math.Ordering.Byte",
+      "Char" -> "ord.asInstanceOf[AnyRef] eq scala.math.Ordering.Char",
+      "Double" -> "ord.isInstanceOf[scala.math.Ordering.Double.TotalOrdering]",
+      "Float" -> "ord.isInstanceOf[scala.math.Ordering.Float.TotalOrdering]"
+    )
     val sortedV = dispatchA(k =>
       if k.name == "Ref" then
         s"{ val vals = materializeRef(xs); val n = vals.length; if (n < 2) xs else { java.util.Arrays.sort(vals, ord.asInstanceOf[java.util.Comparator[Object]]); new RefArr(vals, n) } }"
       else {
         val merge = s"new ${k.name}Arr(sort${k.name}(vals, n, (x, y) => ord.lt(${readVal(k, "x")}, ${readVal(k, "y")})), n)"
-        val body = sortedNat.get(k.name) match {
-          case Some(nat) => s"if (ord.asInstanceOf[AnyRef] eq $nat) { java.util.Arrays.sort(vals); new ${k.name}Arr(vals, n) } else $merge"
-          case None      => merge
+        val body = sortedNatCond.get(k.name) match {
+          case Some(cond) => s"if ($cond) { java.util.Arrays.sort(vals); new ${k.name}Arr(vals, n) } else $merge"
+          case None       => merge
         }
         s"{ val vals = materialize${k.name}(xs); val n = vals.length; if (n < 2) xs else $body }"
       }
     )
-    // sortBy: keys differ from values -> sort an UNBOXED int[] index by the materialized keys, then permute.
-    // (Java's Arrays.sort can't sort an int[] by a comparator without boxing to Integer[], which is slower
-    // than this — Java TimSort only helps the direct Ref element sorts above, where the array IS Object[].)
-    val sortByV = dispatchA(k =>
-      s"{ val vals = materialize${k.name}(xs); val n = vals.length; if (n < 2) xs else { val keys = mapImpl[A, B](xs)(f); val idx = new Array[Int](n); var t = 0; while (t < n) { idx(t) = t; t += 1 }; val sidx = sortInt(idx, n, (ii, jj) => ord.lt(applyAtImpl[B](keys, ii), applyAtImpl[B](keys, jj))); val out = ${allocPlain(k)}; var p = 0; while (p < n) { out(p) = vals(sidx(p)); p += 1 }; new ${k.name}Arr(out, n) } }"
-    )
+    // sortBy: keys are computed ONCE into a RAW kind-B array (no FBase intermediate, no per-compare
+    // applyAtImpl node-match — the old form paid a node dispatch + Ordering box per comparison, measured
+    // 0.19-0.30x of iarray). Natural-ordering fast paths:
+    //   - Int keys: pack (key << 32 | index) into a long[] and Arrays.sort(long[]) — NO comparator at
+    //     all; signed long order == signed key order, and the ascending index in the low bits makes it
+    //     STABLE for equal keys.
+    //   - Long keys: unboxed index-sort comparator karr(ii) < karr(jj).
+    //   - Double keys: any TotalOrdering (incl. the default implicit DeprecatedDoubleOrdering) compares
+    //     exactly like java.lang.Double.compare — unboxed comparator on that.
+    // Everything else: the stable index-sort with ord.lt over the raw key array.
+    def sortByBody(ka: Kind, kb: Kind): String = {
+      val karrAlloc = if kb.name == "Ref" then "new Array[Object](n)" else s"new Array[${kb.arr}](n)"
+      val keyAsB = (e: String) => if kb.name == "Ref" then s"($e).asInstanceOf[B]" else s"rb.wrap($e)"
+      val fillKeys =
+        s"val karr = $karrAlloc; var q = 0; while (q < n) { karr(q) = ${wr(kb, s"rb.unwrap(f(${readVal(ka, "vals(q)")}))")}; q += 1 }"
+      def permute(sidx: String): String =
+        s"val out = ${allocPlain(ka)}; var p = 0; while (p < n) { out(p) = vals($sidx); p += 1 }; new ${ka.name}Arr(out, n)"
+      def idxSort(cmp: String): String =
+        s"{ val idx = new Array[Int](n); var t = 0; while (t < n) { idx(t) = t; t += 1 }; val sidx = sortInt(idx, n, (ii, jj) => $cmp); ${permute("sidx(p)")} }"
+      val generic = idxSort(s"ord.lt(${keyAsB("karr(ii)")}, ${keyAsB("karr(jj)")})")
+      val fast = kb.name match {
+        case "Int" =>
+          s"if (ord.asInstanceOf[AnyRef] eq scala.math.Ordering.Int) { val packed = new Array[Long](n); var t = 0; while (t < n) { packed(t) = (karr(t).toLong << 32) | (t.toLong & 0xffffffffL); t += 1 }; java.util.Arrays.sort(packed); ${permute("(packed(p) & 0xffffffffL).toInt")} } else $generic"
+        case "Long" =>
+          s"if (ord.asInstanceOf[AnyRef] eq scala.math.Ordering.Long) ${idxSort("karr(ii) < karr(jj)")} else $generic"
+        case "Double" =>
+          s"if (ord.isInstanceOf[scala.math.Ordering.Double.TotalOrdering]) ${idxSort("java.lang.Double.compare(karr(ii), karr(jj)) < 0")} else $generic"
+        case _ => generic
+      }
+      s"{ val vals = materialize${ka.name}(xs); val n = vals.length; if (n < 2) xs else { $fillKeys; $fast } }"
+    }
+    val sortByV = dispatchA(ka => dispatchBmap(kb => sortByBody(ka, kb)))
     // groupBy/groupMap: ONE unboxed pass. Each element's key picks (or creates) a per-group `${Kind}Group`
     // buffer in a HashMap (no encounter-order promise — matches List/Vector groupBy, which use HashMap); the
     // element (groupBy) or f(element) (groupMap) is unwrapped and appended directly into that group's primitive
