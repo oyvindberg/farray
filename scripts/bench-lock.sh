@@ -27,8 +27,14 @@ while true; do
     rm -rf "$LOCK"
     continue
   fi
-  echo "bench-lock: held by pid ${holder:-unknown} ($(cat "$LOCK/cmd" 2>/dev/null || echo '?')) — waiting…" >&2
-  sleep 5
+  # 1s poll: measured handoff latency is exactly this interval (acquisition itself is ~10ms, and the
+  # lock costs NOTHING while held — no polling, the command runs as a plain child at full speed).
+  # Announce once, then wait quietly so a long queue doesn't spam the log.
+  if [ -z "${_announced:-}" ]; then
+    echo "bench-lock: held by pid ${holder:-unknown} ($(cat "$LOCK/cmd" 2>/dev/null || echo '?')) — waiting…" >&2
+    _announced=1
+  fi
+  sleep 1
 done
 
 "$@"
