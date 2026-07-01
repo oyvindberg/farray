@@ -144,7 +144,7 @@ export default function Inline() {
 
       <BenchChart
         cls="ColdPipelineIntBenchmark"
-        caption="The same 14-stage pipeline, measured COLD: SingleShotTime, zero warmup, one uncompiled invocation at 100k elements (invocations/sec — higher is faster). Fused FArray is ~3.4× past the best rival and ~4× past List and IArray before HotSpot compiles anything. Warm — the sweep up top — that lead opens to ~31×. Warmup sets the size of the gap, not whether there is one."
+        caption="The same 14-stage pipeline, measured COLD: SingleShotTime, zero warmup, one uncompiled invocation at 100k elements (invocations/sec — higher is faster). Fused FArray is ~3.8× past List and IArray, and ~2.7× past even the quickest rival, before HotSpot compiles anything. Warm — the sweep up top — that lead opens to ~31×. Warmup sets the size of the gap, not whether there is one."
       />
 
       <p>
