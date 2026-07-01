@@ -408,39 +408,30 @@ object GenSets extends BleepCodegenScript("GenSets") {
         ee.open(s"case s: S${K}Sorted =>")
         ee.line("val a = s.arr")
         if k.isPrim then {
-          // binary search over the sorted prim array; bound on a.length (§1.6.5).
-          ee.line("var lo = 0")
-          ee.line("var hi = a.length - 1")
-          ee.line("var found = false")
-          ee.open("while (lo <= hi && !found)")
-          ee.line("val mid = (lo + hi) >>> 1")
-          ee.line("val v = a(mid)")
-          ee.line(s"if (${isEq(k, "v", "e")}) found = true")
-          ee.line(s"else if (${isLt(k, "v", "e")}) lo = mid + 1")
-          ee.line("else hi = mid - 1")
+          // a Sorted leaf is ALWAYS ≤16 (the wrap threshold), so a LINEAR scan beats binary search: the loop
+          // branch is perfectly predictable and only the equality branch can mispredict (once, on a hit),
+          // whereas binary search's ~log n comparisons are all data-dependent → a mispredict each.
+          ee.line("var i = 0")
+          ee.open("while (i < a.length)")
+          ee.line("val v = a(i)")
+          ee.line(s"if (${isEq(k, "v", "e")}) return true")
+          ee.line(s"if (${isLt(k, "e", "v")}) return false") // sorted ascending → passed e → miss, stop early
+          ee.line("i += 1")
           ee.close()
-          ee.line("return found")
+          ee.line("return false")
         } else {
-          // Ref leaf: hash-sorted, so binary-search the cached signed hash, then scan the equal-hash tie-group
-          // (expected size ~1) with .equals. O(log n + tie-group) — replaces the old O(n) linear equals scan.
+          // Ref Sorted leaf is ≤16 (the wrap threshold) and hash-sorted; a LINEAR scan over the cached hashes is
+          // branch-predictable (vs binary search's data-dependent comparisons) and only calls .equals on a hash hit.
           ee.line("val hs = s.hashes")
           ee.line("val hc = e.hashCode()")
-          ee.line("var lo = 0; var hi = a.length - 1; var found = false")
-          ee.open("while (lo <= hi && !found)")
-          ee.line("val mid = (lo + hi) >>> 1")
-          ee.line("val hm = hs(mid)")
-          ee.line("if (hm < hc) lo = mid + 1")
-          ee.line("else if (hm > hc) hi = mid - 1")
-          ee.open("else")
-          // hash hit: scan left then right over the contiguous equal-hash run for an .equals match, then stop.
-          ee.line("var t = mid")
-          ee.line("while (t >= 0 && hs(t) == hc && !found) { if (a(t).equals(e)) found = true; t -= 1 }")
-          ee.line("t = mid + 1")
-          ee.line("while (t < a.length && hs(t) == hc && !found) { if (a(t).equals(e)) found = true; t += 1 }")
-          ee.line("lo = hi + 1")
+          ee.line("var i = 0")
+          ee.open("while (i < a.length)")
+          ee.line("val hm = hs(i)")
+          ee.line("if (hm == hc && a(i).equals(e)) return true")
+          ee.line("if (hm > hc) return false") // hashes sorted ascending → passed hc → miss, stop early
+          ee.line("i += 1")
           ee.close()
-          ee.close()
-          ee.line("return found")
+          ee.line("return false")
         }
         ee.close() // case Sorted
         ee.line(s"case u: SUnion => if (containsLeaf$K(u.right, e)) return true else node = u.left")
@@ -513,7 +504,9 @@ object GenSets extends BleepCodegenScript("GenSets") {
           ee.line("var mn = raw(0); var mx = raw(0); var di = 1")
           ee.line("while (di < len) { val v = raw(di); if (v < mn) mn = v; if (v > mx) mx = v; di += 1 }")
           ee.line("val dspan = mx.toLong - mn.toLong + 1L")
-          ee.open("if (len > 16 && dspan <= 64L * len && dspan <= (1L << 20))")
+          // even SMALL dense sets become bitmaps (O(1) bit-test) — a binary-search Sorted leaf at ≤16 elements
+          // loses contains to every O(1) competitor (the size-16 contains hole). len==1 falls through → SIntOne.
+          ee.open("if (len >= 2 && dspan <= 64L * len && dspan <= (1L << 20))")
           ee.line("val dbase = (mn >> 6) << 6")
           ee.line("val dnw = ((mx - dbase) >>> 6) + 1")
           ee.line("val dwords = new Array[Long](dnw)")
@@ -887,7 +880,9 @@ object GenSets extends BleepCodegenScript("GenSets") {
         ee.line("val n = arr.length")
         ee.line("if (n == 0) SEmpty.INSTANCE")
         ee.line("else if (n == 1) new SRefOne(arr(0))")
-        ee.line("else if (n <= 16) new SRefSorted(arr, hashes)")
+        // only the TINIEST ref sets stay a linear-scan Sorted leaf; >4 gets the O(1) F14 hash so small-set
+        // contains is a single probe (the ctrl byte also rejects misses in one load), not an O(n) scan.
+        ee.line("else if (n <= 4) new SRefSorted(arr, hashes)")
         ee.open("else")
         ee.line("var cap = 8")
         ee.line("while (cap < n * 2) cap <<= 1")
