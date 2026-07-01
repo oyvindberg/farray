@@ -1,5 +1,6 @@
 import Snippet from "../components/Snippet";
 import BenchPair from "../components/BenchPair";
+import BenchChart from "../components/BenchChart";
 import { DispatchDiagram } from "../components/Diagrams";
 
 export default function Inline() {
@@ -136,12 +137,21 @@ export default function Inline() {
       <p>
         And because all of that specialization happened at <em>compile</em> time, there's no warmup lap to
         lose. FArray's speed is already in the bytecode — unboxed, monomorphic, allocation-free — so it never
-        waits on the JIT to devirtualize or escape-analyze its way there. Measured cold, single-shot, with the
-        JVM still interpreting, the fused pipeline already runs three-to-four times ahead of List and IArray;
-        there's no lap where a boxing collection is briefly in front. What warmup buys isn't the lead but its
-        size — that same pipeline widens to its ~30× steady state as the loop compiles. The boxing collections
-        gain little from it, because their cost is <em>allocation</em>, and no amount of JIT will un-allocate a
-        million <code>Integer</code>s.
+        waits on the JIT to devirtualize or escape-analyze its way there. Measured cold — single-shot, zero
+        warmup, the JVM still interpreting — the fused pipeline is already three-to-four times ahead of List
+        and IArray, before HotSpot has compiled a thing:
+      </p>
+
+      <BenchChart
+        cls="ColdPipelineIntBenchmark"
+        caption="The same 14-stage pipeline, measured COLD: SingleShotTime, zero warmup, one uncompiled invocation at 100k elements (invocations/sec — higher is faster). Fused FArray is ~3.4× past the best rival and ~4× past List and IArray before HotSpot compiles anything. Warm — the sweep up top — that lead opens to ~31×. Warmup sets the size of the gap, not whether there is one."
+      />
+
+      <p>
+        There's no lap where a boxing collection is briefly in front. And what warmup buys isn't the lead but
+        its size — that same pipeline widens to its ~31× steady state as the loop compiles. The boxing
+        collections gain little from it, because their cost is <em>allocation</em>, and no amount of JIT will
+        un-allocate a million <code>Integer</code>s.
       </p>
     </section>
   );

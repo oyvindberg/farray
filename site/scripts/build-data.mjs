@@ -74,11 +74,18 @@ function buildBench() {
   let skipped = 0;
   for (const b of raw) {
     const pm = b.primaryMetric;
-    if (!pm || pm.scoreUnit !== "ops/s") {
-      skipped++;
-      continue;
-    }
-    slim.push({ b: b.benchmark, p: b.params || {}, s: pm.score });
+    if (!pm) { skipped++; continue; }
+    // Normalize to a higher-is-faster score. Throughput is already ops/s; SingleShotTime (the cold
+    // benchmarks) reports time/op — invert it to invocations/sec so it charts like everything else.
+    let s;
+    const u = pm.scoreUnit;
+    if (u === "ops/s") s = pm.score;
+    else if (u === "s/op") s = 1 / pm.score;
+    else if (u === "ms/op") s = 1e3 / pm.score;
+    else if (u === "us/op") s = 1e6 / pm.score;
+    else if (u === "ns/op") s = 1e9 / pm.score;
+    else { skipped++; continue; }
+    slim.push({ b: b.benchmark, p: b.params || {}, s });
   }
   writeFileSync(resolve(OUT, "bench.json"), JSON.stringify(slim));
   console.log(`bench.json: ${slim.length} entries (${skipped} non-ops/s skipped)`);
@@ -529,6 +536,11 @@ function buildBenchSources(benchClasses) {
         methodCount++;
       }
     }
+  }
+  // ColdPipelineIntBenchmark defines no @Benchmark methods of its own — it inherits them from
+  // LongMixedPipelineIntBenchmark and only flips the JMH mode to cold. Its per-card source is the parent's.
+  if (byClass.LongMixedPipelineIntBenchmark && !byClass.ColdPipelineIntBenchmark) {
+    byClass.ColdPipelineIntBenchmark = byClass.LongMixedPipelineIntBenchmark;
   }
   writeFileSync(resolve(OUT, "bench-sources.json"), JSON.stringify(byClass));
   console.log(`bench-sources.json: ${methodCount} methods across ${Object.keys(byClass).length} classes`);
