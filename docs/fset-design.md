@@ -51,9 +51,16 @@ subtyping — never real *trait* subtyping, which would box a wrapper and lose t
 | `contains`/`apply`, `∪ ∩ ∖ ⊕ ¬`, `+ -` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `.finite: Option[FSetFinite[A]]` | — | ✅ | (id) | (id) | (id) |
 | `materialize: FSetMaterialized[A]` | ❌ | — | ✅ | (id) | (id) |
+| traversals + transforms: `foreach`/`forall`/`exists`/`count`/`filter`/`map`/`flatMap` | ❌ | ❌ | ✅ | (id) | (id) |
 | exact `size` / `isEmpty` (O(1)) | ❌ | ❌ | ❌ | ✅ | ✅ |
-| `foreach`/`iterator`/`map`/`flatMap`/`filter`/`equals`/`hashCode`/`toFArray` | ❌ | ❌ | ❌ | ✅ | ✅ |
+| `iterator`/`equals`/`hashCode`/`toFArray` | ❌ | ❌ | ❌ | ✅ | ✅ |
 | `min`/`max`/`range`/`firstKey`/`lastKey`/ordered `iterator` | ❌ | ❌ | ❌ | ❌ | ✅ |
+
+> **Placement note (implemented).** The *building* transforms and the O(n) traversals moved DOWN to
+> `FSetFinite`: they materialize (and memoize) internally, so requiring an explicit `.materialize`
+> first added a keyword but no information. The O(1) observations (`size`/`isEmpty`) and the ops whose
+> impls *require* a frozen leaf (`iterator`, value `equals`/`hashCode`, `min`/`max`) stay on
+> `FSetMaterialized`, keeping "cheap read" visible in the type.
 
 ### 1.1 Variance — invariant, except `FSetInfinite` is contravariant (VERIFIED)
 

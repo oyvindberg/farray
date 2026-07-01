@@ -273,6 +273,44 @@ class FSetTest:
     assertTrue(f.contains(75)); assertFalse(f.contains(25))
     assertEquals(40, (FSet(1, 2, 3) ++ big).materialize.count(_ >= 60))
 
+  @Test def flatmap_int(): Unit =
+    // parity with Set.flatMap: dedup across per-element results, sorted materialized output
+    val fs = FSet(1, 2, 3)
+    assertEquals(List(1, 2, 3, 4), fs.flatMap(x => FSet(x, x + 1)).toList)
+    assertEquals(Set(1, 2, 3).flatMap(x => Set(x, x + 1)).toList.sorted, fs.flatMap(x => FSet(x, x + 1)).toList)
+    // total collapse and empty results
+    assertEquals(List(7), fs.flatMap(_ => FSet(7)).toList)
+    assertTrue(fs.flatMap(_ => FSet.empty[Int]).isEmpty)
+    assertEquals(List(2), fs.flatMap(x => if x == 2 then FSet(x) else FSet.empty).toList)
+    // large (bitmap) source and dense expansion — stays on the word-merge path
+    val big = FSet.fromArray((0 until 1000).toArray)
+    val doubled = big.flatMap(x => FSet(2 * x, 2 * x + 1))
+    assertEquals(2000, doubled.size)
+    assertTrue(doubled.contains(1999)); assertFalse(doubled.contains(2000))
+    assertEquals(
+      (0 until 100).toSet.flatMap((x: Int) => Set(x % 7, x % 11)).toList.sorted,
+      FSet.fromArray((0 until 100).toArray).flatMap(x => FSet(x % 7, x % 11)).toList
+    )
+
+  @Test def flatmap_ref_and_cross_kind(): Unit =
+    val ss = FSet("a", "bb")
+    assertEquals(List("a", "ax", "bb", "bbx"), ss.flatMap(s => FSet(s, s + "x")).toList.sorted)
+    // Int -> String and String -> Int (the NxN read/write kinds)
+    assertEquals(List("s1", "s2"), FSet(1, 2).flatMap(x => FSet("s" + x)).toList.sorted)
+    assertEquals(List(1, 2), ss.flatMap(s => FSet(s.length)).toList)
+
+  @Test def transforms_on_finite(): Unit =
+    // filter/map/flatMap/traversals now live on FSetFinite: a bounded range enumerates without .materialize
+    val r = FSet.range(1, 5)
+    assertEquals(List(2, 4), r.filter(_ % 2 == 0).toList)
+    assertEquals(List(2, 4, 6, 8, 10), r.map(_ * 2).toList)
+    assertEquals(List(10, 20, 30, 40, 50), r.flatMap(x => FSet(x * 10)).toList)
+    assertEquals(2, r.count(_ % 2 == 0))
+    assertTrue(r.exists(_ == 5)); assertFalse(r.forall(_ < 5))
+    // and a provably-finite lazy algebra enumerates through .finite without an explicit materialize
+    val lazyU = FSet(1, 2) ++ FSet(3)
+    assertEquals(List(10, 20, 30), lazyU.finite.get.map(_ * 10).toList)
+
   @Test def range_and_predicate_membership(): Unit =
     // the headline: union two HUGE ranges, query membership — O(1), nothing materialized.
     val u = FSet.range(1, 1000000) ++ FSet.range(2000000, 3000000)

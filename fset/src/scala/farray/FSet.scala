@@ -87,13 +87,11 @@ object FSet:
     inline def finite: Option[FSetFinite[A]] =
       if FSetOps.isFiniteImpl[A](xs) then Some(xs.asInstanceOf[FSetFinite[A]]) else None
 
-  // ---- FSetMaterialized: the enumerable face — size / iterate / transform / value-equality / ordered ----
-  extension [A](xs: FSetMaterialized[A])
-    inline def size: Int = FSetOps.sizeImpl[A](xs)
-    inline def isEmpty: Boolean = FSetOps.isEmptyImpl[A](xs)
-    inline def nonEmpty: Boolean = !FSetOps.isEmptyImpl[A](xs)
-    inline def iterator: Iterator[A] = FSetOps.iteratorImpl[A](xs)
-    inline def toList: List[A] = FSetOps.iteratorImpl[A](xs).toList
+  // ---- FSetFinite: traversals + transforms — anything provably finite may enumerate (internally
+  // materializes, memoized on the node; bounded ranges are cap-guarded). The building ops return a fresh
+  // MATERIALIZED set, so they sit here rather than on FSetMaterialized: requiring `.materialize` first
+  // would add a keyword but no information — the operation materializes (and memoizes) anyway. ----
+  extension [A](xs: FSetFinite[A])
     inline def foreach(inline f: A => Unit): Unit = FSetOps.foreachImpl[A](xs)(f)
     inline def forall(inline p: A => Boolean): Boolean = FSetOps.forallImpl[A](xs)(p)
     inline def exists(inline p: A => Boolean): Boolean = FSetOps.existsImpl[A](xs)(p)
@@ -101,6 +99,18 @@ object FSet:
     inline def filter(inline p: A => Boolean): FSetMaterialized[A] = FSetOps.filterImpl[A](xs)(p)
     inline def filterNot(inline p: A => Boolean): FSetMaterialized[A] = FSetOps.filterImpl[A](xs)(a => !p(a))
     inline def map[B](inline f: A => B): FSetMaterialized[B] = FSetOps.mapImpl[A, B](xs)(f)
+    // flatMap: per-element result sets are merged by pairwise unboxed union rounds (bitmap word-OR for
+    // dense Int, cached-hash sort-merge for Ref); dedup falls out of the merge.
+    inline def flatMap[B](inline f: A => FSetMaterialized[B]): FSetMaterialized[B] = FSetOps.flatMapImpl[A, B](xs)(f)
+
+  // ---- FSetMaterialized: the cheap-observation face — O(1)/O(n) reads on the frozen leaf, and the ops
+  // whose impls REQUIRE a materialized leaf (value equality / hashCode / ordered extras). ----
+  extension [A](xs: FSetMaterialized[A])
+    inline def size: Int = FSetOps.sizeImpl[A](xs)
+    inline def isEmpty: Boolean = FSetOps.isEmptyImpl[A](xs)
+    inline def nonEmpty: Boolean = !FSetOps.isEmptyImpl[A](xs)
+    inline def iterator: Iterator[A] = FSetOps.iteratorImpl[A](xs)
+    inline def toList: List[A] = FSetOps.iteratorImpl[A](xs).toList
     // value equals / hashCode — now a COMPILE-TIME guarantee (only materialized sets have them).
     inline def sameElements(that: FSetMaterialized[A]): Boolean = FSetOps.sameElementsImpl[A](xs, that)
     inline def ===(that: FSetMaterialized[A]): Boolean = xs.sameElements(that)

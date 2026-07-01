@@ -1635,6 +1635,23 @@ object GenSets extends BleepCodegenScript("GenSets") {
           ee.line(s"else wrap${K}Raw(java.util.Arrays.copyOf(outA, w), java.util.Arrays.copyOf(outH, w))")
         }
         ee.close()
+        // flatMap's merge tail, INT ONLY: fold the collected per-element result leaves with PAIRWISE unionTwo
+        // rounds (the balanced shape materializeTree uses for union spines) — the bitmap⋃bitmap word-OR fast
+        // path makes this the measured winner for dense Int. Other kinds append raw columns into a
+        // ${"$"}{K}FlatAcc and build ONCE instead (pairwise merge re-allocates at every level — measured loss).
+        if k.name == "Int" then {
+          ee.open(s"def flatMerge$K(parts: java.util.ArrayList[SBase]): SBase =")
+          ee.line("var sz = parts.size")
+          ee.line("if (sz == 0) return SEmpty.INSTANCE")
+          ee.open("while (sz > 1)")
+          ee.line("var w = 0; var i = 0")
+          ee.line(s"while (i + 1 < sz) { parts.set(w, unionTwo$K(parts.get(i), parts.get(i + 1))); w += 1; i += 2 }")
+          ee.line("if (i < sz) { parts.set(w, parts.get(i)); w += 1 }")
+          ee.line("sz = w")
+          ee.close()
+          ee.line("parts.get(0)")
+          ee.close()
+        }
       }
       ee.result
     }
@@ -1688,6 +1705,65 @@ object GenSets extends BleepCodegenScript("GenSets") {
         }
         .mkString("\n") + "\n    }"
     }
+
+    // flatMap[B]: read each element unboxed (kind A, same source walks as map), apply the inline user `f`
+    // to get a per-element MATERIALIZED result set (an SBase leaf — no boxing, no iterator), then combine
+    // per WRITE kind B: Int folds the collected leaves with flatMergeInt's pairwise unionTwo rounds (the
+    // bitmap word-OR fast path — measured winner); Long/Double/Ref append each part's raw column into a
+    // ${"$"}{B}FlatAcc and build ONCE at the end (buildSorted${"$"}{B} dedups) — pairwise merging re-allocates
+    // at every level and measured 0.7-0.9x vs immutable.Set for Ref before this split.
+    val flatMapV = {
+      def srcOf(ka: Kind): String =
+        if ka.name == "Ref" then "rawArrRef(materializeRef(xs))" else s"asArr${ka.name}(materialize${ka.name}(xs))"
+      def readA(ka: Kind): String = if ka.isPrim then "ra.wrap(src(i))" else "src(i).asInstanceOf[A]"
+      // f returns the OPAQUE FSetMaterialized[B]; the body inlines at the USER call site (outside the opaque
+      // scope), so unwrap to SBase with an erased cast there rather than relying on transparency.
+      def collect(ka: Kind, sink: String => String): String =
+        if ka.name == "Int" then
+          // Int source: word-scan a bitmap leaf directly (no Int[] extraction pass), array-scan otherwise.
+          "materializeInt(xs) match { " +
+            "case bm: SIntBitmap => { val ws = bm.words; val bs = bm.base; var wi = 0; " +
+            s"while (wi < ws.length) { var bits = ws(wi); while (bits != 0L) { val e = bs + (wi << 6) + java.lang.Long.numberOfTrailingZeros(bits); ${sink("ra.wrap(e)")}; bits &= bits - 1L }; wi += 1 } }; " +
+            s"case m => { val src = asArrInt(m); var i = 0; while (i < src.length) { ${sink("ra.wrap(src(i))")}; i += 1 } } }"
+        else s"{ val src = ${srcOf(ka)}; var i = 0; while (i < src.length) { ${sink(readA(ka))}; i += 1 } }"
+      def body(ka: Kind, kb: Kind): String =
+        if kb.name == "Int" then
+          s"{ val parts = new java.util.ArrayList[SBase](); ${collect(ka, e => s"val r = (f($e)).asInstanceOf[SBase]; if (!r.isInstanceOf[SEmpty]) parts.add(r)")}; flatMergeInt(parts) }"
+        else s"{ val acc = new ${kb.name}FlatAcc; ${collect(ka, e => s"acc.addAll((f($e)).asInstanceOf[SBase])")}; acc.result() }"
+      "summonFrom {\n" + opKinds
+        .map { ka =>
+          s"      case ra: ${ka.name}Repr[A] => summonFrom {\n" +
+            opKinds.map(kb => s"        case _: ${kb.name}Repr[B] => ${body(ka, kb)}").mkString("\n") +
+            "\n      }"
+        }
+        .mkString("\n") + "\n    }"
+    }
+
+    // Growable raw-column accumulators for flatMap's non-Int write kinds: append each per-element result
+    // leaf's backing column (asArr / rawArrRef — no boxing, bulk arraycopy), build the final leaf ONCE.
+    val flatAccClasses = List("Long" -> "Long", "Double" -> "Double", "Ref" -> "Object")
+      .map { case (kn, at) =>
+        val get = if kn == "Ref" then "FSetOps.rawArrRef(s)" else s"FSetOps.asArr$kn(s)"
+        s"""|// flatMap accumulator (kind $kn): parts' raw columns appended with System.arraycopy; buildSorted$kn dedups once.
+            |private[farray] final class ${kn}FlatAcc {
+            |  private var out = new Array[$at](16)
+            |  private var n = 0
+            |  def addAll(s: SBase): Unit = {
+            |    val a = $get
+            |    if (a.length == 0) return
+            |    if (n + a.length > out.length) {
+            |      var c = out.length << 1
+            |      while (c < n + a.length) c <<= 1
+            |      out = java.util.Arrays.copyOf(out, c)
+            |    }
+            |    System.arraycopy(a, 0, out, n, a.length)
+            |    n += a.length
+            |  }
+            |  def result(): SBase = FSetOps.buildSorted$kn(out, n, true)
+            |}
+            |""".stripMargin
+      }
+      .mkString("\n")
 
     // ---- value equals / hashCode helpers — MATERIALIZED-ONLY (throw on a lazy SView) ----
     val valueHelpers = {
@@ -1869,6 +1945,7 @@ object GenSets extends BleepCodegenScript("GenSets") {
        |  inline def countImpl[A](xs: SBase)(inline p: A => Boolean): Int = $countV
        |  inline def filterImpl[A](xs: SBase)(inline p: A => Boolean): SBase = $filterV
        |  inline def mapImpl[A, B](xs: SBase)(inline f: A => B): SBase = $mapV
+       |  inline def flatMapImpl[A, B](xs: SBase)(inline f: A => FSetMaterialized[B]): SBase = $flatMapV
        |  inline def inclImpl[A, B](xs: SBase, elem: B): SBase = $inclV
        |  inline def exclImpl[A, B](xs: SBase, elem: B): SBase = $exclV
        |  inline def unionImpl[A](xs: SBase, that: SBase): SBase = $unionV
@@ -1972,6 +2049,8 @@ object GenSets extends BleepCodegenScript("GenSets") {
        |    e
        |  }
        |}
+       |
+       |$flatAccClasses
        |""".stripMargin
   }
 }
