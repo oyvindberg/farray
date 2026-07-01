@@ -31,9 +31,11 @@ abstract class StrSetInputs extends CommonParams {
   // a structurally-equal COPY of A (for equals) and a HALF of A ⊆ A (for subsetOf)
   var fsetACopy: FSetMaterialized[String] = _; var sSetACopy: Set[String] = _; var smSetACopy: SMHashSet[String] = _; var fuACopy: FuObjSet[String] = _
   var fsetHalf: FSetMaterialized[String] = _; var sSetHalf: Set[String] = _; var fuHalf: FuObjSet[String] = _
+  var probes: Array[String] = _ // 1024 scrambled probes (~50% hit / 50% miss) — varied lookups defeat branch prediction
 
   @Setup
   def setup(): Unit = {
+    probes = Array.tabulate(1024){ i => val v = (((i.toLong * 2654435761L) & 0x7fffffffL).toInt) % (2 * size); if (v < size) "k" + v else "z" + v }
     arrA = Array.tabulate(size)(i => "k" + i)
     arrB = Array.tabulate(size)(i => "k" + (i + size / 2))
     arrC = Array.tabulate(size)(i => "k" + (i + size))

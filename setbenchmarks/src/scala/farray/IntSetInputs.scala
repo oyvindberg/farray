@@ -35,9 +35,11 @@ abstract class IntSetInputs extends CommonParams {
   // a structurally-equal COPY of A (for equals) and a HALF of A ⊆ A (for subsetOf)
   var fsetACopy: FSetMaterialized[Int] = _; var sSetACopy: Set[Int] = _; var fuACopy: FuIntSet = _; var immBitACopy: BitSet = _
   var fsetHalf: FSetMaterialized[Int] = _; var sSetHalf: Set[Int] = _; var fuHalf: FuIntSet = _; var immBitHalf: BitSet = _
+  var probes: Array[Int] = _ // 1024 scrambled probes (~50% hit / 50% miss) — varied lookups defeat branch prediction
 
   @Setup
   def setup(): Unit = {
+    probes = Array.tabulate(1024)(i => (((i.toLong * 2654435761L) & 0x7fffffffL).toInt) % (2 * size))
     arrA = Array.tabulate(size)(i => i)
     arrB = Array.tabulate(size)(i => i + size / 2)
     arrC = Array.tabulate(size)(i => i + size)
