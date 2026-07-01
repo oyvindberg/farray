@@ -459,9 +459,10 @@ object GenSets extends BleepCodegenScript("GenSets") {
           ee.line("val ctrl = h.ctrl")
           ee.line("val keys = h.keys")
           ee.line("val hc = e.hashCode()")
-          // small tables (fit in cache): cheap mixRef. Large: full mixInt avalanche — its distribution keeps
-          // probe chains short where a cache-cold scan is expensive (build agrees on this via n <= 16384).
-          ee.line("val m = if (ctrl.length <= 32768) mixRef(hc) else mixInt(hc)")
+          // mixRef (cheap) only in the mid BAND where it both matters and distributes well: its high-bit fold is
+          // tuned for ~16-bit masks, so it degrades below ~2^10 (tiny) and above ~2^15 (large) — mixInt there.
+          ee.line("val cl = ctrl.length")
+          ee.line("val m = if (cl >= 1024 && cl <= 32768) mixRef(hc) else mixInt(hc)")
           ee.line("val fp = (((m >>> 24) & 0x7f) | 0x80).toByte")
           ee.line("var slot = m & (ctrl.length - 1)")
           ee.line("var res = false; var go = true")
@@ -893,10 +894,10 @@ object GenSets extends BleepCodegenScript("GenSets") {
         ee.line("while (cap < n * 2) cap <<= 1")
         ee.line("val ctrl = new Array[Byte](cap)")
         ee.line("val keys = new Array[Object](cap)")
-        ee.line("val small = n <= 16384") // small table → cheap mixRef; large → mixInt (probe agrees via ctrl.length)
+        ee.line("val useRef = cap >= 1024 && cap <= 32768") // mid-band → cheap mixRef; else mixInt (probe agrees via ctrl.length)
         ee.line("var p = 0")
         ee.open("while (p < n)")
-        ee.line("val m = if (small) mixRef(hashes(p)) else mixInt(hashes(p))")
+        ee.line("val m = if (useRef) mixRef(hashes(p)) else mixInt(hashes(p))")
         ee.line("var slot = m & (cap - 1)")
         ee.line("while (ctrl(slot) != 0) slot = (slot + 1) & (cap - 1)")
         ee.line("ctrl(slot) = (((m >>> 24) & 0x7f) | 0x80).toByte")
