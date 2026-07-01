@@ -275,8 +275,16 @@ function buildSnippets() {
     const path = resolve(REPO, g.file);
     const raw = readFileSync(path, "utf8").replace(/^\n+|\n+$/g, "");
     if (g.name === "map-generated") {
-      // default to the proxy-stripped loop; the verbatim expansion is one toggle away
-      const short = stripProxy(raw);
+      // A readable rendering: the inline desugaring of `_ + 1` collapsed to `v + 1`, and the dead
+      // `val n`/`val rb` bindings the expansion leaves behind dropped. Crucially the loop is NOT here —
+      // `mapLeafIntInt` is a plain (non-inline) call, so what you see is the call, not the while-loop.
+      // The verbatim post-typer tree is one toggle away in `full`.
+      const short = [
+        "{",
+        "  val r: intRepr.type = intRepr",
+        "  mapLeafIntInt(xs, (v: Int) => v + 1)",
+        "}",
+      ].join("\n");
       out[g.name] = {
         name: g.name, file: g.file, lang: "scala",
         code: short, html: hl(short, "scala"), full: raw, fullHtml: hl(raw, "scala"), fullLabel: "raw expansion",

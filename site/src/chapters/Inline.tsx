@@ -59,10 +59,12 @@ export default function Inline() {
           before the program runs.
         </li>
         <li>
-          <code>mapLeafIntInt(xs, …)</code> — a direct, <strong>monomorphic</strong> call into the shared loop
-          specialized for <code>Int → Int</code>. The per-element work lives <em>there</em>, compiled once, so
-          this call site stays tiny and the JIT has one hot method to inline instead of a fresh copy at every
-          use.
+          <code>mapLeafIntInt(xs, …)</code> — a direct, <strong>monomorphic</strong> call, and a call is all it
+          is. The <code>while</code>-loop lives <em>inside</em> <code>mapLeafIntInt</code>, which is deliberately{" "}
+          <em>not</em> <code>inline</code> — compiled once and shared, never copied into your code. That's why
+          the loop isn't in the expansion above: you're looking at the call site, not the loop body. (Inline the
+          loop at every call site and you'd bloat straight into the JVM's method-size cliff — which is exactly
+          the trade <code>.fuse</code> opts into on purpose.)
         </li>
         <li>
           <code>{"(v: Int) => v + 1"}</code> — your lambda, materialized <strong>once</strong> as a specialized{" "}
