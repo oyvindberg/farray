@@ -7,3 +7,6 @@ public/data
 *.tsbuildinfo
 vite.config.js
 vite.config.d.ts
+
+# vite dep cache
+.vite
