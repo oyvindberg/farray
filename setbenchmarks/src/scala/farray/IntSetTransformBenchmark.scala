@@ -15,5 +15,7 @@ class IntSetFilterBenchmark extends IntSetInputs {
   @Benchmark def fset(): Any = fsetA.filter(x => (x & 1) == 0)
   @Benchmark def scalaset(): Any = sSetA.filter(x => (x & 1) == 0)
   @Benchmark def immbitset(): Any = immBitA.filter(x => (x & 1) == 0)
-  @Benchmark def fastutil(): Any = { val c = new FuIntSet(); val it = fuA.iterator(); while (it.hasNext) { val v = it.nextInt(); if ((v & 1) == 0) c.add(v) }; c }
+  @Benchmark def fastutil(): Any = {
+    val c = new FuIntSet(); val it = fuA.iterator(); while (it.hasNext) { val v = it.nextInt(); if ((v & 1) == 0) c.add(v) }; c
+  }
 }

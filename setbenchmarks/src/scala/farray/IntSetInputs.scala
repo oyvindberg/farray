@@ -10,9 +10,9 @@ import org.eclipse.collections.api.set.primitive.ImmutableIntSet
 import org.eclipse.collections.api.factory.primitive.IntSets
 import org.roaringbitmap.RoaringBitmap
 
-/** Int-set benchmark inputs: two overlapping sets `a`,`b` per competitor (for ∪/∩/∖), the raw int[] for the
-  * build benchmark, hit/miss probes for contains. Every competitor is built once in @Setup. Element domain is
-  * non-negative (0..1.5·size) so the dense BitSet/Roaring competitors are valid. */
+/** Int-set benchmark inputs: two overlapping sets `a`,`b` per competitor (for ∪/∩/∖), the raw int[] for the build benchmark, hit/miss probes for contains.
+  * Every competitor is built once in @Setup. Element domain is non-negative (0..1.5·size) so the dense BitSet/Roaring competitors are valid.
+  */
 abstract class IntSetInputs extends CommonParams {
   @Param(Array("16", "1000", "100000"))
   var size: Int = 1000

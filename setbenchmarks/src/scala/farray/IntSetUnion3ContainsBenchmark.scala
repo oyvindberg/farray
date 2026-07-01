@@ -6,10 +6,10 @@ import com.carrotsearch.hppc.{IntHashSet => HppcIntSet}
 import org.eclipse.collections.impl.set.mutable.primitive.{IntHashSet => EcIntSet}
 import org.roaringbitmap.RoaringBitmap
 
-/** Union THREE sets, then probe `contains` n = size times (once per input element). The amortized test: FSet
-  * builds the 3-way union as O(1) lazy nodes and each `contains` distributes over the depth-2 tree (never
-  * materializes); every competitor builds the whole 3-way union once, then answers each `contains` in O(1).
-  * As the query count grows the union-build cost amortizes — this is where FSet's per-query tree-walk is tested. */
+/** Union THREE sets, then probe `contains` n = size times (once per input element). The amortized test: FSet builds the 3-way union as O(1) lazy nodes and each
+  * `contains` distributes over the depth-2 tree (never materializes); every competitor builds the whole 3-way union once, then answers each `contains` in O(1).
+  * As the query count grows the union-build cost amortizes — this is where FSet's per-query tree-walk is tested.
+  */
 class IntSetUnion3ContainsBenchmark extends IntSetInputs {
   @Benchmark def fset(): Int = {
     val u = fsetA ++ fsetB ++ fsetC

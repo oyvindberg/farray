@@ -2,8 +2,9 @@ package farray
 
 import org.openjdk.jmh.annotations.Benchmark
 
-/** Int `contains` — HIT (element ∈ set), the hot read path, across every competitor.
-  * (Method name = impl name so the W/T/L report groups them; miss is a sibling class.) */
+/** Int `contains` — HIT (element ∈ set), the hot read path, across every competitor. (Method name = impl name so the W/T/L report groups them; miss is a
+  * sibling class.)
+  */
 class IntSetContainsHitBenchmark extends IntSetInputs {
   @Benchmark def fset(): Boolean = fsetA.contains(hit)
   @Benchmark def scalaset(): Boolean = sSetA.contains(hit)

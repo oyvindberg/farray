@@ -2,8 +2,8 @@ package farray
 
 import org.openjdk.jmh.annotations.Benchmark
 
-/** Value ops: equals of two structurally-equal sets (worst case — full compare), order-independent hashCode,
-  * and subsetOf (a HALF of A ⊆ A → confirms all). */
+/** Value ops: equals of two structurally-equal sets (worst case — full compare), order-independent hashCode, and subsetOf (a HALF of A ⊆ A → confirms all).
+  */
 class IntSetEqualsBenchmark extends IntSetInputs {
   @Benchmark def fset(): Boolean = fsetA === fsetACopy
   @Benchmark def scalaset(): Boolean = sSetA == sSetACopy

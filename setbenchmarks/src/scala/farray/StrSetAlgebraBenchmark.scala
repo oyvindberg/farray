@@ -6,9 +6,9 @@ import com.carrotsearch.hppc.{ObjectHashSet => HppcObjSet}
 import com.google.common.collect.{ImmutableSet, Sets}
 import org.eclipse.collections.impl.set.mutable.UnifiedSet
 
-/** Bulk String-set algebra, measured FAIRLY as "combine then answer membership". FSet builds the combination
-  * as an O(1) lazy node and `contains` distributes over it — no merge; every competitor must build the whole
-  * result first, then probe. (`hit` ∈ A∩B.) */
+/** Bulk String-set algebra, measured FAIRLY as "combine then answer membership". FSet builds the combination as an O(1) lazy node and `contains` distributes
+  * over it — no merge; every competitor must build the whole result first, then probe. (`hit` ∈ A∩B.)
+  */
 class StrSetUnionBenchmark extends StrSetInputs {
   @Benchmark def fset(): Boolean = (fsetA ++ fsetB).contains(hit)
   @Benchmark def scalaset(): Boolean = (sSetA union sSetB).contains(hit)
@@ -36,5 +36,7 @@ class StrSetDiffBenchmark extends StrSetInputs {
   @Benchmark def guava(): Boolean = Sets.difference(guavaA, guavaB).immutableCopy().contains(hit)
   @Benchmark def eclipse(): Boolean = ecA.difference(ecB).contains(hit)
   @Benchmark def fastutil(): Boolean = { val c = new FuObjSet[String](fuA); c.removeAll(fuB); c.contains(hit) }
-  @Benchmark def hppc(): Boolean = { val c = new HppcObjSet[String](hppcA); c.removeAll(hppcB.asInstanceOf[com.carrotsearch.hppc.ObjectContainer[String]]); c.contains(hit) }
+  @Benchmark def hppc(): Boolean = {
+    val c = new HppcObjSet[String](hppcA); c.removeAll(hppcB.asInstanceOf[com.carrotsearch.hppc.ObjectContainer[String]]); c.contains(hit)
+  }
 }

@@ -2,8 +2,8 @@ package farray
 
 import org.openjdk.jmh.annotations.Benchmark
 
-/** Full-traversal ops for String: forall (all-nonEmpty → no short-circuit), exists (== miss → full scan),
-  * count (length>2), foreach (sum of lengths). */
+/** Full-traversal ops for String: forall (all-nonEmpty → no short-circuit), exists (== miss → full scan), count (length>2), foreach (sum of lengths).
+  */
 class StrSetForallBenchmark extends StrSetInputs {
   @Benchmark def fset(): Boolean = fsetA.forall(s => s.nonEmpty)
   @Benchmark def scalaset(): Boolean = sSetA.forall(_.nonEmpty)

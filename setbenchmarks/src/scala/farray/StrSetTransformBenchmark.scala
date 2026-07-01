@@ -15,5 +15,7 @@ class StrSetFilterBenchmark extends StrSetInputs {
   @Benchmark def fset(): Any = fsetA.filter(s => s.length > 2)
   @Benchmark def scalaset(): Any = sSetA.filter(_.length > 2)
   @Benchmark def scalamut(): Any = smSetA.filter(_.length > 2)
-  @Benchmark def fastutil(): Any = { val c = new FuObjSet[String](); val it = fuA.iterator(); while (it.hasNext) { val s = it.next(); if (s.length > 2) c.add(s) }; c }
+  @Benchmark def fastutil(): Any = {
+    val c = new FuObjSet[String](); val it = fuA.iterator(); while (it.hasNext) { val s = it.next(); if (s.length > 2) c.add(s) }; c
+  }
 }

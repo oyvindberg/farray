@@ -6,9 +6,9 @@ import com.carrotsearch.hppc.{ObjectHashSet => HppcObjSet}
 import com.google.common.collect.{ImmutableSet, Sets}
 import org.eclipse.collections.impl.set.mutable.UnifiedSet
 
-/** FAIR materialized merge for String (the Ref merge core's scorecard). Every impl folds the result and reads
-  * its size; FSet's `(a++b).materialize.size` forces the real merge (today a boxed collectElems walk — the
-  * measured loss; after the Ref merge core, a cached-hash sort-merge). See the Int variant. */
+/** FAIR materialized merge for String (the Ref merge core's scorecard). Every impl folds the result and reads its size; FSet's `(a++b).materialize.size` forces
+  * the real merge (today a boxed collectElems walk — the measured loss; after the Ref merge core, a cached-hash sort-merge). See the Int variant.
+  */
 class StrSetMergeUnionBenchmark extends StrSetInputs {
   @Benchmark def fset(): Int = (fsetA ++ fsetB).materialize.size
   @Benchmark def scalaset(): Int = (sSetA union sSetB).size

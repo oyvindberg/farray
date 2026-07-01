@@ -3,10 +3,10 @@ package farray
 import org.openjdk.jmh.annotations.Benchmark
 import it.unimi.dsi.fastutil.ints.{IntOpenHashSet => FuIntSet}
 
-/** The MANY-query pattern: materialize the 3-way union ONCE, then probe contains n = size times. This is the
-  * realistic usage when you query a combination a lot (the lazy IntSetUnion3ContainsBenchmark is the FEW-query
-  * moat). With the dense bitmap leaf + word-parallel union, FSet's materialized union is a single bitmap → the
-  * follow-up contains are O(1) bit-tests, so FSet should reach BitSet territory (the plan's Step-2 target). */
+/** The MANY-query pattern: materialize the 3-way union ONCE, then probe contains n = size times. This is the realistic usage when you query a combination a lot
+  * (the lazy IntSetUnion3ContainsBenchmark is the FEW-query moat). With the dense bitmap leaf + word-parallel union, FSet's materialized union is a single
+  * bitmap → the follow-up contains are O(1) bit-tests, so FSet should reach BitSet territory (the plan's Step-2 target).
+  */
 class IntSetUnion3MatContainsBenchmark extends IntSetInputs {
   @Benchmark def fset(): Int = {
     val u = (fsetA ++ fsetB ++ fsetC).materialize

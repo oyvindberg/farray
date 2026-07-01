@@ -7,8 +7,9 @@ import com.carrotsearch.hppc.{ObjectHashSet => HppcObjSet}
 import com.google.common.collect.ImmutableSet
 import org.eclipse.collections.impl.set.mutable.UnifiedSet
 
-/** String-set benchmark inputs: two overlapping sets `a`,`b` per competitor, the raw String[] for build, and
-  * hit/miss probes. The reference (String) suite — every entry must beat scala immutable.HashSet (CHAMP). */
+/** String-set benchmark inputs: two overlapping sets `a`,`b` per competitor, the raw String[] for build, and hit/miss probes. The reference (String) suite —
+  * every entry must beat scala immutable.HashSet (CHAMP).
+  */
 abstract class StrSetInputs extends CommonParams {
   @Param(Array("16", "1000", "100000"))
   var size: Int = 1000
@@ -35,7 +36,9 @@ abstract class StrSetInputs extends CommonParams {
 
   @Setup
   def setup(): Unit = {
-    probes = Array.tabulate(1024){ i => val v = (((i.toLong * 2654435761L) & 0x7fffffffL).toInt) % (2 * size); if (v < size) "k" + v else "z" + v }
+    probes = Array.tabulate(1024) { i =>
+      val v = (((i.toLong * 2654435761L) & 0x7fffffffL).toInt) % (2 * size); if (v < size) "k" + v else "z" + v
+    }
     arrA = Array.tabulate(size)(i => "k" + i)
     arrB = Array.tabulate(size)(i => "k" + (i + size / 2))
     arrC = Array.tabulate(size)(i => "k" + (i + size))

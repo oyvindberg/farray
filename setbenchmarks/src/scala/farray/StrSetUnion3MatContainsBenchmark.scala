@@ -6,10 +6,10 @@ import com.carrotsearch.hppc.{ObjectHashSet => HppcObjSet}
 import com.google.common.collect.{ImmutableSet, Sets}
 import org.eclipse.collections.impl.set.mutable.UnifiedSet
 
-/** The realistic build-once-query-many for STRINGS: materialize the 3-way union ONCE, then probe contains
-  * n = size times. This is the pattern where FSet's lazy `Union3Contains` "win" is misleading — here the
-  * per-query cost is a materialized-set contains (the F14 inline-key path), so this directly measures whether
-  * FSet keeps up with the mutable specialists once you actually merge and query a lot. */
+/** The realistic build-once-query-many for STRINGS: materialize the 3-way union ONCE, then probe contains n = size times. This is the pattern where FSet's lazy
+  * `Union3Contains` "win" is misleading — here the per-query cost is a materialized-set contains (the F14 inline-key path), so this directly measures whether
+  * FSet keeps up with the mutable specialists once you actually merge and query a lot.
+  */
 class StrSetUnion3MatContainsBenchmark extends StrSetInputs {
   @Benchmark def fset(): Int = {
     val u = (fsetA ++ fsetB ++ fsetC).materialize

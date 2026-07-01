@@ -6,11 +6,11 @@ import com.carrotsearch.hppc.{IntHashSet => HppcIntSet}
 import org.eclipse.collections.impl.set.mutable.primitive.{IntHashSet => EcIntSet}
 import org.roaringbitmap.RoaringBitmap
 
-/** FAIR materialized merge: actually fold the union/intersect/diff into a usable set and read its size — the
-  * opposite of IntSet{Union,..}Benchmark, which measures the LAZY moat `(a&b).contains`. Every impl produces a
-  * fresh result set and forces it via `.size`. FSet's `(a++b).materialize` does the unboxed sort-merge; `.size`
-  * forces it (and on a no-op-materialize kind would force the fallback walk). This is the benchmark that scores
-  * the Ref merge core + the wrap-to-hash promotion. Mutable competitors clone the LHS (immutable-result cost). */
+/** FAIR materialized merge: actually fold the union/intersect/diff into a usable set and read its size — the opposite of IntSet{Union,..}Benchmark, which
+  * measures the LAZY moat `(a&b).contains`. Every impl produces a fresh result set and forces it via `.size`. FSet's `(a++b).materialize` does the unboxed
+  * sort-merge; `.size` forces it (and on a no-op-materialize kind would force the fallback walk). This is the benchmark that scores the Ref merge core + the
+  * wrap-to-hash promotion. Mutable competitors clone the LHS (immutable-result cost).
+  */
 class IntSetMergeUnionBenchmark extends IntSetInputs {
   @Benchmark def fset(): Int = (fsetA ++ fsetB).materialize.size
   @Benchmark def scalaset(): Int = (sSetA union sSetB).size

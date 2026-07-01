@@ -2,8 +2,9 @@ package farray
 
 import org.openjdk.jmh.annotations.Benchmark
 
-/** Full-traversal ops: forall (all-true → no short-circuit), exists (== miss → never found, full scan),
-  * count (evens), foreach (sum). Competitors traverse natively or via their primitive iterator. */
+/** Full-traversal ops: forall (all-true → no short-circuit), exists (== miss → never found, full scan), count (evens), foreach (sum). Competitors traverse
+  * natively or via their primitive iterator.
+  */
 class IntSetForallBenchmark extends IntSetInputs {
   @Benchmark def fset(): Boolean = fsetA.forall(x => x >= 0)
   @Benchmark def scalaset(): Boolean = sSetA.forall(_ >= 0)

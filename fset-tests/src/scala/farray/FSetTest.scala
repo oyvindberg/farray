@@ -3,13 +3,12 @@ package farray
 import org.junit.Assert.*
 import org.junit.Test
 
-/** Parity of the FSet M1 green slice vs `scala.collection.immutable.Set`. Covers all four element kinds
-  * (Int / Long / Double prim + String Ref), proving the SBase core + the GenSets codegen + the kind
-  * specialization end-to-end (no boxing of primitive elements — see the javap check in the report).
+/** Parity of the FSet M1 green slice vs `scala.collection.immutable.Set`. Covers all four element kinds (Int / Long / Double prim + String Ref), proving the
+  * SBase core + the GenSets codegen + the kind specialization end-to-end (no boxing of primitive elements — see the javap check in the report).
   *
-  * Ops under test: empty / apply / fromArray / fromFArray / from, contains / apply, size / isEmpty / nonEmpty,
-  * incl / excl (add / remove). (The lazy algebra ++/&/diff/xor, the traversal/materialize ops, and the
-  * Hash/Dense leaves are NEXT-STEPS, not in this slice; both the `incl`/`excl` named ops and the `+`/`-` infix aliases are exercised.)
+  * Ops under test: empty / apply / fromArray / fromFArray / from, contains / apply, size / isEmpty / nonEmpty, incl / excl (add / remove). (The lazy algebra
+  * ++/&/diff/xor, the traversal/materialize ops, and the Hash/Dense leaves are NEXT-STEPS, not in this slice; both the `incl`/`excl` named ops and the `+`/`-`
+  * infix aliases are exercised.)
   */
 class FSetTest:
 
@@ -53,12 +52,12 @@ class FSetTest:
     var ref = Set.empty[Int]
     val script = List(1, 5, 5, 3, 9, 1, 7, 2)
     for x <- script do
-      fs = fs + x        // infix operator
+      fs = fs + x // infix operator
       ref = ref + x
       checkInt(fs, ref, -2 to 12)
     // now remove some
     for x <- List(5, 100, 3, 1, 1) do // 100 absent (no-op alias), 1 removed twice
-      fs = fs - x        // infix operator
+      fs = fs - x // infix operator
       ref = ref - x
       checkInt(fs, ref, -2 to 12)
 
@@ -120,10 +119,10 @@ class FSetTest:
     // the §3.2 unboxed merge: materialize folds the lazy tree to ONE sorted leaf; iteration is ordered+distinct.
     val a = FSet(5, 1, 3, 1); val b = FSet(3, 4, 2)
     val ra = Set(5, 1, 3); val rb = Set(3, 4, 2)
-    assertEquals("union",     (ra union rb).toList.sorted,                              (a ++ b).materialize.toList)
-    assertEquals("intersect", (ra intersect rb).toList.sorted,                          (a & b).materialize.toList)
-    assertEquals("diff",      (ra diff rb).toList.sorted,                               (a &~ b).materialize.toList)
-    assertEquals("xor",       ((ra union rb) diff (ra intersect rb)).toList.sorted,     (a ^ b).materialize.toList)
+    assertEquals("union", (ra union rb).toList.sorted, (a ++ b).materialize.toList)
+    assertEquals("intersect", (ra intersect rb).toList.sorted, (a & b).materialize.toList)
+    assertEquals("diff", (ra diff rb).toList.sorted, (a &~ b).materialize.toList)
+    assertEquals("xor", ((ra union rb) diff (ra intersect rb)).toList.sorted, (a ^ b).materialize.toList)
     // size now flows through the unboxed merge (not the boxed walk) for a lazy node
     assertEquals((ra union rb).size, (a ++ b).materialize.size)
     // nested + memoized: materialize twice is stable
@@ -135,23 +134,23 @@ class FSetTest:
     // the Ref merge core (cached-hash sort-merge). Ref iterates in hash order, so compare as SETS.
     val a = FSet("apple", "banana", "cherry", "fig"); val b = FSet("cherry", "date", "fig", "kiwi")
     val ra = Set("apple", "banana", "cherry", "fig"); val rb = Set("cherry", "date", "fig", "kiwi")
-    assertEquals("union",     ra union rb,                              (a ++ b).materialize.toList.toSet)
-    assertEquals("intersect", ra intersect rb,                         (a & b).materialize.toList.toSet)
-    assertEquals("diff",      ra diff rb,                               (a &~ b).materialize.toList.toSet)
-    assertEquals("xor",       (ra union rb) diff (ra intersect rb),     (a ^ b).materialize.toList.toSet)
+    assertEquals("union", ra union rb, (a ++ b).materialize.toList.toSet)
+    assertEquals("intersect", ra intersect rb, (a & b).materialize.toList.toSet)
+    assertEquals("diff", ra diff rb, (a &~ b).materialize.toList.toSet)
+    assertEquals("xor", (ra union rb) diff (ra intersect rb), (a ^ b).materialize.toList.toSet)
     // HASH-COLLISION tie-group: "Aa" and "BB" share hashCode 2112 — drives the .equals-within-tie-group path.
     assertEquals(2112, "Aa".hashCode); assertEquals(2112, "BB".hashCode)
     val c = FSet("Aa", "BB"); val d = FSet("BB", "Cc")
     assertEquals("collide ∪", Set("Aa", "BB", "Cc"), (c ++ d).materialize.toList.toSet)
-    assertEquals("collide ∩", Set("BB"),             (c & d).materialize.toList.toSet)
-    assertEquals("collide ∖", Set("Aa"),             (c &~ d).materialize.toList.toSet)
-    assertEquals("collide ^", Set("Aa", "Cc"),       (c ^ d).materialize.toList.toSet)
+    assertEquals("collide ∩", Set("BB"), (c & d).materialize.toList.toSet)
+    assertEquals("collide ∖", Set("Aa"), (c &~ d).materialize.toList.toSet)
+    assertEquals("collide ^", Set("Aa", "Cc"), (c ^ d).materialize.toList.toSet)
     // large (Hash-leaf) Ref merge, and chained algebra
     val big1 = FSet.fromArray((0 until 100).map("k" + _).toArray)
     val big2 = FSet.fromArray((50 until 150).map("k" + _).toArray)
     assertEquals((0 until 150).map("k" + _).toSet, (big1 ++ big2).materialize.toList.toSet)
     assertEquals((50 until 100).map("k" + _).toSet, (big1 & big2).materialize.toList.toSet)
-    assertEquals((0 until 50).map("k" + _).toSet,  (big1 &~ big2).materialize.toList.toSet)
+    assertEquals((0 until 50).map("k" + _).toSet, (big1 &~ big2).materialize.toList.toSet)
     // materialized === / setHashCode over a Ref merge result, shape-independent (merged union vs fresh build)
     val merged = (big1 ++ big2).materialize
     val direct = FSet.fromArray((0 until 150).map("k" + _).toArray)
@@ -298,8 +297,8 @@ class FSetTest:
 
   @Test def map_nxn(): Unit =
     // read kind × write kind, with dedup-on-build (map can collapse).
-    assertEquals(List(2, 4, 6), FSet(1, 2, 3).map(_ * 2).toList)        // Int → Int
-    assertEquals(List(0, 1), FSet(1, 2, 3, 4).map(_ % 2).toList)         // Int → Int, collapses to {0,1}
+    assertEquals(List(2, 4, 6), FSet(1, 2, 3).map(_ * 2).toList) // Int → Int
+    assertEquals(List(0, 1), FSet(1, 2, 3, 4).map(_ % 2).toList) // Int → Int, collapses to {0,1}
     assertEquals(List(10L, 20L, 30L), FSet(1, 2, 3).map(_.toLong * 10).toList) // Int → Long
     assertEquals(Set("1", "2", "3"), FSet(1, 2, 3).map(_.toString).toList.toSet) // Int → Ref
     assertEquals(List(1, 5, 6), FSet.from(List("a", "apple", "banana")).map(_.length).toList) // Ref → Int
@@ -326,7 +325,8 @@ class FSetTest:
     assertEquals(10, big.min)
     assertEquals(89, big.max)
     var threw = false
-    try FSet.empty[Int].min catch { case _: NoSuchElementException => threw = true }
+    try FSet.empty[Int].min
+    catch { case _: NoSuchElementException => threw = true }
     assertTrue("min of empty throws", threw)
 
   @Test def ref_build_dedup_and_subset(): Unit =
@@ -367,8 +367,7 @@ class FSetTest:
     val fs = FSet.fromArray(data)
     val ref = data.toSet
     assertEquals("size", ref.size, fs.size)
-    for p <- List("k0", "k50", "k99", "k100", "nope", "k7") do
-      assertEquals(s"contains($p)", ref.contains(p), fs.contains(p))
+    for p <- List("k0", "k50", "k99", "k100", "nope", "k7") do assertEquals(s"contains($p)", ref.contains(p), fs.contains(p))
     val fs2 = fs + "zz" - "k0"
     assertTrue(fs2.contains("zz"))
     assertFalse(fs2.contains("k0"))

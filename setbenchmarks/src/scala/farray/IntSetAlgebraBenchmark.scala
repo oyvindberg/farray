@@ -6,10 +6,10 @@ import com.carrotsearch.hppc.{IntHashSet => HppcIntSet}
 import org.eclipse.collections.impl.set.mutable.primitive.{IntHashSet => EcIntSet}
 import org.roaringbitmap.RoaringBitmap
 
-/** Bulk set algebra, measured FAIRLY as "combine two sets then answer membership" — the real use case. FSet
-  * builds the combination as an O(1) lazy node and `contains` DISTRIBUTES over it (no merge ever happens); every
-  * competitor must build the whole result set first, then probe. The mutable sets clone the LHS before the
-  * destructive in-place op. (`hit` ∈ A∩B, so it's in the union/intersection and absent from the diff.) */
+/** Bulk set algebra, measured FAIRLY as "combine two sets then answer membership" — the real use case. FSet builds the combination as an O(1) lazy node and
+  * `contains` DISTRIBUTES over it (no merge ever happens); every competitor must build the whole result set first, then probe. The mutable sets clone the LHS
+  * before the destructive in-place op. (`hit` ∈ A∩B, so it's in the union/intersection and absent from the diff.)
+  */
 class IntSetUnionBenchmark extends IntSetInputs {
   @Benchmark def fset(): Boolean = (fsetA ++ fsetB).contains(hit)
   @Benchmark def scalaset(): Boolean = (sSetA union sSetB).contains(hit)
