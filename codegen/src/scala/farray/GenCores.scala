@@ -502,9 +502,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val ats = opKinds.map(atDef).mkString("\n")
     // Flatten a (possibly deep) Updated chain to a fresh leaf array, ONCE, so dfs can emit it tight via
     // onRunF instead of walking the chain per element. Recursion applies overrides bottom-up => outer wins.
+    // Bare-leaf fast path: Arrays.copyOf (intrinsic memcpy) instead of the dfs + consumer object.
+    // MUST stay a fresh copy — sortWith/sorted mutate the materialized array in place. copyOf also
+    // trims slack (leaf.length may be < arr.length).
     val mat = opKinds
       .map(k =>
         s"""  def materialize${k.name}(node: FBase): Array[${k.arr}] = node match {
+         |    case leaf: ${k.name}Arr => java.util.Arrays.copyOf(leaf.arr, leaf.length)
          |    case u: ${k.name}Updated => { val out = materialize${k.name}(u.base); out(u.index) = u.elem; out }
          |    case _ => { val out = new Array[${k.arr}](node.length); var o = 0; dfsC${k.name}(node, new ${k.name}Dfs { def onRunF(a: Array[${k.arr}], start: Int, count: Int): Unit = { System.arraycopy(a, start, out, o, count); o += count }; def onRunB(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val e = start - count; while (i > e) { out(o) = a(i); o += 1; i -= 1 } }; def onOne(v: ${k.arr}): Unit = { out(o) = v; o += 1 } }); out }
          |  }""".stripMargin
