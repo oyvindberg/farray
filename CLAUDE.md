@@ -1,5 +1,13 @@
 # FArray
 
+> **⛔ NO DESTRUCTIVE GIT OPERATIONS.** Claude is **NOT allowed** to run destructive git commands
+> (`git checkout -- <file>`, `git checkout .`, `git reset --hard`, `git clean -f`, `git restore`,
+> `git stash drop`/`git stash clear`, force-push, branch deletion). These throw away work
+> irrecoverably. **To revert / set work aside, use `git stash` — stash is free and unlimited; keep as
+> many stashes as you want.** Want a clean tree to measure a baseline? `git stash push` it, do the
+> measurement, then `git stash pop` to bring the change back. Never `git checkout` a file to discard
+> edits, and never drop/clear a stash.
+
 `FArray[+A]` — an immutable, `Array`-backed sequence whose goal is to **beat every competitor**
 (`IArray`, `List`, `Vector`, `fs2.Chunk`, `zio.Chunk`) on as many operations as possible while
 keeping the full `IndexedSeq` API.
