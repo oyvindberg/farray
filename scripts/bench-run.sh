@@ -107,5 +107,5 @@ else:
     json.dump(new, open(dst, "w"))
     print(f"  full suite: merged {len(new)} results from {len(files)} shards")
 PY
-python3 scripts/bench_report.py docs/bench-results.json docs/index.html
-echo "✔ Done → docs/index.html  (publish: git add docs/ && git commit && git push)"
+python3 scripts/bench_report.py docs/bench-results.json docs/report.html
+echo "✔ Done → docs/report.html  (publish: git add docs/ && git commit && git push)"

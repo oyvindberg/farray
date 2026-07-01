@@ -92,14 +92,21 @@ FArray.tabulate(1_000_000)(i => i)
   .filter(_ % 3 == 0)
   .take(10)
   .foldLeft(0)(_ + _)
+
+// and when you want the whole chain as ONE loop, add a word:
+FArray.tabulate(1_000_000)(i => i).fuse
+  .map(_ + 1)
+  .filter(_ % 3 == 0)
+  .foldLeft(0)(_ + _)   // one while-loop over the int[]; nothing allocated in between
 ```
 
-📊 **[Browse the live benchmark report →](https://oyvindberg.github.io/farray/)** — a self-contained page of bar charts, FArray vs `Array`/`IArray`/`List`/`Vector` for every operation.
+📖 **[Read the FArray story →](https://oyvindberg.github.io/farray/)** — how it's built and why it's fast, told through hoverable JMH charts and code extracted from source that compiles. Four pages: the story itself, [the fuse optimizer](https://oyvindberg.github.io/farray/#/fusion), [the fused JSON parser](https://oyvindberg.github.io/farray/#/json) it powers, and [the complete benchmark reference](https://oyvindberg.github.io/farray/#/reference) — every operation at every size, wins and losses alike.
 
-Regenerate it on your own machine:
+Regenerate the numbers on your own machine:
 ```bash
-scripts/benchmark-report.sh        # runs the JMH suite → docs/bench-results.json + docs/index.html
-open docs/index.html
+scripts/bench-run.sh                     # runs the JMH suite → docs/bench-results.json
+cd site && npm install && npm run dev    # the site, live, on your fresh numbers
+npm run pages                            # rebuild the published site into docs/
 ```
 The raw `docs/bench-results.json` also loads directly into <https://jmh.morethan.io> for an interactive view.
 

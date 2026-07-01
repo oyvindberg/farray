@@ -9,6 +9,7 @@
     "dev": "vite",
     "prebuild": "node scripts/build-data.mjs",
     "build": "tsc -b && vite build",
+    "pages": "npm run build && rm -rf ../docs/assets ../docs/data && cp -R dist/. ../docs/ && touch ../docs/.nojekyll",
     "preview": "vite preview"
   },
   "dependencies": {
