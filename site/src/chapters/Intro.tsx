@@ -15,8 +15,10 @@ export default function Intro() {
 
       <p>
         So I waited. For specialization that actually held up. For miniboxing. For the Dotty linker. For
-        Valhalla — always, eventually, for Valhalla. Every release I'd read the bytecode, fight the inliner,
-        and arrive at the same verdict: if it has to be fast, write it in something else. Usually Java. A
+        Valhalla — always, eventually, for Valhalla, and the <code>List&lt;int&gt;</code> it kept almost
+        promising: generics specialized all the way down to flat, unboxed storage. That's the half of
+        Valhalla that still hasn't shipped. Every release I'd read the bytecode, fight the inliner, and
+        arrive at the same verdict: if it has to be fast, write it in something else. Usually Java. A
         genuinely terrible state of affairs for a language this good.
       </p>
 
