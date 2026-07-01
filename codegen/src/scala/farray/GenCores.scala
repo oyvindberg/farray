@@ -529,6 +529,79 @@ object GenCores extends BleepCodegenScript("GenCores") {
          |  }""".stripMargin
       )
       .mkString("\n")
+    // SHARED flatMap drivers, one per OUTPUT kind KB — the flatMap analogue of the reduceLeaf*/mapLeaf*
+    // shared methods. The surface realizes ONE IntToRefFn[FBase] SAM `(i) => f(<unboxed source read>)`
+    // (the user lambda + the unboxed `sa(i)` read spliced into the SAM body) and CALLS this; the whole
+    // adaptive node/flatten loop compiles ONCE here instead of splicing at every call site. That splice
+    // was not just bloat: with the loop inlined into a caller that ALSO calls a virtual FBase method on
+    // the result (`.flatMap(f).take(n)` / `.reverse`), Graal's partial escape analysis of the per-element
+    // inner FArray collapsed catastrophically — MEASURED 35x (FlatMapFilterTakeStr 0.055x of iarray;
+    // ChainDiag fmTake 70 ops/s vs fm 2430 ops/s, alloc.rate.norm 7.2MB/op vs 3.2MB/op). Compiled in its
+    // own method the PEA context never contains the trailing call, so the cliff cannot happen.
+    // ADAPTIVE, KIND-AWARE threshold on the first inner's width (unchanged): node only where it is a
+    // strict throughput win (>=8 ref / >=32 prim, measured crossovers), else flatten-copy into one leaf.
+    val flatMapShared = {
+      val ee = new Emit("  ")
+      opKinds.foreach { kb =>
+        val KB = kb.name
+        val nodeMinWidth = if KB == "Ref" then 8 else 32
+        val segT = if KB == "Ref" then "Array[Object]" else s"Array[${kb.arr}]"
+        // tiny entry (~30 bytecodes, always inlinable) picking node vs flatten; each path is its OWN
+        // single-loop method so the JIT can inline the hot loop (and re-monomorphize `fi.apply`) at
+        // each caller — one big method measured a 33% loss on chained prim flatMaps (FuseProbe eager).
+        ee.open(s"def flatMapShared${KB}(cnt: Int, fi: Traversers.IntToRefFn[FBase]): FBase =")
+        ee.line("val inr0 = fi.apply(0)")
+        ee.line("val l0 = inr0.length")
+        ee.line(s"if (l0 >= $nodeMinWidth) flatMapSegs${KB}(cnt, inr0, l0, fi) else flatMapFlat${KB}(cnt, inr0, l0, fi)")
+        ee.close()
+        // node path: one backing array per inner (zero-copy for leaf inners), offs = prefix sums.
+        ee.open(s"def flatMapSegs${KB}(cnt: Int, inr0: FBase, l0: Int, fi: Traversers.IntToRefFn[FBase]): FBase =")
+        ee.line(s"val segs = new Array[$segT](cnt)")
+        ee.line("val offs = new Array[Int](cnt + 1)")
+        ee.line(s"inr0 match { case lf: ${KB}Arr => segs(0) = lf.arr; case _ => segs(0) = materialize${KB}(inr0) }")
+        ee.line("var total = l0")
+        ee.line("var i = 1")
+        ee.open("while (i < cnt)")
+        ee.line("offs(i) = total")
+        ee.line("val inr = fi.apply(i)")
+        ee.line(s"inr match { case lf: ${KB}Arr => { segs(i) = lf.arr; total += lf.length }; case _ => { val m = materialize${KB}(inr); segs(i) = m; total += m.length } }")
+        ee.line("i += 1")
+        ee.close()
+        ee.line("offs(cnt) = total")
+        ee.line("if (total == 0) Empty.INSTANCE")
+        ee.line(s"else if (total == 1) { var j = 0; while (offs(j + 1) == offs(j)) j += 1; new ${KB}One(segs(j)(0)) }")
+        ee.line(s"else new ${KB}FlatMap(segs, offs)")
+        ee.close()
+        // flatten path: size from the first inner (uniform flatMap never grows), ensureCap for the rest.
+        // Tiny leaf inners (ln <= 8, the FArray(a, b) case) copy with a manual element loop — the
+        // System.arraycopy stub call costs more than the copy at these lengths; ${KB}One inners write
+        // the element directly (no dfs, no consumer).
+        ee.open(s"def flatMapFlat${KB}(cnt: Int, inr0: FBase, l0: Int, fi: Traversers.IntToRefFn[FBase]): FBase =")
+        ee.line("val est = { val e = cnt * l0; if (e < 8) 8 else e }")
+        ee.line(s"var out: $segT = new $segT(est)")
+        ee.line(s"inr0 match { case lf: ${KB}Arr => System.arraycopy(lf.arr, 0, out, 0, l0); case o: ${KB}One => out(0) = o.elem; case _ => flatMapCopyOne${KB}(inr0, out, 0) }")
+        ee.line("var off = l0")
+        ee.line("var i = 1")
+        ee.open("while (i < cnt)")
+        ee.line("val inr = fi.apply(i)")
+        ee.line("val ln = inr.length")
+        ee.line(s"out = ensureCap${KB}(out, off + ln)")
+        ee.open("inr match")
+        ee.open(s"case lf: ${KB}Arr =>")
+        ee.line("if (ln <= 8) { val ia = lf.arr; var c = 0; while (c < ln) { out(off + c) = ia(c); c += 1 } }")
+        ee.line("else System.arraycopy(lf.arr, 0, out, off, ln)")
+        ee.close()
+        ee.line(s"case o: ${KB}One => out(off) = o.elem")
+        ee.line(s"case _ => flatMapCopyOne${KB}(inr, out, off)")
+        ee.close()
+        ee.line("off += ln")
+        ee.line("i += 1")
+        ee.close()
+        ee.line(s"if (off == 0) Empty.INSTANCE else if (off == 1) new ${KB}One(out(0)) else new ${KB}Arr(out, off)")
+        ee.close()
+      }
+      ee.result
+    }
     // Natural (run-adaptive) bottom-up mergesort. NON-inline (compiled once, not dumped at every sort site,
     // so multiple sorts in one method can't blow past the JIT method-size limit) with an unboxed primitive
     // comparator (${k.name}Less SAM — no boxing). Detects ascending runs and reverses strictly-descending
@@ -536,10 +609,24 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // ascending detection non-strict, descending strict). Ref sorts use java.util.Arrays.sort instead.
     val sortKinds = opKinds.filter(_.name != "Ref")
     val lessTraits = sortKinds.map(k => s"trait ${k.name}Less { def lt(a: ${k.arr}, b: ${k.arr}): Boolean }").mkString("\n")
+    // n <= 32: in-place binary-free insertion sort — the run-adaptive mergesort's setup (two run-index
+    // arrays + dst buffer + run detection) is pure overhead at tiny n (SortInt sortWith@10 measured
+    // 0.33x of iarray). Stable (strict less; equal elements never swap past each other).
     val sortArr = sortKinds
       .map(k =>
         s"""  def sort${k.name}(a: Array[${k.arr}], n: Int, less: ${k.name}Less): Array[${k.arr}] = {
-         |    if (n < 2) a else {
+         |    if (n < 2) a
+         |    else if (n <= 32) {
+         |      var i = 1
+         |      while (i < n) {
+         |        val v = a(i)
+         |        var j = i - 1
+         |        while (j >= 0 && less.lt(v, a(j))) { a(j + 1) = a(j); j -= 1 }
+         |        a(j + 1) = v
+         |        i += 1
+         |      }
+         |      a
+         |    } else {
          |      var sruns = new Array[Int](n + 1); var nr = 0; var i = 0
          |      while (i < n) {
          |        sruns(nr) = i; nr += 1; var j = i + 1
@@ -1559,45 +1646,20 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // One pass: size the output from the FIRST inner (cnt * firstLen) so a uniform flatMap (the common case)
     // never grows or trims — only non-uniform inner sizes fall back to ensureCap growth.
     val flatMapOne = {
-      // flatMap-as-map: build ONE segment (backing array) per source element — ZERO-COPY for leaf inners (store
-      // `lf.arr` directly) — and wrap them in a ${K}FlatMap node instead of flatten-copying into one contiguous
-      // leaf. `offs` = prefix sums = per-segment logical lengths (handles inner slack) + the random-access index.
-      // Non-leaf inners (One/Empty/tree) materialise to an exact array (rare). LEAF source reads its array directly;
-      // TREE source materialises the source ONCE, then the same loop. Canonicalise total 0 -> Empty, 1 -> ${K}One.
-      // ADAPTIVE, KIND-AWARE threshold (l0 = first inner's length): build the ${K}FlatMap node only where it is a
-      // STRICT win on BOTH throughput and allocation; else flatten-copy into one contiguous leaf (old path). The
-      // node's segmented traversal trades cache locality for less allocation — measured (flatMap(W).map.fold, node
-      // vs flatten): PRIMITIVES cross over at W>=32 (W16 0.94x thrpt / W32 1.04x / W64 1.04x — the between-segment
-      // cache miss amortises over W), REFS cross over at W>=8 (W4 0.99x / W8 1.03x / W16 1.03x — ref traversal isn't
-      // locality/vectorisation-bound the same way, and the copy avoided is costlier). Alloc is a win at ALL widths
-      // (~0.68-0.79x) but we gate on THROUGHPUT so the node never regresses. Narrow inners keep the old flatten path
-      // (avoids the tiny-segment per-flatMap loss that also compounds in chains). `f` is applied to `sa(0)` ONCE and
-      // reused as the first segment/copy. First-inner width is the sizing proxy (same as the old `cnt*l0` estimate);
-      // non-uniform inners still work — node grows nothing, flatten uses ensureCap.
-      def core(ka: Kind, kb: Kind, saExpr: String): String = {
-        val nodeMinWidth = if kb.name == "Ref" then 8 else 32
-        val segT = if kb.name == "Ref" then "Array[Object]" else s"Array[${kb.arr}]"
-        val readI = readVal(ka, "sa(i)")
-        val nodePath =
-          s"{ val segs = new Array[$segT](cnt); val offs = new Array[Int](cnt + 1); " +
-            s"inr0 match { case lf: ${kb.name}Arr => segs(0) = lf.arr; case _ => segs(0) = materialize${kb.name}(inr0) }; " +
-            s"var total = l0; var i = 1; while (i < cnt) { offs(i) = total; val inr = f($readI); inr match { case lf: ${kb.name}Arr => segs(i) = lf.arr; total += lf.length; case _ => { val m = materialize${kb.name}(inr); segs(i) = m; total += m.length } }; i += 1 }; " +
-            s"offs(cnt) = total; if (total == 0) Empty.INSTANCE else if (total == 1) { var j = 0; while (offs(j + 1) == offs(j)) j += 1; new ${kb.name}One(segs(j)(0)) } else new ${kb.name}FlatMap(segs, offs) }"
-        val flatPath =
-          s"{ val est = { val e = cnt * l0; if (e < 8) 8 else e }; var out: $segT = new $segT(est); " +
-            s"inr0 match { case lf: ${kb.name}Arr => System.arraycopy(lf.arr, 0, out, 0, l0); case _ => flatMapCopyOne${kb.name}(inr0, out, 0) }; " +
-            s"var off = l0; var i = 1; while (i < cnt) { val inr = f($readI); val ln = inr.length; out = ensureCap${kb.name}(out, off + ln); inr match { case lf: ${kb.name}Arr => System.arraycopy(lf.arr, 0, out, off, ln); case _ => flatMapCopyOne${kb.name}(inr, out, off) }; off += ln; i += 1 }; " +
-            s"if (off == 0) Empty.INSTANCE else if (off == 1) new ${kb.name}One(out(0)) else new ${kb.name}Arr(out, off) }"
-        s"{ val sa = $saExpr; val inr0 = f(${readVal(ka, "sa(0)")}); val l0 = inr0.length; if (l0 >= $nodeMinWidth) $nodePath else $flatPath }"
-      }
+      // HYBRID flatMap surface (design §5, same shape as map/filter/reduce): the surface only extracts the
+      // source backing array (leaf array directly, or materialize ONCE), realizes ONE IntToRefFn[FBase] SAM whose body is
+      // the unboxed source read + the user's inline `f`, and CALLS the shared flatMapShared${KB} driver —
+      // NO inlined node/flatten loop at the call site. (The old spliced loop measured a 35x PEA collapse
+      // when the caller also invoked a virtual FBase method on the result — see flatMapShared's comment.)
       withErr(
         "summonFrom {\n" + opKinds
           .map { ka =>
             val inner = "summonFrom {\n" + opKinds
               .map { kb =>
-                val leafCase = core(ka, kb, "leaf.arr")
-                val nodeCase = core(ka, kb, s"materialize${ka.name}(xs)")
-                s"          case rb: ${kb.name}Repr[B] => { if (cnt == 0) Empty.INSTANCE else (xs match { case leaf: ${ka.name}Arr => $leafCase; case _ => $nodeCase }) }"
+                val body =
+                  s"{ val sa = (xs match { case leaf: ${ka.name}Arr => leaf.arr; case _ => materialize${ka.name}(xs) }); " +
+                    s"flatMapShared${kb.name}(cnt, (i) => f(${readVal(ka, "sa(i)")})) }"
+                s"          case rb: ${kb.name}Repr[B] => { if (cnt == 0) Empty.INSTANCE else $body }"
               }
               .mkString("\n") + "\n        }"
             s"      case r: ${ka.name}Repr[A] => $inner"
@@ -2196,6 +2258,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |$ats
        |$mat
        |$flatMapCopyOne
+       |$flatMapShared
        |$sortArr
        |$reduceLeafMethods
        |$mapLeafMethods
