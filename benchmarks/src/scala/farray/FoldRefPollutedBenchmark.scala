@@ -35,43 +35,46 @@ class FoldRefPollutedBenchmark extends CommonParams {
   var size: Int = 10000
 
   // farray inputs (6 distinct reference element types)
-  var fStr:  FArray[String]         = _
-  var fInt:  FArray[Integer]        = _
+  var fStr: FArray[String] = _
+  var fInt: FArray[Integer] = _
   var fLong: FArray[java.lang.Long] = _
-  var fWid:  FArray[Wid]            = _
-  var fTall: FArray[Tall]           = _
-  var fChar: FArray[Character]      = _
+  var fWid: FArray[Wid] = _
+  var fTall: FArray[Tall] = _
+  var fChar: FArray[Character] = _
 
   // Competitor inputs of the SAME 6 types. List/Vector/Chunk fold via a generic boxed Function2 (no
   // per-kind codegen); IArray ≈ raw Array folds inline per call site. A fair megamorphic contrast.
-  var lStr:  List[String]         = _;  var lInt:  List[Integer] = _;  var lLong: List[java.lang.Long] = _
-  var lWid:  List[Wid]            = _;  var lTall: List[Tall]    = _;  var lChar: List[Character]      = _
-  var vStr:  Vector[String]       = _;  var vInt:  Vector[Integer] = _; var vLong: Vector[java.lang.Long] = _
-  var vWid:  Vector[Wid]          = _;  var vTall: Vector[Tall]  = _;  var vChar: Vector[Character]    = _
-  var iStr:  IArray[String]       = _;  var iInt:  IArray[Integer] = _; var iLong: IArray[java.lang.Long] = _
-  var iWid:  IArray[Wid]          = _;  var iTall: IArray[Tall]  = _;  var iChar: IArray[Character]    = _
-  var cStr:  fs2.Chunk[String]    = _;  var cInt:  fs2.Chunk[Integer] = _; var cLong: fs2.Chunk[java.lang.Long] = _
-  var cWid:  fs2.Chunk[Wid]       = _;  var cTall: fs2.Chunk[Tall] = _; var cChar: fs2.Chunk[Character] = _
-  var zStr:  zio.Chunk[String]    = _;  var zInt:  zio.Chunk[Integer] = _; var zLong: zio.Chunk[java.lang.Long] = _
-  var zWid:  zio.Chunk[Wid]       = _;  var zTall: zio.Chunk[Tall] = _; var zChar: zio.Chunk[Character] = _
+  var lStr: List[String] = _; var lInt: List[Integer] = _; var lLong: List[java.lang.Long] = _
+  var lWid: List[Wid] = _; var lTall: List[Tall] = _; var lChar: List[Character] = _
+  var vStr: Vector[String] = _; var vInt: Vector[Integer] = _; var vLong: Vector[java.lang.Long] = _
+  var vWid: Vector[Wid] = _; var vTall: Vector[Tall] = _; var vChar: Vector[Character] = _
+  var iStr: IArray[String] = _; var iInt: IArray[Integer] = _; var iLong: IArray[java.lang.Long] = _
+  var iWid: IArray[Wid] = _; var iTall: IArray[Tall] = _; var iChar: IArray[Character] = _
+  var cStr: fs2.Chunk[String] = _; var cInt: fs2.Chunk[Integer] = _; var cLong: fs2.Chunk[java.lang.Long] = _
+  var cWid: fs2.Chunk[Wid] = _; var cTall: fs2.Chunk[Tall] = _; var cChar: fs2.Chunk[Character] = _
+  var zStr: zio.Chunk[String] = _; var zInt: zio.Chunk[Integer] = _; var zLong: zio.Chunk[java.lang.Long] = _
+  var zWid: zio.Chunk[Wid] = _; var zTall: zio.Chunk[Tall] = _; var zChar: zio.Chunk[Character] = _
 
   @Setup def setup(): Unit = {
-    fStr  = FArray.tabulate(size)(i => i.toString)
-    fInt  = FArray.tabulate(size)(i => Integer.valueOf(i))
+    fStr = FArray.tabulate(size)(i => i.toString)
+    fInt = FArray.tabulate(size)(i => Integer.valueOf(i))
     fLong = FArray.tabulate(size)(i => java.lang.Long.valueOf(i.toLong))
-    fWid  = FArray.tabulate(size)(i => Wid(i))
+    fWid = FArray.tabulate(size)(i => Wid(i))
     fTall = FArray.tabulate(size)(i => Tall(i.toLong, i.toString))
     fChar = FArray.tabulate(size)(i => Character.valueOf((i & 0xffff).toChar))
-    lStr  = List.tabulate(size)(i => i.toString)
-    lInt  = List.tabulate(size)(i => Integer.valueOf(i))
+    lStr = List.tabulate(size)(i => i.toString)
+    lInt = List.tabulate(size)(i => Integer.valueOf(i))
     lLong = List.tabulate(size)(i => java.lang.Long.valueOf(i.toLong))
-    lWid  = List.tabulate(size)(i => Wid(i))
+    lWid = List.tabulate(size)(i => Wid(i))
     lTall = List.tabulate(size)(i => Tall(i.toLong, i.toString))
     lChar = List.tabulate(size)(i => Character.valueOf((i & 0xffff).toChar))
     vStr = lStr.toVector; vInt = lInt.toVector; vLong = lLong.toVector; vWid = lWid.toVector; vTall = lTall.toVector; vChar = lChar.toVector
-    iStr = IArray.from(lStr); iInt = IArray.from(lInt); iLong = IArray.from(lLong); iWid = IArray.from(lWid); iTall = IArray.from(lTall); iChar = IArray.from(lChar)
-    cStr = fs2.Chunk.from(lStr); cInt = fs2.Chunk.from(lInt); cLong = fs2.Chunk.from(lLong); cWid = fs2.Chunk.from(lWid); cTall = fs2.Chunk.from(lTall); cChar = fs2.Chunk.from(lChar)
-    zStr = zio.Chunk.fromIterable(lStr); zInt = zio.Chunk.fromIterable(lInt); zLong = zio.Chunk.fromIterable(lLong); zWid = zio.Chunk.fromIterable(lWid); zTall = zio.Chunk.fromIterable(lTall); zChar = zio.Chunk.fromIterable(lChar)
+    iStr = IArray.from(lStr); iInt = IArray.from(lInt); iLong = IArray.from(lLong); iWid = IArray.from(lWid); iTall = IArray.from(lTall);
+    iChar = IArray.from(lChar)
+    cStr = fs2.Chunk.from(lStr); cInt = fs2.Chunk.from(lInt); cLong = fs2.Chunk.from(lLong); cWid = fs2.Chunk.from(lWid); cTall = fs2.Chunk.from(lTall);
+    cChar = fs2.Chunk.from(lChar)
+    zStr = zio.Chunk.fromIterable(lStr); zInt = zio.Chunk.fromIterable(lInt); zLong = zio.Chunk.fromIterable(lLong); zWid = zio.Chunk.fromIterable(lWid);
+    zTall = zio.Chunk.fromIterable(lTall); zChar = zio.Chunk.fromIterable(lChar)
   }
 
   // MEGAMORPHIC: 6 distinct element types funnel through the SAME generated foldLeft read site.
