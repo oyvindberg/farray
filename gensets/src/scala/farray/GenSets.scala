@@ -1024,7 +1024,13 @@ object GenSets extends BleepCodegenScript("GenSets") {
     // ---- the surface impls (inline, dispatch the kind, route to the shared non-inline helpers) ----------
 
     // contains: dispatch the kind, unwrap the element, call the shared containsLeaf${K}.
-    val containsV = dispatchA(k => s"containsLeaf${k.name}(xs, ${unwrapElem(k, "elem")})")
+    // Int inlines the bitmap bit-test at the (inline) surface so a dense-Int contains is one bit-test with NO
+    // containsLeafInt call (that method is too big to inline: 12-case match + loop). Everything else defers.
+    val containsV = dispatchA(k =>
+      if k.name == "Int" then
+        s"{ val e0 = ${unwrapElem(k, "elem")}; xs match { case b: SIntBitmap => { val i = e0 - b.base; i >= 0 && (i >>> 6) < b.words.length && (b.words(i >>> 6) >>> i & 1L) != 0L }; case _ => containsLeafInt(xs, e0) } }"
+      else s"containsLeaf${k.name}(xs, ${unwrapElem(k, "elem")})"
+    )
 
     // union: the smart `++` — kind-dispatch to unionEager${K}, which eager-merges cheap operand pairs.
     val unionV = dispatchA(k => s"unionEager${k.name}(xs, that)")
