@@ -670,15 +670,14 @@ object FArray:
       else
         var best: A = FArrayOps.applyAtImpl[A](xs, 0); var bk: B = f(best)
         xs.foreach((a: A) => { val k = f(a); if ord.lt(k, bk) then { best = a; bk = k } }); best
-    // min/max: a Fwd Reduce seeded from element 0 — the running best folds via the new reduce engine (unboxed
-    // self-kind acc for a primitive FArray). Re-folding element 0 against itself is idempotent (gt/lt false),
-    // so seeding-and-folding-all matches List.max/min exactly.
+    // min/max: a Fwd Reduce seeded from element 0 — the running best folds via the reduce engine (unboxed
+    // self-kind acc for a primitive FArray; standard orderings compare RAW, others via ord.gt/lt).
+    // Re-folding element 0 against itself is idempotent (gt/lt false), so seeding-and-folding-all
+    // matches List.max/min exactly.
     inline def max[B >: A](using ord: Ordering[B]): A =
-      if xs.length == 1 then FArrayOps.applyAtImpl[A](xs, 0)
-      else xs.foldLeft[B](FArrayOps.applyAtImpl[A](xs, 0))((best, a) => if ord.gt(a, best) then a else best).asInstanceOf[A]
+      if xs.length == 1 then FArrayOps.applyAtImpl[A](xs, 0) else FArrayOps.maxImpl[A, B](xs)
     inline def min[B >: A](using ord: Ordering[B]): A =
-      if xs.length == 1 then FArrayOps.applyAtImpl[A](xs, 0)
-      else xs.foldLeft[B](FArrayOps.applyAtImpl[A](xs, 0))((best, a) => if ord.lt(a, best) then a else best).asInstanceOf[A]
+      if xs.length == 1 then FArrayOps.applyAtImpl[A](xs, 0) else FArrayOps.minImpl[A, B](xs)
     inline def corresponds[B](that: FArray[B])(inline p: (A, B) => Boolean): Boolean =
       xs.length == that.length && FArrayOps.matchAll2Impl[A, B](xs, 0, that, xs.length)(p)
     inline def collectFirst[B](pf: PartialFunction[A, B]): Option[B] = FArrayOps.collectFirstImpl[A, B](xs)(pf)
@@ -688,8 +687,10 @@ object FArray:
     inline def dropWhile(inline p: A => Boolean): FArray[A] = xs.drop(FArrayOps.prefixLengthImpl[A](xs)(p))
     inline def span(inline p: A => Boolean): (FArray[A], FArray[A]) =
       val n = FArrayOps.prefixLengthImpl[A](xs)(p); (xs.take(n), xs.drop(n))
+    // the FBase pair IS the FArray pair inside the opaque scope — re-wrapping into a fresh Tuple2 here
+    // was the whole cost of partition on an empty/cheap input (the impl's cached emptyPair never survived).
     inline def partition(inline p: A => Boolean): (FArray[A], FArray[A]) =
-      val t = FArrayOps.partitionImpl[A](xs)(p); (t._1.asInstanceOf[FArray[A]], t._2.asInstanceOf[FArray[A]])
+      FArrayOps.partitionImpl[A](xs)(p).asInstanceOf[(FArray[A], FArray[A])]
     inline def collect[B](pf: PartialFunction[A, B]): FArray[B] = FArrayOps.collectImpl[A, B](xs)(pf).asInstanceOf[FArray[B]]
     inline def distinct: FArray[A] =
       if xs.length <= 1 then xs
@@ -708,11 +709,15 @@ object FArray:
     inline def groupBy[K](inline f: A => K): Map[K, FArray[A]] =
       FArrayOps.groupByImpl[A, K](xs)(f).asInstanceOf[Map[K, FArray[A]]]
     inline def groupMap[K, B](inline key: A => K)(inline f: A => B): Map[K, FArray[B]] =
-      val acc = FArrayOps.groupMapAcc[K, B]
-      xs.foreach(a => acc.add(key(a), f(a)))
-      acc.result.asInstanceOf[Map[K, FArray[B]]]
+      if xs.length == 1 then
+        val e = FArrayOps.applyAtImpl[A](xs, 0)
+        Map(key(e) -> (FArrayOps.fromValues1[B](f(e)): FArray[B]))
+      else
+        val acc = FArrayOps.groupMapAcc[K, B]
+        xs.foreach(a => acc.add(key(a), f(a)))
+        acc.result.asInstanceOf[Map[K, FArray[B]]]
     inline def partitionMap[A1, A2](inline f: A => Either[A1, A2]): (FArray[A1], FArray[A2]) =
-      val t = FArrayOps.partitionMapImpl[A, A1, A2](xs)(f); (t._1.asInstanceOf[FArray[A1]], t._2.asInstanceOf[FArray[A2]])
+      FArrayOps.partitionMapImpl[A, A1, A2](xs)(f).asInstanceOf[(FArray[A1], FArray[A2])]
 
     // flattening cursor: O(n) over trees (not O(n·depth)), unboxed leaf reads, reports knownSize.
     inline def iterator: Iterator[A] = FArrayOps.iteratorImpl[A](xs)

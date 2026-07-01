@@ -1163,7 +1163,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
           s"if ($c == 0) Empty.INSTANCE else if ($c == 1) new ${K}One($b(0)) else new ${K}Arr($b, $c)"
         ee.open(s"def partitionLeaf${K}(xs: FBase, p: Traversers.${K}Pred): scala.Tuple2[FBase, FBase] =")
         ee.open("xs match")
-        ee.line("case e: Empty => new scala.Tuple2(Empty.INSTANCE, Empty.INSTANCE)")
+        ee.line("case e: Empty => emptyPair")
         ee.line(s"case o: ${K}One => if (p.apply(o.elem)) new scala.Tuple2(xs, Empty.INSTANCE) else new scala.Tuple2(Empty.INSTANCE, xs)")
         ee.open(s"case leaf: ${K}Arr =>")
         ee.line("val a = leaf.arr")
@@ -1421,21 +1421,49 @@ object GenCores extends BleepCodegenScript("GenCores") {
       val narrow = (e: String) => K match { case "Short" => s"($e).toShort"; case "Byte" => s"($e).toByte"; case _ => e }
       s"reduceLeafFwd${K}${K}(xs, $seed, (acc, v) => ${narrow(combine("acc", "v"))}).asInstanceOf[B]"
     }
-    // count: Reduce whose combine folds a predicate into an Int. Only the Int input kind has a usable unboxed
-    // self-kind shared leaf method (reduceLeafFwdIntInt); other prim inputs (Long/Double) and Ref would need
-    // an I->Int fold the engine doesn't emit (cross-prim), so they stay on the old lowered walk.
-    def countSurface(k: Kind): String = {
-      if k.name != "Int" then {
-        // cold cross-kind count (Long/Double/Ref input would need an I->Int fold the engine doesn't emit):
-        // route through the SAME generic Ref-acc shared leaf method with the Int acc BOXED to Integer —
-        // NO inlined leaf loop. These cases are cold/rare, so the boxing is fine.
-        return s"reduceLeafFwd${k.name}Ref[java.lang.Integer](xs, java.lang.Integer.valueOf(0), (acc, v) => java.lang.Integer.valueOf(if (p(${wrapV(k)})) acc.intValue + 1 else acc.intValue)).intValue"
-      }
-      // realize the unboxed IntToIntFold SAM (combine folds the predicate into an Int acc) and CALL the
-      // shared leaf method — NO inlined leaf loop.
-      "reduceLeafFwdIntInt(xs, 0, (acc, v) => if (p(r.wrap(v))) acc + 1 else acc)"
+    // count: Reduce whose combine folds a predicate into an unboxed accumulator. Int input uses the
+    // self-kind fold directly; Ref input uses the existing RefToIntFold (previously it BOXED an Integer
+    // per matching element past the valueOf cache); Long/Double inputs count in a SELF-KIND accumulator
+    // (a long/double count is exact far past any array length) and narrow at the end — zero new
+    // machinery. Remaining prim kinds (Float/Short/Byte/Char/Boolean) keep the boxed Ref-acc path
+    // (a float count loses exactness past 2^24, and the others are cold).
+    def countSurface(k: Kind): String = k.name match {
+      case "Int" =>
+        "reduceLeafFwdIntInt(xs, 0, (acc, v) => if (p(r.wrap(v))) acc + 1 else acc)"
+      case "Ref" =>
+        s"reduceLeafFwdRefInt(xs, 0, (acc, v) => if (p(${wrapV(k)})) acc + 1 else acc)"
+      case "Long" =>
+        "reduceLeafFwdLongLong(xs, 0L, (acc, v) => if (p(r.wrap(v))) acc + 1L else acc).toInt"
+      case "Double" =>
+        "(reduceLeafFwdDoubleDouble(xs, 0.0, (acc, v) => if (p(r.wrap(v))) acc + 1.0 else acc)).toInt"
+      case _ =>
+        s"reduceLeafFwd${k.name}Ref[java.lang.Integer](xs, java.lang.Integer.valueOf(0), (acc, v) => java.lang.Integer.valueOf(if (p(${wrapV(k)})) acc.intValue + 1 else acc.intValue)).intValue"
     }
     val countV = dispatchA(k => countSurface(k))
+    // min/max: the generic form folds with ord.gt/ord.lt, whose erased (Object, Object) signature boxes
+    // BOTH arguments per element and leans on EA to delete them. For the standard orderings on a
+    // primitive FArray, fold with a RAW compare instead (Double/Float via j.l.Double.compare — exactly
+    // TotalOrdering's semantics incl. NaN, which the default implicit extends; a raw `>` would drop NaN).
+    def maxMinSurface(k: Kind, isMax: Boolean): String = {
+      val ordOp = if isMax then "gt" else "lt"
+      val generic = s"foldLeftImpl[A, Z](xs, applyAtImpl[A](xs, 0))((best, a) => if (ord.$ordOp(a, best)) a else best).asInstanceOf[A]"
+      val nat: Option[(String, String)] = k.name match {
+        case "Int" | "Long" | "Short" | "Byte" | "Char" =>
+          Some((s"ord.asInstanceOf[AnyRef] eq scala.math.Ordering.${k.name}", if isMax then "v > acc" else "v < acc"))
+        case "Double" =>
+          Some(("ord.isInstanceOf[scala.math.Ordering.Double.TotalOrdering]", s"java.lang.Double.compare(v, acc) ${if isMax then ">" else "<"} 0"))
+        case "Float" =>
+          Some(("ord.isInstanceOf[scala.math.Ordering.Float.TotalOrdering]", s"java.lang.Float.compare(v, acc) ${if isMax then ">" else "<"} 0"))
+        case _ => None
+      }
+      nat match {
+        case Some((cond, cmp)) =>
+          s"if ($cond) r.wrap(reduceLeafFwd${k.name}${k.name}(xs, r.unwrap(applyAtImpl[A](xs, 0)), (acc, v) => if ($cmp) v else acc)) else $generic"
+        case None => generic
+      }
+    }
+    val maxV = dispatchA(k => maxMinSurface(k, isMax = true))
+    val minV = dispatchA(k => maxMinSurface(k, isMax = false))
     val sumV = dispatchA(k => sumProductSurface(k, (acc, e) => s"$acc + $e", k.dflt, isProduct = false))
     val productV = {
       def one(k: Kind) = k.name match { case "Long" => "1L"; case "Double" => "1.0"; case "Float" => "1.0f"; case _ => "1" }
@@ -2289,6 +2317,10 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |// is supplied element-by-element by the inlined `xs.foreach` at the FArray call site.
        |trait GroupMapAcc[K, B] { def add(key: K, v: B): Unit; def result: Map[K, FBase] }
        |object FArrayOps {
+       |  // cached tuples for the empty results — partition/unzip on an empty FArray allocated a fresh
+       |  // Tuple2(Empty, Empty) per call (SlicingInt partition@0 measured 0.18x of List on that alone).
+       |  val emptyPair: scala.Tuple2[FBase, FBase] = new scala.Tuple2(Empty.INSTANCE, Empty.INSTANCE)
+       |  val emptyTriple: scala.Tuple3[FBase, FBase, FBase] = new scala.Tuple3(Empty.INSTANCE, Empty.INSTANCE, Empty.INSTANCE)
        |$dfsC
        |$ats
        |$mat
@@ -2347,6 +2379,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def foldRightImpl[A, Z](xs: FBase, z: Z)(inline op: (A, Z) => Z): Z = $foldRightV
        |  inline def iteratorImpl[A](xs: FBase): Iterator[A] = ($iteratorV).asInstanceOf[Iterator[A]]
        |  inline def countImpl[A](xs: FBase)(inline p: A => Boolean): Int = $countV
+       |  inline def maxImpl[A, Z >: A](xs: FBase)(using ord: Ordering[Z]): A = $maxV
+       |  inline def minImpl[A, Z >: A](xs: FBase)(using ord: Ordering[Z]): A = $minV
        |  inline def foreachImpl[A](xs: FBase)(inline f: A => Unit): Unit = $foreach
        |  inline def foreachWhileImpl[A](xs: FBase)(inline f: A => Boolean): Unit = $foreachWhileV
        |  inline def existsImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = { val length = xs.length; $existsV }
@@ -2364,13 +2398,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def filterNotImpl[A](xs: FBase)(inline p: A => Boolean): FBase = ${dispatchA(k =>
         s"filterLeaf${k.name}(xs, ${predSAM(k, s"!p(${wrapV(k)})")})"
       )}
-       |  inline def partitionImpl[A](xs: FBase)(inline p: A => Boolean): scala.Tuple2[FBase, FBase] = if (xs.length == 0) new scala.Tuple2(Empty.INSTANCE, Empty.INSTANCE) else $partition
+       |  inline def partitionImpl[A](xs: FBase)(inline p: A => Boolean): scala.Tuple2[FBase, FBase] = if (xs.length == 0) emptyPair else $partition
        |  inline def collectImpl[A, B](xs: FBase)(pf: PartialFunction[A, B]): FBase = $collect
        |  inline def partitionMapImpl[A, A1, A2](xs: FBase)(inline f: A => Either[A1, A2]): scala.Tuple2[FBase, FBase] = $partitionMap
        |  inline def containsImpl[A](xs: FBase, elem: A): Boolean = { val length = xs.length; $contains }
        |  inline def mapConserveImpl[A](xs: FBase)(inline f: A => A): FBase = { val n = xs.length; if (n == 0) xs else if (n == 1) { val e = applyAtImpl[A](xs, 0); val r = f(e); if (r.asInstanceOf[AnyRef] eq e.asInstanceOf[AnyRef]) xs else fromValues1[A](r) } else $mapConserve }
-       |  inline def unzipImpl[A, A1, A2](xs: FBase)(ev: A <:< (A1, A2)): (FBase, FBase) = { val n = xs.length; if (n == 0) (Empty.INSTANCE, Empty.INSTANCE) else $unzipV }
-       |  inline def unzip3Impl[A, A1, A2, A3](xs: FBase)(ev: A <:< (A1, A2, A3)): (FBase, FBase, FBase) = { val n = xs.length; if (n == 0) (Empty.INSTANCE, Empty.INSTANCE, Empty.INSTANCE) else $unzip3V }
+       |  inline def unzipImpl[A, A1, A2](xs: FBase)(ev: A <:< (A1, A2)): (FBase, FBase) = { val n = xs.length; if (n == 0) emptyPair else $unzipV }
+       |  inline def unzip3Impl[A, A1, A2, A3](xs: FBase)(ev: A <:< (A1, A2, A3)): (FBase, FBase, FBase) = { val n = xs.length; if (n == 0) emptyTriple else $unzip3V }
        |  inline def zipImpl[A, B](xs: FBase, that: FBase): FBase = { val n = if (xs.length < that.length) xs.length else that.length; if (n == 0) Empty.INSTANCE else if (n == 1) fromValues1[(A, B)]((applyAtImpl[A](xs, 0), applyAtImpl[B](that, 0))) else { $zipV } }
        |  inline def zipWithIndexImpl[A](xs: FBase): FBase = { val n = xs.length; if (n == 0) Empty.INSTANCE else if (n == 1) fromValues1[(A, Int)]((applyAtImpl[A](xs, 0), 0)) else { $zipIdxV } }
        |  inline def matchAll2Impl[A, B](xs: FBase, xsOff: Int, that: FBase, m: Int)(inline pred: (A, B) => Boolean): Boolean = $matchAll2V
@@ -2389,7 +2423,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def scanRightImpl[A, B](xs: FBase, z: B)(inline op: (A, B) => B): FBase = { val n = xs.length; if (n == 0) fromValues1[B](z) else if (n == 1) fromValues2[B](op(applyAtImpl[A](xs, 0), z), z) else $scanRightV }
        |  inline def combinationsImpl[A](xs: FBase, k: Int): Iterator[FBase] = ($combinationsV).asInstanceOf[Iterator[FBase]]
        |  inline def permutationsImpl[A](xs: FBase): Iterator[FBase] = ($permutationsV).asInstanceOf[Iterator[FBase]]
-       |  inline def groupByImpl[A, K](xs: FBase)(inline f: A => K): Map[K, FBase] = if (xs.length == 0) Map.empty[K, FBase] else $groupBy
+       |  inline def groupByImpl[A, K](xs: FBase)(inline f: A => K): Map[K, FBase] = if (xs.length == 0) Map.empty[K, FBase] else if (xs.length == 1) Map(f(applyAtImpl[A](xs, 0)) -> xs) else $groupBy
        |  inline def groupMapAcc[K, B]: GroupMapAcc[K, B] = $groupMapAcc
        |}
        |""".stripMargin
@@ -4103,6 +4137,15 @@ object GenCores extends BleepCodegenScript("GenCores") {
   private def primCore(p: Prim): String = {
     val cls = s"${p.name}Arr"
     def one1(idx: String): String = s"new ${p.name}One(arr[$idx])"
+    // equals: the range Arrays.equals is a vectorized intrinsic — use it for every prim EXCEPT
+    // float/double, whose Arrays.equals uses BIT equality (NaN == NaN true, +0 != -0) while Scala ==
+    // is IEEE; those keep the manual != loop for List parity.
+    val eqBody = p.name match {
+      case "Float" | "Double" =>
+        "for (int i = 0; i < length; i++) if (arr[i] != other.arr[i]) return false;\n        return true;"
+      case _ =>
+        "return Arrays.equals(arr, 0, length, other.arr, 0, other.length);"
+    }
     s"""package farray;
        |
        |import java.util.Arrays;
@@ -4132,8 +4175,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |        if (!(obj instanceof $cls)) return Concat.elementwiseEquals(this, obj);
        |        $cls other = ($cls) obj;
        |        if (other.length != length) return false;
-       |        for (int i = 0; i < length; i++) if (arr[i] != other.arr[i]) return false;
-       |        return true;
+       |        $eqBody
        |    }
        |    @Override public String toString() { return Concat.render(this); }
        |}
@@ -4164,11 +4206,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |        if (!(obj instanceof RefArr)) return Concat.elementwiseEquals(this, obj);
        |        RefArr other = (RefArr) obj;
        |        if (other.length != length) return false;
-       |        for (int i = 0; i < length; i++) {
-       |            Object x = arr[i], y = other.arr[i];
-       |            if (x == null ? y != null : !x.equals(y)) return false;
-       |        }
-       |        return true;
+       |        // range Arrays.equals: same Objects.equals semantics as the old manual loop, null-safe.
+       |        return Arrays.equals(arr, 0, length, other.arr, 0, other.length);
        |    }
        |    @Override public String toString() { return Concat.render(this); }
        |}
@@ -4471,12 +4510,19 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    public final int[] offs;
        |    public ${name}FlatMap($jt[][] segs, int[] offs) { super(offs[offs.length - 1]); this.segs = segs; this.offs = offs; }
        |
-       |    /** Materialise to one contiguous leaf (length >= 2 here). Back-stop for random-access / windowing ops. */
+       |    /** Materialise to one contiguous leaf (length >= 2 here). Back-stop for random-access / windowing ops.
+       |     *  Memoised (benign racy publish, String.hashCode idiom) — take/drop/slice/init and windowed traversals
+       |     *  each called this, re-flattening the whole node every time. */
+       |    private ${name}Arr _flat;
        |    public ${name}Arr flat() {
+       |        ${name}Arr f = _flat;
+       |        if (f != null) return f;
        |        $jt[] out = new $jt[length];
        |        int o = 0;
        |        for (int s = 0; s < segs.length; s++) { int sl = offs[s + 1] - offs[s]; if (sl > 0) System.arraycopy(segs[s], 0, out, o, sl); o += sl; }
-       |        return new ${name}Arr(out, length);
+       |        f = new ${name}Arr(out, length);
+       |        _flat = f;
+       |        return f;
        |    }
        |
        |    @Override public Object applyBoxed(int i) {
