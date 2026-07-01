@@ -52,9 +52,10 @@ object FExhaustive:
     override def toString = s"$a.flatMap(e=>[e,e])"
   final case class FlatMapSingle(a: Recipe) extends Recipe:
     override def toString = s"$a.flatMap(e=>[e])"
-  // Wide = e => [e]*8 (>= the node threshold): exercises the ${K}FlatMap NODE path (Dup/Single stay < 8 => flatten).
+  // Wide = e => [e]*32 (>= the prim node threshold, so BOTH Int and String build the node; Dup/Single stay below
+  // both thresholds => flatten path): exercises the ${K}FlatMap NODE path for both kinds.
   final case class FlatMapWide(a: Recipe) extends Recipe:
-    override def toString = s"$a.flatMap(e=>[e]*8)"
+    override def toString = s"$a.flatMap(e=>[e]*32)"
 
   // ---------------------------------------------------------------------------
   // Element kind abstraction: Int (primitive leaves) and String (Object[] leaves).
@@ -87,7 +88,7 @@ object FExhaustive:
     def updated(a: FArray[Int], i: Int, e: Int): FArray[Int] = a.updated(i, e)
     def flatMapDup(a: FArray[Int]): FArray[Int] = a.flatMap(e => FArray(e, e))
     def flatMapSingle(a: FArray[Int]): FArray[Int] = a.flatMap(e => FArray(e))
-    def flatMapWide(a: FArray[Int]): FArray[Int] = a.flatMap(e => FArray.tabulate(8)(_ => e))
+    def flatMapWide(a: FArray[Int]): FArray[Int] = a.flatMap(e => FArray.tabulate(32)(_ => e))
 
   given Kind[String] with
     def name = "String"
@@ -101,7 +102,7 @@ object FExhaustive:
     def updated(a: FArray[String], i: Int, e: Int): FArray[String] = a.updated(i, elem(e))
     def flatMapDup(a: FArray[String]): FArray[String] = a.flatMap(e => FArray(e, e))
     def flatMapSingle(a: FArray[String]): FArray[String] = a.flatMap(e => FArray(e))
-    def flatMapWide(a: FArray[String]): FArray[String] = a.flatMap(e => FArray.tabulate(8)(_ => e))
+    def flatMapWide(a: FArray[String]): FArray[String] = a.flatMap(e => FArray.tabulate(32)(_ => e))
 
   // ---------------------------------------------------------------------------
   // Interpret a recipe into both the FArray and the List oracle (same op chain).
@@ -125,7 +126,7 @@ object FExhaustive:
       if i >= 0 && i < l.length then l.updated(i, e) else l // mirror FArray's valid-range only
     case FlatMapDup(a)    => buildList(a, K).flatMap(e => List(e, e))
     case FlatMapSingle(a) => buildList(a, K).flatMap(e => List(e))
-    case FlatMapWide(a)   => buildList(a, K).flatMap(e => List.fill(8)(e))
+    case FlatMapWide(a)   => buildList(a, K).flatMap(e => List.fill(32)(e))
 
   def buildF[E](r: Recipe)(using K: Kind[E]): FArray[E] = r match
     case Empty            => K.empty
@@ -190,10 +191,15 @@ object FExhaustive:
         for i <- (-1 to n + 1); j <- (i to n + 1) do buf += Slice(a, i, j)
         // reverse
         buf += Reverse(a)
-        // flatMap -> ${K}FlatMap node (as a sub-shape, so the composite ops above wrap it next depth)
-        buf += FlatMapDup(a)
-        buf += FlatMapSingle(a)
-        buf += FlatMapWide(a)
+        // flatMap -> ${K}FlatMap node (as a sub-shape, so the composite ops above wrap it next depth).
+        // Guard on the sub-shape length so the x2 / x8 fan-out doesn't compound across depth (32->256->2048);
+        // small wide-flatMap inputs already cover the node path + it-as-an-op-input at every depth.
+        if n <= 6 then
+          buf += FlatMapDup(a)
+          buf += FlatMapSingle(a)
+        // x32 fan-out: only wrap size-<=1 shapes (=> a handful of 32-elem NODES, both kinds), so the composite ops
+        // still wrap a real flatMap node next depth without the combinatorial blow-up.
+        if n <= 1 then buf += FlatMapWide(a)
         // padTo to n-1 .. n+2 (truncation probe + growth) with two filler values
         for len <- (n - 1 to n + 2); f <- Alphabet.take(1) do buf += PadTo(a, len, f)
         // updated only at valid indices

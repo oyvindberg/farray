@@ -1546,13 +1546,18 @@ object GenCores extends BleepCodegenScript("GenCores") {
       // leaf. `offs` = prefix sums = per-segment logical lengths (handles inner slack) + the random-access index.
       // Non-leaf inners (One/Empty/tree) materialise to an exact array (rare). LEAF source reads its array directly;
       // TREE source materialises the source ONCE, then the same loop. Canonicalise total 0 -> Empty, 1 -> ${K}One.
-      // ADAPTIVE (l0 = first inner's length): WIDE inners (>= NodeMin) build the ${K}FlatMap node (skip the
-      // flatten copy — measured win: -27% alloc, refs +15-18% throughput). NARROW inners flatten-copy into one
-      // contiguous leaf (the node's segmented traversal of tiny 2-elem segments is a small per-flatMap LOSS that
-      // compounds in chains — measured single -6% / double -17%). `f` is applied to `sa(0)` ONCE and reused as the
-      // first segment/copy in both paths. First-inner width is the sizing proxy (same heuristic as the old
-      // `cnt * l0` output estimate); non-uniform inners still work — node grows nothing, flatten uses ensureCap.
+      // ADAPTIVE, KIND-AWARE threshold (l0 = first inner's length): build the ${K}FlatMap node only where it is a
+      // STRICT win on BOTH throughput and allocation; else flatten-copy into one contiguous leaf (old path). The
+      // node's segmented traversal trades cache locality for less allocation — measured (flatMap(W).map.fold, node
+      // vs flatten): PRIMITIVES cross over at W>=32 (W16 0.94x thrpt / W32 1.04x / W64 1.04x — the between-segment
+      // cache miss amortises over W), REFS cross over at W>=8 (W4 0.99x / W8 1.03x / W16 1.03x — ref traversal isn't
+      // locality/vectorisation-bound the same way, and the copy avoided is costlier). Alloc is a win at ALL widths
+      // (~0.68-0.79x) but we gate on THROUGHPUT so the node never regresses. Narrow inners keep the old flatten path
+      // (avoids the tiny-segment per-flatMap loss that also compounds in chains). `f` is applied to `sa(0)` ONCE and
+      // reused as the first segment/copy. First-inner width is the sizing proxy (same as the old `cnt*l0` estimate);
+      // non-uniform inners still work — node grows nothing, flatten uses ensureCap.
       def core(ka: Kind, kb: Kind, saExpr: String): String = {
+        val nodeMinWidth = if kb.name == "Ref" then 8 else 32
         val segT = if kb.name == "Ref" then "Array[Object]" else s"Array[${kb.arr}]"
         val readI = readVal(ka, "sa(i)")
         val nodePath =
@@ -1565,7 +1570,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
             s"inr0 match { case lf: ${kb.name}Arr => System.arraycopy(lf.arr, 0, out, 0, l0); case _ => flatMapCopyOne${kb.name}(inr0, out, 0) }; " +
             s"var off = l0; var i = 1; while (i < cnt) { val inr = f($readI); val ln = inr.length; out = ensureCap${kb.name}(out, off + ln); inr match { case lf: ${kb.name}Arr => System.arraycopy(lf.arr, 0, out, off, ln); case _ => flatMapCopyOne${kb.name}(inr, out, off) }; off += ln; i += 1 }; " +
             s"if (off == 0) Empty.INSTANCE else if (off == 1) new ${kb.name}One(out(0)) else new ${kb.name}Arr(out, off) }"
-        s"{ val sa = $saExpr; val inr0 = f(${readVal(ka, "sa(0)")}); val l0 = inr0.length; if (l0 >= 8) $nodePath else $flatPath }"
+        s"{ val sa = $saExpr; val inr0 = f(${readVal(ka, "sa(0)")}); val l0 = inr0.length; if (l0 >= $nodeMinWidth) $nodePath else $flatPath }"
       }
       withErr(
         "summonFrom {\n" + opKinds
