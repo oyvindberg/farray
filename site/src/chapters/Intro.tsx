@@ -20,34 +20,63 @@ export default function Intro() {
         genuinely terrible state of affairs for a language this good.
       </p>
 
+      <h3>A thousand lines of spite</h3>
+
       <p>
-        I started FArray in 2022, mostly out of spite, and prototyped nearly everything you'll see here. Then
-        it sat — the rest of the work was large and I was out of evenings. What finally moved it was having
-        Claude to push the experiment the rest of the way.
+        Eventually spite won. The initial commit lands in January 2023, at three in the morning: one
+        thousand-line file, the whole <code>IndexedSeq</code> API hand-written as <code>inline</code>{" "}
+        <code>while</code> loops over a single flat <code>Array[AnyRef]</code>, casts on the way out,{" "}
+        <code>System.arraycopy</code> wherever shapes lined up. It worked — flat storage and straight-line
+        loops beat the collection library, exactly as the profiler always said they would.
+      </p>
+
+      <p>
+        But it was boxed. The readme of the time is honest about it: <em>“if you need specialized primitives
+        this is not (at least yet) the library for you.”</em> And that “yet” was load-bearing — unboxing
+        wasn't a feature you could bolt on, it wanted a different animal entirely: storage specialized per
+        element kind, a core the inliner couldn't defeat, machinery to keep a user's lambda unboxed across a
+        library boundary. I kept picking at it, and the experiments sprawled across an old machine, most of
+        them never reaching the repo — whose only commit in the three years that followed bumps the version
+        of the build tool. The shape of the thing was clear the whole time. The evenings weren't there.
       </p>
 
       <h2 className="turn">And then — boom</h2>
 
       <p>
-        <strong>First, the unboxing worked.</strong> An <code>FArray[Int]</code> is a real <code>int[]</code>{" "}
-        carrying the entire <code>IndexedSeq</code> API — <code>map</code>, <code>filter</code>,{" "}
-        <code>fold</code>, <code>sort</code> — without a single <code>java.lang.Integer</code> anywhere. That
-        much the 2022 prototype already did.
+        In June 2026 I picked it back up, this time with Claude doing the heavy lifting. Twelve days and
+        nearly three hundred commits later, the roadmap I'd been quietly resequencing for a decade had stopped
+        being sequential. The milestones didn't arrive one by one; they arrived <strong>on top of each
+        other</strong>:
       </p>
 
-      <p>
-        <strong>Then, with a bit more work, the computations fused.</strong> A whole chain of{" "}
-        <code>map</code> / <code>filter</code> / <code>flatMap</code> / <code>zip</code> / <code>fold</code>{" "}
-        stopped allocating anything between its stages — a macro rewrites the lot, at compile time, into one
-        pass over the backing array. This is the part I'd given up on ever having.
-      </p>
+      <ul className="points">
+        <li>
+          <strong>A working FArray.</strong> An <code>FArray[Int]</code> that <em>is</em> a real{" "}
+          <code>int[]</code>, carrying the entire <code>IndexedSeq</code> API — <code>map</code>,{" "}
+          <code>filter</code>, <code>fold</code>, <code>sort</code> — without a single{" "}
+          <code>java.lang.Integer</code> anywhere. The thing the decade was spent waiting for.
+        </li>
+        <li>
+          <strong>Working fusion.</strong> A whole chain of <code>map</code> / <code>filter</code> /{" "}
+          <code>flatMap</code> / <code>zip</code> / <code>fold</code>, rewritten at compile time into one pass
+          over the backing array, allocating nothing between stages. The part I'd given up on ever having —
+          its design note is dated one day before the first three working phases.
+        </li>
+        <li>
+          <strong>And a working Claude.</strong> The reason the other two exist. The redesign the prototype
+          demanded — a generated Java core, per-kind specialization, a macro optimizer — was years of evenings
+          I didn't have. It became twelve days, with the benchmark suite as referee on every commit.
+        </li>
+      </ul>
 
       <p>
-        It's easiest to feel on something long and gnarly. Fourteen stages — <code>flatMap</code>,{" "}
-        <code>filter</code>, <code>map</code>, <code>zip</code>, <code>zipWithIndex</code>,{" "}
-        <code>foldLeft</code>, twice over — run identically on every collection in the race. The FArray
-        version differs by a single word: <code>.fuse</code>. On the left, the code; on the right, what that
-        one word does to everyone else.
+        Everything on this page follows from those three landing together. And they stack — unboxed elements
+        under structural laziness under fused pipelines — so the fairest way to show it is to stack them.
+        Fourteen stages: <code>flatMap</code>, <code>filter</code>, <code>map</code>, <code>zip</code>,{" "}
+        <code>zipWithIndex</code>, <code>foldLeft</code>, twice over — the kind of pipeline you'd write on any
+        ordinary Tuesday and pay for on every element. Every collection in the race runs the identical code;
+        the FArray version differs by a single word: <code>.fuse</code>. Before you look at the chart, pick
+        the speedup you'd refuse to believe.
       </p>
 
       <SideBySide
@@ -64,10 +93,11 @@ export default function Intro() {
       />
 
       <p>
-        At a hundred thousand elements that lands at roughly <strong>30× the quickest competitor</strong>,{" "}
+        At a hundred thousand elements: roughly <strong>30× the quickest competitor</strong>,{" "}
         <strong>80× List</strong> — and, the number that says the most, <strong>16× the very same pipeline
-        run eagerly on FArray itself</strong>. The green bar stands so far above the field that everyone else
-        flattens to slivers. Hover them for the exact numbers.
+        run eagerly on FArray itself</strong>. Whatever factor you picked, the green bar probably clears it;
+        it stands so far above the field that everyone else flattens to slivers. Hover them for the exact
+        numbers.
       </p>
 
       <p>
