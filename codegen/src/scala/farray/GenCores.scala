@@ -619,14 +619,14 @@ object GenCores extends BleepCodegenScript("GenCores") {
       val close = summonStr.lastIndexOf("\n    }")
       if close < 0 then summonStr // defensive: shape changed, leave as-is
       else summonStr.substring(0, close) + s"\n      case _ => ${noReprErr(tp)}" + summonStr.substring(close)
-    //start:kind-dispatch
+    // start:kind-dispatch
     // emit a Scala-3 `summonFrom` that picks the per-kind unboxed body at the concrete call site:
     // a `case r: ${K}Repr[A]` per element kind (Int/Long/Double/Ref), resolved at COMPILE time.
     def dispatchA(body: Kind => String): String =
       "summonFrom {\n" + opKinds.map(k => s"      case r: ${k.name}Repr[A] => ${body(k)}").mkString("\n") + s"\n      case _ => ${noReprErr("A")}\n    }"
     def dispatchB(body: Kind => String): String =
       "summonFrom {\n" + opKinds.map(k => s"      case r: ${k.name}Repr[B] => ${body(k)}").mkString("\n") + s"\n      case _ => ${noReprErr("B")}\n    }"
-    //stop:kind-dispatch
+    // stop:kind-dispatch
 
     // wrap an arbitrary RAW kind-array-typed expression `e` back to A (mirrors readOne, which hardcodes `v`).
     // `rawArray` ops (sum/product) read the prim directly; Ref always casts the Object element to A then wraps.

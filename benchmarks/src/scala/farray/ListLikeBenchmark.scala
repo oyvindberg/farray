@@ -9,11 +9,11 @@ import scala.annotation.tailrec
 
 object FArrayRec:
   import farray.ListSyntax.* // FArray's `::`/`Nil` shadow scala's here
-  //start:cons-list
+  // start:cons-list
   // FArray used as a cons-list: build with `::`, tear apart with `case h :: t` — the SAME code as List
   def buildInt(n: Int): FArray[Int] = if n == 0 then Nil else n :: buildInt(n - 1)
   def sumInt(xs: FArray[Int]): Int = xs match { case h :: t => h + sumInt(t); case _ => 0 }
-  //stop:cons-list
+  // stop:cons-list
   def buildStr(n: Int): FArray[String] = if n == 0 then Nil else n.toString :: buildStr(n - 1)
   def lenStr(xs: FArray[String]): Int = xs match { case h :: t => h.length + lenStr(t); case _ => 0 }
   // a map (or two) between build and pick-apart: map materialises the chain to a leaf, so pick-apart

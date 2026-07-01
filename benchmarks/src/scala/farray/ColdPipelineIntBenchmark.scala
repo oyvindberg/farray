@@ -20,10 +20,17 @@ import java.util.concurrent.TimeUnit
 @Fork(
   value = 12,
   jvmArgs = Array(
-    "-Xms2g", "-Xmx2g", "-XX:NewSize=1g", "-XX:MaxNewSize=1g",
-    "-XX:InitialCodeCacheSize=512m", "-XX:ReservedCodeCacheSize=512m",
-    "-XX:+UseParallelGC", "-XX:-UseAdaptiveSizePolicy",
-    "-XX:MaxInlineLevel=20", "-XX:InlineSmallCode=1500", "-XX:+AlwaysPreTouch"
+    "-Xms2g",
+    "-Xmx2g",
+    "-XX:NewSize=1g",
+    "-XX:MaxNewSize=1g",
+    "-XX:InitialCodeCacheSize=512m",
+    "-XX:ReservedCodeCacheSize=512m",
+    "-XX:+UseParallelGC",
+    "-XX:-UseAdaptiveSizePolicy",
+    "-XX:MaxInlineLevel=20",
+    "-XX:InlineSmallCode=1500",
+    "-XX:+AlwaysPreTouch"
   )
 )
 class ColdPipelineIntBenchmark extends CommonParams {
@@ -51,59 +58,122 @@ class ColdPipelineIntBenchmark extends CommonParams {
 
   @Benchmark def list(): Int =
     listInput
-      .flatMap(x => List(x, x + 1)).filter(_ % 3 != 0).map(_ * 2)
-      .flatMap(x => List(x, x ^ 5)).filter(_ % 2 == 0).map(_ - 7)
-      .zip(listInput.map(_ + 100)).map((a, b) => a + b)
-      .zipWithIndex.filter((v, i) => (v + i) % 4 != 0).map((v, i) => v - i)
-      .flatMap(x => List(x, x + 3)).filter(_ > 0).foldLeft(0)(_ + _)
+      .flatMap(x => List(x, x + 1))
+      .filter(_ % 3 != 0)
+      .map(_ * 2)
+      .flatMap(x => List(x, x ^ 5))
+      .filter(_ % 2 == 0)
+      .map(_ - 7)
+      .zip(listInput.map(_ + 100))
+      .map((a, b) => a + b)
+      .zipWithIndex
+      .filter((v, i) => (v + i) % 4 != 0)
+      .map((v, i) => v - i)
+      .flatMap(x => List(x, x + 3))
+      .filter(_ > 0)
+      .foldLeft(0)(_ + _)
 
   @Benchmark def vector(): Int =
     vectorInput
-      .flatMap(x => Vector(x, x + 1)).filter(_ % 3 != 0).map(_ * 2)
-      .flatMap(x => Vector(x, x ^ 5)).filter(_ % 2 == 0).map(_ - 7)
-      .zip(vectorInput.map(_ + 100)).map((a, b) => a + b)
-      .zipWithIndex.filter((v, i) => (v + i) % 4 != 0).map((v, i) => v - i)
-      .flatMap(x => Vector(x, x + 3)).filter(_ > 0).foldLeft(0)(_ + _)
+      .flatMap(x => Vector(x, x + 1))
+      .filter(_ % 3 != 0)
+      .map(_ * 2)
+      .flatMap(x => Vector(x, x ^ 5))
+      .filter(_ % 2 == 0)
+      .map(_ - 7)
+      .zip(vectorInput.map(_ + 100))
+      .map((a, b) => a + b)
+      .zipWithIndex
+      .filter((v, i) => (v + i) % 4 != 0)
+      .map((v, i) => v - i)
+      .flatMap(x => Vector(x, x + 3))
+      .filter(_ > 0)
+      .foldLeft(0)(_ + _)
 
   @Benchmark def iarray(): Int =
     iarrayInput
-      .flatMap(x => IArray(x, x + 1)).filter(_ % 3 != 0).map(_ * 2)
-      .flatMap(x => IArray(x, x ^ 5)).filter(_ % 2 == 0).map(_ - 7)
-      .zip(iarrayInput.map(_ + 100)).map((a, b) => a + b)
-      .zipWithIndex.filter((v, i) => (v + i) % 4 != 0).map((v, i) => v - i)
-      .flatMap(x => IArray(x, x + 3)).filter(_ > 0).foldLeft(0)(_ + _)
+      .flatMap(x => IArray(x, x + 1))
+      .filter(_ % 3 != 0)
+      .map(_ * 2)
+      .flatMap(x => IArray(x, x ^ 5))
+      .filter(_ % 2 == 0)
+      .map(_ - 7)
+      .zip(iarrayInput.map(_ + 100))
+      .map((a, b) => a + b)
+      .zipWithIndex
+      .filter((v, i) => (v + i) % 4 != 0)
+      .map((v, i) => v - i)
+      .flatMap(x => IArray(x, x + 3))
+      .filter(_ > 0)
+      .foldLeft(0)(_ + _)
 
   @Benchmark def farrayEager(): Int =
     farrayInput
-      .flatMap(x => FArray(x, x + 1)).filter(_ % 3 != 0).map(_ * 2)
-      .flatMap(x => FArray(x, x ^ 5)).filter(_ % 2 == 0).map(_ - 7)
-      .zip(farrayInput.map(_ + 100)).map((a, b) => a + b)
-      .zipWithIndex.filter((v, i) => (v + i) % 4 != 0).map((v, i) => v - i)
-      .flatMap(x => FArray(x, x + 3)).filter(_ > 0).foldLeft(0)(_ + _)
+      .flatMap(x => FArray(x, x + 1))
+      .filter(_ % 3 != 0)
+      .map(_ * 2)
+      .flatMap(x => FArray(x, x ^ 5))
+      .filter(_ % 2 == 0)
+      .map(_ - 7)
+      .zip(farrayInput.map(_ + 100))
+      .map((a, b) => a + b)
+      .zipWithIndex
+      .filter((v, i) => (v + i) % 4 != 0)
+      .map((v, i) => v - i)
+      .flatMap(x => FArray(x, x + 3))
+      .filter(_ > 0)
+      .foldLeft(0)(_ + _)
 
   @Benchmark def farrayFused(): Int = {
     val zipSrc = farrayInput.map(_ + 100)
     farrayInput.fuse
-      .flatMap(x => FArray(x, x + 1)).filter(_ % 3 != 0).map(_ * 2)
-      .flatMap(x => FArray(x, x ^ 5)).filter(_ % 2 == 0).map(_ - 7)
-      .zip(zipSrc).map((a, b) => a + b)
-      .zipWithIndex.filter((v, i) => (v + i) % 4 != 0).map((v, i) => v - i)
-      .flatMap(x => FArray(x, x + 3)).filter(_ > 0).foldLeft(0)(_ + _)
+      .flatMap(x => FArray(x, x + 1))
+      .filter(_ % 3 != 0)
+      .map(_ * 2)
+      .flatMap(x => FArray(x, x ^ 5))
+      .filter(_ % 2 == 0)
+      .map(_ - 7)
+      .zip(zipSrc)
+      .map((a, b) => a + b)
+      .zipWithIndex
+      .filter((v, i) => (v + i) % 4 != 0)
+      .map((v, i) => v - i)
+      .flatMap(x => FArray(x, x + 3))
+      .filter(_ > 0)
+      .foldLeft(0)(_ + _)
   }
 
   @Benchmark def fs2chunk(): Int =
     fs2ChunkInput
-      .flatMap(x => fs2.Chunk(x, x + 1)).filter(_ % 3 != 0).map(_ * 2)
-      .flatMap(x => fs2.Chunk(x, x ^ 5)).filter(_ % 2 == 0).map(_ - 7)
-      .zip(fs2ChunkInput.map(_ + 100)).map((a, b) => a + b)
-      .zipWithIndex.filter((v, i) => (v + i) % 4 != 0).map((v, i) => v - i)
-      .flatMap(x => fs2.Chunk(x, x + 3)).filter(_ > 0).foldLeft(0)(_ + _)
+      .flatMap(x => fs2.Chunk(x, x + 1))
+      .filter(_ % 3 != 0)
+      .map(_ * 2)
+      .flatMap(x => fs2.Chunk(x, x ^ 5))
+      .filter(_ % 2 == 0)
+      .map(_ - 7)
+      .zip(fs2ChunkInput.map(_ + 100))
+      .map((a, b) => a + b)
+      .zipWithIndex
+      .filter((v, i) => (v + i) % 4 != 0)
+      .map((v, i) => v - i)
+      .flatMap(x => fs2.Chunk(x, x + 3))
+      .filter(_ > 0)
+      .foldLeft(0)(_ + _)
 
   @Benchmark def ziochunk(): Int =
     zioChunkInput
-      .flatMap(x => zio.Chunk(x, x + 1)).filter(_ % 3 != 0).map(_ * 2)
-      .flatMap(x => zio.Chunk(x, x ^ 5)).filter(_ % 2 == 0).map(_ - 7)
-      .zip(zioChunkInput.map(_ + 100)).map((a, b) => a + b)
-      .zipWithIndex.filter((v, i) => (v + i) % 4 != 0).map((v, i) => v - i)
-      .flatMap(x => zio.Chunk(x, x + 3)).filter(_ > 0).foldLeft(0)(_ + _)
+      .flatMap(x => zio.Chunk(x, x + 1))
+      .filter(_ % 3 != 0)
+      .map(_ * 2)
+      .flatMap(x => zio.Chunk(x, x ^ 5))
+      .filter(_ % 2 == 0)
+      .map(_ - 7)
+      .zip(zioChunkInput.map(_ + 100))
+      .map((a, b) => a + b)
+      .zipWithIndex
+      .filter((v, i) => (v + i) % 4 != 0)
+      .map((v, i) => v - i)
+      .flatMap(x => zio.Chunk(x, x + 3))
+      .filter(_ > 0)
+      .foldLeft(0)(_ + _)
 }

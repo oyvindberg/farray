@@ -88,7 +88,7 @@ class LongMixedPipelineIntBenchmark extends IntInputs {
   // The SAME logical pipeline through FArray's `fuse` — one pass, no intermediate collections, no
   // Function1, unboxed Int throughout. Same stages as `farray` above. The `zip` source is hoisted to a
   // `val` so the fuse macro sees a simple reference (it reads the `that` argument off the AST).
-  //start:fuse-pipeline
+  // start:fuse-pipeline
   // the SAME 14-stage transform, fused: one pass, no intermediate collections, no Function1,
   // unboxed Int throughout — the macro rewrites the whole chain into a single while-loop.
   @Benchmark def farrayFused(): Int = {
@@ -109,7 +109,7 @@ class LongMixedPipelineIntBenchmark extends IntInputs {
       .filter(_ > 0)
       .foldLeft(0)(_ + _)
   }
-  //stop:fuse-pipeline
+  // stop:fuse-pipeline
 
   @Benchmark def fs2chunk(): Int = {
     fs2ChunkInput

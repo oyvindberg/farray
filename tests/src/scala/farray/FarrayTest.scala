@@ -1658,17 +1658,20 @@ class FListTest:
     import farray.json.{Json, JsonDemo}
     val src = JsonDemo.sample
     val wsrc = JsonDemo.wideSample
-    Snapshots.check("fuse-json-sum.snap",
-      FuseDebug.show(Json.ndjson[JsonDemo.Event](src).stream.filter(_.amount > 150).map(_.amount).foldLeft(0.0)(_ + _)))
-    Snapshots.check("fuse-json-cat.snap",
-      FuseDebug.show(Json.ndjson[JsonDemo.Event](src).stream.filter(_.amount > 150).map(_.category).toList))
-    Snapshots.check("fuse-json-count.snap",
-      FuseDebug.show(Json.ndjson[JsonDemo.Event](src).stream.filter(_.status == "active").map(_.category).count))
-    Snapshots.check("fuse-json-wide.snap",
-      FuseDebug.show(Json.ndjson[JsonDemo.Wide](wsrc).stream.filter(_.key > 90).map(_.payload).count))
-    Snapshots.check("fuse-json-agg.snap",
-      FuseDebug.show(Json.ndjson[JsonDemo.Event](src).stream.filter(_.status == "active")
-        .aggTo(JsonDemo.Stats.apply)(farray.Agg.sum(_.amount), farray.Agg.count, farray.Agg.max1(_.score))))
+    Snapshots.check("fuse-json-sum.snap", FuseDebug.show(Json.ndjson[JsonDemo.Event](src).stream.filter(_.amount > 150).map(_.amount).foldLeft(0.0)(_ + _)))
+    Snapshots.check("fuse-json-cat.snap", FuseDebug.show(Json.ndjson[JsonDemo.Event](src).stream.filter(_.amount > 150).map(_.category).toList))
+    Snapshots.check("fuse-json-count.snap", FuseDebug.show(Json.ndjson[JsonDemo.Event](src).stream.filter(_.status == "active").map(_.category).count))
+    Snapshots.check("fuse-json-wide.snap", FuseDebug.show(Json.ndjson[JsonDemo.Wide](wsrc).stream.filter(_.key > 90).map(_.payload).count))
+    Snapshots.check(
+      "fuse-json-agg.snap",
+      FuseDebug.show(
+        Json
+          .ndjson[JsonDemo.Event](src)
+          .stream
+          .filter(_.status == "active")
+          .aggTo(JsonDemo.Stats.apply)(farray.Agg.sum(_.amount), farray.Agg.count, farray.Agg.max1(_.score))
+      )
+    )
 
   @Test def test_hashCode_matchesList(): Unit =
     def chk(name: String, fa: FArray[Any], l: List[Any]): Unit =

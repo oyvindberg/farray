@@ -28,6 +28,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: bleep-build/bleep-setup-action@0.0.1
+      - uses: coursier/cache-action@v6
+        with:
+          extraFiles: bleep.yaml
+      - name: Generate sources
+        # site/scripts/build-data.mjs extracts snippets from the generated FArrayOps
+        run: bleep sourcegen farray
       - uses: actions/setup-node@v4
         with:
           node-version: 22
