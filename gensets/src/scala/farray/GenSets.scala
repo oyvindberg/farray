@@ -459,7 +459,9 @@ object GenSets extends BleepCodegenScript("GenSets") {
           ee.line("val ctrl = h.ctrl")
           ee.line("val keys = h.keys")
           ee.line("val hc = e.hashCode()")
-          ee.line("val m = mixInt(hc)")
+          // small tables (fit in cache): cheap mixRef. Large: full mixInt avalanche — its distribution keeps
+          // probe chains short where a cache-cold scan is expensive (build agrees on this via n <= 16384).
+          ee.line("val m = if (ctrl.length <= 32768) mixRef(hc) else mixInt(hc)")
           ee.line("val fp = (((m >>> 24) & 0x7f) | 0x80).toByte")
           ee.line("var slot = m & (ctrl.length - 1)")
           ee.line("var res = false; var go = true")
@@ -579,6 +581,9 @@ object GenSets extends BleepCodegenScript("GenSets") {
     val hashHelpers = {
       val ee = new Emit("  ")
       ee.line("def mixInt(h0: Int): Int = { var h = h0; h ^= h >>> 16; h *= 0x85ebca6b; h ^= h >>> 13; h *= 0xc2b2ae35; h ^= h >>> 16; h }")
+      // ref-hash slot mix: the input is already String.hashCode (a decent polynomial hash), so a single
+      // Fibonacci multiply + high-bit fold suffices (~3 cycles vs mixInt's ~9) — the murmur avalanche is redundant.
+      ee.line("def mixRef(h0: Int): Int = { val x = h0 * 0x9e3779b1; x ^ (x >>> 16) }")
       ee.line("def mixLong(h0: Long): Int = { var h = h0; h ^= h >>> 33; h *= 0xff51afd7ed558ccdL.toLong; h ^= h >>> 33; h *= 0xc4ceb9fe1a85ec53L.toLong; h ^= h >>> 33; (h ^ (h >>> 32)).toInt }")
       opKinds.foreach { k =>
         val K = k.name
@@ -888,9 +893,10 @@ object GenSets extends BleepCodegenScript("GenSets") {
         ee.line("while (cap < n * 2) cap <<= 1")
         ee.line("val ctrl = new Array[Byte](cap)")
         ee.line("val keys = new Array[Object](cap)")
+        ee.line("val small = n <= 16384") // small table → cheap mixRef; large → mixInt (probe agrees via ctrl.length)
         ee.line("var p = 0")
         ee.open("while (p < n)")
-        ee.line("val m = mixInt(hashes(p))")
+        ee.line("val m = if (small) mixRef(hashes(p)) else mixInt(hashes(p))")
         ee.line("var slot = m & (cap - 1)")
         ee.line("while (ctrl(slot) != 0) slot = (slot + 1) & (cap - 1)")
         ee.line("ctrl(slot) = (((m >>> 24) & 0x7f) | 0x80).toByte")
