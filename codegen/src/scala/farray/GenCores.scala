@@ -1154,6 +1154,24 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // (k <= n; NO trim copy — the leaf carries slack `n - k` and iterates to `length`). The
     // ${I}Pred SAM closes over the user predicate (does the A wrap), so the leaf method is op-agnostic per input
     // kind. NO inlined leaf loop in the inline surface — the surface only realizes the predicate and CALLS this.
+    // Canonicalise a filtered output buffer of capacity `n` filled to `o`: Empty/One for 0/1, else the
+    // buffer with logical length `o` (slack — skips the trim copy, measured throughput choice) UNLESS
+    // the kept fraction is small: o < n/4 trims via copyOf, capping retained memory at 4x the result
+    // (a filter keeping 2 of 100k used to pin the full 400KB buffer for the result's lifetime). The
+    // trim copy costs < n/4 element moves against the n-element scan just performed.
+    val trimLeafMethods = {
+      val ee = new Emit("  ")
+      opKinds.foreach { k =>
+        val K = k.name
+        ee.open(s"def trimLeaf${K}(out: Array[${k.arr}], o: Int, n: Int): FBase =")
+        ee.line("if (o == 0) Empty.INSTANCE")
+        ee.line(s"else if (o == 1) new ${K}One(out(0))")
+        ee.line(s"else if (o < (n >>> 2)) new ${K}Arr(java.util.Arrays.copyOf(out, o), o)")
+        ee.line(s"else new ${K}Arr(out, o)")
+        ee.close()
+      }
+      ee.result
+    }
     val filterLeafMethods = {
       val ee = new Emit("  ")
       opKinds.foreach { k =>
@@ -1177,7 +1195,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.close()
         // o <= n. o == n -> nothing filtered, reuse xs (reference identity). Else hand `out` through with logical
         // length `o` — SKIP the trim copy (slack = n - o); leaves iterate to `length`.
-        ee.line(s"if (o == n) xs else if (o == 0) Empty.INSTANCE else if (o == 1) new ${K}One(out(0)) else new ${K}Arr(out, o)")
+        ee.line(s"if (o == n) xs else trimLeaf${K}(out, o, n)")
         // SLICE FAST-PATH: same standalone lifted loop over the leaf window (take/drop results).
         ee.closeOpen(s"case s: SliceNode if s.base.isInstanceOf[${K}Arr] =>")
         ee.line(s"val a = s.base.asInstanceOf[${K}Arr].arr")
@@ -1191,14 +1209,12 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line("if (p.apply(e)) { out(o) = e; o += 1 }")
         ee.line("i += 1")
         ee.close()
-        ee.line(s"if (o == n) xs else if (o == 0) Empty.INSTANCE else if (o == 1) new ${K}One(out(0)) else new ${K}Arr(out, o)")
+        ee.line(s"if (o == n) xs else trimLeaf${K}(out, o, n)")
         ee.closeOpen("case _ =>")
         ee.line("val n = xs.length")
         ee.line(s"val out = new Array[${k.arr}](n)")
         ee.line(s"val o = Traversers.buildFiltered${K}(xs, out, 0, p)")
-        ee.line(
-          s"if (o == 0) Empty.INSTANCE else if (o == 1) new ${K}One(out(0)) else new ${K}Arr(out, o)"
-        )
+        ee.line(s"trimLeaf${K}(out, o, n)")
         ee.close()
         ee.close() // xs match
         ee.close() // def
@@ -1217,10 +1233,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
       val ee = new Emit("  ")
       opKinds.foreach { k =>
         val K = k.name
-        // canonicalise ONE output buffer `b` filled to length `c` (c <= b.length) into a leaf — SKIP the trim
-        // copy: hand `b` through with logical length `c` (slack = b.length - c); leaves iterate to `length`.
-        def trim(b: String, c: String): String =
-          s"if ($c == 0) Empty.INSTANCE else if ($c == 1) new ${K}One($b(0)) else new ${K}Arr($b, $c)"
+        // canonicalise ONE output buffer `b` filled to length `c` via the shared trimLeaf (slack kept
+        // unless the kept fraction is < 1/4 — see trimLeafMethods).
+        def trim(b: String, c: String): String = s"trimLeaf${K}($b, $c, n)"
         ee.open(s"def partitionLeaf${K}(xs: FBase, p: Traversers.${K}Pred): scala.Tuple2[FBase, FBase] =")
         ee.open("xs match")
         ee.line("case e: Empty => emptyPair")
@@ -2421,6 +2436,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |$sortArr
        |$reduceLeafMethods
        |$mapLeafMethods
+       |$trimLeafMethods
        |$filterLeafMethods
        |$partitionLeafMethods
        |$foreachLeafMethods
