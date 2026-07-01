@@ -3053,29 +3053,48 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // the Java element type for this input kind (Pad filler / Updated leaf-array element type): each primitive's
     // jt; Ref -> Object.
     val je = prims.find(_.name == K).map(_.jt).getOrElse("Object")
-    // grow the single FBase[] child stack; a deferred Append/Prepend element rides as a ${K}One node.
+    // grow the single FBase[] child stack (and the tail arrays in lockstep once they exist).
     def ensureStack(): Unit = {
       e.open("if (stack == null)")
       e.line("stack = new FBase[16];")
       e.closeOpen("else if (sp == stack.length)")
       e.line("int nl = sp * 2;")
       e.line("stack = java.util.Arrays.copyOf(stack, nl);")
+      e.open("if (isTail != null)")
+      e.line("tail = java.util.Arrays.copyOf(tail, nl);")
+      e.line("isTail = java.util.Arrays.copyOf(isTail, nl);")
+      e.close()
       e.close()
     }
-    def pushOne(elem: String): Unit = {
+    // a deferred Append/Prepend element rides in a RAW tail slot (value array + flag array, both lazy)
+    // — the previous `new ${K}One(elem)` allocated a node PER DEFERRED ELEMENT, so a fold/map over an
+    // n-deep `:+` chain allocated n Ones. The pop loop acts on a flagged slot directly.
+    def pushTail(elem: String): Unit = {
       ensureStack()
-      e.line(s"stack[sp] = new ${K}One($elem);")
+      e.open("if (isTail == null)")
+      e.line(s"tail = new $je[stack.length];")
+      e.line("isTail = new boolean[stack.length];")
+      e.close()
+      e.line(s"tail[sp] = $elem;")
+      e.line("isTail[sp] = true;")
       e.line("sp += 1;")
     }
     def pushChild(child: String): Unit = {
       ensureStack()
+      // a popped tail slot can leave a stale flag at this depth — clear it so this child isn't misread.
+      e.open("if (isTail != null)")
+      e.line("isTail[sp] = false;")
+      e.close()
       e.line(s"stack[sp] = $child;")
       e.line("sp += 1;")
     }
+    def pushOne(elem: String): Unit = pushTail(elem)
 
     e.open(spec.sig)
     e.line("FBase cur = root;")
     e.line("FBase[] stack = null;")
+    e.line(s"$je[] tail = null;")
+    e.line("boolean[] isTail = null;")
     e.line("int sp = 0;")
     spec.prelude()
     e.open("while (cur != null)")
@@ -3209,14 +3228,19 @@ object GenCores extends BleepCodegenScript("GenCores") {
       }
     }
     e.close()
-    // advance: descend into `next`, else pop the explicit stack (a popped ${K}One acts as an ordinary node).
+    // advance: descend into `next`, else pop the explicit stack (a flagged tail slot acts its raw
+    // element directly; an FBase slot resumes the walk).
     e.open("if (next != null)")
     e.line("cur = next;")
     e.closeOpen("else")
     e.line("cur = null;")
     e.open("while (sp > 0 && cur == null)")
     e.line("sp -= 1;")
+    e.open("if (isTail != null && isTail[sp])")
+    spec.act("tail[sp]")
+    e.closeOpen("else")
     e.line("cur = stack[sp];")
+    e.close()
     e.close()
     e.close()
     e.close() // while (cur != null)
@@ -4033,15 +4057,28 @@ object GenCores extends BleepCodegenScript("GenCores") {
       e.closeOpen("else if (sp == stack.length)")
       e.line("int nl = sp * 2;")
       e.line("stack = java.util.Arrays.copyOf(stack, nl);")
+      e.open("if (isTail != null)")
+      e.line("tail = java.util.Arrays.copyOf(tail, nl);")
+      e.line("isTail = java.util.Arrays.copyOf(isTail, nl);")
+      e.close()
       e.close()
     }
+    // raw tail slots (see emitMainWalk): no ${K}One allocation per deferred Append/Prepend element.
     def pushOne(elem: String): Unit = {
       ensureStack()
-      e.line(s"stack[sp] = new ${K}One($elem);")
+      e.open("if (isTail == null)")
+      e.line(s"tail = new $je[stack.length];")
+      e.line("isTail = new boolean[stack.length];")
+      e.close()
+      e.line(s"tail[sp] = $elem;")
+      e.line("isTail[sp] = true;")
       e.line("sp += 1;")
     }
     def pushChild(child: String): Unit = {
       ensureStack()
+      e.open("if (isTail != null)")
+      e.line("isTail[sp] = false;")
+      e.close()
       e.line(s"stack[sp] = $child;")
       e.line("sp += 1;")
     }
@@ -4049,6 +4086,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
     e.open(sig)
     e.line("FBase cur = root;")
     e.line("FBase[] stack = null;")
+    e.line(s"$je[] tail = null;")
+    e.line("boolean[] isTail = null;")
     e.line("int sp = 0;")
     e.open("while (cur != null)")
     e.line("FBase next = null;")
@@ -4193,14 +4232,19 @@ object GenCores extends BleepCodegenScript("GenCores") {
       }
     }
     e.close()
-    // advance: descend into `next`, else pop the explicit stack (a popped ${K}One tests the deferred element).
+    // advance: descend into `next`, else pop the explicit stack (a flagged tail slot tests the deferred
+    // element in place — oneScan may `return` the hit index, abandoning the walk).
     e.open("if (next != null)")
     e.line("cur = next;")
     e.closeOpen("else")
     e.line("cur = null;")
     e.open("while (sp > 0 && cur == null)")
     e.line("sp -= 1;")
+    e.open("if (isTail != null && isTail[sp])")
+    oneScan("tail[sp]")
+    e.closeOpen("else")
     e.line("cur = stack[sp];")
+    e.close()
     e.close()
     e.close()
     e.close() // while (cur != null)
