@@ -1,0 +1,44 @@
+{
+  val $proxy: FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  } = FArray$package.$asInstanceOf$[FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  }]
+  val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
+  val Fuse_this: Fuse[Stat] = (new Fuse[Int](xs$proxy): Fuse[Int]).map[Stat](((x: Int) => Stat.apply(x, x.*(100), x.*(1000))))
+
+  ({
+    val `Fuse_this₂`: Fuse_this.type = Fuse_this
+
+    ({
+      val src0: FBase = inline$base$i1[Stat](`Fuse_this₂`).asInstanceOf[FBase]
+      val n0: Int = src0.length
+      var acc: Int = 0
+
+      ({
+        src0 match {
+          case leaf: IntArr =>
+            val a: Array[Int] = leaf.arr
+            val len: Int = a.length
+            var i: Int = 0
+            while (i.<(len)) {
+              val v: Int = a.apply(i)
+              val `v₂`: Int = v.*(100)
+              acc = acc.+(`v₂`)
+              i = i.+(1)
+            }
+          case s =>
+            val `len₂`: Int = s.length
+            var `i₂`: Int = 0
+            while (`i₂`.<(`len₂`)) {
+              val `v₃`: Int = FArrayOps.intAt(s, `i₂`)
+              val `v₄`: Int = `v₃`.*(100)
+              acc = acc.+(`v₄`)
+              `i₂` = `i₂`.+(1)
+            }
+        }
+        acc
+      }: Int)
+    }.asInstanceOf[Int]: Int)
+  }: Int)
+}

@@ -8,6 +8,7 @@ import scala.collection.BuildFrom
 case class P2(a: Int, b: Int)
 case class Inner(x: Int, y: Int)
 case class Outer(inner: Inner, z: Int)
+case class Stat(id: Int, score: Int, weight: Int) // fused-optimizer fold-decomposition demo
 case class Box[T](v: T, n: Int) // GENERIC case class (type-arg threading in mkProduct)
 case class Rec(base: Int, label: String, extra: Int) // mixed Int/String/Int fields
 object Cx: // top-level helpers (opaque method-call columns)
@@ -1585,6 +1586,92 @@ class FListTest:
       FuseDebug.show(ints.fuse.zipWithIndex.filter(_._1 % 2 == 0).take(2).run)
     )
     Snapshots.check("fused-pipeline.snap", sb.toString)
+
+  // The EXACT 14-stage pipeline from LongMixedPipelineIntBenchmark.farrayFused, lowered. This golden
+  // is what the website's "show the generated code" panel displays next to the benchmark figure.
+  @Test def test_fuse_long_pipeline_snapshot: Unit =
+    val ints = FArray(3, 14, 15, 92, 65, 35, 89, 79, 32, 38, 46, 26)
+    val zipSrc = ints.map(_ + 100)
+    Snapshots.check(
+      "fuse-long-pipeline.snap",
+      FuseDebug.show(
+        ints.fuse
+          .flatMap(x => FArray(x, x + 1))
+          .filter(_ % 3 != 0)
+          .map(_ * 2)
+          .flatMap(x => FArray(x, x ^ 5))
+          .filter(_ % 2 == 0)
+          .map(_ - 7)
+          .zip(zipSrc)
+          .map((a, b) => a + b)
+          .zipWithIndex
+          .filter((v, i) => (v + i) % 4 != 0)
+          .map((v, i) => v - i)
+          .flatMap(x => FArray(x, x + 3))
+          .filter(_ > 0)
+          .foldLeft(0)(_ + _)
+      )
+    )
+
+  // A compact showcase that fuses zip AND collect together: the PartialFunction is matched inline (no
+  // PartialFunction object), reading the zipped column in lock-step (no pair allocated).
+  @Test def test_fuse_collect_zip_snapshot: Unit =
+    val ints = FArray(3, 14, 15, 92, 65, 35, 89, 79)
+    val ys = ints.map(_ * 10)
+    Snapshots.check(
+      "fuse-collect-zip.snap",
+      FuseDebug.show(
+        ints.fuse
+          .zip(ys)
+          .collect { case (a, b) if (a + b) % 2 == 0 => a * b }
+          .map(_ + 1)
+          .run
+      )
+    )
+
+  // The inline layer, no fusion involved: a plain eager `map` on an FArray[Int]. summonFrom resolves the
+  // element kind at THIS call site, so the user's `_ + 1` inlines straight into a while-loop over int[] —
+  // static dispatch, unboxed by construction. The website shows this next to the one-liner that produced it.
+  @Test def test_map_inline_snapshot: Unit =
+    val ints = FArray(3, 14, 15, 92, 65, 35)
+    Snapshots.check("map-inline.snap", FuseDebug.show(ints.map(_ + 1)))
+
+  // The five fuse-optimizer demos for the website's "intro to fusion" page — each the verbatim lowering of
+  // the pipeline above it. Mirrors farray.json.JsonDemo's optimizer section, regenerated to current codegen.
+  @Test def test_fuse_optimizer_snapshots: Unit =
+    val ints = FArray(3, 14, 15, 92, 65, 35, 89, 79)
+    def expensive(x: Int): Int = { var s = x; var k = 0; while (k < 24) { s = s * 1103515245 + 12345; k += 1 }; s }
+    // 1 · one loop, no closures
+    Snapshots.check("fuse-opt-oneloop.snap", FuseDebug.show(ints.fuse.map(_ + 1).filter(_ % 2 == 0).map(_ * 2).run))
+    // 2 · dead-column elimination — column 2 (x*13) is read by nobody and never built
+    Snapshots.check("fuse-opt-dce.snap", FuseDebug.show(ints.fuse.map(x => (x % 3, x * 7, x * 13)).filter(_._1 == 0).map(_._2).run))
+    // 3 · compute-for-survivors — expensive(x) lands inside the filter's `if`
+    Snapshots.check("fuse-opt-sink.snap", FuseDebug.show(ints.fuse.map(x => (x % 2, expensive(x))).filter(_._1 == 0).map(_._2).sum))
+    // 4 · common-subexpression elimination — x*x bound once, reused
+    Snapshots.check("fuse-opt-cse.snap", FuseDebug.show(ints.fuse.map(x => (x * x + 1, x * x + 2)).map(t => t._1 + t._2).run))
+    // 5 · decomposition reaches the fold's lambda — Stat never built; loop is acc + x*100
+    Snapshots.check("fuse-opt-fold.snap", FuseDebug.show(ints.fuse.map(x => Stat(x, x * 100, x * 1000)).foldLeft(0)((acc, s) => acc + s.score)))
+
+  // The five fused-JSON demos for the website's "Fused JSON" page — the SAME optimizer over byte ranges.
+  // Mirrors farray.json.JsonDemo's pipelines (Event/Wide/Stats live there), regenerated to current codegen.
+  @Test def test_fuse_json_snapshots: Unit =
+    import farray.json.{Json, JsonDemo}
+    val src = JsonDemo.sample
+    val wsrc = JsonDemo.wideSample
+    Snapshots.check("fuse-json-sum.snap", FuseDebug.show(Json.ndjson[JsonDemo.Event](src).stream.filter(_.amount > 150).map(_.amount).foldLeft(0.0)(_ + _)))
+    Snapshots.check("fuse-json-cat.snap", FuseDebug.show(Json.ndjson[JsonDemo.Event](src).stream.filter(_.amount > 150).map(_.category).toList))
+    Snapshots.check("fuse-json-count.snap", FuseDebug.show(Json.ndjson[JsonDemo.Event](src).stream.filter(_.status == "active").map(_.category).count))
+    Snapshots.check("fuse-json-wide.snap", FuseDebug.show(Json.ndjson[JsonDemo.Wide](wsrc).stream.filter(_.key > 90).map(_.payload).count))
+    Snapshots.check(
+      "fuse-json-agg.snap",
+      FuseDebug.show(
+        Json
+          .ndjson[JsonDemo.Event](src)
+          .stream
+          .filter(_.status == "active")
+          .aggTo(JsonDemo.Stats.apply)(farray.Agg.sum(_.amount), farray.Agg.count, farray.Agg.max1(_.score))
+      )
+    )
 
   @Test def test_hashCode_matchesList(): Unit =
     def chk(name: String, fa: FArray[Any], l: List[Any]): Unit =

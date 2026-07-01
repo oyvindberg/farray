@@ -10,3 +10,4 @@ sbt-build
 bleep-site/docs
 .vscode
 docs/parts/
+.claude/

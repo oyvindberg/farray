@@ -1,0 +1,49 @@
+{
+  val NdjsonSource_this: NdjsonSource[Event] = (new NdjsonSource[Event](src, 0, src.length): NdjsonSource[Event])
+  val Fuse_this: Fuse[Double] = (new Fuse[Event](NdjsonSource_this): Fuse[Event]).filter(((_$: Event) => _$.amount.>(150))).map[Double](((_$: Event) => _$.amount))
+
+  ({
+    val `Fuse_this₂`: Fuse_this.type = Fuse_this
+
+    ({
+      val src0: FBase = null.asInstanceOf[FBase]
+      val n0: Int = 16
+      var acc: Double = 0.0
+
+      ({
+        val `src₂`: ByteRecordSource = inline$base$i1[Double](`Fuse_this₂`).asInstanceOf[ByteRecordSource]
+        val keyBytes: Array[Byte] = JsonScanner.internKey("amount")
+        try while (`src₂`.nextChunk().&&(true)) while (`src₂`.nextRecord().&&(true)) {
+          val buf: Array[Byte] = `src₂`.buf
+          val recStart: Int = `src₂`.recordStart
+          val recEnd: Int = `src₂`.recordEnd
+          var v: Double = 0.0
+          var pNext: Int = 0
+          var seen: Boolean = false
+          var p: Int = recStart.+(1)
+          var open: Boolean = buf.apply(recStart).==('{')
+          while (open) if (buf.apply(p).==('}')) open = false else {
+            val ks: Int = p.+(1)
+            val ke: Int = (JsonBytes.scanStringEnd(buf, ks, recEnd): Int)
+            p = if (seen.unary_!.&&(({
+              val len: Int = ke.-(ks)
+              len.==(keyBytes.length).&&(java.util.Arrays.equals(buf, ks, ke, keyBytes, 0, len))
+            }: Boolean))) {
+              v = JsonScanner.readDoubleAt(buf, ke.+(2), recEnd)
+              pNext = (inline$numEndTL.get().apply(0): Int)
+              seen = true
+              pNext
+            } else JsonScanner.skipValue(buf, ke.+(2), recEnd)
+            if (seen) open = false else if (buf.apply(p).==(',')) p = p.+(1) else open = false
+          }
+          val `v₂`: Boolean = v.>(150)
+          if (`v₂`) {
+            acc = acc.+(v)
+            ()
+          } else ()
+        } finally `src₂`.close()
+        acc
+      }: Double)
+    }.asInstanceOf[Double]: Double)
+  }: Double)
+}

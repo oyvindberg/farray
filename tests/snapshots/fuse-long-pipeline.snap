@@ -1,0 +1,397 @@
+{
+  val $proxy: FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  } = FArray$package.$asInstanceOf$[FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  }]
+  val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
+  val Fuse_this: Fuse[Int] = (new Fuse[Int](xs$proxy): Fuse[Int]).flatMap[Int](((x: Int) => {
+    val $proxy: FArray$package {
+      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+    } = FArray$package.$asInstanceOf$[FArray$package {
+      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+    }]
+    val FArray$package$_this: $proxy.type = $proxy
+    val b$proxy: Int = x.+(1)
+
+    (({
+      val r: intRepr.type = intRepr
+      val out: Array[Int] = new Array[Int](2)
+      out.update(0, (x: Int))
+      out.update(1, (b$proxy: Int))
+      new IntArr(out, 2)
+    }: FBase): FArray[Int])
+  }.$asInstanceOf$[FArray[Int]])).filter(((_$: Int) => _$.%(3).!=(0))).map[Int](((_$: Int) => _$.*(2))).flatMap[Int](((`x₂`: Int) => {
+    val $proxy: FArray$package {
+      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+    } = FArray$package.$asInstanceOf$[FArray$package {
+      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+    }]
+    val `FArray$package$_this₂`: $proxy.type = $proxy
+    val b$proxy: Int = `x₂`.^(5)
+
+    (({
+      val `r₂`: intRepr.type = intRepr
+      val `out₂`: Array[Int] = new Array[Int](2)
+      `out₂`.update(0, (`x₂`: Int))
+      `out₂`.update(1, (b$proxy: Int))
+      new IntArr(`out₂`, 2)
+    }: FBase): FArray[Int])
+  }.$asInstanceOf$[FArray[Int]])).filter(((_$: Int) => _$.%(2).==(0))).map[Int](((_$: Int) => _$.-(7))).zip[Int](zipSrc).map[Int](((x$1: Tuple2[Int, Int]) => {
+    val a: Int = x$1._1
+    val b: Int = x$1._2
+    a.+(b)
+  })).zipWithIndex.filter(((`x$1₂`: Tuple2[Int, Int]) => {
+    val v: Int = `x$1₂`._1
+    val i: Int = `x$1₂`._2
+    v.+(i).%(4).!=(0)
+  })).map[Int](((`x$1₃`: Tuple2[Int, Int]) => {
+    val `v₂`: Int = `x$1₃`._1
+    val `i₂`: Int = `x$1₃`._2
+    `v₂`.-(`i₂`)
+  })).flatMap[Int](((`x₃`: Int) => {
+    val $proxy: FArray$package {
+      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+    } = FArray$package.$asInstanceOf$[FArray$package {
+      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+    }]
+    val `FArray$package$_this₃`: $proxy.type = $proxy
+    val b$proxy: Int = `x₃`.+(3)
+
+    (({
+      val `r₃`: intRepr.type = intRepr
+      val `out₃`: Array[Int] = new Array[Int](2)
+      `out₃`.update(0, (`x₃`: Int))
+      `out₃`.update(1, (b$proxy: Int))
+      new IntArr(`out₃`, 2)
+    }: FBase): FArray[Int])
+  }.$asInstanceOf$[FArray[Int]])).filter(((_$: Int) => _$.>(0)))
+
+  ({
+    val `Fuse_this₂`: Fuse_this.type = Fuse_this
+
+    ({
+      val src0: FBase = inline$base$i1[Int](`Fuse_this₂`).asInstanceOf[FBase]
+      val n0: Int = src0.length
+      var done: Boolean = false
+      val zthat: FBase = zipSrc.asInstanceOf[FBase]
+      val zn: Int = zthat.length
+      var c: Int = 0
+      var `c₂`: Int = 0
+      var acc: Int = 0
+
+      ({
+        src0 match {
+          case leaf: IntArr =>
+            val `a₂`: Array[Int] = leaf.arr
+            val len: Int = `a₂`.length
+            var `i₃`: Int = 0
+            while (`i₃`.<(len).&&(done.unary_!)) {
+              val `v₃`: Int = `a₂`.apply(`i₃`)
+              val `v₄`: Int = `v₃`.%(3)
+              val `v₅`: Boolean = `v₄`.!=(0)
+              if (`v₅`) {
+                val `v₆`: Int = `v₃`.*(2)
+                val `v₇`: Int = `v₆`.%(2)
+                val `v₈`: Boolean = `v₇`.==(0)
+                if (`v₈`) {
+                  val `v₉`: Int = `v₆`.-(7)
+                  if (c.>=(zn)) done = true else {
+                    val pos: Int = c
+                    c = c.+(1)
+                    val `v₁₀`: Int = FArrayOps.intAt(zthat, pos)
+                    val `v₁₁`: Int = `v₉`.+(`v₁₀`)
+                    val `v₁₂`: Int = `c₂`
+                    `c₂` = `c₂`.+(1)
+                    val `v₁₃`: Int = `v₁₁`.+(`v₁₂`)
+                    val `v₁₄`: Int = `v₁₃`.%(4)
+                    val `v₁₅`: Boolean = `v₁₄`.!=(0)
+                    if (`v₁₅`) {
+                      val `v₁₆`: Int = `v₁₁`.-(`v₁₂`)
+                      val `v₁₇`: Boolean = `v₁₆`.>(0)
+                      if (`v₁₇`) {
+                        acc = acc.+(`v₁₆`)
+                        ()
+                      } else ()
+                      val `v₁₈`: Int = `v₁₆`.+(3)
+                      val `v₁₉`: Boolean = `v₁₈`.>(0)
+                      if (`v₁₉`) {
+                        val `v₂₀`: Int = `v₁₆`.+(3)
+                        acc = acc.+(`v₂₀`)
+                        ()
+                      } else ()
+                      ()
+                    } else ()
+                  }
+                } else ()
+                val `v₂₁`: Int = `v₆`.^(5)
+                val `v₂₂`: Int = `v₂₁`.%(2)
+                val `v₂₃`: Boolean = `v₂₂`.==(0)
+                if (`v₂₃`) {
+                  val `v₂₄`: Int = `v₆`.^(5)
+                  val `v₂₅`: Int = `v₂₄`.-(7)
+                  if (c.>=(zn)) done = true else {
+                    val `pos₂`: Int = c
+                    c = c.+(1)
+                    val `v₂₆`: Int = FArrayOps.intAt(zthat, `pos₂`)
+                    val `v₂₇`: Int = `v₂₅`.+(`v₂₆`)
+                    val `v₂₈`: Int = `c₂`
+                    `c₂` = `c₂`.+(1)
+                    val `v₂₉`: Int = `v₂₇`.+(`v₂₈`)
+                    val `v₃₀`: Int = `v₂₉`.%(4)
+                    val `v₃₁`: Boolean = `v₃₀`.!=(0)
+                    if (`v₃₁`) {
+                      val `v₃₂`: Int = `v₂₇`.-(`v₂₈`)
+                      val `v₃₃`: Boolean = `v₃₂`.>(0)
+                      if (`v₃₃`) {
+                        acc = acc.+(`v₃₂`)
+                        ()
+                      } else ()
+                      val `v₃₄`: Int = `v₃₂`.+(3)
+                      val `v₃₅`: Boolean = `v₃₄`.>(0)
+                      if (`v₃₅`) {
+                        val `v₃₆`: Int = `v₃₂`.+(3)
+                        acc = acc.+(`v₃₆`)
+                        ()
+                      } else ()
+                      ()
+                    } else ()
+                  }
+                } else ()
+                ()
+              } else ()
+              val `v₃₇`: Int = `v₃`.+(1)
+              val `v₃₈`: Int = `v₃₇`.%(3)
+              val `v₃₉`: Boolean = `v₃₈`.!=(0)
+              if (`v₃₉`) {
+                val `v₄₀`: Int = `v₃`.+(1)
+                val `v₄₁`: Int = `v₄₀`.*(2)
+                val `v₄₂`: Int = `v₄₁`.%(2)
+                val `v₄₃`: Boolean = `v₄₂`.==(0)
+                if (`v₄₃`) {
+                  val `v₄₄`: Int = `v₄₁`.-(7)
+                  if (c.>=(zn)) done = true else {
+                    val `pos₃`: Int = c
+                    c = c.+(1)
+                    val `v₄₅`: Int = FArrayOps.intAt(zthat, `pos₃`)
+                    val `v₄₆`: Int = `v₄₄`.+(`v₄₅`)
+                    val `v₄₇`: Int = `c₂`
+                    `c₂` = `c₂`.+(1)
+                    val `v₄₈`: Int = `v₄₆`.+(`v₄₇`)
+                    val `v₄₉`: Int = `v₄₈`.%(4)
+                    val `v₅₀`: Boolean = `v₄₉`.!=(0)
+                    if (`v₅₀`) {
+                      val `v₅₁`: Int = `v₄₆`.-(`v₄₇`)
+                      val `v₅₂`: Boolean = `v₅₁`.>(0)
+                      if (`v₅₂`) {
+                        acc = acc.+(`v₅₁`)
+                        ()
+                      } else ()
+                      val `v₅₃`: Int = `v₅₁`.+(3)
+                      val `v₅₄`: Boolean = `v₅₃`.>(0)
+                      if (`v₅₄`) {
+                        val `v₅₅`: Int = `v₅₁`.+(3)
+                        acc = acc.+(`v₅₅`)
+                        ()
+                      } else ()
+                      ()
+                    } else ()
+                  }
+                } else ()
+                val `v₅₆`: Int = `v₄₁`.^(5)
+                val `v₅₇`: Int = `v₅₆`.%(2)
+                val `v₅₈`: Boolean = `v₅₇`.==(0)
+                if (`v₅₈`) {
+                  val `v₅₉`: Int = `v₄₁`.^(5)
+                  val `v₆₀`: Int = `v₅₉`.-(7)
+                  if (c.>=(zn)) done = true else {
+                    val `pos₄`: Int = c
+                    c = c.+(1)
+                    val `v₆₁`: Int = FArrayOps.intAt(zthat, `pos₄`)
+                    val `v₆₂`: Int = `v₆₀`.+(`v₆₁`)
+                    val `v₆₃`: Int = `c₂`
+                    `c₂` = `c₂`.+(1)
+                    val `v₆₄`: Int = `v₆₂`.+(`v₆₃`)
+                    val `v₆₅`: Int = `v₆₄`.%(4)
+                    val `v₆₆`: Boolean = `v₆₅`.!=(0)
+                    if (`v₆₆`) {
+                      val `v₆₇`: Int = `v₆₂`.-(`v₆₃`)
+                      val `v₆₈`: Boolean = `v₆₇`.>(0)
+                      if (`v₆₈`) {
+                        acc = acc.+(`v₆₇`)
+                        ()
+                      } else ()
+                      val `v₆₉`: Int = `v₆₇`.+(3)
+                      val `v₇₀`: Boolean = `v₆₉`.>(0)
+                      if (`v₇₀`) {
+                        val `v₇₁`: Int = `v₆₇`.+(3)
+                        acc = acc.+(`v₇₁`)
+                        ()
+                      } else ()
+                      ()
+                    } else ()
+                  }
+                } else ()
+                ()
+              } else ()
+              `i₃` = `i₃`.+(1)
+            }
+          case s =>
+            val `len₂`: Int = s.length
+            var `i₄`: Int = 0
+            while (`i₄`.<(`len₂`).&&(done.unary_!)) {
+              val `v₇₂`: Int = FArrayOps.intAt(s, `i₄`)
+              val `v₇₃`: Int = `v₇₂`.%(3)
+              val `v₇₄`: Boolean = `v₇₃`.!=(0)
+              if (`v₇₄`) {
+                val `v₇₅`: Int = `v₇₂`.*(2)
+                val `v₇₆`: Int = `v₇₅`.%(2)
+                val `v₇₇`: Boolean = `v₇₆`.==(0)
+                if (`v₇₇`) {
+                  val `v₇₈`: Int = `v₇₅`.-(7)
+                  if (c.>=(zn)) done = true else {
+                    val `pos₅`: Int = c
+                    c = c.+(1)
+                    val `v₇₉`: Int = FArrayOps.intAt(zthat, `pos₅`)
+                    val `v₈₀`: Int = `v₇₈`.+(`v₇₉`)
+                    val `v₈₁`: Int = `c₂`
+                    `c₂` = `c₂`.+(1)
+                    val `v₈₂`: Int = `v₈₀`.+(`v₈₁`)
+                    val `v₈₃`: Int = `v₈₂`.%(4)
+                    val `v₈₄`: Boolean = `v₈₃`.!=(0)
+                    if (`v₈₄`) {
+                      val `v₈₅`: Int = `v₈₀`.-(`v₈₁`)
+                      val `v₈₆`: Boolean = `v₈₅`.>(0)
+                      if (`v₈₆`) {
+                        acc = acc.+(`v₈₅`)
+                        ()
+                      } else ()
+                      val `v₈₇`: Int = `v₈₅`.+(3)
+                      val `v₈₈`: Boolean = `v₈₇`.>(0)
+                      if (`v₈₈`) {
+                        val `v₈₉`: Int = `v₈₅`.+(3)
+                        acc = acc.+(`v₈₉`)
+                        ()
+                      } else ()
+                      ()
+                    } else ()
+                  }
+                } else ()
+                val `v₉₀`: Int = `v₇₅`.^(5)
+                val `v₉₁`: Int = `v₉₀`.%(2)
+                val `v₉₂`: Boolean = `v₉₁`.==(0)
+                if (`v₉₂`) {
+                  val `v₉₃`: Int = `v₇₅`.^(5)
+                  val `v₉₄`: Int = `v₉₃`.-(7)
+                  if (c.>=(zn)) done = true else {
+                    val `pos₆`: Int = c
+                    c = c.+(1)
+                    val `v₉₅`: Int = FArrayOps.intAt(zthat, `pos₆`)
+                    val `v₉₆`: Int = `v₉₄`.+(`v₉₅`)
+                    val `v₉₇`: Int = `c₂`
+                    `c₂` = `c₂`.+(1)
+                    val `v₉₈`: Int = `v₉₆`.+(`v₉₇`)
+                    val `v₉₉`: Int = `v₉₈`.%(4)
+                    val `v₁₀₀`: Boolean = `v₉₉`.!=(0)
+                    if (`v₁₀₀`) {
+                      val `v₁₀₁`: Int = `v₉₆`.-(`v₉₇`)
+                      val `v₁₀₂`: Boolean = `v₁₀₁`.>(0)
+                      if (`v₁₀₂`) {
+                        acc = acc.+(`v₁₀₁`)
+                        ()
+                      } else ()
+                      val `v₁₀₃`: Int = `v₁₀₁`.+(3)
+                      val `v₁₀₄`: Boolean = `v₁₀₃`.>(0)
+                      if (`v₁₀₄`) {
+                        val `v₁₀₅`: Int = `v₁₀₁`.+(3)
+                        acc = acc.+(`v₁₀₅`)
+                        ()
+                      } else ()
+                      ()
+                    } else ()
+                  }
+                } else ()
+                ()
+              } else ()
+              val `v₁₀₆`: Int = `v₇₂`.+(1)
+              val `v₁₀₇`: Int = `v₁₀₆`.%(3)
+              val `v₁₀₈`: Boolean = `v₁₀₇`.!=(0)
+              if (`v₁₀₈`) {
+                val `v₁₀₉`: Int = `v₇₂`.+(1)
+                val `v₁₁₀`: Int = `v₁₀₉`.*(2)
+                val `v₁₁₁`: Int = `v₁₁₀`.%(2)
+                val `v₁₁₂`: Boolean = `v₁₁₁`.==(0)
+                if (`v₁₁₂`) {
+                  val `v₁₁₃`: Int = `v₁₁₀`.-(7)
+                  if (c.>=(zn)) done = true else {
+                    val `pos₇`: Int = c
+                    c = c.+(1)
+                    val `v₁₁₄`: Int = FArrayOps.intAt(zthat, `pos₇`)
+                    val `v₁₁₅`: Int = `v₁₁₃`.+(`v₁₁₄`)
+                    val `v₁₁₆`: Int = `c₂`
+                    `c₂` = `c₂`.+(1)
+                    val `v₁₁₇`: Int = `v₁₁₅`.+(`v₁₁₆`)
+                    val `v₁₁₈`: Int = `v₁₁₇`.%(4)
+                    val `v₁₁₉`: Boolean = `v₁₁₈`.!=(0)
+                    if (`v₁₁₉`) {
+                      val `v₁₂₀`: Int = `v₁₁₅`.-(`v₁₁₆`)
+                      val `v₁₂₁`: Boolean = `v₁₂₀`.>(0)
+                      if (`v₁₂₁`) {
+                        acc = acc.+(`v₁₂₀`)
+                        ()
+                      } else ()
+                      val `v₁₂₂`: Int = `v₁₂₀`.+(3)
+                      val `v₁₂₃`: Boolean = `v₁₂₂`.>(0)
+                      if (`v₁₂₃`) {
+                        val `v₁₂₄`: Int = `v₁₂₀`.+(3)
+                        acc = acc.+(`v₁₂₄`)
+                        ()
+                      } else ()
+                      ()
+                    } else ()
+                  }
+                } else ()
+                val `v₁₂₅`: Int = `v₁₁₀`.^(5)
+                val `v₁₂₆`: Int = `v₁₂₅`.%(2)
+                val `v₁₂₇`: Boolean = `v₁₂₆`.==(0)
+                if (`v₁₂₇`) {
+                  val `v₁₂₈`: Int = `v₁₁₀`.^(5)
+                  val `v₁₂₉`: Int = `v₁₂₈`.-(7)
+                  if (c.>=(zn)) done = true else {
+                    val `pos₈`: Int = c
+                    c = c.+(1)
+                    val `v₁₃₀`: Int = FArrayOps.intAt(zthat, `pos₈`)
+                    val `v₁₃₁`: Int = `v₁₂₉`.+(`v₁₃₀`)
+                    val `v₁₃₂`: Int = `c₂`
+                    `c₂` = `c₂`.+(1)
+                    val `v₁₃₃`: Int = `v₁₃₁`.+(`v₁₃₂`)
+                    val `v₁₃₄`: Int = `v₁₃₃`.%(4)
+                    val `v₁₃₅`: Boolean = `v₁₃₄`.!=(0)
+                    if (`v₁₃₅`) {
+                      val `v₁₃₆`: Int = `v₁₃₁`.-(`v₁₃₂`)
+                      val `v₁₃₇`: Boolean = `v₁₃₆`.>(0)
+                      if (`v₁₃₇`) {
+                        acc = acc.+(`v₁₃₆`)
+                        ()
+                      } else ()
+                      val `v₁₃₈`: Int = `v₁₃₆`.+(3)
+                      val `v₁₃₉`: Boolean = `v₁₃₈`.>(0)
+                      if (`v₁₃₉`) {
+                        val `v₁₄₀`: Int = `v₁₃₆`.+(3)
+                        acc = acc.+(`v₁₄₀`)
+                        ()
+                      } else ()
+                      ()
+                    } else ()
+                  }
+                } else ()
+                ()
+              } else ()
+              `i₄` = `i₄`.+(1)
+            }
+        }
+        acc
+      }: Int)
+    }.asInstanceOf[Int]: Int)
+  }: Int)
+}
