@@ -354,7 +354,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  var arr: Array[$arrT] = new Array[$arrT](4)
        |  var size: Int = 0
        |  def add(v: $arrT): Unit = { if (size == arr.length) arr = java.util.Arrays.copyOf(arr, size * 2); arr(size) = v; size += 1 }
-       |  def toLeaf: FBase = if (size == 0) Empty.INSTANCE else if (size == 1) new ${k.name}One(arr(0)) else new ${k.name}Arr(if (size == arr.length) arr else java.util.Arrays.copyOf(arr, size), size)
+       |  def toLeaf: FBase = if (size == 0) Empty.INSTANCE else if (size == 1) new ${k.name}One(arr(0)) else new ${k.name}Arr(arr, size)
        |}""".stripMargin
   }
 
@@ -680,12 +680,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
                 // LeafExact (map): output length is exactly `oc` (== n); route through the canonicalizer so a
                 // length-0 walk yields Empty and length-1 yields ${K}One — upholding the size-0/1 invariant.
                 case Finalize.LeafExact => s"\n${leaf(ek, "out", "oc")}"
-                case Finalize.LeafTrim  =>
-                  s"\nif (oc == out.length) ${leaf(ek, "out", "oc")} else ${leaf(ek, s"java.util.Arrays.copyOf(out, oc)", "oc")}"
-                // FilterIdentity: keep the `if (oc == n) xs` reference-identity shortcut, then leaf-canonicalize a
-                // trimmed copy (oc == 0 -> Empty, oc == 1 -> ${K}One, else a copyOf-trimmed leaf).
+                // LeafTrim (collect/…): `oc <= out.length`. SKIP the trim copy — hand the (possibly over-sized)
+                // `out` to the leaf with logical length `oc` (slack = out.length - oc). Leaves iterate to `length`.
+                case Finalize.LeafTrim => s"\n${leaf(ek, "out", "oc")}"
+                // FilterIdentity: keep the `if (oc == n) xs` reference-identity shortcut; else canonicalize
+                // size-0/1 and hand `out` straight through with logical length `oc` (no trim copy — slack).
                 case Finalize.FilterIdentity =>
-                  s"\nif (oc == n) xs else if (oc == 0) Empty.INSTANCE else if (oc == 1) new ${ek.name}One(out(0)) else new ${ek.name}Arr(java.util.Arrays.copyOf(out, oc), oc)"
+                  s"\nif (oc == n) xs else if (oc == 0) Empty.INSTANCE else if (oc == 1) new ${ek.name}One(out(0)) else new ${ek.name}Arr(out, oc)"
               }
           }
           val accPart = if accDecls.isEmpty then "" else s"$accDecls\n"
@@ -853,11 +854,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line("case e: Empty => z")
         ee.line(s"case o: ${k.name}One => f.apply(z, o.elem)")
         ee.open(s"case leaf: ${k.name}Arr =>")
-        // Loop on `a.length`, NOT leaf.length: the JIT can prove the bound matches the array it indexes
-        // (a JVM fact), so it drops the per-element bounds check on `a(i)` and vectorizes — `leaf.length`
-        // is OUR copyOf invariant, opaque to HotSpot, and leaks a bounds check that blocks vectorization.
+        // Loop on the LOGICAL length `leaf.length` (may be < arr.length — leaves can carry slack so structural
+        // ops skip the trim copy). MEASURED (ArrLenFoldBenchmark, GraalVM + C2): a `leaf.length` field bound over
+        // `a` ties the `a.length` baseline exactly — HotSpot loop-predication hoists the `leaf.length <= a.length`
+        // check out once and the body stays a vectorized counted loop. (The compound `i < a.length && i < len`
+        // form is what BREAKS vectorization — 0.48× on GraalVM — never use it.)
         ee.line("val a = leaf.arr")
-        ee.line("val n = a.length")
+        ee.line("val n = leaf.length")
         ee.line(s"var acc: $accT = z")
         if !backward then {
           ee.line("var i = 0")
@@ -967,7 +970,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line(s"case o: ${KI}One => new ${KO}One($oneArg)")
         ee.open(s"case leaf: ${KI}Arr =>")
         ee.line("val a = leaf.arr")
-        ee.line("val n = a.length")
+        ee.line("val n = leaf.length")
         ee.line(s"val out = $outAlloc")
         ee.line("var i = 0")
         ee.open("while (i < n)")
@@ -993,21 +996,23 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // peels Empty (-> Empty), ${I}One (1-elt predicate test), top-${I}Arr (the unboxed leaf loop with a
     // predicate-GUARDED append `if (p) { out(o) = e; o += 1 }`), and routes a genuine TREE through the Java
     // buildFiltered${I} traverser (which returns the kept-count). Output is canonicalised on the kept-count k:
-    // k == 0 -> Empty; k == 1 -> ${I}One(out(0)); else (k < n, so always TRIMMED) a copyOf-${I}Arr leaf. The
+    // k == 0 -> Empty; k == 1 -> ${I}One(out(0)); else a ${I}Arr wrapping `out` directly with logical length k
+    // (k <= n; NO trim copy — the leaf carries slack `n - k` and iterates to `length`). The
     // ${I}Pred SAM closes over the user predicate (does the A wrap), so the leaf method is op-agnostic per input
     // kind. NO inlined leaf loop in the inline surface — the surface only realizes the predicate and CALLS this.
     val filterLeafMethods = {
       val ee = new Emit("  ")
       opKinds.foreach { k =>
         val K = k.name
-        // the size-1/0-trim canonicaliser: k == 0 -> Empty, k == 1 -> ${K}One, else a TRIMMED copyOf leaf (k < n).
+        // the size-1/0 canonicaliser: k == 0 -> Empty, k == 1 -> ${K}One, else `out` wrapped directly with logical
+        // length k (k <= n; NO trim copy — slack `n - k`).
         ee.open(s"def filterLeaf${K}(xs: FBase, p: Traversers.${K}Pred): FBase =")
         ee.open("xs match")
         ee.line("case e: Empty => Empty.INSTANCE")
         ee.line(s"case o: ${K}One => if (p.apply(o.elem)) xs else Empty.INSTANCE")
         ee.open(s"case leaf: ${K}Arr =>")
         ee.line("val a = leaf.arr")
-        ee.line("val n = a.length")
+        ee.line("val n = leaf.length")
         ee.line(s"val out = new Array[${k.arr}](n)")
         ee.line("var i = 0")
         ee.line("var o = 0")
@@ -1016,14 +1021,15 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line("if (p.apply(e)) { out(o) = e; o += 1 }")
         ee.line("i += 1")
         ee.close()
-        // o <= n. o == n -> nothing filtered, reuse xs (reference identity). Else canonicalise a trim.
-        ee.line(s"if (o == n) xs else if (o == 0) Empty.INSTANCE else if (o == 1) new ${K}One(out(0)) else new ${K}Arr(java.util.Arrays.copyOf(out, o), o)")
+        // o <= n. o == n -> nothing filtered, reuse xs (reference identity). Else hand `out` through with logical
+        // length `o` — SKIP the trim copy (slack = n - o); leaves iterate to `length`.
+        ee.line(s"if (o == n) xs else if (o == 0) Empty.INSTANCE else if (o == 1) new ${K}One(out(0)) else new ${K}Arr(out, o)")
         ee.closeOpen("case _ =>")
         ee.line("val n = xs.length")
         ee.line(s"val out = new Array[${k.arr}](n)")
         ee.line(s"val o = Traversers.buildFiltered${K}(xs, out, 0, p)")
         ee.line(
-          s"if (o == 0) Empty.INSTANCE else if (o == 1) new ${K}One(out(0)) else if (o == n) new ${K}Arr(out, n) else new ${K}Arr(java.util.Arrays.copyOf(out, o), o)"
+          s"if (o == 0) Empty.INSTANCE else if (o == 1) new ${K}One(out(0)) else new ${K}Arr(out, o)"
         )
         ee.close()
         ee.close() // xs match
@@ -1043,16 +1049,17 @@ object GenCores extends BleepCodegenScript("GenCores") {
       val ee = new Emit("  ")
       opKinds.foreach { k =>
         val K = k.name
-        // canonicalise ONE output buffer `b` filled to length `c` (c <= n) into a trimmed leaf.
+        // canonicalise ONE output buffer `b` filled to length `c` (c <= b.length) into a leaf — SKIP the trim
+        // copy: hand `b` through with logical length `c` (slack = b.length - c); leaves iterate to `length`.
         def trim(b: String, c: String): String =
-          s"if ($c == 0) Empty.INSTANCE else if ($c == 1) new ${K}One($b(0)) else if ($c == $b.length) new ${K}Arr($b, $c) else new ${K}Arr(java.util.Arrays.copyOf($b, $c), $c)"
+          s"if ($c == 0) Empty.INSTANCE else if ($c == 1) new ${K}One($b(0)) else new ${K}Arr($b, $c)"
         ee.open(s"def partitionLeaf${K}(xs: FBase, p: Traversers.${K}Pred): scala.Tuple2[FBase, FBase] =")
         ee.open("xs match")
         ee.line("case e: Empty => new scala.Tuple2(Empty.INSTANCE, Empty.INSTANCE)")
         ee.line(s"case o: ${K}One => if (p.apply(o.elem)) new scala.Tuple2(xs, Empty.INSTANCE) else new scala.Tuple2(Empty.INSTANCE, xs)")
         ee.open(s"case leaf: ${K}Arr =>")
         ee.line("val a = leaf.arr")
-        ee.line("val n = a.length")
+        ee.line("val n = leaf.length")
         ee.line(s"val outA = new Array[${k.arr}](n)")
         ee.line(s"val outB = new Array[${k.arr}](n)")
         ee.line("var i = 0")
@@ -1096,7 +1103,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line(s"case o: ${K}One => f.apply(o.elem)")
         ee.open(s"case leaf: ${K}Arr =>")
         ee.line("val a = leaf.arr")
-        ee.line("val n = a.length")
+        ee.line("val n = leaf.length")
         ee.line("var i = 0")
         ee.open("while (i < n)")
         ee.line("f.apply(a(i))")
@@ -1149,7 +1156,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line(s"new ${if refAcc then "Ref" else K}Arr(out, 2)")
         ee.closeOpen(s"case leaf: ${K}Arr =>")
         ee.line("val a = leaf.arr")
-        ee.line("val n = a.length")
+        ee.line("val n = leaf.length")
         ee.line(s"val out = new Array[$outArr](n + 1)")
         if !backward then {
           ee.line(s"out(0) = ${store("z")}")
@@ -1206,7 +1213,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line(s"case o: ${K}One => if (from <= 0 && p.apply(o.elem)) 0 else 1")
         ee.open(s"case leaf: ${K}Arr =>")
         ee.line("val a = leaf.arr")
-        ee.line("val n = a.length")
+        ee.line("val n = leaf.length")
         ee.line("var i = if (from < 0) 0 else from")
         ee.line("while (i < n && !p.apply(a(i))) i += 1")
         ee.line("i")
@@ -1221,7 +1228,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line(s"case o: ${K}One => if (end >= 0 && p.apply(o.elem)) 0 else -1")
         ee.open(s"case leaf: ${K}Arr =>")
         ee.line("val a = leaf.arr")
-        ee.line("var i = if (end > a.length - 1) a.length - 1 else end")
+        ee.line("var i = if (end > leaf.length - 1) leaf.length - 1 else end")
         ee.line("while (i >= 0 && !p.apply(a(i))) i -= 1")
         ee.line("if (i < 0) -1 else i")
         ee.closeOpen("case _ =>")
@@ -1538,8 +1545,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
               .map { kb =>
                 val outType = if kb.name == "Ref" then "Array[Object]" else s"Array[${kb.arr}]"
                 val leafBranch = s"{ val sa = leaf.arr; ${branch(ka, kb, readVal(ka, "sa(0)"), readVal(ka, "sa(i)"))} }"
+                // hand `out` through with logical length `off` — SKIP the trim copy (slack = out.length - off).
                 val canon =
-                  s"if (off == 0) Empty.INSTANCE else if (off == 1) new ${kb.name}One(out(0)) else if (off == out.length) new ${kb.name}Arr(out, off) else new ${kb.name}Arr(java.util.Arrays.copyOf(out, off), off)"
+                  s"if (off == 0) Empty.INSTANCE else if (off == 1) new ${kb.name}One(out(0)) else new ${kb.name}Arr(out, off)"
                 // LEAF source: direct array, first-inner sizing (unchanged, already optimal).
                 val leafCase = s"{ var out: $outType = null; var off = 0; $leafBranch; $canon }"
                 // TREE source: ONE dfs via foreachLeaf (genuine trees route through Traversers.foreachFwd) feeding a
@@ -2737,7 +2745,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       retState: String, // the value to `return` at the end (e.g. "acc" / "o"); "" for a void walk
       recurReverse: String => Unit, // the ReverseNode arm: given "rev.base", emit the opposite-direction call
       act: String => Unit, // per-element action on an element expr (One/Prepend·elem/Append·elem/Pad·filler/Range)
-      runLeaf: String => Unit, // a WHOLE-leaf run over the named array (HotSpot drops the bounds check)
+      runLeaf: (String, String) => Unit, // a WHOLE-leaf run over the named array up to the leaf's LOGICAL length (may be < arr.length; slack)
       run: (String, String, String) => Unit, // a leaf window run over arr[start, start±count) (Slice/Pad/Updated)
       winCall: (String, String, String) => Unit, // deep-base window hand-off: node[lo, lo+len) in THIS direction
       cursorDecl: String = "", // OPTIONAL output-cursor decl, threaded beside the state (Build/Partition); "" here
@@ -2785,7 +2793,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     e.line("FBase next = null;")
     // leaf
     e.open(s"if (cur instanceof ${K}Arr leaf)")
-    spec.runLeaf("leaf.arr")
+    spec.runLeaf("leaf.arr", "leaf.length")
     // one
     e.closeOpen(s"else if (cur instanceof ${K}One one)")
     spec.act("one.elem")
@@ -2938,20 +2946,22 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // unboxes via the boxed wrapper's value method; for Ref the element IS Object (pass-through).
     def fromBoxed(expr: String): String = fromBoxedK(k, expr)
 
-    // a WHOLE-leaf run: loop on `a.length`, NOT leaf.length. HotSpot can prove the bound matches the array it
-    // indexes (a JVM fact) and drops the per-element bounds check on `a[i]`, vectorizing the load — `leaf.length`
-    // is OUR copyOf invariant, opaque to the JIT, leaking a bounds check that blocks vectorization.
-    def runLeaf(arr: String): Unit = e.scope {
+    // a WHOLE-leaf run over `arr[0, len)` where `len` is the leaf's LOGICAL length (may be < arr.length — leaves
+    // can carry slack so structural ops skip the trim copy). MEASURED (ArrLenFoldBenchmark, GraalVM + C2): the
+    // `len` field bound over `a` ties the `a.length` baseline — loop-predication hoists `len <= a.length` out once
+    // and the body stays a vectorized counted loop. (The compound `i < a.length && i < len` form defeats
+    // vectorization — 0.48× on GraalVM — never use it.)
+    def runLeaf(arr: String, len: String): Unit = e.scope {
       e.line(s"$je[] a = $arr;")
       if !backward then {
         e.line("int i = 0;")
-        e.line("int end = a.length;")
+        e.line(s"int end = $len;")
         e.open("while (i < end)")
         e.line("acc = f.apply(acc, a[i]);")
         e.line("i += 1;")
         e.close()
       } else {
-        e.line("int i = a.length - 1;")
+        e.line(s"int i = ($len) - 1;")
         e.open("while (i >= 0)")
         e.line("acc = f.apply(acc, a[i]);")
         e.line("i -= 1;")
@@ -3033,7 +3043,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       retState = "acc",
       recurReverse = base => e.line(s"acc = $recur($base, acc, f);"),
       act = el => e.line(s"acc = f.apply(acc, $el);"),
-      runLeaf = arr => runLeaf(arr),
+      runLeaf = (arr, len) => runLeaf(arr, len),
       run = (arr, start, count) => run(arr, start, count),
       winCall = (node, lo, len) => winCall(node, lo, len)
     )
@@ -3072,19 +3082,19 @@ object GenCores extends BleepCodegenScript("GenCores") {
       e.line("o += 1;")
     }
     def fromBoxed(expr: String): String = fromBoxedK(ki, expr)
-    // a WHOLE-leaf run on a.length (HotSpot drops the bounds check — see the reduce leaf note). The cursor `o`
+    // a WHOLE-leaf run over `arr[0, len)` (LOGICAL length; may be < arr.length — slack). The cursor `o`
     // advances ascending in BOTH directions; only the READ index walks descending for the Bwd build.
-    def runLeaf(arr: String): Unit = e.scope {
+    def runLeaf(arr: String, len: String): Unit = e.scope {
       e.line(s"$jiE[] a = $arr;")
       if !backward then {
         e.line("int i = 0;")
-        e.line("int end = a.length;")
+        e.line(s"int end = $len;")
         e.open("while (i < end)")
         writeElem("a[i]")
         e.line("i += 1;")
         e.close()
       } else {
-        e.line("int i = a.length - 1;")
+        e.line(s"int i = ($len) - 1;")
         e.open("while (i >= 0)")
         writeElem("a[i]")
         e.line("i -= 1;")
@@ -3144,7 +3154,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       retState = "o",
       recurReverse = base => e.line(s"o = $recur($base, out, o, f);"),
       act = el => writeElem(el),
-      runLeaf = arr => runLeaf(arr),
+      runLeaf = (arr, len) => runLeaf(arr, len),
       run = (arr, start, count) => run(arr, start, count),
       winCall = (node, lo, len) => winCall(node, lo, len)
     )
@@ -3177,18 +3187,18 @@ object GenCores extends BleepCodegenScript("GenCores") {
       e.close()
     }
     def fromBoxed(expr: String): String = fromBoxedK(k, expr)
-    // a WHOLE-leaf run on a.length. The READ index walks descending for the Bwd filter; the cursor advances asc.
-    def runLeaf(arr: String): Unit = e.scope {
+    // a WHOLE-leaf run over the LOGICAL length `len` (may be < arr.length — slack). The READ index walks descending for the Bwd filter; the cursor advances asc.
+    def runLeaf(arr: String, len: String): Unit = e.scope {
       e.line(s"$je[] a = $arr;")
       if !backward then {
         e.line("int i = 0;")
-        e.line("int end = a.length;")
+        e.line(s"int end = $len;")
         e.open("while (i < end)")
         writeElem("a[i]")
         e.line("i += 1;")
         e.close()
       } else {
-        e.line("int i = a.length - 1;")
+        e.line(s"int i = ($len) - 1;")
         e.open("while (i >= 0)")
         writeElem("a[i]")
         e.line("i -= 1;")
@@ -3248,7 +3258,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       retState = "o",
       recurReverse = base => e.line(s"o = $recur($base, out, o, p);"),
       act = el => writeElem(el),
-      runLeaf = arr => runLeaf(arr),
+      runLeaf = (arr, len) => runLeaf(arr, len),
       run = (arr, start, count) => run(arr, start, count),
       winCall = (node, lo, len) => winCall(node, lo, len),
       prependVar = "pr" // the fn param is named `p` (the predicate), so the Prepend binding is `pr` to avoid shadowing
@@ -3283,17 +3293,17 @@ object GenCores extends BleepCodegenScript("GenCores") {
       e.close()
     }
     def fromBoxed(expr: String): String = fromBoxedK(k, expr)
-    def runLeaf(arr: String): Unit = e.scope {
+    def runLeaf(arr: String, len: String): Unit = e.scope {
       e.line(s"$je[] a = $arr;")
       if !backward then {
         e.line("int i = 0;")
-        e.line("int end = a.length;")
+        e.line(s"int end = $len;")
         e.open("while (i < end)")
         writeElem("a[i]")
         e.line("i += 1;")
         e.close()
       } else {
-        e.line("int i = a.length - 1;")
+        e.line(s"int i = ($len) - 1;")
         e.open("while (i >= 0)")
         writeElem("a[i]")
         e.line("i -= 1;")
@@ -3359,7 +3369,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
         e.line("ob = (int) (_pk >>> 32);")
       },
       act = el => writeElem(el),
-      runLeaf = arr => runLeaf(arr),
+      runLeaf = (arr, len) => runLeaf(arr, len),
       run = (arr, start, count) => run(arr, start, count),
       winCall = (node, lo, len) => winCall(node, lo, len),
       prelude = () => { e.line("int oa = (int) oa0;"); e.line("int ob = (int) ob0;") },
@@ -3384,18 +3394,18 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val sig = s"static void foreach${dir}${K}(FBase root, ${K}Consumer f)"
     val recur = s"foreach${other}${K}"
     def fromBoxed(expr: String): String = fromBoxedK(k, expr)
-    // a WHOLE-leaf run on a.length (HotSpot drops the bounds check — see the reduce leaf note).
-    def runLeaf(arr: String): Unit = e.scope {
+    // a WHOLE-leaf run over the LOGICAL length `len` (may be < arr.length — slack; see the reduce leaf note).
+    def runLeaf(arr: String, len: String): Unit = e.scope {
       e.line(s"$je[] a = $arr;")
       if !backward then {
         e.line("int i = 0;")
-        e.line("int end = a.length;")
+        e.line(s"int end = $len;")
         e.open("while (i < end)")
         e.line("f.apply(a[i]);")
         e.line("i += 1;")
         e.close()
       } else {
-        e.line("int i = a.length - 1;")
+        e.line(s"int i = ($len) - 1;")
         e.open("while (i >= 0)")
         e.line("f.apply(a[i]);")
         e.line("i -= 1;")
@@ -3454,7 +3464,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       retState = "",
       recurReverse = base => e.line(s"$recur($base, f);"),
       act = el => e.line(s"f.apply($el);"),
-      runLeaf = arr => runLeaf(arr),
+      runLeaf = (arr, len) => runLeaf(arr, len),
       run = (arr, start, count) => run(arr, start, count),
       winCall = (node, lo, len) => winCall(node, lo, len)
     )
@@ -3505,18 +3515,18 @@ object GenCores extends BleepCodegenScript("GenCores") {
         e.line(s"out[o] = f.apply($prevAcc, $elem);")
         e.line("o -= 1;")
       }
-    // a WHOLE-leaf run on a.length (the acc is out[o±1], so the loop carries `o`, not an acc local).
-    def runLeaf(arr: String): Unit = e.scope {
+    // a WHOLE-leaf run over the LOGICAL length `len` (may be < arr.length — slack). The acc is out[o±1], so the loop carries `o`, not an acc local.
+    def runLeaf(arr: String, len: String): Unit = e.scope {
       e.line(s"$je[] a = $arr;")
       if !backward then {
         e.line("int i = 0;")
-        e.line("int end = a.length;")
+        e.line(s"int end = $len;")
         e.open("while (i < end)")
         writeElem("a[i]")
         e.line("i += 1;")
         e.close()
       } else {
-        e.line("int i = a.length - 1;")
+        e.line(s"int i = ($len) - 1;")
         e.open("while (i >= 0)")
         writeElem("a[i]")
         e.line("i -= 1;")
@@ -3580,7 +3590,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       retState = "o",
       recurReverse = base => e.line(s"o = $recur($base, out, o, f);"),
       act = el => writeElem(el),
-      runLeaf = arr => runLeaf(arr),
+      runLeaf = (arr, len) => runLeaf(arr, len),
       run = (arr, start, count) => run(arr, start, count),
       winCall = (node, lo, len) => winCall(node, lo, len)
     )
