@@ -1086,6 +1086,20 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line("i += 1")
         ee.close()
         ee.line(s"new ${KO}Arr(out, n)")
+        // SLICE FAST-PATH (same rationale as reduceLeaf's, measured win there): a top-level SliceNode
+        // over a matching leaf (the take/drop/tail result shape) runs a standalone lifted loop instead
+        // of the Traversers walk. SliceNode length >= 2 by construction, so no One canonicalisation.
+        ee.closeOpen(s"case s: SliceNode if s.base.isInstanceOf[${KI}Arr] =>")
+        ee.line(s"val a = s.base.asInstanceOf[${KI}Arr].arr")
+        ee.line("val so = s.offset")
+        ee.line("val n = s.length")
+        ee.line(s"val out = $outAlloc")
+        ee.line("var i = 0")
+        ee.open("while (i < n)")
+        ee.line(writeOut.replace("_RD_", "a(so + i)"))
+        ee.line("i += 1")
+        ee.close()
+        ee.line(s"new ${KO}Arr(out, n)")
         ee.closeOpen("case _ =>")
         ee.line("val n = xs.length")
         ee.line(s"val out = $outAlloc")
@@ -1131,6 +1145,20 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.close()
         // o <= n. o == n -> nothing filtered, reuse xs (reference identity). Else hand `out` through with logical
         // length `o` — SKIP the trim copy (slack = n - o); leaves iterate to `length`.
+        ee.line(s"if (o == n) xs else if (o == 0) Empty.INSTANCE else if (o == 1) new ${K}One(out(0)) else new ${K}Arr(out, o)")
+        // SLICE FAST-PATH: same standalone lifted loop over the leaf window (take/drop results).
+        ee.closeOpen(s"case s: SliceNode if s.base.isInstanceOf[${K}Arr] =>")
+        ee.line(s"val a = s.base.asInstanceOf[${K}Arr].arr")
+        ee.line("val so = s.offset")
+        ee.line("val n = s.length")
+        ee.line(s"val out = new Array[${k.arr}](n)")
+        ee.line("var i = 0")
+        ee.line("var o = 0")
+        ee.open("while (i < n)")
+        ee.line("val e = a(so + i)")
+        ee.line("if (p.apply(e)) { out(o) = e; o += 1 }")
+        ee.line("i += 1")
+        ee.close()
         ee.line(s"if (o == n) xs else if (o == 0) Empty.INSTANCE else if (o == 1) new ${K}One(out(0)) else new ${K}Arr(out, o)")
         ee.closeOpen("case _ =>")
         ee.line("val n = xs.length")
@@ -1215,6 +1243,16 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line("var i = 0")
         ee.open("while (i < n)")
         ee.line("f.apply(a(i))")
+        ee.line("i += 1")
+        ee.close()
+        // SLICE FAST-PATH: standalone lifted loop over the leaf window (take/drop results).
+        ee.closeOpen(s"case s: SliceNode if s.base.isInstanceOf[${K}Arr] =>")
+        ee.line(s"val a = s.base.asInstanceOf[${K}Arr].arr")
+        ee.line("val so = s.offset")
+        ee.line("val n = s.length")
+        ee.line("var i = 0")
+        ee.open("while (i < n)")
+        ee.line("f.apply(a(so + i))")
         ee.line("i += 1")
         ee.close()
         ee.closeOpen("case _ =>")
@@ -1333,6 +1371,14 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line("var i = if (from < 0) 0 else from")
         ee.line("while (i < n && !p.apply(a(i))) i += 1")
         ee.line("i")
+        // SLICE FAST-PATH: the same clamped empty-body scan over the leaf window; returns LOGICAL index.
+        ee.closeOpen(s"case s: SliceNode if s.base.isInstanceOf[${K}Arr] =>")
+        ee.line(s"val a = s.base.asInstanceOf[${K}Arr].arr")
+        ee.line("val so = s.offset")
+        ee.line("val n = s.length")
+        ee.line("var i = if (from < 0) 0 else from")
+        ee.line("while (i < n && !p.apply(a(so + i))) i += 1")
+        ee.line("i")
         ee.closeOpen("case _ =>")
         ee.line(s"val r = Traversers.scFwd${K}(xs, from, 0, p)")
         ee.line("if (r >= 0) r else ~r - 1")
@@ -1346,6 +1392,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line("val a = leaf.arr")
         ee.line("var i = if (end > leaf.length - 1) leaf.length - 1 else end")
         ee.line("while (i >= 0 && !p.apply(a(i))) i -= 1")
+        ee.line("if (i < 0) -1 else i")
+        // SLICE FAST-PATH: descending clamped scan over the leaf window; returns LOGICAL index.
+        ee.closeOpen(s"case s: SliceNode if s.base.isInstanceOf[${K}Arr] =>")
+        ee.line(s"val a = s.base.asInstanceOf[${K}Arr].arr")
+        ee.line("val so = s.offset")
+        ee.line("var i = if (end > s.length - 1) s.length - 1 else end")
+        ee.line("while (i >= 0 && !p.apply(a(so + i))) i -= 1")
         ee.line("if (i < 0) -1 else i")
         ee.closeOpen("case _ =>")
         ee.line(s"val r = Traversers.scBwd${K}(xs, end, xs.length - 1, p)")
@@ -1884,8 +1937,15 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val combinationsV = dispatchA(k => s"{ if (k < 0 || k > xs.length) Iterator.empty else ${k.name}CombPerm.combinations(materialize${k.name}(xs), k) }")
     val permutationsV = dispatchA(k => s"${k.name}CombPerm.permutations(materialize${k.name}(xs))")
     val emptyB = dispatchA(k => s"Empty.INSTANCE")
+    // Ref tabulate allocates a TYPED backing array when a ClassTag[A] is summonable at the concrete
+    // call site (String[] instead of Object[]): toArray[A] then takes the unchecked arraycopy path
+    // (Object[] -> String[] pays a per-element store check — NewOpsStr toArray measured 0.15x of
+    // iarray on tabulate-built input). The store into the typed array is an exact-class check (cheap).
     val tabulate = dispatchA(k =>
-      s"if (n <= 0) Empty.INSTANCE else if (n == 1) new ${k.name}One(${wr(k, "r.unwrap(f(0))")}) else { val out = ${alloc(k, "r")}; var i = 0; while (i < n) { out(i) = ${wr(k, "r.unwrap(f(i))")}; i += 1 }; new ${k.name}Arr(out, n) }"
+      if k.name == "Ref" then
+        s"if (n <= 0) Empty.INSTANCE else if (n == 1) new RefOne(${wr(k, "r.unwrap(f(0))")}) else { val out = summonFrom { case ct: scala.reflect.ClassTag[A] => ct.newArray(n).asInstanceOf[Array[Object]]; case _ => new Array[Object](n) }; var i = 0; while (i < n) { out(i) = ${wr(k, "r.unwrap(f(i))")}; i += 1 }; new RefArr(out, n) }"
+      else
+        s"if (n <= 0) Empty.INSTANCE else if (n == 1) new ${k.name}One(${wr(k, "r.unwrap(f(0))")}) else { val out = ${alloc(k, "r")}; var i = 0; while (i < n) { out(i) = ${wr(k, "r.unwrap(f(i))")}; i += 1 }; new ${k.name}Arr(out, n) }"
     )
     val applyVar = dispatchA(k =>
       // iterate, never as(i): indexed access on a LinearSeq (List) is O(i) -> O(n^2). Iterator is O(1)/elem.
