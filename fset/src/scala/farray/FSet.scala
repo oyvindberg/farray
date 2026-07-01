@@ -1,7 +1,7 @@
 package farray
 
-/** The FSet type lattice — Option C: REAL opaque subtyping over the sealed Java core [[SBase]] (zero wrapper;
-  * verified on Scala 3.8.3). Capability split enforced by the types:
+/** The FSet type lattice — Option C: REAL opaque subtyping over the sealed Java core [[SBase]] (zero wrapper; verified on Scala 3.8.3). Capability split
+  * enforced by the types:
   * {{{
   *   FSet[A]              <: AnyRef          membership + lazy algebra (no enumeration)
   *    └ FSetFinite[A]     <: FSet[A]         finite (the .finite target; materialize)
@@ -9,16 +9,17 @@ package farray
   *          └ FSetSorted[A]    <: FSetMaterialized   ordered extras (later)
   *   FSetInfinite[-A]     <: AnyRef          predicate-only (range/above/below/universal/complement)
   * }}}
-  * `FSetInfinite` is SEPARATE (contravariant — an infinite set is a predicate `A => Boolean`) and bridges to
-  * `FSet` by a no-import `Conversion`, so you **cannot enumerate an infinite set**: `FSet.above(5).size` does
-  * not compile. Construction yields an `FSetMaterialized`; the lazy algebra (`++`/`&`/`+`/…) yields an `FSet`,
-  * which you `.materialize` (→ `FSetMaterialized`) to enumerate. Invariant in `A` except `FSetInfinite[-A]`.
+  * `FSetInfinite` is SEPARATE (contravariant — an infinite set is a predicate `A => Boolean`) and bridges to `FSet` by a no-import `Conversion`, so you
+  * **cannot enumerate an infinite set**: `FSet.above(5).size` does not compile. Construction yields an `FSetMaterialized`; the lazy algebra (`++`/`&`/`+`/…)
+  * yields an `FSet`, which you `.materialize` (→ `FSetMaterialized`) to enumerate. Invariant in `A` except `FSetInfinite[-A]`.
   */
-opaque type FSet[A] <: AnyRef = SBase
-opaque type FSetFinite[A] <: FSet[A] = SBase
-opaque type FSetMaterialized[A] <: FSetFinite[A] = SBase
-opaque type FSetSorted[A] <: FSetMaterialized[A] = SBase
-opaque type FSetInfinite[-A] <: AnyRef = SBase
+//start:set-lattice
+opaque type FSet[A] <: AnyRef = SBase // membership + lazy algebra — no enumeration
+opaque type FSetFinite[A] <: FSet[A] = SBase // provably finite — .materialize is safe
+opaque type FSetMaterialized[A] <: FSetFinite[A] = SBase // enumerable: size/iterator/map/equals
+opaque type FSetSorted[A] <: FSetMaterialized[A] = SBase // ordered extras
+opaque type FSetInfinite[-A] <: AnyRef = SBase // a predicate — contravariant, never enumerable
+//stop:set-lattice
 
 object FSet:
 
@@ -56,6 +57,7 @@ object FSet:
   // ---- FSet (top): membership + lazy algebra. Inherited by every finite subtype (and reached by an
   // FSetInfinite via the Conversion). The opaque receiver flows into the SBase-typed impl at the boundary. ----
   extension [A](xs: FSet[A])
+    // start:set-surface
     inline def contains(elem: A): Boolean = FSetOps.containsImpl[A](xs, elem)
     inline def apply(elem: A): Boolean = FSetOps.containsImpl[A](xs, elem)
     inline def subsetOf(that: FSet[A]): Boolean = FSetOps.subsetOfImpl[A](xs, that)
@@ -79,6 +81,7 @@ object FSet:
     // materialize: fold the lazy algebra into one leaf (memoized). Throws at runtime if the tree laundered an
     // infinite leaf in (e.g. finite ∪ above(k)); a directly-infinite set is an FSetInfinite and can't reach here.
     inline def materialize: FSetMaterialized[A] = FSetOps.materializeImpl[A](xs)
+    // stop:set-surface
     // finite view: Some if this set is provably finite (every leaf a materialized set or a bounded range;
     // no complement / over-cap range), so it can be `.materialize`d safely — None if it might be infinite.
     inline def finite: Option[FSetFinite[A]] =

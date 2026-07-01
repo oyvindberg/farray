@@ -6,8 +6,9 @@ function cell(x: number | null): string {
   return x <= 1.3 ? "sc-hi" : x > 3.0 ? "sc-lo" : "sc-mid";
 }
 
-export default function Scorecard() {
-  const { scorecard, ready } = useStore();
+export default function Scorecard({ suite = "farray" }: { suite?: "farray" | "fset" }) {
+  const { scorecard: fa, setScorecard, ready } = useStore();
+  const scorecard = suite === "fset" ? setScorecard : fa;
   if (!ready || !scorecard) return <div className="snippet snippet--loading">tallying…</div>;
 
   return (

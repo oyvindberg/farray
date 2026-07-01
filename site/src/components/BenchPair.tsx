@@ -8,12 +8,15 @@ interface Props {
   /** the String/reference equivalent, e.g. "MapStrBenchmark" */
   str: string;
   caption?: ReactNode;
+  /** which benchmark suite to look the classes up in (default: the FArray suite) */
+  suite?: "farray" | "fset";
 }
 
 // Int (left) next to its String/reference equivalent (right), matched op-by-op, so the
 // primitive-vs-reference picture sits side by side and stays honest.
-export default function BenchPair({ int: intCls, str: strCls, caption }: Props) {
-  const { charts, ready } = useStore();
+export default function BenchPair({ int: intCls, str: strCls, caption, suite = "farray" }: Props) {
+  const { charts: faCharts, setCharts, ready } = useStore();
+  const charts = suite === "fset" ? setCharts : faCharts;
   if (!ready) return <div className="bench-grid bench-grid--loading">measuring…</div>;
 
   const pick = (cls: string) => charts.filter((c) => c.cls === cls);

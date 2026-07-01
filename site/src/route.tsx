@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
 
-// Single source of truth for the site's pages. Adding one — e.g. a future FSet page — is one line here
-// plus a branch in App's Router and its page component.
+// Single source of truth for the site's pages. Adding one is one line here plus a branch in
+// App's Router and its page component.
 const TABS = [
   { id: "home", href: "#/", label: "FArray" },
   { id: "fusion", href: "#/fusion", label: "Fusion" },
   { id: "json", href: "#/json", label: "Fused JSON" },
-  { id: "reference", href: "#/reference", label: "Benchmarks" },
-  // { id: "fset", href: "#/fset", label: "FSet" },  // future: the FSet collection gets its own page
+  { id: "fset", href: "#/fset", label: "FSet" },
+  { id: "reference", href: "#/reference", label: "FArray benchmarks" },
+  { id: "setbench", href: "#/setbench", label: "FSet benchmarks" },
 ] as const;
 
 export type Route = (typeof TABS)[number]["id"];
