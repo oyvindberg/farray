@@ -43,28 +43,27 @@ export default function Inline() {
       <DispatchDiagram />
 
       <p>
-        And you don't have to take the diagram's word for it. Here's the actual lowering — the eighty branches
-        gone, your lambda lifted into one specialized SAM and handed to the loop. (The opaque-type bookkeeping
-        is elided; toggle <em>raw expansion</em> for the verbatim tree.) Read it as three names:
+        And you don't have to take the diagram's word for it. Here's the actual lowering: your whole{" "}
+        <code>xs.map(_ + 1)</code> — the dispatch, the kind resolution, all of it — became one line. (The dead
+        bindings the expansion leaves behind are elided; toggle <em>raw expansion</em> for the verbatim tree.)
       </p>
 
       <Snippet name="map-generated" />
 
-      <p>Three things are worth pointing at, because together they are the entire pitch:</p>
+      <p>Three things are worth pointing at in that one line, because together they are the entire pitch:</p>
 
       <ul className="points">
         <li>
-          <code>val r: intRepr.type = intRepr</code> — the kind was resolved <strong>at compile time</strong>.
-          The whole eighty-branch <code>summonFrom</code> collapsed to a single choice; the dispatch is gone
-          before the program runs.
+          <code>mapLeafInt<strong>Int</strong></code> — the resolution is in the name. <code>summonFrom</code>{" "}
+          picked the <code>Int → Int</code> leaf <strong>at compile time</strong> and deleted the other eighty
+          branches; the dispatch is gone before the program runs.
         </li>
         <li>
-          <code>mapLeafIntInt(xs, …)</code> — a direct, <strong>monomorphic</strong> call, and a call is all it
-          is. The <code>while</code>-loop lives <em>inside</em> <code>mapLeafIntInt</code>, which is deliberately{" "}
-          <em>not</em> <code>inline</code> — compiled once and shared, never copied into your code. That's why
-          the loop isn't in the expansion above: you're looking at the call site, not the loop body. (Inline the
-          loop at every call site and you'd bloat straight into the JVM's method-size cliff — which is exactly
-          the trade <code>.fuse</code> opts into on purpose.)
+          It's a <strong>call</strong>, not the loop. The <code>while</code>-loop lives <em>inside</em>{" "}
+          <code>mapLeafIntInt</code>, which is deliberately <em>not</em> <code>inline</code> — compiled once and
+          shared, never copied into your code. That's why the loop isn't in the line above. (Inline it at every
+          call site and you'd bloat straight into the JVM's method-size cliff — exactly the trade{" "}
+          <code>.fuse</code> opts into on purpose.)
         </li>
         <li>
           <code>{"(v: Int) => v + 1"}</code> — your lambda, materialized <strong>once</strong> as a specialized{" "}
