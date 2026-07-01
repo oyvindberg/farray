@@ -1190,7 +1190,17 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line("var o = 0")
         ee.open("while (i < n)")
         ee.line("val e = a(i)")
-        ee.line("if (p.apply(e)) { out(o) = e; o += 1 }")
+        if k.isPrim then {
+          // BRANCHLESS keep (prims only): unconditional store + conditional cursor bump. Removes the
+          // mispredict on unpredictable predicates AND lets the loop vectorize - MEASURED @100k Int:
+          // random 3.3k -> 21.5k ops/s, predictable 3.3k-ish branchy -> 29.8k. Ref keeps the branchy
+          // form: an unconditional ref store pays a GC write barrier per REJECTED element too, and
+          // measured 10-38% slower on the (predictable) Str suite.
+          ee.line("out(o) = e")
+          ee.line("o += (if (p.apply(e)) 1 else 0)")
+        } else {
+          ee.line("if (p.apply(e)) { out(o) = e; o += 1 }")
+        }
         ee.line("i += 1")
         ee.close()
         // o <= n. o == n -> nothing filtered, reuse xs (reference identity). Else hand `out` through with logical
@@ -1206,7 +1216,17 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line("var o = 0")
         ee.open("while (i < n)")
         ee.line("val e = a(so + i)")
-        ee.line("if (p.apply(e)) { out(o) = e; o += 1 }")
+        if k.isPrim then {
+          // BRANCHLESS keep (prims only): unconditional store + conditional cursor bump. Removes the
+          // mispredict on unpredictable predicates AND lets the loop vectorize - MEASURED @100k Int:
+          // random 3.3k -> 21.5k ops/s, predictable 3.3k-ish branchy -> 29.8k. Ref keeps the branchy
+          // form: an unconditional ref store pays a GC write barrier per REJECTED element too, and
+          // measured 10-38% slower on the (predictable) Str suite.
+          ee.line("out(o) = e")
+          ee.line("o += (if (p.apply(e)) 1 else 0)")
+        } else {
+          ee.line("if (p.apply(e)) { out(o) = e; o += 1 }")
+        }
         ee.line("i += 1")
         ee.close()
         ee.line(s"if (o == n) xs else trimLeaf${K}(out, o, n)")
@@ -3520,13 +3540,21 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val name = if backward then s"buildFilteredBwd${K}" else s"buildFiltered${K}"
     val recur = if backward then s"buildFiltered${K}" else s"buildFilteredBwd${K}"
     val sig = s"static int $name(FBase root, $je[] out, int o, ${K}Pred p)"
-    // predicate-guarded write: keep + advance only on a hit. The cursor `o` advances ascending in BOTH directions.
+    // keep-write: prims are BRANCHLESS (unconditional store + conditional bump — no mispredict,
+    // vectorizes; measured 6-9x on the Scala leaf loops); Ref stays predicate-guarded (an
+    // unconditional ref store pays a GC write barrier per rejected element, measured slower).
+    // The cursor `o` advances ascending in BOTH directions.
     def writeElem(elem: String): Unit = e.scope {
       e.line(s"$je _e = $elem;")
-      e.open("if (p.apply(_e))")
-      e.line("out[o] = _e;")
-      e.line("o += 1;")
-      e.close()
+      if k.isPrim then {
+        e.line("out[o] = _e;")
+        e.line("o += p.apply(_e) ? 1 : 0;")
+      } else {
+        e.open("if (p.apply(_e))")
+        e.line("out[o] = _e;")
+        e.line("o += 1;")
+        e.close()
+      }
     }
     def fromBoxed(expr: String): String = fromBoxedK(k, expr)
     // a WHOLE-leaf run over the LOGICAL length `len` (may be < arr.length — slack). The READ index walks descending for the Bwd filter; the cursor advances asc.
