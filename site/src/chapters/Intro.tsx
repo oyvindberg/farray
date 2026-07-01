@@ -8,7 +8,7 @@ export default function Intro() {
       <h2>Ten years of waiting for the JVM</h2>
 
       <p className="lede">
-        For most of a decade I've tried to write fast code in Scala, and spent most of it frustrated. The
+        For most of a decade I tried to write fast code in Scala, and spent most of it frustrated. The
         collections are a joy to write — and box every primitive into the bargain. The <code>while</code> loop
         that doesn't box is a joy to nobody. Everything in between was a promise with a version number.
       </p>
@@ -38,16 +38,16 @@ export default function Intro() {
       <p>
         <strong>Then, with a bit more work, the computations fused.</strong> A whole chain of{" "}
         <code>map</code> / <code>filter</code> / <code>flatMap</code> / <code>zip</code> / <code>fold</code>{" "}
-        stopped allocating anything between its stages — the macro rewrites the lot, at compile time, into one
-        pass over the backing array. This is the part I'd given up on.
+        stopped allocating anything between its stages — a macro rewrites the lot, at compile time, into one
+        pass over the backing array. This is the part I'd given up on ever having.
       </p>
 
       <p>
         It's easiest to feel on something long and gnarly. Fourteen stages — <code>flatMap</code>,{" "}
         <code>filter</code>, <code>map</code>, <code>zip</code>, <code>zipWithIndex</code>,{" "}
         <code>foldLeft</code>, twice over — run identically on every collection in the race. The FArray
-        version differs by a single word: <code>.fuse</code>. On the left, the code; on the right, what it
-        does to everyone else.
+        version differs by a single word: <code>.fuse</code>. On the left, the code; on the right, what that
+        one word does to everyone else.
       </p>
 
       <SideBySide
@@ -56,44 +56,45 @@ export default function Intro() {
         title="14-stage pipeline"
         caption={
           <>
-            The identical transform across every collection, swept from empty to 100k elements. Hover any size
-            to read throughput and the fused FArray's ratio against each rival — including the same pipeline
-            run eagerly on FArray itself.
+            The identical transform on every collection, swept from empty to 100k elements. Hover any size to
+            read throughput and the fused FArray's ratio over each rival — including the same pipeline run
+            eagerly on FArray itself.
           </>
         }
       />
 
       <p>
         At a hundred thousand elements that lands at roughly <strong>30× the quickest competitor</strong>,{" "}
-        <strong>80× List</strong>, and <strong>16× the very same pipeline run eagerly on FArray</strong> —
-        the green bar is so far above the rest that the others flatten to slivers. Hover them for the exact
-        numbers.
+        <strong>80× List</strong> — and, the number that says the most, <strong>16× the very same pipeline
+        run eagerly on FArray itself</strong>. The green bar stands so far above the field that everyone else
+        flattens to slivers. Hover them for the exact numbers.
       </p>
 
       <p>
-        The reason it runs away with it is that <code>.fuse</code> refuses to build any of the work-in-progress.
-        Run those stages eagerly and each one allocates an array the next immediately consumes and throws away.
-        Fusion collapses the whole chain into a single pass:
+        The reason it runs away with it: <code>.fuse</code> refuses to build any of the work-in-progress. Run
+        those stages eagerly and each one allocates an array whose only purpose is to be consumed and thrown
+        away by the next. Fusion collapses the whole chain into a single pass:
       </p>
 
       <FusionDiagram />
 
       <p>
         <code>.fuse</code> is a macro, not a runtime call. At compile time it reads the entire chain off the
-        syntax tree and rewrites it into one <code>while</code>-loop over the backing array — the intermediate
-        collections, the <code>Function1</code>s, the boxing, all gone. And this isn't a claim to take on faith:
-        the lowering is checked into the repo as a golden test, regenerated on every build. Here is exactly what
-        those fourteen stages compiled to.
+        typed syntax tree and rewrites it into one <code>while</code> loop over the backing array — the
+        intermediate collections, the <code>Function1</code>s, the boxing: gone. And this isn't a claim to
+        take on faith. The lowering is checked into the repo as a golden test, regenerated on every build.
+        Here is exactly what those fourteen stages compiled to.
       </p>
 
       <GeneratedCode name="fuse-generated" summary="The loop .fuse emitted — 14 stages, one pass" />
 
       <p>
-        That the Scala 3 macro system can do this — read a call chain, work out which columns nobody reads, and
-        emit a specialized loop, all at compile time — is, frankly, a little phenomenal. There's a whole page on{" "}
-        <a href="#/fusion">how the macro pulls it off</a>. But fusion is the summit, and we're at the trailhead.
-        The rest of this page is the climb: the Java core the loop runs over, the Scala that keeps it unboxed,
-        and the cost model that makes the whole thing hang together.
+        That the Scala 3 macro system can do this — read a call chain off the tree, work out which columns
+        nobody downstream reads, and emit the specialized loop you'd have written by hand — is, frankly, a
+        little phenomenal. There's a whole page on <a href="#/fusion">how the macro pulls it off</a>. But
+        fusion is the summit, and we're at the trailhead. The rest of this page is the climb: the Java core
+        the loop runs over, the Scala that keeps it unboxed, and the cost model that makes the whole thing
+        hang together.
       </p>
     </section>
   );

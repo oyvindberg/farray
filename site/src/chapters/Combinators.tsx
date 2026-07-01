@@ -23,8 +23,8 @@ export default function Combinators() {
         type-check that <code>int[]</code> doesn't carry. In exchange it can't even compare or print itself:{" "}
         <code>IArray(1, 2, 3).toString</code> is <code>[I@5a07e868</code> and <code>==</code> is identity.
         FArray wraps the array in an object, so it gives that hair back and gets value <code>equals</code>,{" "}
-        <code>hashCode</code> and <code>toString</code> — and a collection you can assemble any way you please,
-        in constant time, paying for a flat array only when you ask for one. Here's the cost of each:
+        <code>hashCode</code> and <code>toString</code> — and a collection you can assemble any way you
+        please, in constant time, paying for a flat array only when you ask for one. Here's the cost of each:
       </p>
 
       <Complexity />
@@ -33,29 +33,29 @@ export default function Combinators() {
         The reason that table is almost all <code>O(1)</code> is that the structural nodes are{" "}
         <strong>lazy</strong>: a <code>Concat</code> or a <code>SliceNode</code> records an intention, it
         doesn't do the work. Nothing is computed until you read. So if you <code>++</code> twenty arrays
-        together and then call <code>take(2)</code>, the traversal walks two elements into the tree and stops —
-        the other nineteen concatenations are never constructed into anything. That's a lot of collections you
+        together and then call <code>take(2)</code>, the traversal walks two elements into the tree and stops
+        — the other nineteen concatenations never become anything at all. That's a lot of collections you
         simply don't build. You pay for what you read, not for what you wrote.
       </p>
 
       <p>
         And what you do pay <strong>amortizes</strong>. Cons a million elements on one at a time and you've
         built a million-deep tree of O(1) nodes; the first elementwise combinator — a <code>map</code>, a{" "}
-        <code>sum</code>, a <code>foldLeft</code> — flattens the whole thing into one contiguous primitive array
-        in a single pass, and every read after that is array-speed. The array is the preferred shape, and it
-        reasserts itself the moment you compute.
+        <code>sum</code>, a <code>foldLeft</code> — flattens the whole thing into one contiguous primitive
+        array in a single pass, and every read after that is array-speed. The flat array is the preferred
+        shape, and it reasserts itself the moment you compute.
       </p>
 
       <BenchChart
         cls="SlicingIntBenchmark"
-        caption="Structural ops — slice, span, splitAt, grouped, sliding. Lazy nodes mean FArray produces these without copying; against the collections that must materialize each piece the gap runs from a couple× to, for grouped, thousands×. (Shown on Int, but structural ops touch no elements, so the String numbers are identical — there's nothing to box.)"
+        caption="Structural ops — slice, span, splitAt, grouped, sliding. Lazy nodes mean FArray produces these without copying; against collections that must materialize each piece, the gap runs from a couple× to, for grouped, thousands×. (Shown on Int, but structural ops touch no elements — the String numbers are identical, because there's nothing to box.)"
       />
 
       <h3>It keeps up with List at List's own game</h3>
 
       <p>
         Which leads to a result I still find faintly absurd. Because <code>+:</code> is O(1) and the tree is
-        lazy, you can use FArray as a literal cons-list — build it with <code>::</code>, take it apart with{" "}
+        lazy, you can drive FArray as a literal cons-list — build it with <code>::</code>, take it apart with{" "}
         <code>case h :: t</code>, recursively — and it keeps pace with <code>List</code>, the structure that
         exists for precisely that.
       </p>
@@ -70,12 +70,14 @@ export default function Combinators() {
       <BenchPair
         int="ListLikeScalingIntBenchmark"
         str="ListLikeScalingStrBenchmark"
-        caption="FArray used as a cons-list — built by ::, summed and mapped by recursion — versus List, Int beside String. On Int it wins the build and the maps; on String it's a dead heat with List throughout. References were never boxed, so there's no gap to open: keeping pace with the cons-list at its own game is the whole win."
+        caption="FArray driven as a cons-list — built by ::, summed and mapped by recursion — versus List, Int beside String. On Int it wins the build and the maps; on String it's a dead heat with List throughout. References were never boxed, so there's no gap to open: matching the cons-list at its own game is the whole win."
       />
 
+      <h3>Sorting — the one you'd bet against</h3>
+
       <p>
-        One last pair, because it's the one you'd bet against. Sorting is where a raw array should win outright —
-        FArray sorts directly on the materialized array (a run-detecting mergesort, no boxed indices):
+        One last pair, because it's where a raw array should win outright. FArray sorts directly on the
+        materialized array — a run-detecting mergesort, no boxed indices, no <code>Ordering</code> ceremony:
       </p>
 
       <BenchPair

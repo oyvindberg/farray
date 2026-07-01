@@ -16,7 +16,7 @@ function Hero() {
       </p>
       <p className="hero__sub">
         Every number here is a JMH measurement you can hover; every snippet is extracted from source that
-        compiles.
+        compiles. If it's on the page, it ran.
       </p>
     </header>
   );
@@ -33,7 +33,8 @@ function Footer() {
   return (
     <footer className="foot">
       Charts are this commit's <code>docs/bench-results.json</code>; snippets are extracted verbatim from
-      compiled source. If it's on the page, it ran.
+      compiled source; lowerings are golden tests, regenerated on every build. Nothing on this page is a
+      mock-up.
     </footer>
   );
 }

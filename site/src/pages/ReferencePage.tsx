@@ -11,11 +11,11 @@ const SECTION_INFO: Record<Section, { title: string; blurb: string }> = {
   },
   String: {
     title: "Reference elements",
-    blurb: "String payloads. There's no boxing to save, so these isolate structure and dispatch alone.",
+    blurb: "String payloads. Nothing to unbox, so these isolate structure and dispatch alone — the honest half of the suite.",
   },
   ListLike: {
     title: "Cons-list workloads",
-    blurb: "FArray driven like a List — built with ::, torn down by head/tail recursion.",
+    blurb: "FArray driven like a List — built with ::, torn down by head/tail recursion — against the structure built for exactly that.",
   },
   Diagnostics: {
     title: "Diagnostics & internals",
@@ -41,10 +41,10 @@ export default function ReferencePage() {
         <p className="page__eyebrow">the complete scorecard</p>
         <h1>Benchmarks</h1>
         <p className="page__lede">
-          The whole JMH suite, unabridged — every operation, every size, FArray against every competitor. The
-          chapters up front pull out the highlights and explain the machinery; this page is the reference.
-          Every bar is a measurement you can hover, and every card reveals the exact benchmark source it came
-          from.
+          The whole JMH suite, unabridged — every operation at every size, FArray against every competitor,
+          wins and losses alike. The chapters up front pull out the highlights and explain the machinery; this
+          page is the raw record. Every bar is a measurement you can hover, and every card reveals the exact{" "}
+          <code>@Benchmark</code> source it came from.
         </p>
       </header>
 
@@ -55,8 +55,8 @@ export default function ReferencePage() {
           <section className="ref-section">
             <h2>Leaderboard</h2>
             <p className="ref-blurb">
-              Geometric mean of best-in-class ÷ own, per structure and section — one number each. 1.00 is the
-              fastest of the field; higher is slower.
+              One number per structure and section: the geometric mean of how far each sits behind the
+              fastest-in-cell. 1.00 means fastest across the board; higher is slower.
             </p>
             <Scorecard />
           </section>
