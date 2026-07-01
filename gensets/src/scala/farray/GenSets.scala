@@ -228,13 +228,21 @@ object GenSets extends BleepCodegenScript("GenSets") {
          |// F14/abseil-style: `ctrl` is a dense 1-byte-per-slot table (0 = empty; else 0x80 | 7-bit hash
          |// fingerprint) that rejects a miss with one cache-resident byte; `keys` holds the element ref INLINE at
          |// the slot, so a hit dereferences it directly — no dependent hashes[p]/arr[p] random load. `arr`/`hashes`
-         |// (hash-sorted) are kept for the unboxed merge core. O(1) contains.
+         |// hold the dense element column (insertion order unless built sorted); the HASH-SORTED view the merge
+         |// core needs is memoized LAZILY in `sortedArr`/`sortedHashes` (build-then-query never pays the sort).
+         |// Benign race: the sorted view is deterministic, and `sortedHashes` is written before `sortedArr`, so a
+         |// reader that sees sortedArr non-null also sees its pair. O(1) contains.
          |public final class S${k.name}Hash extends SMaterialized {
          |    public final Object[] arr;
          |    public final int[] hashes;
          |    public final byte[] ctrl;
          |    public final Object[] keys;
-         |    public S${k.name}Hash(Object[] arr, int[] hashes, byte[] ctrl, Object[] keys) { this.arr = arr; this.hashes = hashes; this.ctrl = ctrl; this.keys = keys; }
+         |    public volatile Object[] sortedArr;
+         |    public volatile int[] sortedHashes;
+         |    public S${k.name}Hash(Object[] arr, int[] hashes, byte[] ctrl, Object[] keys, boolean sorted) {
+         |        this.arr = arr; this.hashes = hashes; this.ctrl = ctrl; this.keys = keys;
+         |        if (sorted) { this.sortedHashes = hashes; this.sortedArr = arr; }
+         |    }
          |    @Override public int size() { return arr.length; }
          |}
          |""".stripMargin
@@ -288,8 +296,9 @@ object GenSets extends BleepCodegenScript("GenSets") {
     * carry their own kind). `sizeHint` is a cheap upper bound; exact size forces a materialize. */
   private def algebraNode(name: String): String = {
     val hint = name match {
-      // Union/Xor: at most |l| + |r|. Inter/Diff: at most |l| (Inter ⊆ l, Diff ⊆ l).
-      case "SUnion" | "SXor" => "left.sizeHint() + right.sizeHint()"
+      // Union/Xor: at most |l| + |r| (summed in long — two huge hints must clamp, not overflow negative).
+      // Inter/Diff: at most |l| (Inter ⊆ l, Diff ⊆ l).
+      case "SUnion" | "SXor" => "(int) Math.min((long) left.sizeHint() + (long) right.sizeHint(), (long) Integer.MAX_VALUE)"
       case _                 => "left.sizeHint()"
     }
     s"""package farray;
@@ -395,16 +404,19 @@ object GenSets extends BleepCodegenScript("GenSets") {
       val ee = new Emit("  ")
       opKinds.foreach { k =>
         val K = k.name
-        // ITERATIVE left-spine trampoline (§2.4): loop the unbounded LEFT spine of a Union/Inter/Diff chain
-        // and recurse only on the (shallow) right children — so a deep +/++/- chain (which is LEFT-deep)
-        // cannot StackOverflow. Sorted leaf = branchless binary search (Double via java.lang.Double.compare,
-        // NaN-correct); One/Empty trivial. Union short-circuits on first hit, Inter/Diff on first miss.
+        // ITERATIVE left-spine trampoline (§2.4): loop the unbounded LEFT spine and recurse only on the
+        // (shallow) right children — so a deep +/++/-/^ chain (which is LEFT-deep) cannot StackOverflow.
+        // `flip` accumulates the pending parity from SXor/SComplement frames (result = raw ^ flip), which is
+        // what lets Xor and Complement ride the SAME loop instead of recursing on `left`/`inner`. Union
+        // short-circuits on first hit (→ !flip), Inter/Diff on first miss (→ flip). On the hot leaf-only path
+        // flip is provably false and folds away.
         ee.open(s"def containsLeaf$K(node0: SBase, e: ${k.arr}): Boolean =")
         ee.line("var node: SBase = node0")
+        ee.line("var flip = false")
         ee.open("while (true)")
         ee.open("node match")
-        ee.line("case _: SEmpty => return false")
-        ee.line(s"case o: S${K}One => return ${isEq(k, "o.elem", "e")}")
+        ee.line("case _: SEmpty => return flip")
+        ee.line(s"case o: S${K}One => return ${isEq(k, "o.elem", "e")} ^ flip")
         ee.open(s"case s: S${K}Sorted =>")
         ee.line("val a = s.arr")
         if k.isPrim then {
@@ -414,11 +426,11 @@ object GenSets extends BleepCodegenScript("GenSets") {
           ee.line("var i = 0")
           ee.open("while (i < a.length)")
           ee.line("val v = a(i)")
-          ee.line(s"if (${isEq(k, "v", "e")}) return true")
-          ee.line(s"if (${isLt(k, "e", "v")}) return false") // sorted ascending → passed e → miss, stop early
+          ee.line(s"if (${isEq(k, "v", "e")}) return !flip")
+          ee.line(s"if (${isLt(k, "e", "v")}) return flip") // sorted ascending → passed e → miss, stop early
           ee.line("i += 1")
           ee.close()
-          ee.line("return false")
+          ee.line("return flip")
         } else {
           // Ref Sorted leaf is ≤16 (the wrap threshold) and hash-sorted; a LINEAR scan over the cached hashes is
           // branch-predictable (vs binary search's data-dependent comparisons) and only calls .equals on a hash hit.
@@ -427,18 +439,19 @@ object GenSets extends BleepCodegenScript("GenSets") {
           ee.line("var i = 0")
           ee.open("while (i < a.length)")
           ee.line("val hm = hs(i)")
-          ee.line("if (hm == hc && a(i).equals(e)) return true")
-          ee.line("if (hm > hc) return false") // hashes sorted ascending → passed hc → miss, stop early
+          ee.line("if (hm == hc && a(i).equals(e)) return !flip")
+          ee.line("if (hm > hc) return flip") // hashes sorted ascending → passed hc → miss, stop early
           ee.line("i += 1")
           ee.close()
-          ee.line("return false")
+          ee.line("return flip")
         }
         ee.close() // case Sorted
-        ee.line(s"case u: SUnion => if (containsLeaf$K(u.right, e)) return true else node = u.left")
-        ee.line(s"case n: SInter => if (!containsLeaf$K(n.right, e)) return false else node = n.left")
-        ee.line(s"case d: SDiff => if (containsLeaf$K(d.right, e)) return false else node = d.left")
-        // Xor needs BOTH children (no short-circuit, no left-spine) — both recurse (xor trees are not loop-built).
-        ee.line(s"case x: SXor => return containsLeaf$K(x.left, e) ^ containsLeaf$K(x.right, e)")
+        ee.line(s"case u: SUnion => if (containsLeaf$K(u.right, e)) return !flip else node = u.left")
+        ee.line(s"case n: SInter => if (!containsLeaf$K(n.right, e)) return flip else node = n.left")
+        ee.line(s"case d: SDiff => if (containsLeaf$K(d.right, e)) return flip else node = d.left")
+        // Xor: a LEAF left child answers directly (the common single-^ case — MEASURED ~20% faster than
+        // looping); a lazy left child folds the right into the parity and LOOPS — a ^-built chain is left-deep.
+        ee.line(s"case x: SXor => x.left match { case _: SView => { flip ^= containsLeaf$K(x.right, e); node = x.left }; case l => return (containsLeaf$K(l, e) ^ containsLeaf$K(x.right, e)) ^ flip }")
         // frozen open-addressing leaf — O(1) probe (§2.3): mix → slot → linear-probe index → position → compare.
         ee.open(s"case h: S${K}Hash =>")
         ee.line("val arr = h.arr")
@@ -452,7 +465,7 @@ object GenSets extends BleepCodegenScript("GenSets") {
           ee.line(s"else if (${isEq(k, "arr(p)", "e")}) { res = true; go = false }")
           ee.line("else slot = (slot + 1) & (idx.length - 1)")
           ee.close()
-          ee.line("return res")
+          ee.line("return res ^ flip")
         } else {
           // F14 probe: a 1-byte ctrl fingerprint rejects a miss from a cache-resident byte; on a fingerprint
           // match the inline `keys[slot]` ref is dereferenced directly (no dependent arr[pos] random load).
@@ -472,15 +485,18 @@ object GenSets extends BleepCodegenScript("GenSets") {
           ee.line("else if (c == fp && keys(slot).equals(e)) { res = true; go = false }")
           ee.line("else slot = (slot + 1) & (ctrl.length - 1)")
           ee.close()
-          ee.line("return res")
+          ee.line("return res ^ flip")
         }
         ee.close()
         // predicate leaves (§2.5): O(1)-by-computation, distribute through the algebra, never materialize.
-        if k.name == "Int" then ee.line("case b: SIntBitmap => { val i = e - b.base; return i >= 0 && (i >>> 6) < b.words.length && (b.words(i >>> 6) >>> i & 1L) != 0L }")
-        if k.name == "Int" then ee.line("case r: SIntRange => return r.lo <= e && e <= r.hi")
-        if k.name == "Long" then ee.line("case r: SLongRange => return r.lo <= e && e <= r.hi")
-        ee.line(s"case c: SComplement => return !containsLeaf$K(c.inner, e)")
-        ee.line("case _ => return false")
+        // (a single unsigned long-compare bounds test was MEASURED SLOWER than these two int compares — the
+        // branches predict perfectly; the long ops don't come free. Keep the two-compare form.)
+        if k.name == "Int" then ee.line("case b: SIntBitmap => { val i = e - b.base; return (i >= 0 && (i >>> 6) < b.words.length && (b.words(i >>> 6) >>> i & 1L) != 0L) ^ flip }")
+        if k.name == "Int" then ee.line("case r: SIntRange => return (r.lo <= e && e <= r.hi) ^ flip")
+        if k.name == "Long" then ee.line("case r: SLongRange => return (r.lo <= e && e <= r.hi) ^ flip")
+        // Complement folds into the parity and LOOPS on inner — a nested-complement chain cannot StackOverflow.
+        ee.line("case c: SComplement => { flip = !flip; node = c.inner }")
+        ee.line("case _ => return flip")
         ee.close() // node match
         ee.close() // while
         ee.line("false")
@@ -499,7 +515,10 @@ object GenSets extends BleepCodegenScript("GenSets") {
       opKinds.foreach { k =>
         val K = k.name
         val arrT = if k.name == "Ref" then "Object" else k.arr
-        ee.open(s"def buildSorted$K(raw: Array[$arrT], len: Int): SBase =")
+        // `owned = false` ⇒ the caller's array must not be mutated: the prim SORT branch copies before sorting
+        // (the dense-Int bitmap branch and the whole Ref branch only READ raw, so they never copy — this is what
+        // lets fromArray pass the user's array straight through with no defensive copy).
+        ee.open(s"def buildSorted$K(raw: Array[$arrT], len: Int, owned: Boolean): SBase =")
         ee.line("if (len == 0) return SEmpty.INSTANCE")
         if k.name == "Int" then {
           // dense-Int FAST build: one min/max pass, then set bits DIRECTLY into a bitmap (O(n), no O(n log n)
@@ -519,56 +538,67 @@ object GenSets extends BleepCodegenScript("GenSets") {
           ee.close()
         }
         if k.isPrim then {
-          // sort the first `len` slots in place, then unique-compact dropping equal neighbours.
-          ee.line("java.util.Arrays.sort(raw, 0, len)")
+          // sort the first `len` slots (copy first if the caller still owns the array), then unique-compact.
+          ee.line("val a = if (owned) raw else java.util.Arrays.copyOf(raw, len)")
+          ee.line("java.util.Arrays.sort(a, 0, len)")
           ee.line("var w = 1")
           ee.line("var i = 1")
           ee.open("while (i < len)")
-          ee.open(s"if (${notEq(k, "raw(i)", "raw(i - 1)")})")
-          ee.line("raw(w) = raw(i)")
+          ee.open(s"if (${notEq(k, "a(i)", "a(i - 1)")})")
+          ee.line("a(w) = a(i)")
           ee.line("w += 1")
           ee.close()
           ee.line("i += 1")
           ee.close()
-          ee.line(s"if (w == 1) new S${K}One(raw(0))")
+          ee.line(s"if (w == 1) new S${K}One(a(0))")
           // route the sorted distinct array through wrap (Int → dense bitmap / Sorted / Hash; Long/Double → Sorted/Hash).
-          ee.line(s"else wrap$K(java.util.Arrays.copyOf(raw, w))")
+          ee.line(s"else wrap$K(java.util.Arrays.copyOf(a, w))")
         } else {
-          // Ref: dedup DURING an open-addressing insert (O(n) expected) — replaces the old O(n²) equals scan.
-          // Build the index + parallel hashes inline; trim arr/hashes to the distinct count w. The index is
-          // sized for `len` (slightly over for heavy-dup inputs) but only references positions 0..w-1.
+          // Ref: ONE PASS — the F14 ctrl+keys table doubles as the dedup structure AND the final probe index;
+          // arr/hashes collect the distinct elements in insertion order. The hash-sort the merge core needs is
+          // DEFERRED to the leaf's memoized sorted view (ensureSortedRef), so build-then-query never pays it.
+          // Tiny results (≤4) eager-sort into SRefSorted (its contains scan needs sorted hashes); a heavy-dup
+          // input (final load ≤ cap/8) rebuilds a tight table instead of keeping the oversized one.
           ee.line("var cap = 8")
           ee.line("while (cap < len * 2) cap <<= 1")
-          ee.line("val index = new Array[Int](cap)")
-          ee.line("java.util.Arrays.fill(index, -1)")
+          ee.line("val ctrl = new Array[Byte](cap)")
+          ee.line("val keys = new Array[Object](cap)")
           ee.line("val arr = new Array[Object](len)")
           ee.line("val hashes = new Array[Int](len)")
+          ee.line("val useRef = cap >= 1024 && cap <= 32768")
           ee.line("var w = 0")
           ee.line("var i = 0")
           ee.open("while (i < len)")
           ee.line("val v = raw(i)")
           ee.line("val hc = v.hashCode()")
-          ee.line("var slot = mixInt(hc) & (cap - 1)")
-          ee.line("var dup = false")
-          ee.open("while (index(slot) != -1 && !dup)")
-          ee.line("val p = index(slot)")
-          ee.line("if (hashes(p) == hc && arr(p).equals(v)) dup = true")
+          ee.line("val m = if (useRef) mixRef(hc) else mixInt(hc)")
+          ee.line("val fp = (((m >>> 24) & 0x7f) | 0x80).toByte")
+          ee.line("var slot = m & (cap - 1)")
+          ee.line("var dup = false; var go = true")
+          ee.open("while (go)")
+          ee.line("val c = ctrl(slot)")
+          ee.line("if (c == 0) go = false")
+          ee.line("else if (c == fp && keys(slot).equals(v)) { dup = true; go = false }")
           ee.line("else slot = (slot + 1) & (cap - 1)")
           ee.close()
           ee.open("if (!dup)")
-          ee.line("arr(w) = v; hashes(w) = hc; index(slot) = w; w += 1")
+          ee.line("ctrl(slot) = fp; keys(slot) = v; arr(w) = v; hashes(w) = hc; w += 1")
           ee.close()
           ee.line("i += 1")
           ee.close()
           ee.line("if (w == 0) SEmpty.INSTANCE")
           ee.line(s"else if (w == 1) new S${K}One(arr(0))")
-          // sort the distinct elements by hashCode, then wrap (≤16 → Sorted, else frozen Hash). The dedup index
-          // was over the unsorted arr, so wrapRef rebuilds it over the sorted leaf (build path, not hot).
-          ee.open("else")
+          ee.open("else if (w <= 4)")
           ee.line("val ta = java.util.Arrays.copyOf(arr, w)")
           ee.line("val th = java.util.Arrays.copyOf(hashes, w)")
           ee.line(s"sortByHash$K(ta, th, w)")
-          ee.line(s"wrap$K(ta, th)")
+          ee.line(s"new S${K}Sorted(ta, th)")
+          ee.close()
+          ee.line(s"else if (w * 8 <= cap) wrap${K}Raw(java.util.Arrays.copyOf(arr, w), java.util.Arrays.copyOf(hashes, w))")
+          ee.open("else")
+          ee.line("val ta = if (w == len) arr else java.util.Arrays.copyOf(arr, w)")
+          ee.line("val th = if (w == len) hashes else java.util.Arrays.copyOf(hashes, w)")
+          ee.line(s"new S${K}Hash(ta, th, ctrl, keys, false)")
           ee.close()
         }
         ee.close()
@@ -713,28 +743,7 @@ object GenSets extends BleepCodegenScript("GenSets") {
         ee.line("case _ => new SUnion(a, b)")
         ee.close()
         ee.close()
-        // materialize a left-deep union SPINE iteratively (§Step 5): collect the spine leaves without deep
-        // recursion (a +/incl-built set is a left-deep SUnion(...,One) chain → would StackOverflow + be O(n²)),
-        // then balanced pairwise-merge → O(N log k). Union is commutative+associative, so order is free.
-        ee.open(s"def materializeUnion$K(u0: SUnion): SBase =")
-        ee.line("val parts = new java.util.ArrayList[SBase]()")
-        ee.line("var cur: SBase = u0")
-        ee.line("var go = true")
-        ee.open("while (go)")
-        ee.open("cur match")
-        ee.line(s"case uu: SUnion => parts.add(materialize$K(uu.right)); cur = uu.left")
-        ee.line(s"case _ => parts.add(materialize$K(cur)); go = false")
-        ee.close()
-        ee.close()
-        ee.line("var sz = parts.size")
-        ee.open("while (sz > 1)")
-        ee.line("var w = 0; var i = 0")
-        ee.line(s"while (i + 1 < sz) { parts.set(w, unionTwo$K(parts.get(i), parts.get(i + 1))); w += 1; i += 2 }")
-        ee.line("if (i < sz) { parts.set(w, parts.get(i)); w += 1 }")
-        ee.line("sz = w")
-        ee.close()
-        ee.line("if (parts.isEmpty) SEmpty.INSTANCE else parts.get(0)")
-        ee.close()
+        // (the union-spine collapse now lives inside materializeTree$K's union-run batching)
         // enumerate a bounded range [lo,hi] into a sorted prim array (the caller / materialize cap-guards span).
         if k.name == "Int" || k.name == "Long" then {
           ee.open(s"def rangeArr$K(lo: $P, hi: $P): Array[$P] =")
@@ -745,33 +754,113 @@ object GenSets extends BleepCodegenScript("GenSets") {
           ee.line("a")
           ee.close()
         }
-        // materialize: fold + memoize. A leaf returns itself; Inter/Diff/Xor merge their materialized children;
-        // Union uses the iterative spine collapse above (StackOverflow-safe for deep incl chains).
-        ee.open(s"def materialize$K(node: SBase): SBase = node match")
-        ee.line(s"case _: SMaterialized => node")
-        def algebra(tpe: String, bind: String, merge: String, op: Int): Unit = {
-          ee.open(s"case $bind: $tpe =>")
-          ee.line(s"val m = $bind.memo")
-          if k.name == "Int" then
-            // Int routes through mergeAlgebraInt → word-parallel bitmap kernel when both children are bitmaps.
-            ee.line(s"if (m != null) m else { val r = mergeAlgebraInt($bind.left, $bind.right, $op); $bind.memo = r; r }")
-          else
-            ee.line(s"if (m != null) m else { val r = wrap$K($merge$K(asArr$K(materialize$K($bind.left)), asArr$K(materialize$K($bind.right)))); $bind.memo = r; r }")
-          ee.close()
-        }
-        ee.open("case u: SUnion =>")
-        ee.line("val m = u.memo")
-        ee.line(s"if (m != null) m else { val r = materializeUnion$K(u); u.memo = r; r }")
-        ee.close()
-        algebra("SInter", "n", "mergeInter", 1)
-        algebra("SDiff", "d", "mergeDiff", 2)
-        algebra("SXor", "x", "mergeXor", 3)
-        // a BOUNDED range is finite → enumerate it (a contiguous range routes to a bitmap); an over-cap range
-        // (above/below/universal) stays membership-only and throws — it cannot be enumerated.
-        if k.name == "Int" || k.name == "Long" then
-          ee.line(s"""case r: S${K}Range => { val s = r.hi.toLong - r.lo.toLong; if (s < 0L || s >= (1L << 20)) throw new UnsupportedOperationException("range too large to enumerate (> 2^20) — membership-only") else wrap$K(rangeArr$K(r.lo, r.hi)) }""")
-        ee.line("""case _ => throw new UnsupportedOperationException("cannot materialize/enumerate an infinite or predicate set (above/below/universal/complement) — only contains is defined")""")
-        ee.close()
+        // materialize: fold + memoize, ITERATIVELY over the left spine. Any of the four algebra ops loop-built
+        // (incl/excl/&/^/++ chains are all LEFT-deep) would StackOverflow a left-recursive fold — collect the
+        // spine, materialize the bottom, then fold back UP. Consecutive-union runs batch through a balanced
+        // pairwise merge (O(N log k), what materializeUnion did); Inter/Diff/Xor apply sequentially (each is
+        // one merge). Right children recurse (shallow in loop-built chains). Memos: Inter/Diff/Xor nodes and
+        // the TOP node of each union run get theirs set (interior run nodes stay unset, same as before).
+        val interExpr = if k.name == "Int" then "mergeAlgebraInt(acc, n.right, 1)" else s"wrap$K(mergeInter$K(asArr$K(acc), asArr$K(materialize$K(n.right))))"
+        val diffExpr = if k.name == "Int" then "mergeAlgebraInt(acc, d.right, 2)" else s"wrap$K(mergeDiff$K(asArr$K(acc), asArr$K(materialize$K(d.right))))"
+        val xorExpr = if k.name == "Int" then "mergeAlgebraInt(acc, x.right, 3)" else s"wrap$K(mergeXor$K(asArr$K(acc), asArr$K(materialize$K(x.right))))"
+        val rangeCase =
+          if k.name == "Int" || k.name == "Long" then
+            s"""  case r: S${K}Range => { val s = r.hi.toLong - r.lo.toLong; if (s < 0L || s >= (1L << 20)) throw new UnsupportedOperationException("range too large to enumerate (> 2^20) — membership-only") else wrap$K(rangeArr$K(r.lo, r.hi)) }
+               |""".stripMargin
+          else ""
+        ee.lines(
+          s"""def isUnsetAlg$K(node: SBase): Boolean = node match {
+             |  case u: SUnion => u.memo == null
+             |  case n: SInter => n.memo == null
+             |  case d: SDiff => d.memo == null
+             |  case x: SXor => x.memo == null
+             |  case _ => false
+             |}
+             |def materialize$K(node: SBase): SBase = node match {
+             |  case m: SMaterialized => m
+             |  // SHALLOW fast paths (left already materialized/memoized — the common `a & b` shape): merge
+             |  // directly, no spine list allocation. Only a left-deep UNMATERIALIZED chain walks the tree.
+             |  case u: SUnion =>
+             |    val m = u.memo
+             |    if (m != null) m
+             |    else if (!isUnsetAlg$K(u.left)) { val r = unionTwo$K(materialize$K(u.left), materialize$K(u.right)); u.memo = r; r }
+             |    else materializeTree$K(node)
+             |  case n: SInter =>
+             |    val m = n.memo
+             |    if (m != null) m
+             |    else if (!isUnsetAlg$K(n.left)) { val acc = materialize$K(n.left); val r = $interExpr; n.memo = r; r }
+             |    else materializeTree$K(node)
+             |  case d: SDiff =>
+             |    val m = d.memo
+             |    if (m != null) m
+             |    else if (!isUnsetAlg$K(d.left)) { val acc = materialize$K(d.left); val r = $diffExpr; d.memo = r; r }
+             |    else materializeTree$K(node)
+             |  case x: SXor =>
+             |    val m = x.memo
+             |    if (m != null) m
+             |    else if (!isUnsetAlg$K(x.left)) { val acc = materialize$K(x.left); val r = $xorExpr; x.memo = r; r }
+             |    else materializeTree$K(node)
+             |  case _ => materializeTree$K(node)
+             |}
+             |def materializeBottom$K(node: SBase): SBase = node match {
+             |  case m: SMaterialized => m
+             |  case u: SUnion => u.memo
+             |  case n: SInter => n.memo
+             |  case d: SDiff => d.memo
+             |  case x: SXor => x.memo
+             |$rangeCase  case _ => throw new UnsupportedOperationException("cannot materialize/enumerate an infinite or predicate set (above/below/universal/complement) — only contains is defined")
+             |}
+             |def materializeTree$K(node0: SBase): SBase = {
+             |  val spine = new java.util.ArrayList[SBase]()
+             |  var cur: SBase = node0
+             |  var go = true
+             |  while (go) cur match {
+             |    case u: SUnion if u.memo == null => spine.add(u); cur = u.left
+             |    case n: SInter if n.memo == null => spine.add(n); cur = n.left
+             |    case d: SDiff if d.memo == null => spine.add(d); cur = d.left
+             |    case x: SXor if x.memo == null => spine.add(x); cur = x.left
+             |    case _ => go = false
+             |  }
+             |  var acc = materializeBottom$K(cur)
+             |  var idx = spine.size - 1
+             |  while (idx >= 0) {
+             |    spine.get(idx) match {
+             |      case _: SUnion =>
+             |        val parts = new java.util.ArrayList[SBase]()
+             |        parts.add(acc)
+             |        var top = idx
+             |        var run = true
+             |        while (run && idx >= 0) spine.get(idx) match {
+             |          case uu: SUnion => parts.add(materialize$K(uu.right)); top = idx; idx -= 1
+             |          case _ => run = false
+             |        }
+             |        var sz = parts.size
+             |        while (sz > 1) {
+             |          var w = 0; var i = 0
+             |          while (i + 1 < sz) { parts.set(w, unionTwo$K(parts.get(i), parts.get(i + 1))); w += 1; i += 2 }
+             |          if (i < sz) { parts.set(w, parts.get(i)); w += 1 }
+             |          sz = w
+             |        }
+             |        acc = parts.get(0)
+             |        spine.get(top).asInstanceOf[SUnion].memo = acc
+             |      case n: SInter =>
+             |        acc = $interExpr
+             |        n.memo = acc
+             |        idx -= 1
+             |      case d: SDiff =>
+             |        acc = $diffExpr
+             |        d.memo = acc
+             |        idx -= 1
+             |      case x: SXor =>
+             |        acc = $xorExpr
+             |        x.memo = acc
+             |        idx -= 1
+             |      case _ =>
+             |        idx -= 1
+             |    }
+             |  }
+             |  acc
+             |}""".stripMargin)
       }
       // ---- Int dense-bitmap helpers (Step 2): density router + bitmap build + bit-iteration extraction.
       {
@@ -782,8 +871,10 @@ object GenSets extends BleepCodegenScript("GenSets") {
         ee.line("if (n == 0) SEmpty.INSTANCE")
         ee.line("else if (n == 1) new SIntOne(arr(0))")
         ee.open("else")
+        // SAME density rule as buildSortedInt (n ≥ 2 here): a small dense merge result keeps its O(1) bitmap
+        // contains instead of degrading to a linear-scan Sorted leaf that an identical fresh build wouldn't use.
         ee.line("val span = arr(n - 1).toLong - arr(0).toLong + 1L")
-        ee.line("if (n > 16 && span <= 64L * n && span <= (1L << 20)) buildBitmapInt(arr)")
+        ee.line("if (span <= 64L * n && span <= (1L << 20)) buildBitmapInt(arr)")
         ee.line("else if (n <= 16) new SIntSorted(arr)")
         ee.line("else buildHashInt(arr)")
         ee.close()
@@ -813,25 +904,83 @@ object GenSets extends BleepCodegenScript("GenSets") {
         ee.close()
         ee.line("out")
         ee.close()
+        // canonicalize a merge result: down-convert a sparse result (fill < 1/16) back through routeInt — but
+        // never churn a tiny (≤4-word) bitmap through extract+rebuild, there is nothing to save there.
+        ee.lines(
+          """def finishBitmapInt(base: Int, card: Int, words: Array[Long]): SBase =
+            |  if (words.length > 4 && card.toLong * 16L < words.length.toLong * 64L) routeInt(bitmapToArr(new SIntBitmap(base, card, words)))
+            |  else new SIntBitmap(base, card, words)""".stripMargin)
         // word-parallel bitmap algebra (bases are multiples of 64 → word grids align). op 0=∪ 1=∩ 2=∖ 3=△.
-        // Maintain card via fused Long.bitCount; down-convert a sparse result (fill < 1/16) back through routeInt.
-        ee.open("def bitmapMergeInt(lb: SIntBitmap, rb: SIntBitmap, op: Int): SBase =")
-        ee.line("val base = if (lb.base < rb.base) lb.base else rb.base")
-        ee.line("val o1 = (lb.base - base) >>> 6; val o2 = (rb.base - base) >>> 6")
-        ee.line("val e1 = o1 + lb.words.length; val e2 = o2 + rb.words.length")
-        ee.line("val end = if (e1 > e2) e1 else e2")
-        ee.line("val words = new Array[Long](end)")
-        ee.line("var k = 0; var card = 0")
-        ee.open("while (k < end)")
-        ee.line("val w1 = if (k >= o1 && k < e1) lb.words(k - o1) else 0L")
-        ee.line("val w2 = if (k >= o2 && k < e2) rb.words(k - o2) else 0L")
-        ee.line("val r = if (op == 0) w1 | w2 else if (op == 1) w1 & w2 else if (op == 2) w1 & ~w2 else w1 ^ w2")
-        ee.line("words(k) = r; card += java.lang.Long.bitCount(r); k += 1")
-        ee.close()
-        ee.line("if (card == 0) SEmpty.INSTANCE")
-        ee.line("else if (card.toLong * 16L < end.toLong * 64L) routeInt(bitmapToArr(new SIntBitmap(base, card, words)))")
-        ee.line("else new SIntBitmap(base, card, words)")
-        ee.close()
+        // REGION-SPLIT kernel: the exclusive regions are arraycopied (∪/△) or untouched (∖) and only the
+        // overlap runs a (branch-free) combining loop; ∩ allocates just the overlap window and ∖ just the left
+        // window, not the full merged span. Same-grid single-word pairs are ONE op (the whole @16 dense case),
+        // with operand-aliasing returns (immutability makes returning lb/rb sound). Offsets are computed in
+        // LONG and a ∪/△ whose merged span exceeds 2^20 bits falls back to the sorted-array merge instead of
+        // allocating a giant mostly-empty word array (far-apart bases previously did exactly that).
+        ee.lines(
+          """def bitmapMergeInt(lb: SIntBitmap, rb: SIntBitmap, op: Int): SBase = {
+            |  val lw = lb.words; val rw = rb.words
+            |  if (lb.base == rb.base && lw.length == 1 && rw.length == 1) {
+            |    val w1 = lw(0); val w2 = rw(0)
+            |    val r = if (op == 0) w1 | w2 else if (op == 1) w1 & w2 else if (op == 2) w1 & ~w2 else w1 ^ w2
+            |    if (r == 0L) return SEmpty.INSTANCE
+            |    if (r == w1) return lb
+            |    if (r == w2) return rb
+            |    val ws = new Array[Long](1); ws(0) = r
+            |    return new SIntBitmap(lb.base, java.lang.Long.bitCount(r), ws)
+            |  }
+            |  val base = if (lb.base < rb.base) lb.base else rb.base
+            |  val o1L = (lb.base.toLong - base.toLong) >> 6; val o2L = (rb.base.toLong - base.toLong) >> 6
+            |  val e1L = o1L + lw.length; val e2L = o2L + rw.length
+            |  val ovSL = if (o1L > o2L) o1L else o2L
+            |  val ovEL = if (e1L < e2L) e1L else e2L
+            |  if (op == 1) {
+            |    if (ovSL >= ovEL) return SEmpty.INSTANCE
+            |    val o1 = o1L.toInt; val o2 = o2L.toInt; val ovS = ovSL.toInt; val ovE = ovEL.toInt
+            |    val n = ovE - ovS
+            |    val words = new Array[Long](n)
+            |    var card = 0; var k = 0
+            |    while (k < n) { val r = lw(k + ovS - o1) & rw(k + ovS - o2); words(k) = r; card += java.lang.Long.bitCount(r); k += 1 }
+            |    if (card == 0) return SEmpty.INSTANCE
+            |    return finishBitmapInt(base + (ovS << 6), card, words)
+            |  }
+            |  if (op == 2) {
+            |    if (ovSL >= ovEL) return lb
+            |    val o1 = o1L.toInt; val o2 = o2L.toInt; val ovS = ovSL.toInt; val ovE = ovEL.toInt
+            |    val words = java.util.Arrays.copyOf(lw, lw.length)
+            |    var card = lb.card
+            |    var k = ovS
+            |    while (k < ovE) {
+            |      val before = words(k - o1); val after = before & ~rw(k - o2)
+            |      if (after != before) { card -= java.lang.Long.bitCount(before ^ after); words(k - o1) = after }
+            |      k += 1
+            |    }
+            |    if (card == lb.card) return lb
+            |    if (card == 0) return SEmpty.INSTANCE
+            |    return finishBitmapInt(lb.base, card, words)
+            |  }
+            |  val endL = if (e1L > e2L) e1L else e2L
+            |  if (endL > (1L << 14)) {
+            |    val a = bitmapToArr(lb); val b = bitmapToArr(rb)
+            |    return wrapInt(if (op == 0) mergeUnionInt(a, b) else mergeXorInt(a, b))
+            |  }
+            |  val o1 = o1L.toInt; val o2 = o2L.toInt; val ovS = ovSL.toInt; val ovE = ovEL.toInt
+            |  val end = endL.toInt
+            |  val words = new Array[Long](end)
+            |  System.arraycopy(lw, 0, words, o1, lw.length)
+            |  if (ovS >= ovE) System.arraycopy(rw, 0, words, o2, rw.length)
+            |  else {
+            |    if (o2 < ovS) System.arraycopy(rw, 0, words, o2, ovS - o2)
+            |    if (ovE < e2L.toInt) System.arraycopy(rw, ovE - o2, words, ovE, e2L.toInt - ovE)
+            |    var k = ovS
+            |    if (op == 0) while (k < ovE) { words(k) |= rw(k - o2); k += 1 }
+            |    else while (k < ovE) { words(k) ^= rw(k - o2); k += 1 }
+            |  }
+            |  var card = 0; var i = 0
+            |  while (i < end) { card += java.lang.Long.bitCount(words(i)); i += 1 }
+            |  if (card == 0) SEmpty.INSTANCE
+            |  else finishBitmapInt(base, card, words)
+            |}""".stripMargin)
         // materialize an Int algebra node: bitmap fast-path when both children are bitmaps, else array sorted-merge.
         ee.open("def mergeAlgebraInt(left: SBase, right: SBase, op: Int): SBase =")
         ee.line("val l = materializeInt(left); val rr = materializeInt(right)")
@@ -866,30 +1015,55 @@ object GenSets extends BleepCodegenScript("GenSets") {
         ee.close()
         ee.line("System.arraycopy(tmp, 0, arr, 0, w)")
         ee.close()
-        // extract the hash-sorted element array / its parallel hash key from any materialized Ref node.
+        // force + memoize the hash-sorted view of a hash leaf. Deterministic result → the racy double-compute
+        // is benign; hashes written BEFORE arr so a reader seeing sortedArr non-null also sees its pair.
+        ee.open("def ensureSortedRef(h: SRefHash): Unit =")
+        ee.open("if (h.sortedArr == null)")
+        ee.line("val n = h.arr.length")
+        ee.line("val sa = java.util.Arrays.copyOf(h.arr, n)")
+        ee.line("val sh = java.util.Arrays.copyOf(h.hashes, n)")
+        ee.line("sortByHashRef(sa, sh, n)")
+        ee.line("h.sortedHashes = sh")
+        ee.line("h.sortedArr = sa")
+        ee.close()
+        ee.close()
+        // SORTED accessors (merge core / set-equality): extract the hash-sorted element array / parallel hash
+        // key, forcing the hash leaf's memoized sorted view on first use.
         ee.open("def asArrRef(node: SBase): Array[Object] = node match")
         ee.line("case _: SEmpty => new Array[Object](0)")
         ee.line("case o: SRefOne => { val a = new Array[Object](1); a(0) = o.elem; a }")
         ee.line("case s: SRefSorted => s.arr")
-        ee.line("case h: SRefHash => h.arr")
+        ee.line("case h: SRefHash => { ensureSortedRef(h); h.sortedArr }")
         ee.line("case _ => new Array[Object](0)")
         ee.close()
         ee.open("def hashesOfRef(node: SBase): Array[Int] = node match")
         ee.line("case _: SEmpty => new Array[Int](0)")
         ee.line("case o: SRefOne => { val a = new Array[Int](1); a(0) = o.elem.hashCode(); a }")
         ee.line("case s: SRefSorted => s.hashes")
-        ee.line("case h: SRefHash => h.hashes")
+        ee.line("case h: SRefHash => { ensureSortedRef(h); h.sortedHashes }")
         ee.line("case _ => new Array[Int](0)")
         ee.close()
-        // wrap a hash-sorted arr+hashes into the canonical leaf (≤16 → Sorted; else build the open-addressing index).
-        ee.open("def wrapRef(arr: Array[Object], hashes: Array[Int]): SBase =")
+        // RAW accessors (traversal / filter / map / iterator / setHash / subsetOf — anything order-insensitive):
+        // the element column in whatever order the leaf holds it, NEVER forcing the sort.
+        ee.open("def rawArrRef(node: SBase): Array[Object] = node match")
+        ee.line("case h: SRefHash => h.arr")
+        ee.line("case _ => asArrRef(node)")
+        ee.close()
+        ee.open("def rawHashesRef(node: SBase): Array[Int] = node match")
+        ee.line("case h: SRefHash => h.hashes")
+        ee.line("case _ => hashesOfRef(node)")
+        ee.close()
+        // wrap an arr+hashes column into the canonical leaf (≤4 → Sorted linear-scan; else the F14 table).
+        // `sorted` records whether the column is ALREADY hash-sorted (merge outputs are; filter/build outputs
+        // aren't) — it presets the hash leaf's sorted view / pre-sorts the tiny Sorted leaf.
+        ee.open("def buildTableRef(arr: Array[Object], hashes: Array[Int], sorted: Boolean): SBase =")
         ee.line("val n = arr.length")
-        ee.line("if (n == 0) SEmpty.INSTANCE")
-        ee.line("else if (n == 1) new SRefOne(arr(0))")
-        // only the TINIEST ref sets stay a linear-scan Sorted leaf; >4 gets the O(1) F14 hash so small-set
-        // contains is a single probe (the ctrl byte also rejects misses in one load), not an O(n) scan.
-        ee.line("else if (n <= 4) new SRefSorted(arr, hashes)")
-        ee.open("else")
+        ee.line("if (n == 0) return SEmpty.INSTANCE")
+        ee.line("if (n == 1) return new SRefOne(arr(0))")
+        ee.open("if (n <= 4)")
+        ee.line("if (!sorted) sortByHashRef(arr, hashes, n)")
+        ee.line("return new SRefSorted(arr, hashes)")
+        ee.close()
         ee.line("var cap = 8")
         ee.line("while (cap < n * 2) cap <<= 1")
         ee.line("val ctrl = new Array[Byte](cap)")
@@ -904,9 +1078,10 @@ object GenSets extends BleepCodegenScript("GenSets") {
         ee.line("keys(slot) = arr(p)")
         ee.line("p += 1")
         ee.close()
-        ee.line("new SRefHash(arr, hashes, ctrl, keys)")
+        ee.line("new SRefHash(arr, hashes, ctrl, keys, sorted)")
         ee.close()
-        ee.close()
+        ee.line("def wrapRef(arr: Array[Object], hashes: Array[Int]): SBase = buildTableRef(arr, hashes, true)")
+        ee.line("def wrapRefRaw(arr: Array[Object], hashes: Array[Int]): SBase = buildTableRef(arr, hashes, false)")
         // the four tie-group-aware merges. aA/aH and bA/bH are hash-sorted parallel (element, signed-hash) arrays.
         // gather the equal-hash run on each side, then resolve membership inside it with .equals (g~1 expected).
         def refMerge(name: String, outLen: String, lt: String, gt: String, tieAllA: Boolean,
@@ -980,43 +1155,103 @@ object GenSets extends BleepCodegenScript("GenSets") {
         ee.line("case _ => new SUnion(a, b)")
         ee.close()
         ee.close()
-        ee.open("def materializeUnionRef(u0: SUnion): SBase =")
-        ee.line("val parts = new java.util.ArrayList[SBase]()")
-        ee.line("var cur: SBase = u0")
-        ee.line("var go = true")
-        ee.open("while (go)")
-        ee.open("cur match")
-        ee.line("case uu: SUnion => parts.add(materializeRef(uu.right)); cur = uu.left")
-        ee.line("case _ => parts.add(materializeRef(cur)); go = false")
-        ee.close()
-        ee.close()
-        ee.line("var sz = parts.size")
-        ee.open("while (sz > 1)")
-        ee.line("var w = 0; var i = 0")
-        ee.line("while (i + 1 < sz) { parts.set(w, unionTwoRef(parts.get(i), parts.get(i + 1))); w += 1; i += 2 }")
-        ee.line("if (i < sz) { parts.set(w, parts.get(i)); w += 1 }")
-        ee.line("sz = w")
-        ee.close()
-        ee.line("if (parts.isEmpty) SEmpty.INSTANCE else parts.get(0)")
-        ee.close()
-        // materialize: fold + memoize (children materialized once, only when the memo is unset).
-        ee.open("def materializeRef(node: SBase): SBase = node match")
-        ee.line("case _: SMaterialized => node")
-        def algebraRef(tpe: String, bind: String, merge: String): Unit = {
-          ee.open(s"case $bind: $tpe =>")
-          ee.line(s"val m = $bind.memo")
-          ee.line(s"if (m != null) m else { val l = materializeRef($bind.left); val rr = materializeRef($bind.right); val r = $merge(asArrRef(l), hashesOfRef(l), asArrRef(rr), hashesOfRef(rr)); $bind.memo = r; r }")
-          ee.close()
-        }
-        ee.open("case u: SUnion =>")
-        ee.line("val m = u.memo")
-        ee.line("if (m != null) m else { val r = materializeUnionRef(u); u.memo = r; r }")
-        ee.close()
-        algebraRef("SInter", "n", "mergeInterRef")
-        algebraRef("SDiff", "d", "mergeDiffRef")
-        algebraRef("SXor", "x", "mergeXorRef")
-        ee.line("""case _ => throw new UnsupportedOperationException("cannot materialize/enumerate an infinite or predicate Ref set — only contains is defined")""")
-        ee.close()
+        // materialize: fold + memoize, ITERATIVELY over the left spine (mirror of materializeTree for prims —
+        // see that comment; the merges here are the tie-group-aware cached-hash Ref merges).
+        ee.lines(
+          """def isUnsetAlgRef(node: SBase): Boolean = node match {
+            |  case u: SUnion => u.memo == null
+            |  case n: SInter => n.memo == null
+            |  case d: SDiff => d.memo == null
+            |  case x: SXor => x.memo == null
+            |  case _ => false
+            |}
+            |def materializeRef(node: SBase): SBase = node match {
+            |  case m: SMaterialized => m
+            |  // SHALLOW fast paths — mirror of the prim materialize (see that comment).
+            |  case u: SUnion =>
+            |    val m = u.memo
+            |    if (m != null) m
+            |    else if (!isUnsetAlgRef(u.left)) { val r = unionTwoRef(materializeRef(u.left), materializeRef(u.right)); u.memo = r; r }
+            |    else materializeTreeRef(node)
+            |  case n: SInter =>
+            |    val m = n.memo
+            |    if (m != null) m
+            |    else if (!isUnsetAlgRef(n.left)) { val acc = materializeRef(n.left); val rr = materializeRef(n.right); val r = mergeInterRef(asArrRef(acc), hashesOfRef(acc), asArrRef(rr), hashesOfRef(rr)); n.memo = r; r }
+            |    else materializeTreeRef(node)
+            |  case d: SDiff =>
+            |    val m = d.memo
+            |    if (m != null) m
+            |    else if (!isUnsetAlgRef(d.left)) { val acc = materializeRef(d.left); val rr = materializeRef(d.right); val r = mergeDiffRef(asArrRef(acc), hashesOfRef(acc), asArrRef(rr), hashesOfRef(rr)); d.memo = r; r }
+            |    else materializeTreeRef(node)
+            |  case x: SXor =>
+            |    val m = x.memo
+            |    if (m != null) m
+            |    else if (!isUnsetAlgRef(x.left)) { val acc = materializeRef(x.left); val rr = materializeRef(x.right); val r = mergeXorRef(asArrRef(acc), hashesOfRef(acc), asArrRef(rr), hashesOfRef(rr)); x.memo = r; r }
+            |    else materializeTreeRef(node)
+            |  case _ => materializeTreeRef(node)
+            |}
+            |def materializeBottomRef(node: SBase): SBase = node match {
+            |  case m: SMaterialized => m
+            |  case u: SUnion => u.memo
+            |  case n: SInter => n.memo
+            |  case d: SDiff => d.memo
+            |  case x: SXor => x.memo
+            |  case _ => throw new UnsupportedOperationException("cannot materialize/enumerate an infinite or predicate Ref set — only contains is defined")
+            |}
+            |def materializeTreeRef(node0: SBase): SBase = {
+            |  val spine = new java.util.ArrayList[SBase]()
+            |  var cur: SBase = node0
+            |  var go = true
+            |  while (go) cur match {
+            |    case u: SUnion if u.memo == null => spine.add(u); cur = u.left
+            |    case n: SInter if n.memo == null => spine.add(n); cur = n.left
+            |    case d: SDiff if d.memo == null => spine.add(d); cur = d.left
+            |    case x: SXor if x.memo == null => spine.add(x); cur = x.left
+            |    case _ => go = false
+            |  }
+            |  var acc = materializeBottomRef(cur)
+            |  var idx = spine.size - 1
+            |  while (idx >= 0) {
+            |    spine.get(idx) match {
+            |      case _: SUnion =>
+            |        val parts = new java.util.ArrayList[SBase]()
+            |        parts.add(acc)
+            |        var top = idx
+            |        var run = true
+            |        while (run && idx >= 0) spine.get(idx) match {
+            |          case uu: SUnion => parts.add(materializeRef(uu.right)); top = idx; idx -= 1
+            |          case _ => run = false
+            |        }
+            |        var sz = parts.size
+            |        while (sz > 1) {
+            |          var w = 0; var i = 0
+            |          while (i + 1 < sz) { parts.set(w, unionTwoRef(parts.get(i), parts.get(i + 1))); w += 1; i += 2 }
+            |          if (i < sz) { parts.set(w, parts.get(i)); w += 1 }
+            |          sz = w
+            |        }
+            |        acc = parts.get(0)
+            |        spine.get(top).asInstanceOf[SUnion].memo = acc
+            |      case n: SInter =>
+            |        val rr = materializeRef(n.right)
+            |        acc = mergeInterRef(asArrRef(acc), hashesOfRef(acc), asArrRef(rr), hashesOfRef(rr))
+            |        n.memo = acc
+            |        idx -= 1
+            |      case d: SDiff =>
+            |        val rr = materializeRef(d.right)
+            |        acc = mergeDiffRef(asArrRef(acc), hashesOfRef(acc), asArrRef(rr), hashesOfRef(rr))
+            |        d.memo = acc
+            |        idx -= 1
+            |      case x: SXor =>
+            |        val rr = materializeRef(x.right)
+            |        acc = mergeXorRef(asArrRef(acc), hashesOfRef(acc), asArrRef(rr), hashesOfRef(rr))
+            |        x.memo = acc
+            |        idx -= 1
+            |      case _ =>
+            |        idx -= 1
+            |    }
+            |  }
+            |  acc
+            |}""".stripMargin)
       }
       ee.result
     }
@@ -1046,28 +1281,28 @@ object GenSets extends BleepCodegenScript("GenSets") {
       dispatchA { k =>
         val arrT = if k.name == "Ref" then "Object" else k.arr
         val stores = params.map(p => unwrapElem(k, p)).mkString(", ")
-        s"buildSorted${k.name}(Array[$arrT]($stores), $n)"
+        s"buildSorted${k.name}(Array[$arrT]($stores), $n, true)"
       }
     }
 
-    // fromArray: unwrap the source Array[A] into a raw scratch array, then build. The source is copied (we
-    // sort in place and must not mutate the caller's array). Ref reuses a fresh Object[] (typed-ref read needs
-    // no per-elem checkcast on the way IN; reads back out are a NEXT-STEP transform op).
+    // fromArray: unwrap the source Array[A] and build with owned=false — NO defensive copy here. buildSorted
+    // only mutates its input on the prim SORT branch (where it copies itself when !owned); the dense-Int bitmap
+    // branch and the whole Ref dedup branch are read-only, so the common paths pay zero extra copies.
     val fromArrayV = dispatchA { k =>
-      val arrT = if k.name == "Ref" then "Object" else k.arr
       if k.isPrim then
-        s"{ val src = as.asInstanceOf[Array[${k.arr}]]; val n = src.length; buildSorted${k.name}(java.util.Arrays.copyOf(src, n), n) }"
+        s"{ val src = as.asInstanceOf[Array[${k.arr}]]; buildSorted${k.name}(src, src.length, false) }"
       else
-        s"{ val src = as.asInstanceOf[Array[Object]]; val n = src.length; buildSorted${k.name}(java.util.Arrays.copyOf(src, n), n) }"
+        s"{ val src = as.asInstanceOf[Array[Object]]; buildSorted${k.name}(src, src.length, false) }"
     }
 
-    // from(IterableOnce): generic build — drain into an ArrayBuffer of raw kind values, then copy into a raw
-    // kind array and build. (fromFArray routes through here from the surface via `fa.iterator`, so there is no
-    // separate FArray bridge impl — the opaque FArray type can only be widened to FBase in FArray.scala's own
-    // scope, not here; a direct unboxed leaf read off the FArray's ${K}Arr is a NEXT-STEP zero-copy bridge.)
+    // from(IterableOnce): generic build — drain into a RAW growable kind array (ArrayBuffer is unspecialized
+    // and would box every primitive element AND store them behind an Object[]), then build with owned=true (the
+    // scratch array is ours, so the sort path sorts in place with no extra copy). (fromFArray routes through
+    // here from the surface via `fa.iterator`; a direct unboxed leaf read off the FArray's ${K}Arr is a
+    // NEXT-STEP zero-copy bridge.)
     val fromV = dispatchA { k =>
       val arrT = if k.name == "Ref" then "Object" else k.arr
-      s"{ val b = scala.collection.mutable.ArrayBuffer.empty[$arrT]; it.iterator.foreach(a => b += ${storeRaw(k, unwrapElem(k, "a"))}); val n = b.length; val raw = new Array[$arrT](n); var i = 0; while (i < n) { raw(i) = b(i); i += 1 }; buildSorted${k.name}(raw, n) }"
+      s"{ val it0 = it.iterator; var raw = new Array[$arrT](16); var n = 0; while (it0.hasNext) { if (n == raw.length) raw = java.util.Arrays.copyOf(raw, n << 1); raw(n) = ${storeRaw(k, unwrapElem(k, "it0.next()"))}; n += 1 }; buildSorted${k.name}(raw, n, true) }"
     }
 
     // dispatch on the ELEMENT kind B (mirrors FArray's appendImpl[A, B], which dispatches `${K}Repr[B]`).
@@ -1078,6 +1313,10 @@ object GenSets extends BleepCodegenScript("GenSets") {
     // §3.2) when a cheap contains proves the element already present. Shape MIRRORS FArray's appendImpl[A, B]
     // exactly (two type params, dispatch on the element kind B, build a node node from the `xs: SBase` param) —
     // the structure that lets the `SBase`-result up-coerce to the opaque `FSet[B]` at foreign call sites.
+    // NOTE eager bitmap incl/excl (word-copy + bit set/clear below a small word threshold) was MEASURED and
+    // REVERTED: @16 it is 0.4x the lazy node (292M→115M ops/s). scala's BitSet1/BitSet2 keep the word in a
+    // FIELD (no array alloc), which an array-backed bitmap copy cannot match; the lazy SUnion/SDiff node is
+    // the better persistent-update shape at every size.
     val inclV = dispatchB(k =>
       s"{ val e = ${unwrapElemB(k, "elem")}; if (containsLeaf${k.name}(xs, e)) xs else new SUnion(xs, new S${k.name}One(e)) }"
     )
@@ -1098,10 +1337,15 @@ object GenSets extends BleepCodegenScript("GenSets") {
     // need a probe but M1 just asks size==0 via the (boxed) element collection — cheap enough for the slice.
     val isEmptyV = dispatchA(k => s"isEmptyImpl${k.name}(xs)")
 
-    // iterator: materialize to a leaf (prim: unboxed sorted merge → ordered; Ref: boxed collectElems set) and
-    // walk its elements. The Array[prim].iterator boxes on `next`; the cast to Iterator[A] is sound (A is the
-    // concrete element kind at the call site). Ordered for prims; unordered for Ref (no Ordering threaded yet).
-    val iteratorV = dispatchA(k => s"asArr${k.name}(materialize${k.name}(xs)).iterator.asInstanceOf[Iterator[A]]")
+    // iterator: materialize to a leaf and walk its elements. An Int BITMAP leaf gets a direct word-scanning
+    // iterator (no bitmapToArr extraction — the old path allocated and filled a full Int[] before yielding the
+    // first element); other leaves walk their array. `next` boxes either way (Iterator is unspecialized — the
+    // same tax every competitor's iterator pays). The cast to Iterator[A] is sound (A is concrete at the site).
+    val iteratorV = dispatchA(k =>
+      if k.name == "Int" then
+        "{ materializeInt(xs) match { case b: SIntBitmap => new SIntBitmapIterator(b.words, b.base).asInstanceOf[Iterator[A]]; case m => asArrInt(m).iterator.asInstanceOf[Iterator[A]] } }"
+      else if k.name == "Ref" then "rawArrRef(materializeRef(xs)).iterator.asInstanceOf[Iterator[A]]"
+      else s"asArr${k.name}(materialize${k.name}(xs)).iterator.asInstanceOf[Iterator[A]]")
 
     // value equals / hashCode (order- and shape-independent) — but ONLY on a MATERIALIZED set: a still-lazy
     // SView throws (call .materialize first). This is the FSetMaterialized-only capability of the design,
@@ -1115,6 +1359,8 @@ object GenSets extends BleepCodegenScript("GenSets") {
     // `b`'s membership (contains distributes over a lazy `b`, no materialize). A query op (no materialized guard).
     val subsetOfV = dispatchA(k =>
       if k.name == "Int" then "subsetOfInt(a, b)"
+      else if k.name == "Ref" then
+        "{ val arr = rawArrRef(materializeRef(a)); var i = 0; var ok = true; while (i < arr.length && ok) { if (!containsLeafRef(b, arr(i))) ok = false; i += 1 }; ok }"
       else s"{ val arr = asArr${k.name}(materialize${k.name}(a)); var i = 0; var ok = true; while (i < arr.length && ok) { if (!containsLeaf${k.name}(b, arr(i))) ok = false; i += 1 }; ok }"
     )
 
@@ -1242,7 +1488,9 @@ object GenSets extends BleepCodegenScript("GenSets") {
             ee.close()
             ee.close()
           } else {
-            ee.line(s"val arr = asArr$K(materialize$K(node)); var i = 0")
+            // Ref walks the RAW column (order-insensitive) so a traversal never forces the sorted view.
+            val acc = if k.name == "Ref" then "rawArrRef" else s"asArr$K"
+            ee.line(s"val arr = $acc(materialize$K(node)); var i = 0")
             ee.open(s"while (i < arr.length$cc)")
             ee.line("val e = arr(i)")
             ee.line(perElem)
@@ -1300,19 +1548,26 @@ object GenSets extends BleepCodegenScript("GenSets") {
           primFilterBody()
           ee.close()
           ee.close()
-        } else {
+        } else if k.isPrim then {
           setup()
-          if k.isPrim then primFilterBody()
-          else {
-            ee.line("val out = new Array[Object](arr.length)")
-            ee.line("var i = 0; var w = 0")
-            ee.open("while (i < arr.length)")
-            ee.line("val v = arr(i)")
-            ee.line("if (p.test(v)) { out(w) = v; w += 1 }")
-            ee.line("i += 1")
-            ee.close()
-            ee.line(s"buildSorted$K(out, w)")
-          }
+          primFilterBody()
+        } else {
+          // Ref: the kept subset of a hash-sorted distinct leaf is STILL hash-sorted and distinct — filter the
+          // element array and its parallel hash cache together and wrap directly. (The old path re-ran the whole
+          // buildSortedRef pipeline: a fresh dedup table + a re-sort, all provably no-ops on this input.)
+          ee.line(s"val mz = materialize$K(node)")
+          ee.line("val arr = rawArrRef(mz); val hs = rawHashesRef(mz)")
+          ee.line("val outA = new Array[Object](arr.length)")
+          ee.line("val outH = new Array[Int](arr.length)")
+          ee.line("var i = 0; var w = 0")
+          ee.open("while (i < arr.length)")
+          ee.line("val v = arr(i)")
+          ee.line("if (p.test(v)) { outA(w) = v; outH(w) = hs(i); w += 1 }")
+          ee.line("i += 1")
+          ee.close()
+          ee.line("if (w == 0) SEmpty.INSTANCE")
+          ee.line(s"else if (w == 1) new S${K}One(outA(0))")
+          ee.line(s"else wrap${K}Raw(java.util.Arrays.copyOf(outA, w), java.util.Arrays.copyOf(outH, w))")
         }
         ee.close()
       }
@@ -1328,23 +1583,37 @@ object GenSets extends BleepCodegenScript("GenSets") {
     // user `f` to get a B, store the raw B (kind B), then buildSorted${B} DEDUPS (map can collapse distinct A→B).
     // Both A and B are concrete at the call site, so summonFrom picks one (A,B) path — no megamorphism, no box.
     val mapV = {
-      def srcOf(ka: Kind): String = s"asArr${ka.name}(materialize${ka.name}(xs))"
+      def srcOf(ka: Kind): String =
+        if ka.name == "Ref" then "rawArrRef(materializeRef(xs))" else s"asArr${ka.name}(materialize${ka.name}(xs))"
       def readA(ka: Kind): String = if ka.isPrim then "ra.wrap(src(i))" else "src(i).asInstanceOf[A]"
       def storeB(kb: Kind, b: String): String = if kb.isPrim then s"rb.unwrap($b)" else s"($b).asInstanceOf[Object]"
       def genericBody(ka: Kind, kb: Kind): String =
-        s"{ val src = ${srcOf(ka)}; val n = src.length; val out = new Array[${kb.arr}](n); var i = 0; while (i < n) { out(i) = ${storeB(kb, "f(" + readA(ka) + ")")}; i += 1 }; buildSorted${kb.name}(out, n) }"
+        s"{ val src = ${srcOf(ka)}; val n = src.length; val out = new Array[${kb.arr}](n); var i = 0; while (i < n) { out(i) = ${storeB(kb, "f(" + readA(ka) + ")")}; i += 1 }; buildSorted${kb.name}(out, n, true) }"
       // Int SOURCE: skip the asArrInt materialization — word-scan the bitmap leaf directly and apply f in ONE
       // pass into out[] (saves the intermediate Int[] extraction + its pass; buildSortedInt's dense-build path
       // then dedups+routes). Non-bitmap Int leaves (sparse/wide) take the array path. `card` sizes out exactly.
       def intSrcBody(kb: Kind): String =
         s"{ materializeInt(xs) match { " +
           s"case bm: SIntBitmap => { val ws = bm.words; val bs = bm.base; val out = new Array[${kb.arr}](bm.card); var w = 0; var wi = 0; " +
-          s"while (wi < ws.length) { var bits = ws(wi); while (bits != 0L) { val e = bs + (wi << 6) + java.lang.Long.numberOfTrailingZeros(bits); out(w) = ${storeB(kb, "f(ra.wrap(e))")}; w += 1; bits &= bits - 1L }; wi += 1 }; buildSorted${kb.name}(out, w) }; " +
-          s"case m => { val src = asArrInt(m); val n = src.length; val out = new Array[${kb.arr}](n); var i = 0; while (i < n) { out(i) = ${storeB(kb, "f(ra.wrap(src(i)))")}; i += 1 }; buildSorted${kb.name}(out, n) } } }"
+          s"while (wi < ws.length) { var bits = ws(wi); while (bits != 0L) { val e = bs + (wi << 6) + java.lang.Long.numberOfTrailingZeros(bits); out(w) = ${storeB(kb, "f(ra.wrap(e))")}; w += 1; bits &= bits - 1L }; wi += 1 }; buildSorted${kb.name}(out, w, true) }; " +
+          s"case m => { val src = asArrInt(m); val n = src.length; val out = new Array[${kb.arr}](n); var i = 0; while (i < n) { out(i) = ${storeB(kb, "f(ra.wrap(src(i)))")}; i += 1 }; buildSorted${kb.name}(out, n, true) } } }"
+      // Int DEST: feed f's outputs straight into the growable bitmap accumulator — a dense map keeps bitmap
+      // form end-to-end with no intermediate array, no min/max pass, no sort (the immutable-BitSet advantage).
+      def intDestBody(ka: Kind): String =
+        if ka.name == "Int" then
+          "{ val bld = new IntBitmapBuilder; materializeInt(xs) match { " +
+            "case bm: SIntBitmap => { val ws = bm.words; val bs = bm.base; var wi = 0; " +
+            "while (wi < ws.length) { var bits = ws(wi); while (bits != 0L) { val e = bs + (wi << 6) + java.lang.Long.numberOfTrailingZeros(bits); bld.add(rb.unwrap(f(ra.wrap(e)))); bits &= bits - 1L }; wi += 1 } }; " +
+            "case m => { val src = asArrInt(m); var i = 0; while (i < src.length) { bld.add(rb.unwrap(f(ra.wrap(src(i))))); i += 1 } } }; bld.result() }"
+        else
+          s"{ val src = ${srcOf(ka)}; val n = src.length; val bld = new IntBitmapBuilder; var i = 0; while (i < n) { bld.add(rb.unwrap(f(${readA(ka)}))); i += 1 }; bld.result() }"
       "summonFrom {\n" + opKinds.map { ka =>
         s"      case ra: ${ka.name}Repr[A] => summonFrom {\n" +
           opKinds.map { kb =>
-            val body = if ka.name == "Int" then intSrcBody(kb) else genericBody(ka, kb)
+            val body =
+              if kb.name == "Int" then intDestBody(ka)
+              else if ka.name == "Int" then intSrcBody(kb)
+              else genericBody(ka, kb)
             s"        case rb: ${kb.name}Repr[B] => $body"
           }.mkString("\n") +
           "\n      }"
@@ -1388,9 +1657,10 @@ object GenSets extends BleepCodegenScript("GenSets") {
           ee.line("h + arr.length")
           ee.close()
         } else {
-          // unboxed: fold the leaf's parallel hash cache directly (commutative → order/shape-independent).
+          // unboxed: fold the leaf's parallel hash cache directly (commutative → order/shape-independent, so
+          // the RAW column suffices — never forces the sorted view).
           ee.open("case _: SMaterialized =>")
-          ee.line("val hs = hashesOfRef(node)")
+          ee.line("val hs = rawHashesRef(node)")
           ee.line("var h = 0; var i = 0")
           ee.open("while (i < hs.length)")
           ee.line("h += mixInt(hs(i))")
@@ -1423,6 +1693,11 @@ object GenSets extends BleepCodegenScript("GenSets") {
           ee.line("var i = 0; var ok = true")
           ee.open("while (i < aA.length && ok)")
           ee.line("if (aH(i) != bH(i)) ok = false")
+          // POSITIONAL fast path: equal sets in the same hash-sort order match pairwise at ~every index; only a
+          // differently-ordered tie group falls into the set-compare. Restricting that compare to [i, j) is
+          // sound: positions before i matched pairwise and elements are distinct, so nothing at ≥ i can have
+          // its match among them.
+          ee.line("else if (aA(i).equals(bA(i))) i += 1")
           ee.open("else")
           ee.line("var j = i + 1; while (j < aA.length && aH(j) == aH(i)) j += 1")
           ee.line("var k = i")
@@ -1528,6 +1803,105 @@ object GenSets extends BleepCodegenScript("GenSets") {
        |  inline def inclImpl[A, B](xs: SBase, elem: B): SBase = $inclV
        |  inline def exclImpl[A, B](xs: SBase, elem: B): SBase = $exclV
        |  inline def unionImpl[A](xs: SBase, that: SBase): SBase = $unionV
+       |}
+       |
+       |// Direct word-scanning iterator over a dense-Int bitmap leaf — yields set bits low→high (ascending
+       |// element order) without extracting the bitmap to an Int[] first. Tolerates leading/interior zero words
+       |// (a diff can clear whole words in place).
+       |// Growable dense-Int bitmap accumulator for map[_, Int]: values are OR'd straight into a word array that
+       |// rebases/doubles on both ends (base stays a multiple of 64), so a dense map keeps bitmap form end-to-end
+       |// with no intermediate Int[] + sort. If the running span ever exceeds 2^20 bits the builder DEGRADES once:
+       |// it extracts the bits collected so far and appends raw values from then on (dups fine — buildSortedInt
+       |// dedups), i.e. sparse/wide outputs pay ~the old path, dense outputs skip it entirely.
+       |private[farray] final class IntBitmapBuilder {
+       |  private var words: Array[Long] = null
+       |  private var baseWord = 0 // word index of words(0), i.e. base >> 6
+       |  private var arr: Array[Int] = null // degraded (sparse/wide) mode: raw append, dedup at result()
+       |  private var n = 0
+       |
+       |  def add(v: Int): Unit = {
+       |    if (arr != null) { addArr(v); return }
+       |    val vw = v >> 6
+       |    if (words == null) {
+       |      words = new Array[Long](4)
+       |      baseWord = vw
+       |      words(0) = 1L << v
+       |      return
+       |    }
+       |    val off = vw - baseWord
+       |    if (off >= 0 && off < words.length) { words(off) |= 1L << v; return }
+       |    grow(vw)
+       |    if (arr != null) { addArr(v); return }
+       |    words(vw - baseWord) |= 1L << v
+       |  }
+       |
+       |  private def grow(vw: Int): Unit = {
+       |    val loW = if (vw < baseWord) vw else baseWord
+       |    val hiW = if (vw + 1 > baseWord + words.length) vw + 1 else baseWord + words.length
+       |    val span = hiW - loW
+       |    if (span > 16384) { degrade(); return }
+       |    var cap = words.length << 1
+       |    while (cap < span) cap <<= 1
+       |    if (cap > 16384) cap = 16384
+       |    val nw = new Array[Long](cap)
+       |    // growing down puts the slack below (newBase = hiW - cap ≤ loW); growing up keeps base and slack above
+       |    val newBaseWord = if (vw < baseWord) hiW - cap else baseWord
+       |    System.arraycopy(words, 0, nw, baseWord - newBaseWord, words.length)
+       |    words = nw
+       |    baseWord = newBaseWord
+       |  }
+       |
+       |  private def degrade(): Unit = {
+       |    var card = 0; var i = 0
+       |    while (i < words.length) { card += java.lang.Long.bitCount(words(i)); i += 1 }
+       |    val cap = if (card + 16 > 32) card + 16 else 32
+       |    val a = new Array[Int](cap)
+       |    val base = baseWord << 6
+       |    var w = 0; var wi = 0
+       |    while (wi < words.length) {
+       |      var bits = words(wi)
+       |      while (bits != 0L) { a(w) = base + (wi << 6) + java.lang.Long.numberOfTrailingZeros(bits); w += 1; bits &= bits - 1L }
+       |      wi += 1
+       |    }
+       |    arr = a; n = w
+       |    words = null
+       |  }
+       |
+       |  private def addArr(v: Int): Unit = {
+       |    if (n == arr.length) arr = java.util.Arrays.copyOf(arr, n << 1)
+       |    arr(n) = v; n += 1
+       |  }
+       |
+       |  def result(): SBase = {
+       |    if (arr != null) return FSetOps.buildSortedInt(arr, n, true)
+       |    if (words == null) return SEmpty.INSTANCE
+       |    var lo = 0
+       |    while (lo < words.length && words(lo) == 0L) lo += 1
+       |    if (lo == words.length) return SEmpty.INSTANCE
+       |    var hi = words.length - 1
+       |    while (words(hi) == 0L) hi -= 1
+       |    var card = 0; var i = lo
+       |    while (i <= hi) { card += java.lang.Long.bitCount(words(i)); i += 1 }
+       |    val base = (baseWord + lo) << 6
+       |    if (card == 1) return new SIntOne(base + java.lang.Long.numberOfTrailingZeros(words(lo)))
+       |    val ws = if (lo == 0 && hi == words.length - 1) words else java.util.Arrays.copyOfRange(words, lo, hi + 1)
+       |    FSetOps.finishBitmapInt(base, card, ws)
+       |  }
+       |}
+       |
+       |private[farray] final class SIntBitmapIterator(words: Array[Long], base: Int) extends scala.collection.AbstractIterator[Int] {
+       |  private var wi = 0
+       |  private var bits = if (words.length == 0) 0L else words(0)
+       |  advance()
+       |  private def advance(): Unit = { while (bits == 0L && wi + 1 < words.length) { wi += 1; bits = words(wi) } }
+       |  def hasNext: Boolean = bits != 0L
+       |  def next(): Int = {
+       |    val t = java.lang.Long.numberOfTrailingZeros(bits)
+       |    val e = base + (wi << 6) + t
+       |    bits &= bits - 1L
+       |    if (bits == 0L) advance()
+       |    e
+       |  }
        |}
        |""".stripMargin
   }

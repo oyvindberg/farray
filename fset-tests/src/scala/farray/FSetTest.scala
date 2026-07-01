@@ -386,6 +386,56 @@ class FSetTest:
     assertFalse(fs.contains(-1))
     assertFalse(fs.contains(n))
 
+  @Test def deep_excl_chain_no_stackoverflow(): Unit =
+    // a long `s = s - x` loop builds a left-deep SDiff spine; both contains (trampoline) and materialize
+    // (iterative spine fold — previously recursive on `left` for Diff) must survive the depth.
+    val n = 12000
+    var fs: FSet[Int] = FSet.fromArray((0 until n).toArray)
+    var i = 0
+    while i < n do { fs = fs - i; i += 2 } // drop the evens, one spine frame each
+    assertFalse(fs.contains(0))
+    assertTrue(fs.contains(1))
+    assertFalse(fs.contains(n - 2))
+    assertTrue(fs.contains(n - 1))
+    assertEquals(n / 2, fs.materialize.size)
+
+  @Test def deep_xor_chain_no_stackoverflow(): Unit =
+    // a long `s = s ^ single` loop builds a left-deep SXor spine; contains rides the flip-accumulator
+    // trampoline (previously recursed both children per level) and materialize the iterative spine fold.
+    val n = 12000
+    var fs: FSet[Int] = FSet.fromArray((0 until n).toArray)
+    var i = 0
+    while i < n do { fs = fs ^ FSet(i); i += 2 } // toggle the evens out
+    assertFalse(fs.contains(0))
+    assertTrue(fs.contains(1))
+    assertFalse(fs.contains(n - 2))
+    assertTrue(fs.contains(n - 1))
+    assertEquals(n / 2, fs.materialize.size)
+
+  @Test def deep_mixed_chain_materialize(): Unit =
+    // interleaved +/- mixes SUnion and SDiff frames on one spine; the iterative fold must batch the union
+    // runs and apply the diffs in order — replay against a mutable reference set.
+    val n = 12000
+    var fs: FSet[Int] = FSet.empty[Int]
+    val ref = scala.collection.mutable.Set.empty[Int]
+    var i = 0
+    while i < n do
+      fs = fs + i; ref += i
+      if i % 4 == 0 then { fs = fs - (i / 2); ref -= (i / 2) }
+      i += 1
+    val m = fs.materialize
+    assertEquals(ref.size, m.size)
+    assertTrue(ref.forall(m.contains))
+
+  @Test def deep_complement_chain_contains(): Unit =
+    // nested complements fold into the trampoline's flip parity instead of recursing one frame per level.
+    var s: FSetInfinite[Int] = FSet.above(10)
+    var i = 0
+    while i < 20000 do { s = s.complement; i += 1 }
+    // an even number of complements ⇒ back to above(10)
+    assertTrue(s.contains(11))
+    assertFalse(s.contains(10))
+
   // ---- Ref kind (String) — typed Object[], equals-based membership ----
 
   @Test def ref_kind_string(): Unit =
