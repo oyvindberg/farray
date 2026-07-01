@@ -73,9 +73,9 @@ class FilterIntBenchmark extends CommonParams {
     zioChunkInput = zio.Chunk.fromArray(arr)
   }
 
-  //start:filter-rand
+  // start:filter-rand
   @Benchmark def farray(): FArray[Int] = farrayInput.filter(x => (x & 1) == 0)
-  //stop:filter-rand
+  // stop:filter-rand
   @Benchmark def list(): List[Int] = listInput.filter(x => (x & 1) == 0)
   @Benchmark def iarray(): IArray[Int] = iarrayInput.filter(x => (x & 1) == 0)
   @Benchmark def vector(): Vector[Int] = vectorInput.filter(x => (x & 1) == 0)

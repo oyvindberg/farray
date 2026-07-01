@@ -130,10 +130,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
   /** the primitive kinds only — used e.g. for the Ref-element + primitive-accumulator folds. */
   val primKinds: List[Kind] = opKinds.filter(_.isPrim)
 
-  /** WIDENING cross-prim (input, accumulator) pairs the reduce engine covers UNBOXED — the canonical
-    * overflow-safe folds (`ints.foldLeft(0L)(_ + _)`, sums into a Double). Every other cross-prim pair
-    * stays on the boxed Ref-acc path (cold). Each pair costs one SAM type + 2 leaf methods + 2 Java
-    * traversers, so keep this list to the pairs real code hits.
+  /** WIDENING cross-prim (input, accumulator) pairs the reduce engine covers UNBOXED — the canonical overflow-safe folds (`ints.foldLeft(0L)(_ + _)`, sums into
+    * a Double). Every other cross-prim pair stays on the boxed Ref-acc path (cold). Each pair costs one SAM type + 2 leaf methods + 2 Java traversers, so keep
+    * this list to the pairs real code hits.
     */
   val wideningPairs: List[(Kind, Kind)] = {
     def k(n: String) = opKinds.find(_.name == n).get
@@ -574,7 +573,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.open("while (i < cnt)")
         ee.line("offs(i) = total")
         ee.line("val inr = fi.apply(i)")
-        ee.line(s"inr match { case lf: ${KB}Arr => { segs(i) = lf.arr; total += lf.length }; case _ => { val m = materialize${KB}(inr); segs(i) = m; total += m.length } }")
+        ee.line(
+          s"inr match { case lf: ${KB}Arr => { segs(i) = lf.arr; total += lf.length }; case _ => { val m = materialize${KB}(inr); segs(i) = m; total += m.length } }"
+        )
         ee.line("i += 1")
         ee.close()
         ee.line("offs(cnt) = total")
@@ -589,7 +590,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.open(s"def flatMapFlat${KB}(cnt: Int, inr0: FBase, l0: Int, fi: Traversers.IntToRefFn[FBase]): FBase =")
         ee.line("val est = { val e = cnt * l0; if (e < 8) 8 else e }")
         ee.line(s"var out: $segT = new $segT(est)")
-        ee.line(s"inr0 match { case lf: ${KB}Arr => System.arraycopy(lf.arr, 0, out, 0, l0); case o: ${KB}One => out(0) = o.elem; case _ => flatMapCopyOne${KB}(inr0, out, 0) }")
+        ee.line(
+          s"inr0 match { case lf: ${KB}Arr => System.arraycopy(lf.arr, 0, out, 0, l0); case o: ${KB}One => out(0) = o.elem; case _ => flatMapCopyOne${KB}(inr0, out, 0) }"
+        )
         ee.line("var off = l0")
         ee.line("var i = 1")
         ee.open("while (i < cnt)")
