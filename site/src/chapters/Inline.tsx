@@ -98,6 +98,26 @@ export default function Inline() {
         str="MapStrBenchmark"
         caption="map, swept to 100k. On Int (left) FArray ties a bare int[] and runs ~10–27× past the collections that box the element — List, Vector, both Chunks. On String (right) there's nothing to unbox, so it just ties IArray and the field clusters close. No penalty, no fireworks — references were never boxed to begin with."
       />
+
+      <h3>The consequence: put eight of them in one method</h3>
+
+      <p>
+        That last sentence — the specialization lives in the call site, not the signature — has a consequence
+        you can measure. Write eight <code>map</code>s with eight <em>distinct</em> lambdas in one method, and
+        IArray funnels all of them into its one shared <code>Array.map</code>. That call site now sees eight
+        different <code>Function1</code> types, well past the JIT's ≥3-type megamorphic threshold, so it stops
+        devirtualising: every element pays a real virtual <code>apply</code>, and on <code>Int</code> it
+        re-boxes through <code>Integer</code> on the way out. The bigger the method, the more distinct lambdas
+        crowd that one site, the worse it gets. FArray has no shared site to poison — each lambda was already
+        spliced into its own specialized loop at compile time, so eight maps are just eight tight{" "}
+        <code>int[]</code> loops, indifferent to how many of them you wrote.
+      </p>
+
+      <BenchPair
+        int="MapMegaIntBenchmark"
+        str="MapMegaStrBenchmark"
+        caption="eight distinct lambdas through map in one method. On Int (left) IArray's shared map site goes megamorphic and re-boxes; FArray has no shared site to poison, so it runs ahead — widening to ~3.3× at 100k. On String (right) there's no boxing to pay, so the same megamorphic dispatch costs almost nothing (~1.05×). Same mechanism; only the boxing tax differs."
+      />
     </section>
   );
 }

@@ -21,7 +21,7 @@ class MapMegaIntBenchmark extends IntInputs {
     bh.consume(iarrayInput.map(_ + 9))
     bh.consume(iarrayInput.map(_ * 5))
   }
-  @Benchmark def committed(bh: Blackhole): Unit = {
+  @Benchmark def farray(bh: Blackhole): Unit = {
     bh.consume(farrayInput.map(_ + 1))
     bh.consume(farrayInput.map(_ * 2))
     bh.consume(farrayInput.map(_ - 3))
@@ -89,7 +89,7 @@ class MapMegaStrBenchmark extends Inputs {
     bh.consume(iarrayInput.map(_ + "z"))
     bh.consume(iarrayInput.map(s => s.reverse))
   }
-  @Benchmark def committed(bh: Blackhole): Unit = {
+  @Benchmark def farray(bh: Blackhole): Unit = {
     bh.consume(farrayInput.map(_ + "a"))
     bh.consume(farrayInput.map(_ + "b"))
     bh.consume(farrayInput.map(_.toUpperCase))
