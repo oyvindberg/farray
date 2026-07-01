@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Truly-parallel JMH sweep for the FSet suite — a parallel of scripts/bench-run.sh, fully split:
-# its own runner (setbenchmarks-runner), its own output (docs/set-bench-results.json + docs/set-index.html),
-# and `fset` as the W/T/L subject. Drives org.openjdk.jmh.Main directly (N independent java processes).
+# its own runner (setbenchmarks-runner) and its own output (docs/set-bench-results.json — rendered by
+# the site at #/setbench). Drives org.openjdk.jmh.Main directly (N independent java processes).
 #
 #   caffeinate -i bash scripts/setbench-run.sh [warmup-iters] [measure-iters] [forks] [shards]
 #
@@ -95,5 +95,5 @@ else:
     json.dump(new, open(dst, "w"))
     print(f"  full suite: merged {len(new)} results from {len(files)} shards")
 PY
-python3 scripts/setbench_report.py docs/set-bench-results.json docs/set-index.html
-echo "✔ Done → docs/set-index.html  (publish: git add docs/ && git commit && git push)"
+# The report is the site: site/ renders docs/set-bench-results.json (see site/scripts/build-data.mjs).
+echo "✔ Done → docs/set-bench-results.json  (view: cd site && npm run dev → #/setbench; publish: git add docs/ && git commit && git push)"
