@@ -1,10 +1,21 @@
 import { useEffect, useState } from "react";
 
-export type Route = "home" | "fusion" | "json";
+// Single source of truth for the site's pages. Adding one — e.g. a future FSet page — is one line here
+// plus a branch in App's Router and its page component.
+const TABS = [
+  { id: "home", href: "#/", label: "FArray" },
+  { id: "fusion", href: "#/fusion", label: "Fusion" },
+  { id: "json", href: "#/json", label: "Fused JSON" },
+  { id: "reference", href: "#/reference", label: "Benchmarks" },
+  // { id: "fset", href: "#/fset", label: "FSet" },  // future: the FSet collection gets its own page
+] as const;
+
+export type Route = (typeof TABS)[number]["id"];
+const IDS = TABS.map((t) => t.id) as string[];
 
 function read(): Route {
   const h = location.hash.replace(/^#\/?/, "");
-  return h === "fusion" || h === "json" ? h : "home";
+  return (IDS.includes(h) ? h : "home") as Route;
 }
 
 export function useRoute(): Route {
@@ -16,12 +27,6 @@ export function useRoute(): Route {
   }, []);
   return route;
 }
-
-const TABS: { id: Route; href: string; label: string }[] = [
-  { id: "home", href: "#/", label: "FArray" },
-  { id: "fusion", href: "#/fusion", label: "Fusion" },
-  { id: "json", href: "#/json", label: "Fused JSON" },
-];
 
 export function Nav({ route }: { route: Route }) {
   return (

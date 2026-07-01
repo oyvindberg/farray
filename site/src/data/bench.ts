@@ -34,7 +34,9 @@ export const ours = (v: string): boolean => v.startsWith("farray");
 
 function section(cls: string): Section {
   // benchmark classes are named by element-kind SUFFIX, e.g. MapIntBenchmark / MapStrBenchmark
-  // (not IntMap…), so classify on the kind before the Benchmark/Bench tail.
+  // (not IntMap…), so classify on the kind before the Benchmark/Bench tail. (FArray's own set ops —
+  // SetOpsInt/… — are ordinary element ops and stay Primitive/String; the future FSet collection gets
+  // its own page, not a section here.)
   if (cls.startsWith("ListLike")) return "ListLike";
   const base = cls.replace(/Benchmark$|Bench$/, "");
   if (/(Int|Long)$/.test(base)) return "Primitive";

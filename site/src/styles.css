@@ -426,6 +426,21 @@ table.score .sc-total { font-weight: 700; }
 .dgm-down { text-align: center; color: var(--ink-faint); font-family: var(--mono); font-size: 10px; padding: 6px 0; }
 .dgm-down::before { content: "↓"; display: block; font-size: 15px; line-height: 1; color: var(--ink-faint); margin-bottom: 2px; }
 
+/* ----- reference (full benchmark report) page ----- */
+.ref-section { margin: 46px 0 0; }
+.ref-section > h2 {
+  font-family: var(--serif); font-weight: 600; font-size: 24px; letter-spacing: -0.015em; margin: 0 0 5px;
+  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+}
+.ref-count { font-family: var(--mono); font-size: 11px; font-weight: 500; color: var(--ink-faint); letter-spacing: 0; }
+.ref-blurb { font-family: var(--serif); font-size: 15px; color: var(--ink-soft); margin: 0 0 18px; max-width: var(--measure); }
+.ref-loading { font-family: var(--mono); color: var(--ink-faint); font-size: 13px; padding: 20px 0; }
+/* break the chart grids out wider than the prose column so more cards fit per row */
+.ref-grid {
+  width: min(94vw, 1240px); margin-left: 50%; transform: translateX(-50%);
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+}
+
 /* ----- responsive + a11y ----- */
 @media (max-width: 680px) {
   .wrap { padding: 0 18px 80px; }
