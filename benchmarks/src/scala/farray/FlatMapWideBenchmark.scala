@@ -13,19 +13,19 @@ import org.openjdk.jmh.annotations.Benchmark
 private inline val W = 16
 
 class FlatMapWideIntBenchmark extends IntInputs {
-  @Benchmark def farray(): Int   = farrayInput.flatMap(x => FArray.tabulate(W)(j => x + j)).map(_ + 1).foldLeft(0)(_ + _)
-  @Benchmark def list(): Int     = listInput.flatMap(x => List.tabulate(W)(j => x + j)).map(_ + 1).foldLeft(0)(_ + _)
-  @Benchmark def vector(): Int   = vectorInput.flatMap(x => Vector.tabulate(W)(j => x + j)).map(_ + 1).foldLeft(0)(_ + _)
-  @Benchmark def iarray(): Int   = iarrayInput.flatMap(x => IArray.tabulate(W)(j => x + j)).map(_ + 1).foldLeft(0)(_ + _)
+  @Benchmark def farray(): Int = farrayInput.flatMap(x => FArray.tabulate(W)(j => x + j)).map(_ + 1).foldLeft(0)(_ + _)
+  @Benchmark def list(): Int = listInput.flatMap(x => List.tabulate(W)(j => x + j)).map(_ + 1).foldLeft(0)(_ + _)
+  @Benchmark def vector(): Int = vectorInput.flatMap(x => Vector.tabulate(W)(j => x + j)).map(_ + 1).foldLeft(0)(_ + _)
+  @Benchmark def iarray(): Int = iarrayInput.flatMap(x => IArray.tabulate(W)(j => x + j)).map(_ + 1).foldLeft(0)(_ + _)
   @Benchmark def fs2chunk(): Int = fs2ChunkInput.flatMap(x => fs2.Chunk.array(Array.tabulate(W)(j => x + j))).map(_ + 1).foldLeft(0)(_ + _)
   @Benchmark def ziochunk(): Int = zioChunkInput.flatMap(x => zio.Chunk.fromArray(Array.tabulate(W)(j => x + j))).map(_ + 1).foldLeft(0)(_ + _)
 }
 
 class FlatMapWideStrBenchmark extends Inputs {
-  @Benchmark def farray(): Int   = farrayInput.flatMap(s => FArray.tabulate(W)(_ => s)).map(_.length).foldLeft(0)(_ + _)
-  @Benchmark def list(): Int     = listInput.flatMap(s => List.tabulate(W)(_ => s)).map(_.length).foldLeft(0)(_ + _)
-  @Benchmark def vector(): Int   = vectorInput.flatMap(s => Vector.tabulate(W)(_ => s)).map(_.length).foldLeft(0)(_ + _)
-  @Benchmark def iarray(): Int   = iarrayInput.flatMap(s => IArray.tabulate(W)(_ => s)).map(_.length).foldLeft(0)(_ + _)
+  @Benchmark def farray(): Int = farrayInput.flatMap(s => FArray.tabulate(W)(_ => s)).map(_.length).foldLeft(0)(_ + _)
+  @Benchmark def list(): Int = listInput.flatMap(s => List.tabulate(W)(_ => s)).map(_.length).foldLeft(0)(_ + _)
+  @Benchmark def vector(): Int = vectorInput.flatMap(s => Vector.tabulate(W)(_ => s)).map(_.length).foldLeft(0)(_ + _)
+  @Benchmark def iarray(): Int = iarrayInput.flatMap(s => IArray.tabulate(W)(_ => s)).map(_.length).foldLeft(0)(_ + _)
   @Benchmark def fs2chunk(): Int = fs2ChunkInput.flatMap(s => fs2.Chunk.array(Array.fill(W)(s))).map(_.length).foldLeft(0)(_ + _)
   @Benchmark def ziochunk(): Int = zioChunkInput.flatMap(s => zio.Chunk.fromArray(Array.fill(W)(s))).map(_.length).foldLeft(0)(_ + _)
 }

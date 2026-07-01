@@ -27,8 +27,9 @@ abstract class NdIntFold { def apply(acc: Int, x: Int): Int }
 /** Realized SAM for the Ref path — Int accumulator, Object element (leaf stores Object[], like RefArr). */
 abstract class NdRefFold { def apply(acc: Int, x: Object): Int }
 
-/** FBase-shaped node hierarchy. Only `IntLeaf`/`RefLeaf` are exercised at runtime; the other cases exist
-  * so the fold methods have the real method's breadth (match arms + code size). */
+/** FBase-shaped node hierarchy. Only `IntLeaf`/`RefLeaf` are exercised at runtime; the other cases exist so the fold methods have the real method's breadth
+  * (match arms + code size).
+  */
 sealed abstract class Nd { def length: Int }
 final class IntLeaf(val arr: Array[Int], val len: Int) extends Nd { def length: Int = len }
 final class RefLeaf(val arr: Array[Object], val len: Int) extends Nd { def length: Int = len }
@@ -41,8 +42,8 @@ final object NdEmpty extends Nd { def length: Int = 0 }
 object NdFold {
   // ---- Int, forward ----
   def intArrLenFwd(xs: Nd, z: Int, f: NdIntFold): Int = xs match {
-    case NdEmpty      => z
-    case o: NdOne     => f.apply(z, o.elem)
+    case NdEmpty       => z
+    case o: NdOne      => f.apply(z, o.elem)
     case leaf: IntLeaf =>
       val a = leaf.arr; val n = a.length; var acc = z; var i = 0
       while (i < n) { acc = f.apply(acc, a(i)); i += 1 }; acc
@@ -52,8 +53,8 @@ object NdFold {
     case _            => z
   }
   def intFieldLenFwd(xs: Nd, z: Int, f: NdIntFold): Int = xs match {
-    case NdEmpty      => z
-    case o: NdOne     => f.apply(z, o.elem)
+    case NdEmpty       => z
+    case o: NdOne      => f.apply(z, o.elem)
     case leaf: IntLeaf =>
       val a = leaf.arr; val n = leaf.len; var acc = z; var i = 0
       while (i < n) { acc = f.apply(acc, a(i)); i += 1 }; acc
@@ -63,8 +64,8 @@ object NdFold {
     case _            => z
   }
   def intCompoundFwd(xs: Nd, z: Int, f: NdIntFold): Int = xs match {
-    case NdEmpty      => z
-    case o: NdOne     => f.apply(z, o.elem)
+    case NdEmpty       => z
+    case o: NdOne      => f.apply(z, o.elem)
     case leaf: IntLeaf =>
       val a = leaf.arr; val n = leaf.len; var acc = z; var i = 0
       while (i < a.length && i < n) { acc = f.apply(acc, a(i)); i += 1 }; acc
@@ -74,8 +75,8 @@ object NdFold {
     case _            => z
   }
   def intMinFwd(xs: Nd, z: Int, f: NdIntFold): Int = xs match {
-    case NdEmpty      => z
-    case o: NdOne     => f.apply(z, o.elem)
+    case NdEmpty       => z
+    case o: NdOne      => f.apply(z, o.elem)
     case leaf: IntLeaf =>
       val a = leaf.arr; val n = if (a.length < leaf.len) a.length else leaf.len; var acc = z; var i = 0
       while (i < n) { acc = f.apply(acc, a(i)); i += 1 }; acc
@@ -87,8 +88,8 @@ object NdFold {
 
   // ---- Int, backward ----
   def intArrLenBwd(xs: Nd, z: Int, f: NdIntFold): Int = xs match {
-    case NdEmpty      => z
-    case o: NdOne     => f.apply(z, o.elem)
+    case NdEmpty       => z
+    case o: NdOne      => f.apply(z, o.elem)
     case leaf: IntLeaf =>
       val a = leaf.arr; val n = a.length; var acc = z; var i = n - 1
       while (i >= 0) { acc = f.apply(acc, a(i)); i -= 1 }; acc
@@ -98,8 +99,8 @@ object NdFold {
     case _            => z
   }
   def intFieldLenBwd(xs: Nd, z: Int, f: NdIntFold): Int = xs match {
-    case NdEmpty      => z
-    case o: NdOne     => f.apply(z, o.elem)
+    case NdEmpty       => z
+    case o: NdOne      => f.apply(z, o.elem)
     case leaf: IntLeaf =>
       val a = leaf.arr; val n = leaf.len; var acc = z; var i = n - 1
       while (i >= 0) { acc = f.apply(acc, a(i)); i -= 1 }; acc
@@ -111,8 +112,8 @@ object NdFold {
 
   // ---- Ref (Object[]), forward — sums String lengths, like a real Ref fold ----
   def refArrLenFwd(xs: Nd, z: Int, f: NdRefFold): Int = xs match {
-    case NdEmpty      => z
-    case o: NdOne     => z
+    case NdEmpty       => z
+    case o: NdOne      => z
     case leaf: RefLeaf =>
       val a = leaf.arr; val n = a.length; var acc = z; var i = 0
       while (i < n) { acc = f.apply(acc, a(i)); i += 1 }; acc
@@ -122,8 +123,8 @@ object NdFold {
     case _            => z
   }
   def refFieldLenFwd(xs: Nd, z: Int, f: NdRefFold): Int = xs match {
-    case NdEmpty      => z
-    case o: NdOne     => z
+    case NdEmpty       => z
+    case o: NdOne      => z
     case leaf: RefLeaf =>
       val a = leaf.arr; val n = leaf.len; var acc = z; var i = 0
       while (i < n) { acc = f.apply(acc, a(i)); i += 1 }; acc
@@ -133,8 +134,8 @@ object NdFold {
     case _            => z
   }
   def refCompoundFwd(xs: Nd, z: Int, f: NdRefFold): Int = xs match {
-    case NdEmpty      => z
-    case o: NdOne     => z
+    case NdEmpty       => z
+    case o: NdOne      => z
     case leaf: RefLeaf =>
       val a = leaf.arr; val n = leaf.len; var acc = z; var i = 0
       while (i < a.length && i < n) { acc = f.apply(acc, a(i)); i += 1 }; acc
@@ -151,10 +152,17 @@ object NdFold {
 @Fork(
   value = 1,
   jvmArgs = Array(
-    "-Xms2g", "-Xmx2g", "-XX:NewSize=1g", "-XX:MaxNewSize=1g",
-    "-XX:InitialCodeCacheSize=512m", "-XX:ReservedCodeCacheSize=512m",
-    "-XX:+UseParallelGC", "-XX:-UseAdaptiveSizePolicy",
-    "-XX:MaxInlineLevel=20", "-XX:InlineSmallCode=1500", "-XX:+AlwaysPreTouch"
+    "-Xms2g",
+    "-Xmx2g",
+    "-XX:NewSize=1g",
+    "-XX:MaxNewSize=1g",
+    "-XX:InitialCodeCacheSize=512m",
+    "-XX:ReservedCodeCacheSize=512m",
+    "-XX:+UseParallelGC",
+    "-XX:-UseAdaptiveSizePolicy",
+    "-XX:MaxInlineLevel=20",
+    "-XX:InlineSmallCode=1500",
+    "-XX:+AlwaysPreTouch"
   )
 )
 @BenchmarkMode(Array(Mode.Throughput))
@@ -163,8 +171,8 @@ class ArrLenFoldBenchmark {
   @Param(Array("100", "1000", "10000", "100000"))
   var size: Int = 1000
 
-  var exactInt: IntLeaf = _   // arr.length == size
-  var slackInt: IntLeaf = _   // arr.length == 2*size, len == size
+  var exactInt: IntLeaf = _ // arr.length == size
+  var slackInt: IntLeaf = _ // arr.length == 2*size, len == size
   var exactRef: RefLeaf = _
   var slackRef: RefLeaf = _
 
@@ -181,17 +189,17 @@ class ArrLenFoldBenchmark {
   }
 
   // Int forward: exact/arrLen is the ideal baseline; the three slack variants must tie it.
-  @Benchmark def intArrLenExact(): Int    = NdFold.intArrLenFwd(exactInt, 0, sumInt)
-  @Benchmark def intFieldLenSlack(): Int  = NdFold.intFieldLenFwd(slackInt, 0, sumInt)
-  @Benchmark def intCompoundSlack(): Int  = NdFold.intCompoundFwd(slackInt, 0, sumInt)
-  @Benchmark def intMinSlack(): Int       = NdFold.intMinFwd(slackInt, 0, sumInt)
+  @Benchmark def intArrLenExact(): Int = NdFold.intArrLenFwd(exactInt, 0, sumInt)
+  @Benchmark def intFieldLenSlack(): Int = NdFold.intFieldLenFwd(slackInt, 0, sumInt)
+  @Benchmark def intCompoundSlack(): Int = NdFold.intCompoundFwd(slackInt, 0, sumInt)
+  @Benchmark def intMinSlack(): Int = NdFold.intMinFwd(slackInt, 0, sumInt)
 
   // Int backward.
-  @Benchmark def intArrLenBwdExact(): Int   = NdFold.intArrLenBwd(exactInt, 0, sumInt)
+  @Benchmark def intArrLenBwdExact(): Int = NdFold.intArrLenBwd(exactInt, 0, sumInt)
   @Benchmark def intFieldLenBwdSlack(): Int = NdFold.intFieldLenBwd(slackInt, 0, sumInt)
 
   // Ref (String) forward.
-  @Benchmark def refArrLenExact(): Int    = NdFold.refArrLenFwd(exactRef, 0, sumRefLen)
-  @Benchmark def refFieldLenSlack(): Int  = NdFold.refFieldLenFwd(slackRef, 0, sumRefLen)
-  @Benchmark def refCompoundSlack(): Int  = NdFold.refCompoundFwd(slackRef, 0, sumRefLen)
+  @Benchmark def refArrLenExact(): Int = NdFold.refArrLenFwd(exactRef, 0, sumRefLen)
+  @Benchmark def refFieldLenSlack(): Int = NdFold.refFieldLenFwd(slackRef, 0, sumRefLen)
+  @Benchmark def refCompoundSlack(): Int = NdFold.refCompoundFwd(slackRef, 0, sumRefLen)
 }

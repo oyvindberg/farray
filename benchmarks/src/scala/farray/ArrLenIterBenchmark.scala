@@ -3,24 +3,21 @@ package farray
 import org.openjdk.jmh.annotations._
 import java.util.concurrent.TimeUnit
 
-/** Validates the "logical length <= backing-array length" iteration shape that the generated `{K}Arr`
-  * leaves will adopt: a leaf may hold a backing array LONGER than its logical length (so structural ops
-  * can share/keep the array instead of copying). Every traversal loop must therefore (a) stop at the
-  * logical length and (b) STILL let HotSpot drop the per-element bounds check and vectorize.
+/** Validates the "logical length <= backing-array length" iteration shape that the generated `{K}Arr` leaves will adopt: a leaf may hold a backing array LONGER
+  * than its logical length (so structural ops can share/keep the array instead of copying). Every traversal loop must therefore (a) stop at the logical length
+  * and (b) STILL let HotSpot drop the per-element bounds check and vectorize.
   *
   * The canonical shape is:
   *
-  *   while (i < arr.length && i < len) { ... arr(i) ... }
+  * while (i < arr.length && i < len) { ... arr(i) ... }
   *
-  * The first, short-circuiting `i < arr.length` proves `i` is in-bounds for `arr` at the point of the
-  * `arr(i)` read (so HotSpot eliminates the bounds check + can vectorize); the second `i < len` caps the
-  * trip count at the logical length.
+  * The first, short-circuiting `i < arr.length` proves `i` is in-bounds for `arr` at the point of the `arr(i)` read (so HotSpot eliminates the bounds check +
+  * can vectorize); the second `i < len` caps the trip count at the logical length.
   *
-  * `arrLenOnly` is the ideal tight `while (i < arr.length)` loop over an exactly-sized array — the number
-  * every other variant must TIE. `compoundNoSlack`/`compoundSlack` are the proposed shape (len == and <
-  * arr.length respectively). `lenOnlySlack` (`while (i < len)`, `len` not provably <= arr.length) and
-  * `minSlack` (`while (i < min(arr.length, len))`) are the alternatives we suspect are slower — included so
-  * the choice is measured, not assumed.
+  * `arrLenOnly` is the ideal tight `while (i < arr.length)` loop over an exactly-sized array — the number every other variant must TIE.
+  * `compoundNoSlack`/`compoundSlack` are the proposed shape (len == and < arr.length respectively). `lenOnlySlack` (`while (i < len)`, `len` not provably <=
+  * arr.length) and `minSlack` (`while (i < min(arr.length, len))`) are the alternatives we suspect are slower — included so the choice is measured, not
+  * assumed.
   *
   * Every variant sums EXACTLY `size` ints, so Throughput (ops/s) is directly comparable across all of them.
   */

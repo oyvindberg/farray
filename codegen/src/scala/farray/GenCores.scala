@@ -484,7 +484,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    case p: ${k.name}Prepend => if (i == 0) p.elem else ${k.lc}At(p.base, i - 1)
        |    case rev: ReverseNode => ${k.lc}At(rev.base, rev.base.length - 1 - i)
        |    case pad: ${k.name}Pad => if (i < pad.base.length) $padBase else pad.filler
-       |    case u: ${k.name}Updated => if (i == u.index) u.elem else ${if k.name == "Ref" then "u.base.applyBoxed(i)" else s"${k.lc}At(u.base, i)"}
+       |    case u: ${k.name}Updated => if (i == u.index) u.elem else ${
+        if k.name == "Ref" then "u.base.applyBoxed(i)" else s"${k.lc}At(u.base, i)"
+      }
        |    case s: SliceNode => ${k.lc}At(s.base, s.offset + i)
        |    case fm: ${k.name}FlatMap => { var lo = 0; var hi = fm.segs.length - 1; while (lo < hi) { val mid = (lo + hi + 1) >>> 1; if (fm.offs(mid) <= i) lo = mid else hi = mid - 1 }; fm.segs(lo)(i - fm.offs(lo)) }$rngCase
        |    case _ => ${k.dflt}
@@ -4323,16 +4325,14 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |}
        |""".stripMargin
 
-  /** flatMap result node: an ARRAY OF ARRAYS (one backing array per inner `f(x)`), so flatMap is a plain map
-    * (store each inner's array — zero-copy for leaf inners) instead of a flatten-copy into one contiguous leaf.
-    * `offs` is the prefix-sum of the per-segment LOGICAL lengths: `offs[i]` = start index of segment i,
-    * `offs[nSeg]` = total length, and `offs[i+1]-offs[i]` = segment i's logical length (segs[i] may be LONGER —
-    * slack). It doubles as the O(log nSeg) random-access index. Built only for total length >= 2 (0 -> Empty,
-    * 1 -> ${name}One), so it never has to uphold the size-0/1 leaf canonicalisation.
+  /** flatMap result node: an ARRAY OF ARRAYS (one backing array per inner `f(x)`), so flatMap is a plain map (store each inner's array — zero-copy for leaf
+    * inners) instead of a flatten-copy into one contiguous leaf. `offs` is the prefix-sum of the per-segment LOGICAL lengths: `offs[i]` = start index of
+    * segment i, `offs[nSeg]` = total length, and `offs[i+1]-offs[i]` = segment i's logical length (segs[i] may be LONGER — slack). It doubles as the O(log
+    * nSeg) random-access index. Built only for total length >= 2 (0 -> Empty, 1 -> ${name}One), so it never has to uphold the size-0/1 leaf canonicalisation.
     *
-    * Fast forward/backward element traversal (map/fold/foreach/filter/reduce/scan/materialize) has a dedicated
-    * segmented arm in the Scala DFS driver and the Java main-walk driver. Random-access / windowing / hashing use
-    * `flat()` (build the contiguous leaf once) — correct and no worse than the old flatten-copy, just not lazy.
+    * Fast forward/backward element traversal (map/fold/foreach/filter/reduce/scan/materialize) has a dedicated segmented arm in the Scala DFS driver and the
+    * Java main-walk driver. Random-access / windowing / hashing use `flat()` (build the contiguous leaf once) — correct and no worse than the old flatten-copy,
+    * just not lazy.
     */
   private def flatMapNode(name: String, jt: String, boxed: String): String =
     val readSeg = if boxed.isEmpty then "segs[lo][i - offs[lo]]" else s"$boxed.valueOf(segs[lo][i - offs[lo]])"
