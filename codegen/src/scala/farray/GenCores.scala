@@ -130,6 +130,16 @@ object GenCores extends BleepCodegenScript("GenCores") {
   /** the primitive kinds only — used e.g. for the Ref-element + primitive-accumulator folds. */
   val primKinds: List[Kind] = opKinds.filter(_.isPrim)
 
+  /** WIDENING cross-prim (input, accumulator) pairs the reduce engine covers UNBOXED — the canonical
+    * overflow-safe folds (`ints.foldLeft(0L)(_ + _)`, sums into a Double). Every other cross-prim pair
+    * stays on the boxed Ref-acc path (cold). Each pair costs one SAM type + 2 leaf methods + 2 Java
+    * traversers, so keep this list to the pairs real code hits.
+    */
+  val wideningPairs: List[(Kind, Kind)] = {
+    def k(n: String) = opKinds.find(_.name == n).get
+    List((k("Int"), k("Long")), (k("Int"), k("Double")), (k("Long"), k("Double")), (k("Float"), k("Double")))
+  }
+
   /** primitive kinds that have a `scala.math.Numeric` (so sum/product/scan-of-numeric work). Char/Boolean do not. */
   val numericKinds: List[Kind] = opKinds.filter(k => k.isPrim && k.name != "Char" && k.name != "Boolean")
 
@@ -921,6 +931,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.open(s"case rz: ${K}Repr[Z] =>")
         zPrimArm()
         ee.close()
+        // WIDENING cross-prim accumulators (Long/Double acc over this input) — the canonical
+        // overflow-safe folds, fully unboxed via the ${K}To${Z}Fold SAM (previously boxed per element).
+        wideningPairs.filter(_._1.name == K).foreach { case (_, zk) =>
+          ee.open(s"case rz: ${zk.name}Repr[Z] =>")
+          ee.line(s"rz.wrap(reduceLeaf${dir}${K}${zk.name}(xs, rz.unwrap(z), (acc, v) => rz.unwrap(${comb("rz.wrap(acc)", wrapV(k))})))")
+          ee.close()
+        }
       } else {
         // Ref input: unboxed prim-accumulator arms (Int/Long/Double) before the generic Ref-acc / boxed arms.
         primKinds.foreach { p =>
@@ -1022,6 +1039,21 @@ object GenCores extends BleepCodegenScript("GenCores") {
           if k.isPrim then emit(s"reduceLeaf${dir}${K}${K}", k, "", k.arr, s"Traversers.${K}To${K}Fold", s"Traversers.reduce${dir}${K}${K}(xs, z, f)", backward)
           // generic ref acc (every input kind).
           emit(s"reduceLeaf${dir}${K}Ref", k, "[Z <: AnyRef]", "Z", s"Traversers.${K}ToRefFold[Z]", s"Traversers.reduce${dir}${K}Ref[Z](xs, z, f)", backward)
+        }
+      }
+      // WIDENING cross-prim leaf methods (unboxed wider acc over a narrower prim input).
+      wideningPairs.foreach { case (i, zk) =>
+        List(false, true).foreach { backward =>
+          val dir = if backward then "Bwd" else "Fwd"
+          emit(
+            s"reduceLeaf${dir}${i.name}${zk.name}",
+            i,
+            "",
+            zk.arr,
+            s"Traversers.${i.name}To${zk.name}Fold",
+            s"Traversers.reduce${dir}${i.name}${zk.name}(xs, z, f)",
+            backward
+          )
         }
       }
       // CROSS-kind: Ref ELEMENT folded into a PRIMITIVE accumulator (sum/count over Strings etc.). The hot
@@ -2544,6 +2576,12 @@ object GenCores extends BleepCodegenScript("GenCores") {
       e.line(s"$jp apply($jp acc, Object v);")
       e.close()
     }
+    // WIDENING cross-prim fold types (input I, wider acc Z) — ints.foldLeft(0L)(_ + _) etc. Fully unboxed.
+    wideningPairs.foreach { case (i, z) =>
+      e.open(s"public interface ${i.name}To${z.name}Fold")
+      e.line(s"${jelem(z)} apply(${jelem(z)} acc, ${jelem(i)} v);")
+      e.close()
+    }
     e.blank()
     // --- Build (map) function types (§3): one per COVERED (input I, output O) pair. Primitive O is unboxed
     //     (a primitive return); a Ref OUTPUT is a type param RO. A Ref INPUT element is plain `Object` (NOT a
@@ -2603,6 +2641,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
       reduceTraverser(e, k, backward = false, refAcc = true)
       e.blank()
       reduceTraverser(e, k, backward = true, refAcc = true)
+      e.blank()
+    }
+    // WIDENING cross-prim reduce traversers (unboxed wider acc over a narrower prim input).
+    wideningPairs.foreach { case (i, z) =>
+      reduceTraverser(e, i, backward = false, refAcc = false, accPrim = Some(z))
+      e.blank()
+      reduceTraverser(e, i, backward = true, refAcc = false, accPrim = Some(z))
       e.blank()
     }
     // --- Build (map) traversers: ONE per covered (I, O) pair. Same lazy-stack walk skeleton as reduceFwd;
@@ -3184,17 +3229,21 @@ object GenCores extends BleepCodegenScript("GenCores") {
     * the first defer); a bare-leaf walk never touches it. ONLY ReverseNode recurses — fwd calls bwd on rev.base (and vice versa), so the direction flip rides
     * the JVM call boundary. (Deep bases over a NON-leaf use applyBoxed — minimal but correct; the leaf-base fast path is unboxed.)
     */
-  private def reduceTraverser(e: Emit, k: Kind, backward: Boolean, refAcc: Boolean): Unit = {
+  private def reduceTraverser(e: Emit, k: Kind, backward: Boolean, refAcc: Boolean, accPrim: Option[Kind] = None): Unit = {
     val K = k.name
     val je = jelem(k) // Java element type: int/long/double/Object
     val isRefInput = K == "Ref"
     val dir = if backward then "Bwd" else "Fwd"
     val other = if backward then "Fwd" else "Bwd"
-    val foldT = if refAcc then s"${K}ToRefFold<Z>" else s"${K}To${K}Fold"
+    // accPrim = Some(z): a WIDENING cross-prim accumulator (e.g. long acc over int input) — same walk,
+    // acc typed jelem(z), fold type ${K}To${Z}Fold. None: self-kind (acc == input kind).
+    val accName = accPrim.map(_.name).getOrElse(K)
+    val accJ = accPrim.map(jelem).getOrElse(je)
+    val foldT = if refAcc then s"${K}ToRefFold<Z>" else s"${K}To${accName}Fold"
     val sig =
       if refAcc then s"static <Z> Z reduce${dir}${K}Ref(FBase root, Z acc, $foldT f)"
-      else s"static $je reduce${dir}${K}${K}(FBase root, $je acc, $foldT f)"
-    val recur = if refAcc then s"reduce${other}${K}Ref" else s"reduce${other}${K}${K}"
+      else s"static $accJ reduce${dir}${K}${accName}(FBase root, $accJ acc, $foldT f)"
+    val recur = if refAcc then s"reduce${other}${K}Ref" else s"reduce${other}${K}${accName}"
     // Read a single boxed Object from a deep (non-leaf) base, cast to the element type. For prims the cast
     // unboxes via the boxed wrapper's value method; for Ref the element IS Object (pass-through).
     def fromBoxed(expr: String): String = fromBoxedK(k, expr)
@@ -3260,9 +3309,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
     }
 
     // --- the (skip,take)-windowed sub-traverser for deep (non-leaf) Slice/Pad/Updated bases (replaces runBoxed). ---
-    val accT = if refAcc then "Z" else je
-    val winName = s"reduceWindow${dir}${K}${if refAcc then "Ref" else K}"
-    val winOther = s"reduceWindow${other}${K}${if refAcc then "Ref" else K}"
+    val accT = if refAcc then "Z" else accJ
+    val winName = s"reduceWindow${dir}${K}${if refAcc then "Ref" else accName}"
+    val winOther = s"reduceWindow${other}${K}${if refAcc then "Ref" else accName}"
     val win = WinSpec(
       name = winName,
       other = winOther,
