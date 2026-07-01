@@ -59,14 +59,19 @@ export default function FSetPage() {
         </p>
         <Snippet name="set-lattice" hideFull />
         <p>
-          Membership and the algebra live at the top and are inherited by everything below. Enumeration —{" "}
-          <code>size</code>, <code>iterator</code>, <code>map</code>, value <code>equals</code> — exists
-          only from <code>FSetMaterialized</code> down. The compiler enforces the split:{" "}
-          <code>(a ++ b).size</code> doesn't compile until you <code>.materialize</code>, and{" "}
-          <code>FSet.above(5).size</code> doesn't compile at all. <code>FSetInfinite</code> is the honest
-          outlier — an infinite set <em>is</em> a predicate, so it's contravariant like one, kept out of the
-          invariant chain and bridged in by a <code>Conversion</code>. Ranges round it out:{" "}
-          <code>FSet.range(0, 1_000_000_000)</code> is a finite, materializable set that costs 16 bytes.
+          Membership and the algebra live at the top and are inherited by everything below. Traversals and
+          transforms — <code>foreach</code>, <code>filter</code>, <code>map</code>, <code>flatMap</code> —
+          live on <code>FSetFinite</code>: anything provably finite may enumerate (they materialize
+          internally, memoized on the node), and since a transform builds a fresh materialized set anyway,
+          demanding an explicit <code>.materialize</code> first would add a keyword but no information. The
+          cheap observations and value equality — <code>size</code>, <code>iterator</code>,{" "}
+          <code>sameElements</code> — need the frozen leaf itself and sit on <code>FSetMaterialized</code>.
+          The compiler enforces the split: <code>(a ++ b).size</code> doesn't compile until you{" "}
+          <code>.materialize</code>, and <code>FSet.above(5).size</code> doesn't compile at all.{" "}
+          <code>FSetInfinite</code> is the honest outlier — an infinite set <em>is</em> a predicate, so it's
+          contravariant like one, kept out of the invariant chain and bridged in by a <code>Conversion</code>.
+          Ranges round it out: <code>FSet.range(0, 1_000_000_000)</code> is a finite, materializable set that
+          costs 16 bytes.
         </p>
         <Snippet name="set-surface" hideFull />
       </section>
@@ -229,6 +234,28 @@ export default function FSetPage() {
           suite="fset"
           cls="IntSetMapBenchmark"
           caption={<>map an Int set through a function and rebuild the set — fused source scan into bitmap build.</>}
+        />
+        <p>
+          <code>flatMap</code> gets the same treatment, split by write kind. Each element's result set is
+          already a materialized leaf, so for Int the leaves fold together with pairwise word-OR union
+          rounds; for references each part's raw element column is appended — a bulk{" "}
+          <code>System.arraycopy</code>, no iterator, no boxing — and the deduplicating one-pass build runs{" "}
+          <em>once</em> at the end. That last choice was measured, not assumed: the first cut merged Ref
+          leaves pairwise too, re-allocating at every round, and lost to <code>immutable.Set</code>;
+          append-once turned it into a win at every size.
+        </p>
+        <BenchPair
+          suite="fset"
+          int="IntSetFlatMapBenchmark"
+          str="StrSetFlatMapBenchmark"
+          caption={
+            <>
+              flatMap with a 2× expansion (<code>x → {"{x, x+1}"}</code> / <code>s → {"{s, s+\"x\"}"}</code>).
+              fastutil has no flatMap, so its bar is the raw hand-written double-add loop — the strongest
+              possible baseline, allocating no inner sets at all; FSet passes even that at 100k on both
+              element kinds.
+            </>
+          }
         />
       </section>
 
