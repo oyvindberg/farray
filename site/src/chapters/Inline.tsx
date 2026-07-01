@@ -132,6 +132,17 @@ export default function Inline() {
         str="MapMegaStrBenchmark"
         caption="eight distinct lambdas through map in one method. On Int (left) IArray's shared map site goes megamorphic and re-boxes; FArray has no shared site to poison, so it runs ahead — widening to ~3.3× at 100k. On String (right) there's no boxing to pay, so the same megamorphic dispatch costs almost nothing (~1.05×). Same mechanism; only the boxing tax differs."
       />
+
+      <p>
+        And because all of that specialization happened at <em>compile</em> time, there's no warmup lap to
+        lose. FArray's speed is already in the bytecode — unboxed, monomorphic, allocation-free — so it never
+        waits on the JIT to devirtualize or escape-analyze its way there. Measured cold, single-shot, with the
+        JVM still interpreting, the fused pipeline already runs three-to-four times ahead of List and IArray;
+        there's no lap where a boxing collection is briefly in front. What warmup buys isn't the lead but its
+        size — that same pipeline widens to its ~30× steady state as the loop compiles. The boxing collections
+        gain little from it, because their cost is <em>allocation</em>, and no amount of JIT will un-allocate a
+        million <code>Integer</code>s.
+      </p>
     </section>
   );
 }
