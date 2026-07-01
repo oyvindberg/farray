@@ -4,6 +4,8 @@ import Core from "./chapters/Core";
 import Syntax from "./chapters/Syntax";
 import Combinators from "./chapters/Combinators";
 import Inline from "./chapters/Inline";
+import FlatMap from "./chapters/FlatMap";
+import Filter from "./chapters/Filter";
 import Closing from "./chapters/Closing";
 
 function Hero() {
@@ -50,6 +52,8 @@ export default function MainStory() {
         <Syntax />
         <Combinators />
         <Inline />
+        <FlatMap />
+        <Filter />
         <Closing />
       </main>
       <Footer />
