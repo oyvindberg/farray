@@ -4771,6 +4771,55 @@ object GenCores extends BleepCodegenScript("GenCores") {
         s"""       |        if (node instanceof ${name}One o) { hs[pos] = $eh2; return pos + 1; }"""
       }
       .mkString("\n")
+    // streamed per-kind run hashers: MurmurHash3 orderedHash over a leaf window with the
+    // arithmetic-progression (rangeHash) detection carried in scalars — no int[] buffer.
+    val runHashers = (prims.map(p => (p.name, p.jt)) :+ ("Ref", "Object"))
+      .map { case (name, jt) =>
+        val eh0 = ehName(name, "a[from]")
+        val ehi = ehName(name, "a[from + i]")
+        s"""       |    private static int hash${name}Run($jt[] a, int from, int n) {
+       |        if (n == 0) return finalizeHash(SEED, 0);
+       |        int h0 = $eh0;
+       |        if (n == 1) return finalizeHash(mix(SEED, h0), 1);
+       |        int prev = h0;
+       |        int diff = 0;
+       |        boolean isRange = true;
+       |        int acc = mix(SEED, h0);
+       |        for (int i = 1; i < n; i++) {
+       |            int h = $ehi;
+       |            if (i == 1) diff = h - prev;
+       |            else if (h - prev != diff) isRange = false;
+       |            acc = mix(acc, h);
+       |            prev = h;
+       |        }
+       |        if (isRange) return rangeHash(h0, diff, prev, SEED);
+       |        return finalizeHash(acc, n);
+       |    }"""
+      }
+      .mkString("\n")
+    // hashOf fast arms: leaf / One / slice-over-leaf stream directly (the common shapes); the old path
+    // allocated int[node.length] per hashCode call — and the fill slice arm allocated int[base.length]
+    // (hashing a 10-element slice of a 1M leaf allocated 4MB).
+    val hashOfFast = {
+      val leafArms = (prims.map(_.name) :+ "Ref")
+        .map(n => s"""       |        if (node instanceof ${n}Arr a) return hash${n}Run(a.arr, 0, a.length);""")
+        .mkString("\n")
+      val oneArms = oneKinds
+        .map { case (n, _, _) => s"""       |        if (node instanceof ${n}One o) return finalizeHash(mix(SEED, ${ehName(n, "o.elem")}), 1);""" }
+        .mkString("\n")
+      val sliceArms = (prims.map(_.name) :+ "Ref")
+        .map(n => s"""       |        if (node instanceof SliceNode s && s.base instanceof ${n}Arr a) return hash${n}Run(a.arr, s.offset, s.length);""")
+        .mkString("\n")
+      leafArms + "\n" + oneArms + "\n" + sliceArms
+    }
+    // fill's slice arm: read the (always-leaf, by construction) base window directly; keep the
+    // tmp-buffer fallback for a hypothetical non-leaf base.
+    val sliceFillArms = (prims.map(_.name) :+ "Ref")
+      .map { n =>
+        val ehE = ehName(n, "a.arr[s.offset + i]")
+        s"""       |            if (s.base instanceof ${n}Arr a) { if (rev) for (int i = s.length - 1; i >= 0; i--) hs[pos++] = $ehE; else for (int i = 0; i < s.length; i++) hs[pos++] = $ehE; return pos; }"""
+      }
+      .mkString("\n")
     val flatMapFill = padKinds
       .map { case (name, _, _) =>
         val ehE = ehName(name, "fm.segs[s][j]")
@@ -4792,10 +4841,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |            if (rg.length == 1) return finalizeHash(mix(SEED, rg.start), 1);
        |            return rangeHash(rg.start, rg.step, rg.start + (rg.length - 1) * rg.step, SEED);
        |        }
+$hashOfFast
+       |        if (node instanceof Empty) return finalizeHash(SEED, 0);
        |        int[] hs = new int[node.length];
        |        fill(node, false, hs, 0);
        |        return ordered(hs);
        |    }
+$runHashers
        |    private static int mix(int h, int d) { return scala.util.hashing.MurmurHash3$$.MODULE$$.mix(h, d); }
        |    private static int finalizeHash(int h, int n) { return scala.util.hashing.MurmurHash3$$.MODULE$$.finalizeHash(h, n); }
        |    private static int rangeHash(int start, int step, int last, int seed) { return scala.util.hashing.MurmurHash3$$.MODULE$$.rangeHash(start, step, last, seed); }
@@ -4823,7 +4875,10 @@ $prependFill
        |        if (node instanceof RefAppend ap) { if (rev) { hs[pos++] = scala.runtime.Statics.anyHash(ap.elem); return fill(ap.base, true, hs, pos); } else { pos = fill(ap.base, false, hs, pos); hs[pos++] = scala.runtime.Statics.anyHash(ap.elem); return pos; } }
        |        if (node instanceof RefPrepend pp) { if (rev) { pos = fill(pp.base, true, hs, pos); hs[pos++] = scala.runtime.Statics.anyHash(pp.elem); return pos; } else { hs[pos++] = scala.runtime.Statics.anyHash(pp.elem); return fill(pp.base, false, hs, pos); } }
        |        if (node instanceof ReverseNode r) { return fill(r.base, !rev, hs, pos); }
-       |        if (node instanceof SliceNode s) { int[] tmp = new int[s.base.length]; fill(s.base, false, tmp, 0); if (rev) for (int i = s.length - 1; i >= 0; i--) hs[pos++] = tmp[s.offset + i]; else for (int i = 0; i < s.length; i++) hs[pos++] = tmp[s.offset + i]; return pos; }
+       |        if (node instanceof SliceNode s) {
+$sliceFillArms
+       |            int[] tmp = new int[s.base.length]; fill(s.base, false, tmp, 0); if (rev) for (int i = s.length - 1; i >= 0; i--) hs[pos++] = tmp[s.offset + i]; else for (int i = 0; i < s.length; i++) hs[pos++] = tmp[s.offset + i]; return pos;
+       |        }
 $padFill
 $updatedFill
 $oneFill
