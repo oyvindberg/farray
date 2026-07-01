@@ -1331,10 +1331,20 @@ object GenSets extends BleepCodegenScript("GenSets") {
       def srcOf(ka: Kind): String = s"asArr${ka.name}(materialize${ka.name}(xs))"
       def readA(ka: Kind): String = if ka.isPrim then "ra.wrap(src(i))" else "src(i).asInstanceOf[A]"
       def storeB(kb: Kind, b: String): String = if kb.isPrim then s"rb.unwrap($b)" else s"($b).asInstanceOf[Object]"
+      def genericBody(ka: Kind, kb: Kind): String =
+        s"{ val src = ${srcOf(ka)}; val n = src.length; val out = new Array[${kb.arr}](n); var i = 0; while (i < n) { out(i) = ${storeB(kb, "f(" + readA(ka) + ")")}; i += 1 }; buildSorted${kb.name}(out, n) }"
+      // Int SOURCE: skip the asArrInt materialization — word-scan the bitmap leaf directly and apply f in ONE
+      // pass into out[] (saves the intermediate Int[] extraction + its pass; buildSortedInt's dense-build path
+      // then dedups+routes). Non-bitmap Int leaves (sparse/wide) take the array path. `card` sizes out exactly.
+      def intSrcBody(kb: Kind): String =
+        s"{ materializeInt(xs) match { " +
+          s"case bm: SIntBitmap => { val ws = bm.words; val bs = bm.base; val out = new Array[${kb.arr}](bm.card); var w = 0; var wi = 0; " +
+          s"while (wi < ws.length) { var bits = ws(wi); while (bits != 0L) { val e = bs + (wi << 6) + java.lang.Long.numberOfTrailingZeros(bits); out(w) = ${storeB(kb, "f(ra.wrap(e))")}; w += 1; bits &= bits - 1L }; wi += 1 }; buildSorted${kb.name}(out, w) }; " +
+          s"case m => { val src = asArrInt(m); val n = src.length; val out = new Array[${kb.arr}](n); var i = 0; while (i < n) { out(i) = ${storeB(kb, "f(ra.wrap(src(i)))")}; i += 1 }; buildSorted${kb.name}(out, n) } } }"
       "summonFrom {\n" + opKinds.map { ka =>
         s"      case ra: ${ka.name}Repr[A] => summonFrom {\n" +
           opKinds.map { kb =>
-            val body = s"{ val src = ${srcOf(ka)}; val n = src.length; val out = new Array[${kb.arr}](n); var i = 0; while (i < n) { out(i) = ${storeB(kb, "f(" + readA(ka) + ")")}; i += 1 }; buildSorted${kb.name}(out, n) }"
+            val body = if ka.name == "Int" then intSrcBody(kb) else genericBody(ka, kb)
             s"        case rb: ${kb.name}Repr[B] => $body"
           }.mkString("\n") +
           "\n      }"
