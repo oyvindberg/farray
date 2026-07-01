@@ -81,7 +81,7 @@ export default function Combinators() {
       <BenchPair
         int="SortIntBenchmark"
         str="SortStrBenchmark"
-        caption="sortBy / sortWith / sorted, Int beside String. On Int the unboxed mergesort edges IArray (~1.9–2.2×) and buries the boxing collections. On String there's no unboxing to win, so it ties IArray on sortWith and sorted — and still takes sortBy outright."
+        caption="sortBy / sortWith / sorted, Int beside String. On Int the unboxed mergesort edges IArray (~1.9–2.2× on sortBy/sortWith) and buries the boxing collections. On String there's no unboxing to win, so it ties IArray on sortWith — and still takes sortBy (~3.7×) and sorted outright."
       />
     </section>
   );

@@ -64,8 +64,8 @@ export default function Intro() {
       />
 
       <p>
-        At a hundred thousand elements that lands at roughly <strong>31× the quickest competitor</strong>,{" "}
-        <strong>88× List</strong>, and <strong>15× the very same pipeline run eagerly on FArray</strong> —
+        At a hundred thousand elements that lands at roughly <strong>30× the quickest competitor</strong>,{" "}
+        <strong>80× List</strong>, and <strong>16× the very same pipeline run eagerly on FArray</strong> —
         the green bar is so far above the rest that the others flatten to slivers. Hover them for the exact
         numbers.
       </p>

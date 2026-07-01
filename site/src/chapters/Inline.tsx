@@ -103,15 +103,16 @@ export default function Inline() {
       <BenchPair
         int="MapIntBenchmark"
         str="MapStrBenchmark"
-        caption="map, swept to 100k. On Int (left) FArray edges a bare int[] and runs ~6–32× past everything that boxes the element — List, Vector, both Chunks. On String (right) there's nothing to unbox, so the gap closes to nothing: FArray ties IArray, and fs2/zio Chunk actually edge it by a few percent. When boxing isn't on the table, the wrapper and the SAM aren't free."
+        caption="map, swept to 100k. On Int (left) FArray edges a bare int[] and runs ~4–9× past everything that boxes the element — List, Vector, both Chunks. On String (right) there's nothing to unbox, so FArray only ties IArray — yet it still runs ~2.5–5× past List, Vector and the Chunks, which pay for their structure with or without boxing. No fireworks against the raw array; a clean win over every real collection."
       />
 
       <h3>We're here for the crushes</h3>
 
       <p>
-        Read those two charts honestly and it's a modest win on <code>Int</code> and a modest loss on{" "}
-        <code>String</code>. That's the texture of a <em>micro</em>-benchmark — one operation over one array, in
-        isolation, where a lone <code>Array.map</code> is a call the JIT already inlines to perfection and the
+        Read those two charts honestly and, measured against a bare array, it's a wash — a slight edge on{" "}
+        <code>Int</code>, a dead tie on <code>String</code>. That's the texture of a <em>micro</em>-benchmark —
+        one operation over one array, in isolation, where a lone <code>Array.map</code> is a call the JIT
+        already inlines to perfection and the
         opaque wrapper plus the specialized SAM are pure overhead it doesn't carry. FArray isn't built to win
         those by a percent. It's built for what happens the moment the benchmark stops being a micro-benchmark —
         and it doesn't take much.
@@ -131,7 +132,7 @@ export default function Inline() {
       <BenchPair
         int="MapMegaIntBenchmark"
         str="MapMegaStrBenchmark"
-        caption="eight distinct lambdas through map in one method. On Int (left) IArray's shared map site goes megamorphic and re-boxes; FArray has no shared site to poison, so it runs ahead — widening to ~3.3× at 100k. On String (right) there's no boxing to pay, so the same megamorphic dispatch costs almost nothing (~1.05×). Same mechanism; only the boxing tax differs."
+        caption="eight distinct lambdas through map in one method. On Int (left) IArray's shared map site goes megamorphic and re-boxes; FArray has no shared site to poison, so it runs ahead — ~3× at 100k. On String (right) there's no boxing to pay, so the megamorphic dispatch costs almost nothing and nobody pulls away — FArray sits within a few percent of the pack. Same mechanism; only the boxing tax moves the needle."
       />
 
       <p>
@@ -144,12 +145,12 @@ export default function Inline() {
 
       <BenchChart
         cls="ColdPipelineIntBenchmark"
-        caption="The same 14-stage pipeline, measured COLD: SingleShotTime, zero warmup, one uncompiled invocation at 100k elements (invocations/sec — higher is faster). Fused FArray is ~3.8× past List and IArray, and ~2.7× past even the quickest rival, before HotSpot compiles anything. Warm — the sweep up top — that lead opens to ~31×. Warmup sets the size of the gap, not whether there is one."
+        caption="The same 14-stage pipeline, measured COLD: SingleShotTime, zero warmup, one uncompiled invocation at 100k elements (invocations/sec — higher is faster). Fused FArray is ~3.8× past List and IArray, and ~2.7× past even the quickest rival, before HotSpot compiles anything. Warm — the sweep up top — that lead opens to ~30×. Warmup sets the size of the gap, not whether there is one."
       />
 
       <p>
         There's no lap where a boxing collection is briefly in front. And what warmup buys isn't the lead but
-        its size — that same pipeline widens to its ~31× steady state as the loop compiles. The boxing
+        its size — that same pipeline widens to its ~30× steady state as the loop compiles. The boxing
         collections gain little from it, because their cost is <em>allocation</em>, and no amount of JIT will
         un-allocate a million <code>Integer</code>s.
       </p>
