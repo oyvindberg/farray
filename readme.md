@@ -106,8 +106,8 @@ Regenerate the numbers on your own machine:
 ```bash
 scripts/bench-run.sh                     # runs the JMH suite → docs/bench-results.json
 cd site && npm install && npm run dev    # the site, live, on your fresh numbers
-npm run pages                            # rebuild the published site into docs/
 ```
+Commit `docs/bench-results.json` and push — CI rebuilds and redeploys the site from it automatically.
 The raw `docs/bench-results.json` also loads directly into <https://jmh.morethan.io> for an interactive view.
 
 ---

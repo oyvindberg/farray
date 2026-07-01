@@ -1,0 +1,59 @@
+name: Site
+# Builds the site from source on every push to main and deploys it to GitHub Pages.
+# The site's data pipeline (site/scripts/build-data.mjs) reads docs/bench-results.json and
+# extracts snippets from the checked-in sources, so committing fresh benchmark numbers is
+# enough — the deployed site picks them up automatically. No build artifacts live in git.
+#
+# One-time setup: repo Settings → Pages → Source = "GitHub Actions" (build_type=workflow).
+on:
+  push:
+    branches: [ 'main' ]
+  pull_request:
+    branches: [ 'main' ]
+    paths: [ 'site/**', 'docs/bench-results.json' ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - name: Build site
+        working-directory: site
+        run: |
+          npm ci
+          npm run build
+      - name: Keep the raw report and data reachable
+        run: |
+          cp docs/report.html site/dist/report.html
+          cp docs/bench-results.json site/dist/bench-results.json
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/dist
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: [ build ]
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
