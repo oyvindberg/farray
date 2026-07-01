@@ -1175,18 +1175,26 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line("val a = leaf.arr")
         ee.line("val n = leaf.length")
         ee.line(s"val out = new Array[$outArr](n + 1)")
+        // The running acc is a REGISTER local, not a reload of out(i): scan is a serial dependency
+        // chain, so `acc = f(out(i), a(i))` pays a store->load forward (~4-5 cycles) per element
+        // where the register form pays the op alone (ScanIntBenchmark measured 0.22-0.40x of iarray
+        // with the out(i) reload).
         if !backward then {
           ee.line(s"out(0) = ${store("z")}")
+          ee.line(s"var acc: $zT = z")
           ee.line("var i = 0")
           ee.open("while (i < n)")
-          ee.line(s"out(i + 1) = ${store(s"f.apply(${readPrev("i")}, a(i))")}")
+          ee.line("acc = f.apply(acc, a(i))")
+          ee.line(s"out(i + 1) = ${store("acc")}")
           ee.line("i += 1")
           ee.close()
         } else {
           ee.line(s"out(n) = ${store("z")}")
+          ee.line(s"var acc: $zT = z")
           ee.line("var i = n - 1")
           ee.open("while (i >= 0)")
-          ee.line(s"out(i) = ${store(s"f.apply(${readPrev("i + 1")}, a(i))")}")
+          ee.line("acc = f.apply(acc, a(i))")
+          ee.line(s"out(i) = ${store("acc")}")
           ee.line("i -= 1")
           ee.close()
         }
@@ -3564,38 +3572,51 @@ object GenCores extends BleepCodegenScript("GenCores") {
         e.line(s"out[o] = f.apply($prevAcc, $elem);")
         e.line("o -= 1;")
       }
-    // a WHOLE-leaf run over the LOGICAL length `len` (may be < arr.length — slack). The acc is out[o±1], so the loop carries `o`, not an acc local.
+    // the register-acc variant for RUN loops: acc is seeded from the previously-written slot ONCE per
+    // run (the `acc` local emitted by runLeaf/run below), then carried in a register — a per-element
+    // out[o±1] reload puts a store->load forward on scan's serial dependency chain (measured 0.22-0.40x
+    // of iarray). Single-element arms (One/Prepend/Append/Pad-filler/Range) keep the out[o±1] read —
+    // no loop, no chain.
+    def writeElemAcc(elem: String): Unit = {
+      e.line(s"acc = f.apply(acc, $elem);")
+      e.line("out[o] = acc;")
+      e.line(if !writeBackward then "o += 1;" else "o -= 1;")
+    }
+    // a WHOLE-leaf run over the LOGICAL length `len` (may be < arr.length — slack). The acc is a register
+    // local seeded from out[o±1]; the loop carries both `o` and `acc`.
     def runLeaf(arr: String, len: String): Unit = e.scope {
       e.line(s"$je[] a = $arr;")
+      e.line(s"$zT acc = $prevAcc;")
       if !backward then {
         e.line("int i = 0;")
         e.line(s"int end = $len;")
         e.open("while (i < end)")
-        writeElem("a[i]")
+        writeElemAcc("a[i]")
         e.line("i += 1;")
         e.close()
       } else {
         e.line(s"int i = ($len) - 1;")
         e.open("while (i >= 0)")
-        writeElem("a[i]")
+        writeElemAcc("a[i]")
         e.line("i -= 1;")
         e.close()
       }
     }
     def run(arr: String, start: String, count: String): Unit = e.scope {
       e.line(s"$je[] a = $arr;")
+      e.line(s"$zT acc = $prevAcc;")
       if !backward then {
         e.line(s"int i = $start;")
         e.line(s"int end = i + ($count);")
         e.open("while (i < end)")
-        writeElem("a[i]")
+        writeElemAcc("a[i]")
         e.line("i += 1;")
         e.close()
       } else {
         e.line(s"int i = $start;")
         e.line(s"int end = i - ($count);")
         e.open("while (i > end)")
-        writeElem("a[i]")
+        writeElemAcc("a[i]")
         e.line("i -= 1;")
         e.close()
       }
