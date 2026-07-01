@@ -95,8 +95,8 @@ export default function Intro() {
       />
 
       <p>
-        At a hundred thousand elements: roughly <strong>30× the quickest competitor</strong>,{" "}
-        <strong>80× List</strong> — and, the number that says the most, <strong>16× the very same pipeline
+        At a hundred thousand elements: roughly <strong>36× the quickest competitor</strong>,{" "}
+        <strong>83× List</strong> — and, the number that says the most, <strong>15× the very same pipeline
         run eagerly on FArray itself</strong>. Whatever factor you picked, the green bar probably clears it;
         it stands so far above the field that everyone else flattens to slivers. Hover them for the exact
         numbers.

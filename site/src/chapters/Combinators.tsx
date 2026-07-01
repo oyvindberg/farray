@@ -70,7 +70,7 @@ export default function Combinators() {
       <BenchPair
         int="ListLikeScalingIntBenchmark"
         str="ListLikeScalingStrBenchmark"
-        caption="FArray driven as a cons-list — built by ::, summed and mapped by recursion — versus List, Int beside String. On Int it wins the build and the maps; on String it's a dead heat with List throughout. References were never boxed, so there's no gap to open: matching the cons-list at its own game is the whole win."
+        caption="FArray driven as a cons-list — built by ::, summed and mapped by recursion — versus List, Int beside String. On Int it takes the build (~2× at 100k, ~2.6× at 1M) and the map-then-sum (~1.9–2.3×), and ties the pure tear-down. On String everything lands within ~10% of List either way. References were never boxed, so there's no gap to open: matching the cons-list at its own game is the whole win."
       />
 
       <h3>Sorting — the one you'd bet against</h3>
@@ -83,7 +83,7 @@ export default function Combinators() {
       <BenchPair
         int="SortIntBenchmark"
         str="SortStrBenchmark"
-        caption="sortBy / sortWith / sorted, Int beside String. On Int the unboxed mergesort edges IArray (~1.9–2.2× on sortBy/sortWith) and buries the boxing collections. On String there's no unboxing to win, so it ties IArray on sortWith — and still takes sortBy (~3.7×) and sorted outright."
+        caption="sortBy / sortWith / sorted, Int beside String. On Int the unboxed mergesort runs ~2–2.3× past IArray on sortBy/sortWith and buries the boxing collections (sorted is a dead heat with IArray — both bottom out in the same array sort). On String there's no unboxing to win, so sortWith and sorted tie IArray — but sortBy still runs ~4–5× past the whole field, because FArray sorts cached keys instead of re-deriving them per comparison."
       />
     </section>
   );
