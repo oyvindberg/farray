@@ -1,5 +1,6 @@
 import Snippet from "../components/Snippet";
 import BenchPair from "../components/BenchPair";
+import { DispatchDiagram } from "../components/Diagrams";
 
 export default function Inline() {
   return (
@@ -37,10 +38,14 @@ export default function Inline() {
 
       <p className="codeline"><code>xs.map(_ + 1)</code> &nbsp;<span className="codeline__where">where <code>xs: FArray[Int]</code></span></p>
 
+      <p>resolves entirely in the compiler:</p>
+
+      <DispatchDiagram />
+
       <p>
-        compiles, at that line, to a single resolved leaf call — the eighty branches gone, your lambda lifted
-        into one specialized SAM and handed to the loop. (That's the lowering with the opaque-type bookkeeping
-        elided; toggle <em>raw expansion</em> for the verbatim tree.) Read it as three names:
+        And you don't have to take the diagram's word for it. Here's the actual lowering — the eighty branches
+        gone, your lambda lifted into one specialized SAM and handed to the loop. (The opaque-type bookkeeping
+        is elided; toggle <em>raw expansion</em> for the verbatim tree.) Read it as three names:
       </p>
 
       <Snippet name="map-generated" />

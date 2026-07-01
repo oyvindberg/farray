@@ -1,5 +1,6 @@
 import SideBySide from "../components/SideBySide";
 import GeneratedCode from "../components/GeneratedCode";
+import { FusionDiagram } from "../components/Diagrams";
 
 export default function Intro() {
   return (
@@ -70,29 +71,29 @@ export default function Intro() {
       </p>
 
       <p>
-        <code>.fuse</code> is a macro, not a runtime call. At compile time it rewrites the entire chain into a
-        single <code>while</code>-loop over the backing array — the intermediate collections, the{" "}
-        <code>Function1</code>s, the boxing, all gone. This isn't a claim to take on faith: the lowering is
-        checked into the repo as a golden test, regenerated on every build. Here is exactly what those
-        fourteen stages became.
+        The reason it runs away with it is that <code>.fuse</code> refuses to build any of the work-in-progress.
+        Run those stages eagerly and each one allocates an array the next immediately consumes and throws away.
+        Fusion collapses the whole chain into a single pass:
+      </p>
+
+      <FusionDiagram />
+
+      <p>
+        <code>.fuse</code> is a macro, not a runtime call. At compile time it reads the entire chain off the
+        syntax tree and rewrites it into one <code>while</code>-loop over the backing array — the intermediate
+        collections, the <code>Function1</code>s, the boxing, all gone. And this isn't a claim to take on faith:
+        the lowering is checked into the repo as a golden test, regenerated on every build. Here is exactly what
+        those fourteen stages compiled to.
       </p>
 
       <GeneratedCode name="fuse-generated" summary="The loop .fuse emitted — 14 stages, one pass" />
 
       <p>
-        Even the awkward stages fuse. <code>zip</code> reads the second column in lock-step without ever
-        building a pair; <code>collect</code> inlines the pattern match, so no <code>PartialFunction</code>{" "}
-        object is allocated. Both, lowered together:
-      </p>
-
-      <GeneratedCode name="fuse-collect-generated" summary="zip + collect, fused into one loop" />
-
-      <p>
-        None of this is a runtime trick. It's the Scala 3 macro system — <code>inline</code>, quotes, and{" "}
-        <code>summonFrom</code> — doing real work at compile time: reading the call chain off the syntax tree,
-        eliminating the columns nobody reads, and emitting a specialized loop. Having metaprogramming this
-        capable on tap is, frankly, a little phenomenal. There's a whole page on{" "}
-        <a href="#/fusion">how the macro pulls it off</a> — dead-column elimination, the survivor sink, the lot.
+        That the Scala 3 macro system can do this — read a call chain, work out which columns nobody reads, and
+        emit a specialized loop, all at compile time — is, frankly, a little phenomenal. There's a whole page on{" "}
+        <a href="#/fusion">how the macro pulls it off</a>. But fusion is the summit, and we're at the trailhead.
+        The rest of this page is the climb: the Java core the loop runs over, the Scala that keeps it unboxed,
+        and the cost model that makes the whole thing hang together.
       </p>
     </section>
   );

@@ -389,6 +389,43 @@ table.score .sc-total { font-weight: 700; }
   max-width: none;
 }
 
+/* ----- diagrams ----- */
+.dgm { margin: 28px 0; }
+.dgm svg { display: block; width: 100%; max-width: 580px; height: auto; margin: 0 auto; }
+.dgm text { font-family: var(--mono); }
+.dgm-t { fill: var(--ink); }
+.dgm-node { font-size: 13px; font-weight: 600; }
+.dgm-num { font-size: 13px; }
+.dgm-op { fill: var(--emerald); font-size: 11px; font-weight: 600; }
+.dgm-dim { fill: var(--ink-faint); }
+.dgm-leaflbl, .dgm-rowlbl, .dgm-note, .dgm-flow { font-size: 10.5px; }
+.dgm-lazy { fill: var(--card); stroke: var(--emerald); stroke-width: 1.4; stroke-dasharray: 4 3; }
+.dgm-cell, .dgm-box { fill: var(--panel); stroke: var(--hair-strong); stroke-width: 1; }
+.dgm-box--waste { fill: none; stroke: var(--red); stroke-dasharray: 3 3; opacity: 0.75; }
+.dgm-edge { stroke: var(--ink-faint); stroke-width: 1.3; fill: none; }
+.dgm-ahp { fill: var(--ink-faint); }
+.dgm-cap {
+  font-family: var(--serif); font-size: 14.5px; line-height: 1.55; color: var(--ink-soft);
+  margin: 12px auto 0; max-width: var(--measure); text-align: center;
+}
+.dgm-key { font-weight: 600; }
+.dgm-key--lazy { color: var(--emerald); }
+.dgm-key--leaf { color: var(--ink); }
+/* inline-dispatch flow (HTML, not SVG) */
+.dgm--flow { display: flex; flex-direction: column; align-items: center; }
+.dgm-flow-col { display: flex; flex-direction: column; width: 100%; max-width: 560px; }
+.dgm-step {
+  display: flex; gap: 14px; align-items: center; border: 1px solid var(--hair-strong); border-radius: 8px;
+  padding: 12px 15px; background: var(--panel);
+}
+.dgm-step__tag {
+  flex: none; font-family: var(--mono); font-size: 9px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--ink-faint); width: 76px;
+}
+.dgm-step__body { font-family: var(--mono); font-size: 12px; line-height: 1.5; color: var(--ink); }
+.dgm-down { text-align: center; color: var(--ink-faint); font-family: var(--mono); font-size: 10px; padding: 6px 0; }
+.dgm-down::before { content: "↓"; display: block; font-size: 15px; line-height: 1; color: var(--ink-faint); margin-bottom: 2px; }
+
 /* ----- responsive + a11y ----- */
 @media (max-width: 680px) {
   .wrap { padding: 0 18px 80px; }
