@@ -44,6 +44,17 @@ object FExhaustive:
     override def toString = s"$a.padTo($n,$f)"
   final case class Updated(a: Recipe, i: Int, e: Int) extends Recipe:
     override def toString = s"$a.updated($i,$e)"
+  // flatMap producing a ${K}FlatMap node: Dup = e => [e,e] (size-2 leaf inners, the fast path);
+  // Single = e => [e] (size-1 => One-inner materialize + total-canonicalisation). Both are element-value
+  // independent so the List oracle and the FArray stay in parity. Wrapping these in the composite ops above
+  // is what exercises the flatMap node as an INPUT to take/drop/slice/padTo/updated/reverse/scan.
+  final case class FlatMapDup(a: Recipe) extends Recipe:
+    override def toString = s"$a.flatMap(e=>[e,e])"
+  final case class FlatMapSingle(a: Recipe) extends Recipe:
+    override def toString = s"$a.flatMap(e=>[e])"
+  // Wide = e => [e]*8 (>= the node threshold): exercises the ${K}FlatMap NODE path (Dup/Single stay < 8 => flatten).
+  final case class FlatMapWide(a: Recipe) extends Recipe:
+    override def toString = s"$a.flatMap(e=>[e]*8)"
 
   // ---------------------------------------------------------------------------
   // Element kind abstraction: Int (primitive leaves) and String (Object[] leaves).
@@ -60,6 +71,9 @@ object FExhaustive:
     def prepend(e: Int, a: FArray[E]): FArray[E]
     def padTo(a: FArray[E], n: Int, f: Int): FArray[E]
     def updated(a: FArray[E], i: Int, e: Int): FArray[E]
+    def flatMapDup(a: FArray[E]): FArray[E]
+    def flatMapSingle(a: FArray[E]): FArray[E]
+    def flatMapWide(a: FArray[E]): FArray[E]
 
   given Kind[Int] with
     def name = "Int"
@@ -71,6 +85,9 @@ object FExhaustive:
     def prepend(e: Int, a: FArray[Int]): FArray[Int] = e +: a
     def padTo(a: FArray[Int], n: Int, f: Int): FArray[Int] = a.padTo(n, f)
     def updated(a: FArray[Int], i: Int, e: Int): FArray[Int] = a.updated(i, e)
+    def flatMapDup(a: FArray[Int]): FArray[Int] = a.flatMap(e => FArray(e, e))
+    def flatMapSingle(a: FArray[Int]): FArray[Int] = a.flatMap(e => FArray(e))
+    def flatMapWide(a: FArray[Int]): FArray[Int] = a.flatMap(e => FArray.tabulate(8)(_ => e))
 
   given Kind[String] with
     def name = "String"
@@ -82,6 +99,9 @@ object FExhaustive:
     def prepend(e: Int, a: FArray[String]): FArray[String] = elem(e) +: a
     def padTo(a: FArray[String], n: Int, f: Int): FArray[String] = a.padTo(n, elem(f))
     def updated(a: FArray[String], i: Int, e: Int): FArray[String] = a.updated(i, elem(e))
+    def flatMapDup(a: FArray[String]): FArray[String] = a.flatMap(e => FArray(e, e))
+    def flatMapSingle(a: FArray[String]): FArray[String] = a.flatMap(e => FArray(e))
+    def flatMapWide(a: FArray[String]): FArray[String] = a.flatMap(e => FArray.tabulate(8)(_ => e))
 
   // ---------------------------------------------------------------------------
   // Interpret a recipe into both the FArray and the List oracle (same op chain).
@@ -103,6 +123,9 @@ object FExhaustive:
     case Updated(a, i, e) =>
       val l = buildList(a, K)
       if i >= 0 && i < l.length then l.updated(i, e) else l // mirror FArray's valid-range only
+    case FlatMapDup(a)    => buildList(a, K).flatMap(e => List(e, e))
+    case FlatMapSingle(a) => buildList(a, K).flatMap(e => List(e))
+    case FlatMapWide(a)   => buildList(a, K).flatMap(e => List.fill(8)(e))
 
   def buildF[E](r: Recipe)(using K: Kind[E]): FArray[E] = r match
     case Empty            => K.empty
@@ -116,6 +139,9 @@ object FExhaustive:
     case Reverse(a)       => buildF[E](a).reverse
     case PadTo(a, n, f)   => K.padTo(buildF[E](a), n, f)
     case Updated(a, i, e) => K.updated(buildF[E](a), i, e)
+    case FlatMapDup(a)    => K.flatMapDup(buildF[E](a))
+    case FlatMapSingle(a) => K.flatMapSingle(buildF[E](a))
+    case FlatMapWide(a)   => K.flatMapWide(buildF[E](a))
 
   // ---------------------------------------------------------------------------
   // Generator. Enumerate every shape up to depth D. base shapes = empty + leaves
@@ -164,6 +190,10 @@ object FExhaustive:
         for i <- (-1 to n + 1); j <- (i to n + 1) do buf += Slice(a, i, j)
         // reverse
         buf += Reverse(a)
+        // flatMap -> ${K}FlatMap node (as a sub-shape, so the composite ops above wrap it next depth)
+        buf += FlatMapDup(a)
+        buf += FlatMapSingle(a)
+        buf += FlatMapWide(a)
         // padTo to n-1 .. n+2 (truncation probe + growth) with two filler values
         for len <- (n - 1 to n + 2); f <- Alphabet.take(1) do buf += PadTo(a, len, f)
         // updated only at valid indices

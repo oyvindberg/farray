@@ -46,6 +46,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
       // ${K}One (array-free singleton) for EVERY prim kind + Ref — so any length-1 leaf/node canonicalizes to
       // its own-kind One (no boxing), never a generic fallback.
       oneKinds.foreach { case (name, jt, boxed) => Files.writeString(dir.resolve(s"${name}One.java"), oneNode(name, jt, boxed)) }
+      // ${K}FlatMap (array-of-arrays flatMap result) for every prim kind + Ref.
+      padKinds.foreach { case (name, jt, boxed) => Files.writeString(dir.resolve(s"${name}FlatMap.java"), flatMapNode(name, jt, boxed)) }
       prims.foreach { p =>
         Files.writeString(dir.resolve(s"${p.name}Arr.java"), primCore(p))
         Files.writeString(dir.resolve(s"${p.name}Append.java"), primAppend(p))
@@ -291,7 +293,15 @@ object GenCores extends BleepCodegenScript("GenCores") {
         s"case u: ${k.name}Updated => { u.base match { case lf: ${k.name}Arr => { val la = lf.arr; val ui = u.index; ${runFwd("la", "0", "ui")}; ${onO("u.elem")}; ${runFwd("la", "ui + 1", "u.length - ui - 1")} }; case _ => { val mout = materialize${k.name}(u); ${runFwd("mout", "0", "mout.length")} } } }"
       else
         s"case u: ${k.name}Updated => { u.base match { case lf: ${k.name}Arr => { val la = lf.arr; val ui = u.index; ${runBwd("la", "u.length - 1", "u.length - ui - 1")}; ${onO("u.elem")}; ${runBwd("la", "ui - 1", "ui")} }; case _ => { val mout = materialize${k.name}(u); ${runBwd("mout", "mout.length - 1", "mout.length")} } } }"
-    val cases = List(leafCase, oneCase, prependCase, appendCase, concatCase, reverseCase, padCase, updatedCase, sliceCase)
+    // flatMap node: run each inner segment as a leaf window (forward: seg 0..; backward: seg last.. each descending).
+    // `offs(i+1)-offs(i)` is segment i's LOGICAL length (segs(i) may carry slack). A run may short-circuit (onRF's
+    // `if (c.stop) return`), which bails the whole walk — correct across segments.
+    val flatMapCase =
+      if !backward then
+        s"case fm: ${k.name}FlatMap => { val fsegs = fm.segs; val foffs = fm.offs; val fns = fsegs.length; var fsi = 0; while (fsi < fns) { ${runFwd("fsegs(fsi)", "0", "foffs(fsi + 1) - foffs(fsi)")}; fsi += 1 } }"
+      else
+        s"case fm: ${k.name}FlatMap => { val fsegs = fm.segs; val foffs = fm.offs; var fsi = fsegs.length - 1; while (fsi >= 0) { val fsl = foffs(fsi + 1) - foffs(fsi); ${runBwd("fsegs(fsi)", "fsl - 1", "fsl")}; fsi -= 1 } }"
+    val cases = List(leafCase, oneCase, prependCase, appendCase, concatCase, reverseCase, padCase, updatedCase, sliceCase, flatMapCase)
       .map(c => s"        $c")
       .mkString("\n       |") + rngCase
     s"""    var cur: FBase = root
@@ -475,7 +485,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    case rev: ReverseNode => ${k.lc}At(rev.base, rev.base.length - 1 - i)
        |    case pad: ${k.name}Pad => if (i < pad.base.length) $padBase else pad.filler
        |    case u: ${k.name}Updated => if (i == u.index) u.elem else ${if k.name == "Ref" then "u.base.applyBoxed(i)" else s"${k.lc}At(u.base, i)"}
-       |    case s: SliceNode => ${k.lc}At(s.base, s.offset + i)$rngCase
+       |    case s: SliceNode => ${k.lc}At(s.base, s.offset + i)
+       |    case fm: ${k.name}FlatMap => { var lo = 0; var hi = fm.segs.length - 1; while (lo < hi) { val mid = (lo + hi + 1) >>> 1; if (fm.offs(mid) <= i) lo = mid else hi = mid - 1 }; fm.segs(lo)(i - fm.offs(lo)) }$rngCase
        |    case _ => ${k.dflt}
        |  }""".stripMargin
   }
@@ -1530,32 +1541,39 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // One pass: size the output from the FIRST inner (cnt * firstLen) so a uniform flatMap (the common case)
     // never grows or trims — only non-uniform inner sizes fall back to ensureCap growth.
     val flatMapOne = {
-      def stepOf(kb: Kind, src: String): String =
-        s"val inr = f($src); val ln = inr.length; out = ensureCap${kb.name}(out, off + ln); inr match { case lf: ${kb.name}Arr => System.arraycopy(lf.arr, 0, out, off, ln); case _ => flatMapCopyOne${kb.name}(inr, out, off) }; off += ln"
-      def branch(ka: Kind, kb: Kind, src0: String, srcI: String): String = {
-        val est = "{ val e = cnt * l0; if (e < 8) 8 else e }"
-        val alloc = if kb.name == "Ref" then s"new Array[Object]($est)" else s"new Array[${kb.arr}]($est)"
-        val copy0 = s"inr0 match { case lf: ${kb.name}Arr => System.arraycopy(lf.arr, 0, out, 0, l0); case _ => flatMapCopyOne${kb.name}(inr0, out, 0) }"
-        s"{ val inr0 = f($src0); val l0 = inr0.length; out = $alloc; $copy0; off = l0; var i = 1; while (i < cnt) { ${stepOf(kb, srcI)}; i += 1 } }"
+      // flatMap-as-map: build ONE segment (backing array) per source element — ZERO-COPY for leaf inners (store
+      // `lf.arr` directly) — and wrap them in a ${K}FlatMap node instead of flatten-copying into one contiguous
+      // leaf. `offs` = prefix sums = per-segment logical lengths (handles inner slack) + the random-access index.
+      // Non-leaf inners (One/Empty/tree) materialise to an exact array (rare). LEAF source reads its array directly;
+      // TREE source materialises the source ONCE, then the same loop. Canonicalise total 0 -> Empty, 1 -> ${K}One.
+      // ADAPTIVE (l0 = first inner's length): WIDE inners (>= NodeMin) build the ${K}FlatMap node (skip the
+      // flatten copy — measured win: -27% alloc, refs +15-18% throughput). NARROW inners flatten-copy into one
+      // contiguous leaf (the node's segmented traversal of tiny 2-elem segments is a small per-flatMap LOSS that
+      // compounds in chains — measured single -6% / double -17%). `f` is applied to `sa(0)` ONCE and reused as the
+      // first segment/copy in both paths. First-inner width is the sizing proxy (same heuristic as the old
+      // `cnt * l0` output estimate); non-uniform inners still work — node grows nothing, flatten uses ensureCap.
+      def core(ka: Kind, kb: Kind, saExpr: String): String = {
+        val segT = if kb.name == "Ref" then "Array[Object]" else s"Array[${kb.arr}]"
+        val readI = readVal(ka, "sa(i)")
+        val nodePath =
+          s"{ val segs = new Array[$segT](cnt); val offs = new Array[Int](cnt + 1); " +
+            s"inr0 match { case lf: ${kb.name}Arr => segs(0) = lf.arr; case _ => segs(0) = materialize${kb.name}(inr0) }; " +
+            s"var total = l0; var i = 1; while (i < cnt) { offs(i) = total; val inr = f($readI); inr match { case lf: ${kb.name}Arr => segs(i) = lf.arr; total += lf.length; case _ => { val m = materialize${kb.name}(inr); segs(i) = m; total += m.length } }; i += 1 }; " +
+            s"offs(cnt) = total; if (total == 0) Empty.INSTANCE else if (total == 1) { var j = 0; while (offs(j + 1) == offs(j)) j += 1; new ${kb.name}One(segs(j)(0)) } else new ${kb.name}FlatMap(segs, offs) }"
+        val flatPath =
+          s"{ val est = { val e = cnt * l0; if (e < 8) 8 else e }; var out: $segT = new $segT(est); " +
+            s"inr0 match { case lf: ${kb.name}Arr => System.arraycopy(lf.arr, 0, out, 0, l0); case _ => flatMapCopyOne${kb.name}(inr0, out, 0) }; " +
+            s"var off = l0; var i = 1; while (i < cnt) { val inr = f($readI); val ln = inr.length; out = ensureCap${kb.name}(out, off + ln); inr match { case lf: ${kb.name}Arr => System.arraycopy(lf.arr, 0, out, off, ln); case _ => flatMapCopyOne${kb.name}(inr, out, off) }; off += ln; i += 1 }; " +
+            s"if (off == 0) Empty.INSTANCE else if (off == 1) new ${kb.name}One(out(0)) else new ${kb.name}Arr(out, off) }"
+        s"{ val sa = $saExpr; val inr0 = f(${readVal(ka, "sa(0)")}); val l0 = inr0.length; if (l0 >= 8) $nodePath else $flatPath }"
       }
       withErr(
         "summonFrom {\n" + opKinds
           .map { ka =>
             val inner = "summonFrom {\n" + opKinds
               .map { kb =>
-                val outType = if kb.name == "Ref" then "Array[Object]" else s"Array[${kb.arr}]"
-                val leafBranch = s"{ val sa = leaf.arr; ${branch(ka, kb, readVal(ka, "sa(0)"), readVal(ka, "sa(i)"))} }"
-                // hand `out` through with logical length `off` — SKIP the trim copy (slack = out.length - off).
-                val canon =
-                  s"if (off == 0) Empty.INSTANCE else if (off == 1) new ${kb.name}One(out(0)) else new ${kb.name}Arr(out, off)"
-                // LEAF source: direct array, first-inner sizing (unchanged, already optimal).
-                val leafCase = s"{ var out: $outType = null; var off = 0; $leafBranch; $canon }"
-                // TREE source: ONE dfs via foreachLeaf (genuine trees route through Traversers.foreachFwd) feeding a
-                // growable Group; the user lambda f inlines into the Consumer SAM, each inner f(v) appended unboxed.
-                // Replaces the old kindAt(xs, i) per-element random access (O(n*depth) tree-walks + a sealed dispatch
-                // on every element) with a single direction-aware DFS — the same treatment map/filter/fold already got.
-                val nodeCase =
-                  s"{ val buf = new ${kb.name}Group(); foreachLeaf${ka.name}(xs, (v) => { val inr = f(${wrapV(ka)}); val ln = inr.length; buf.arr = ensureCap${kb.name}(buf.arr, buf.size + ln); inr match { case lf: ${kb.name}Arr => System.arraycopy(lf.arr, 0, buf.arr, buf.size, ln); case _ => flatMapCopyOne${kb.name}(inr, buf.arr, buf.size) }; buf.size += ln }); buf.toLeaf }"
+                val leafCase = core(ka, kb, "leaf.arr")
+                val nodeCase = core(ka, kb, s"materialize${ka.name}(xs)")
                 s"          case rb: ${kb.name}Repr[B] => { if (cnt == 0) Empty.INSTANCE else (xs match { case leaf: ${ka.name}Arr => $leafCase; case _ => $nodeCase }) }"
               }
               .mkString("\n") + "\n        }"
@@ -2573,6 +2591,17 @@ object GenCores extends BleepCodegenScript("GenCores") {
     if !backward then s.actRun("wa", "skip", "n")
     else s.actRun("wa", "c - 1 - skip", "n")
     e.close()
+    // flatMap node: flatten to one contiguous leaf, then the SAME windowed leaf run (a window may span segments).
+    e.closeOpen(s"else if (cur instanceof ${K}FlatMap fm)")
+    e.line(s"${K}Arr ffl = fm.flat();")
+    e.line(s"$je[] wa = ffl.arr;")
+    e.line("int c = ffl.length;")
+    e.open("if (skip < c)")
+    e.line("int avail = c - skip;")
+    e.line("int n = take < avail ? take : avail;")
+    if !backward then s.actRun("wa", "skip", "n")
+    else s.actRun("wa", "c - 1 - skip", "n")
+    e.close()
     // one
     e.closeOpen(s"else if (cur instanceof ${K}One one)")
     e.open("if (skip == 0)")
@@ -2794,6 +2823,15 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // leaf
     e.open(s"if (cur instanceof ${K}Arr leaf)")
     spec.runLeaf("leaf.arr", "leaf.length")
+    // flatMap node: run each inner segment as a whole-leaf run. runLeaf emits the per-segment loop in `backward`
+    // direction; only the segment iteration order flips. `foffs[i+1]-foffs[i]` = segment i's LOGICAL length.
+    e.closeOpen(s"else if (cur instanceof ${K}FlatMap fm)")
+    e.line(s"$je[][] fsegs = fm.segs;")
+    e.line("int[] foffs = fm.offs;")
+    if !backward then e.open("for (int fsi = 0; fsi < fsegs.length; fsi++)")
+    else e.open("for (int fsi = fsegs.length - 1; fsi >= 0; fsi--)")
+    spec.runLeaf("fsegs[fsi]", "foffs[fsi + 1] - foffs[fsi]")
+    e.close()
     // one
     e.closeOpen(s"else if (cur instanceof ${K}One one)")
     spec.act("one.elem")
@@ -3740,6 +3778,14 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // leaf: a whole-leaf run starting at array index 0.
     e.open(s"if (cur instanceof ${K}Arr leaf)")
     runScan("leaf.arr", "0", "leaf.length")
+    // flatMap node: scan each inner segment as a run (cum advances across segments; runScan returns on a hit).
+    e.closeOpen(s"else if (cur instanceof ${K}FlatMap fm)")
+    e.line(s"$je[][] fsegs = fm.segs;")
+    e.line("int[] foffs = fm.offs;")
+    if !backward then e.open("for (int fsi = 0; fsi < fsegs.length; fsi++)")
+    else e.open("for (int fsi = fsegs.length - 1; fsi >= 0; fsi--)")
+    runScan("fsegs[fsi]", "0", "foffs[fsi + 1] - foffs[fsi]")
+    e.close()
     // one
     e.closeOpen(s"else if (cur instanceof ${K}One one)")
     oneScan("one.elem")
@@ -3895,7 +3941,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
         _._1 + "Pad"
       ) ++ padKinds.map(
         _._1 + "Updated"
-      ) ++ oneKinds.map(_._1 + "One")).mkString(", ")
+      ) ++ oneKinds.map(_._1 + "One") ++ padKinds.map(_._1 + "FlatMap")).mkString(", ")
     s"""package farray;
        |
        |// GENERATED by GenCores — do not edit.
@@ -4016,7 +4062,12 @@ object GenCores extends BleepCodegenScript("GenCores") {
            |        if (n instanceof ${k}Updated u) { if (i == u.index) return new ${k}One(u.elem); n = u.base; continue; }""".stripMargin
       }
       .mkString("\n")
-    val onePayload = oneAppendPrepend + "\n" + onePadUpdated
+    val oneFlatMap = padKinds
+      .map { case (k, _, _) =>
+        s"        if (n instanceof ${k}FlatMap fm) { int lo = 0, hi = fm.segs.length - 1; while (lo < hi) { int mid = (lo + hi + 1) >>> 1; if (fm.offs[mid] <= i) lo = mid; else hi = mid - 1; } return new ${k}One(fm.segs[lo][i - fm.offs[lo]]); }"
+      }
+      .mkString("\n")
+    val onePayload = oneAppendPrepend + "\n" + onePadUpdated + "\n" + oneFlatMap
     s"""package farray;
        |
        |// GENERATED by GenCores — do not edit. Tree node: O(1) concat, structural ops recurse (Java
@@ -4267,6 +4318,51 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |}
        |""".stripMargin
 
+  /** flatMap result node: an ARRAY OF ARRAYS (one backing array per inner `f(x)`), so flatMap is a plain map
+    * (store each inner's array — zero-copy for leaf inners) instead of a flatten-copy into one contiguous leaf.
+    * `offs` is the prefix-sum of the per-segment LOGICAL lengths: `offs[i]` = start index of segment i,
+    * `offs[nSeg]` = total length, and `offs[i+1]-offs[i]` = segment i's logical length (segs[i] may be LONGER —
+    * slack). It doubles as the O(log nSeg) random-access index. Built only for total length >= 2 (0 -> Empty,
+    * 1 -> ${name}One), so it never has to uphold the size-0/1 leaf canonicalisation.
+    *
+    * Fast forward/backward element traversal (map/fold/foreach/filter/reduce/scan/materialize) has a dedicated
+    * segmented arm in the Scala DFS driver and the Java main-walk driver. Random-access / windowing / hashing use
+    * `flat()` (build the contiguous leaf once) — correct and no worse than the old flatten-copy, just not lazy.
+    */
+  private def flatMapNode(name: String, jt: String, boxed: String): String =
+    val readSeg = if boxed.isEmpty then "segs[lo][i - offs[lo]]" else s"$boxed.valueOf(segs[lo][i - offs[lo]])"
+    s"""package farray;
+       |
+       |// GENERATED by GenCores — do not edit. flatMap node: array-of-arrays (one backing array per inner).
+       |public final class ${name}FlatMap extends FBase {
+       |    public final $jt[][] segs;
+       |    public final int[] offs;
+       |    public ${name}FlatMap($jt[][] segs, int[] offs) { super(offs[offs.length - 1]); this.segs = segs; this.offs = offs; }
+       |
+       |    /** Materialise to one contiguous leaf (length >= 2 here). Back-stop for random-access / windowing ops. */
+       |    public ${name}Arr flat() {
+       |        $jt[] out = new $jt[length];
+       |        int o = 0;
+       |        for (int s = 0; s < segs.length; s++) { int sl = offs[s + 1] - offs[s]; if (sl > 0) System.arraycopy(segs[s], 0, out, o, sl); o += sl; }
+       |        return new ${name}Arr(out, length);
+       |    }
+       |
+       |    @Override public Object applyBoxed(int i) {
+       |        int lo = 0, hi = segs.length - 1;
+       |        while (lo < hi) { int mid = (lo + hi + 1) >>> 1; if (offs[mid] <= i) lo = mid; else hi = mid - 1; }
+       |        return $readSeg;
+       |    }
+       |    @Override public FBase take(int n) { return flat().take(n); }
+       |    @Override public FBase drop(int n) { return flat().drop(n); }
+       |    @Override public FBase slice(int from, int until) { return flat().slice(from, until); }
+       |    @Override public FBase reverse() { return new ReverseNode(this); }
+       |    @Override public FBase init() { return flat().init(); }
+       |    @Override public int hashCode() { return Hashing.hashOf(this); }
+       |    @Override public boolean equals(Object o) { return Concat.elementwiseEquals(this, o); }
+       |    @Override public String toString() { return Concat.render(this); }
+       |}
+       |""".stripMargin
+
   /** The one empty sequence — kind-agnostic (no elements), a single shared instance. */
   private def emptyNode: String =
     s"""package farray;
@@ -4344,6 +4440,12 @@ object GenCores extends BleepCodegenScript("GenCores") {
         s"""       |        if (node instanceof ${name}One o) { hs[pos] = $eh2; return pos + 1; }"""
       }
       .mkString("\n")
+    val flatMapFill = padKinds
+      .map { case (name, _, _) =>
+        val ehE = ehName(name, "fm.segs[s][j]")
+        s"""       |        if (node instanceof ${name}FlatMap fm) { int ns = fm.segs.length; if (rev) { for (int s = ns - 1; s >= 0; s--) { int sl = fm.offs[s + 1] - fm.offs[s]; for (int j = sl - 1; j >= 0; j--) hs[pos++] = $ehE; } } else { for (int s = 0; s < ns; s++) { int sl = fm.offs[s + 1] - fm.offs[s]; for (int j = 0; j < sl; j++) hs[pos++] = $ehE; } } return pos; }"""
+      }
+      .mkString("\n")
     s"""package farray;
        |
        |// GENERATED by GenCores — do not edit. Hash byte-for-byte equal to Scala Seq.hashCode (List/Vector):
@@ -4394,6 +4496,7 @@ $prependFill
 $padFill
 $updatedFill
 $oneFill
+$flatMapFill
        |        if (node instanceof RangeNode rg) { if (rev) for (int i = rg.length - 1; i >= 0; i--) hs[pos++] = rg.start + i * rg.step; else for (int i = 0; i < rg.length; i++) hs[pos++] = rg.start + i * rg.step; return pos; }
        |        for (int i = 0; i < node.length; i++) hs[pos++] = scala.runtime.Statics.anyHash(node.applyBoxed(rev ? node.length - 1 - i : i));
        |        return pos;
