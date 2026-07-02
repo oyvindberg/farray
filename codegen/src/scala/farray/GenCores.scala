@@ -130,6 +130,15 @@ object GenCores extends BleepCodegenScript("GenCores") {
   /** the primitive kinds only — used e.g. for the Ref-element + primitive-accumulator folds. */
   val primKinds: List[Kind] = opKinds.filter(_.isPrim)
 
+  /** WIDENING cross-prim (input, accumulator) pairs the reduce engine covers UNBOXED — the canonical overflow-safe folds (`ints.foldLeft(0L)(_ + _)`, sums into
+    * a Double). Every other cross-prim pair stays on the boxed Ref-acc path (cold). Each pair costs one SAM type + 2 leaf methods + 2 Java traversers, so keep
+    * this list to the pairs real code hits.
+    */
+  val wideningPairs: List[(Kind, Kind)] = {
+    def k(n: String) = opKinds.find(_.name == n).get
+    List((k("Int"), k("Long")), (k("Int"), k("Double")), (k("Long"), k("Double")), (k("Float"), k("Double")))
+  }
+
   /** primitive kinds that have a `scala.math.Numeric` (so sum/product/scan-of-numeric work). Char/Boolean do not. */
   val numericKinds: List[Kind] = opKinds.filter(k => k.isPrim && k.name != "Char" && k.name != "Boolean")
 
@@ -502,9 +511,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val ats = opKinds.map(atDef).mkString("\n")
     // Flatten a (possibly deep) Updated chain to a fresh leaf array, ONCE, so dfs can emit it tight via
     // onRunF instead of walking the chain per element. Recursion applies overrides bottom-up => outer wins.
+    // Bare-leaf fast path: Arrays.copyOf (intrinsic memcpy) instead of the dfs + consumer object.
+    // MUST stay a fresh copy — sortWith/sorted mutate the materialized array in place. copyOf also
+    // trims slack (leaf.length may be < arr.length).
     val mat = opKinds
       .map(k =>
         s"""  def materialize${k.name}(node: FBase): Array[${k.arr}] = node match {
+         |    case leaf: ${k.name}Arr => java.util.Arrays.copyOf(leaf.arr, leaf.length)
          |    case u: ${k.name}Updated => { val out = materialize${k.name}(u.base); out(u.index) = u.elem; out }
          |    case _ => { val out = new Array[${k.arr}](node.length); var o = 0; dfsC${k.name}(node, new ${k.name}Dfs { def onRunF(a: Array[${k.arr}], start: Int, count: Int): Unit = { System.arraycopy(a, start, out, o, count); o += count }; def onRunB(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val e = start - count; while (i > e) { out(o) = a(i); o += 1; i -= 1 } }; def onOne(v: ${k.arr}): Unit = { out(o) = v; o += 1 } }); out }
          |  }""".stripMargin
@@ -525,6 +538,83 @@ object GenCores extends BleepCodegenScript("GenCores") {
          |  }""".stripMargin
       )
       .mkString("\n")
+    // SHARED flatMap drivers, one per OUTPUT kind KB — the flatMap analogue of the reduceLeaf*/mapLeaf*
+    // shared methods. The surface realizes ONE IntToRefFn[FBase] SAM `(i) => f(<unboxed source read>)`
+    // (the user lambda + the unboxed `sa(i)` read spliced into the SAM body) and CALLS this; the whole
+    // adaptive node/flatten loop compiles ONCE here instead of splicing at every call site. That splice
+    // was not just bloat: with the loop inlined into a caller that ALSO calls a virtual FBase method on
+    // the result (`.flatMap(f).take(n)` / `.reverse`), Graal's partial escape analysis of the per-element
+    // inner FArray collapsed catastrophically — MEASURED 35x (FlatMapFilterTakeStr 0.055x of iarray;
+    // ChainDiag fmTake 70 ops/s vs fm 2430 ops/s, alloc.rate.norm 7.2MB/op vs 3.2MB/op). Compiled in its
+    // own method the PEA context never contains the trailing call, so the cliff cannot happen.
+    // ADAPTIVE, KIND-AWARE threshold on the first inner's width (unchanged): node only where it is a
+    // strict throughput win (>=8 ref / >=32 prim, measured crossovers), else flatten-copy into one leaf.
+    val flatMapShared = {
+      val ee = new Emit("  ")
+      opKinds.foreach { kb =>
+        val KB = kb.name
+        val nodeMinWidth = if KB == "Ref" then 8 else 32
+        val segT = if KB == "Ref" then "Array[Object]" else s"Array[${kb.arr}]"
+        // tiny entry (~30 bytecodes, always inlinable) picking node vs flatten; each path is its OWN
+        // single-loop method so the JIT can inline the hot loop (and re-monomorphize `fi.apply`) at
+        // each caller — one big method measured a 33% loss on chained prim flatMaps (FuseProbe eager).
+        ee.open(s"def flatMapShared${KB}(cnt: Int, fi: Traversers.IntToRefFn[FBase]): FBase =")
+        ee.line("val inr0 = fi.apply(0)")
+        ee.line("val l0 = inr0.length")
+        ee.line(s"if (l0 >= $nodeMinWidth) flatMapSegs${KB}(cnt, inr0, l0, fi) else flatMapFlat${KB}(cnt, inr0, l0, fi)")
+        ee.close()
+        // node path: one backing array per inner (zero-copy for leaf inners), offs = prefix sums.
+        ee.open(s"def flatMapSegs${KB}(cnt: Int, inr0: FBase, l0: Int, fi: Traversers.IntToRefFn[FBase]): FBase =")
+        ee.line(s"val segs = new Array[$segT](cnt)")
+        ee.line("val offs = new Array[Int](cnt + 1)")
+        ee.line(s"inr0 match { case lf: ${KB}Arr => segs(0) = lf.arr; case _ => segs(0) = materialize${KB}(inr0) }")
+        ee.line("var total = l0")
+        ee.line("var i = 1")
+        ee.open("while (i < cnt)")
+        ee.line("offs(i) = total")
+        ee.line("val inr = fi.apply(i)")
+        ee.line(
+          s"inr match { case lf: ${KB}Arr => { segs(i) = lf.arr; total += lf.length }; case _ => { val m = materialize${KB}(inr); segs(i) = m; total += m.length } }"
+        )
+        ee.line("i += 1")
+        ee.close()
+        ee.line("offs(cnt) = total")
+        ee.line("if (total == 0) Empty.INSTANCE")
+        ee.line(s"else if (total == 1) { var j = 0; while (offs(j + 1) == offs(j)) j += 1; new ${KB}One(segs(j)(0)) }")
+        ee.line(s"else new ${KB}FlatMap(segs, offs)")
+        ee.close()
+        // flatten path: size from the first inner (uniform flatMap never grows), ensureCap for the rest.
+        // Tiny leaf inners (ln <= 8, the FArray(a, b) case) copy with a manual element loop — the
+        // System.arraycopy stub call costs more than the copy at these lengths; ${KB}One inners write
+        // the element directly (no dfs, no consumer).
+        ee.open(s"def flatMapFlat${KB}(cnt: Int, inr0: FBase, l0: Int, fi: Traversers.IntToRefFn[FBase]): FBase =")
+        ee.line("val est = { val e = cnt * l0; if (e < 8) 8 else e }")
+        ee.line(s"var out: $segT = new $segT(est)")
+        ee.line(
+          s"inr0 match { case lf: ${KB}Arr => System.arraycopy(lf.arr, 0, out, 0, l0); case o: ${KB}One => out(0) = o.elem; case _ => flatMapCopyOne${KB}(inr0, out, 0) }"
+        )
+        ee.line("var off = l0")
+        ee.line("var i = 1")
+        ee.open("while (i < cnt)")
+        ee.line("val inr = fi.apply(i)")
+        ee.line("val ln = inr.length")
+        ee.line(s"out = ensureCap${KB}(out, off + ln)")
+        ee.open("inr match")
+        ee.open(s"case lf: ${KB}Arr =>")
+        ee.line("if (ln <= 8) { val ia = lf.arr; var c = 0; while (c < ln) { out(off + c) = ia(c); c += 1 } }")
+        ee.line("else System.arraycopy(lf.arr, 0, out, off, ln)")
+        ee.close()
+        ee.line(s"case o: ${KB}One => out(off) = o.elem")
+        ee.line(s"case _ => flatMapCopyOne${KB}(inr, out, off)")
+        ee.close()
+        ee.line("off += ln")
+        ee.line("i += 1")
+        ee.close()
+        ee.line(s"if (off == 0) Empty.INSTANCE else if (off == 1) new ${KB}One(out(0)) else new ${KB}Arr(out, off)")
+        ee.close()
+      }
+      ee.result
+    }
     // Natural (run-adaptive) bottom-up mergesort. NON-inline (compiled once, not dumped at every sort site,
     // so multiple sorts in one method can't blow past the JIT method-size limit) with an unboxed primitive
     // comparator (${k.name}Less SAM — no boxing). Detects ascending runs and reverses strictly-descending
@@ -532,10 +622,24 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // ascending detection non-strict, descending strict). Ref sorts use java.util.Arrays.sort instead.
     val sortKinds = opKinds.filter(_.name != "Ref")
     val lessTraits = sortKinds.map(k => s"trait ${k.name}Less { def lt(a: ${k.arr}, b: ${k.arr}): Boolean }").mkString("\n")
+    // n <= 32: in-place binary-free insertion sort — the run-adaptive mergesort's setup (two run-index
+    // arrays + dst buffer + run detection) is pure overhead at tiny n (SortInt sortWith@10 measured
+    // 0.33x of iarray). Stable (strict less; equal elements never swap past each other).
     val sortArr = sortKinds
       .map(k =>
         s"""  def sort${k.name}(a: Array[${k.arr}], n: Int, less: ${k.name}Less): Array[${k.arr}] = {
-         |    if (n < 2) a else {
+         |    if (n < 2) a
+         |    else if (n <= 32) {
+         |      var i = 1
+         |      while (i < n) {
+         |        val v = a(i)
+         |        var j = i - 1
+         |        while (j >= 0 && less.lt(v, a(j))) { a(j + 1) = a(j); j -= 1 }
+         |        a(j + 1) = v
+         |        i += 1
+         |      }
+         |      a
+         |    } else {
          |      var sruns = new Array[Int](n + 1); var nr = 0; var i = 0
          |      while (i < n) {
          |        sruns(nr) = i; nr += 1; var j = i + 1
@@ -830,6 +934,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.open(s"case rz: ${K}Repr[Z] =>")
         zPrimArm()
         ee.close()
+        // WIDENING cross-prim accumulators (Long/Double acc over this input) — the canonical
+        // overflow-safe folds, fully unboxed via the ${K}To${Z}Fold SAM (previously boxed per element).
+        wideningPairs.filter(_._1.name == K).foreach { case (_, zk) =>
+          ee.open(s"case rz: ${zk.name}Repr[Z] =>")
+          ee.line(s"rz.wrap(reduceLeaf${dir}${K}${zk.name}(xs, rz.unwrap(z), (acc, v) => rz.unwrap(${comb("rz.wrap(acc)", wrapV(k))})))")
+          ee.close()
+        }
       } else {
         // Ref input: unboxed prim-accumulator arms (Int/Long/Double) before the generic Ref-acc / boxed arms.
         primKinds.foreach { p =>
@@ -933,6 +1044,21 @@ object GenCores extends BleepCodegenScript("GenCores") {
           emit(s"reduceLeaf${dir}${K}Ref", k, "[Z <: AnyRef]", "Z", s"Traversers.${K}ToRefFold[Z]", s"Traversers.reduce${dir}${K}Ref[Z](xs, z, f)", backward)
         }
       }
+      // WIDENING cross-prim leaf methods (unboxed wider acc over a narrower prim input).
+      wideningPairs.foreach { case (i, zk) =>
+        List(false, true).foreach { backward =>
+          val dir = if backward then "Bwd" else "Fwd"
+          emit(
+            s"reduceLeaf${dir}${i.name}${zk.name}",
+            i,
+            "",
+            zk.arr,
+            s"Traversers.${i.name}To${zk.name}Fold",
+            s"Traversers.reduce${dir}${i.name}${zk.name}(xs, z, f)",
+            backward
+          )
+        }
+      }
       // CROSS-kind: Ref ELEMENT folded into a PRIMITIVE accumulator (sum/count over Strings etc.). The hot
       // Empty/One/leaf path keeps the acc UNBOXED (a primitive `${P}` local + the RefTo${P}Fold SAM). Only the
       // COLD genuine-tree path (`case _`) boxes: it routes through the existing generic Ref-acc Java traverser
@@ -995,6 +1121,20 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line("i += 1")
         ee.close()
         ee.line(s"new ${KO}Arr(out, n)")
+        // SLICE FAST-PATH (same rationale as reduceLeaf's, measured win there): a top-level SliceNode
+        // over a matching leaf (the take/drop/tail result shape) runs a standalone lifted loop instead
+        // of the Traversers walk. SliceNode length >= 2 by construction, so no One canonicalisation.
+        ee.closeOpen(s"case s: SliceNode if s.base.isInstanceOf[${KI}Arr] =>")
+        ee.line(s"val a = s.base.asInstanceOf[${KI}Arr].arr")
+        ee.line("val so = s.offset")
+        ee.line("val n = s.length")
+        ee.line(s"val out = $outAlloc")
+        ee.line("var i = 0")
+        ee.open("while (i < n)")
+        ee.line(writeOut.replace("_RD_", "a(so + i)"))
+        ee.line("i += 1")
+        ee.close()
+        ee.line(s"new ${KO}Arr(out, n)")
         ee.closeOpen("case _ =>")
         ee.line("val n = xs.length")
         ee.line(s"val out = $outAlloc")
@@ -1017,6 +1157,24 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // (k <= n; NO trim copy — the leaf carries slack `n - k` and iterates to `length`). The
     // ${I}Pred SAM closes over the user predicate (does the A wrap), so the leaf method is op-agnostic per input
     // kind. NO inlined leaf loop in the inline surface — the surface only realizes the predicate and CALLS this.
+    // Canonicalise a filtered output buffer of capacity `n` filled to `o`: Empty/One for 0/1, else the
+    // buffer with logical length `o` (slack — skips the trim copy, measured throughput choice) UNLESS
+    // the kept fraction is small: o < n/4 trims via copyOf, capping retained memory at 4x the result
+    // (a filter keeping 2 of 100k used to pin the full 400KB buffer for the result's lifetime). The
+    // trim copy costs < n/4 element moves against the n-element scan just performed.
+    val trimLeafMethods = {
+      val ee = new Emit("  ")
+      opKinds.foreach { k =>
+        val K = k.name
+        ee.open(s"def trimLeaf${K}(out: Array[${k.arr}], o: Int, n: Int): FBase =")
+        ee.line("if (o == 0) Empty.INSTANCE")
+        ee.line(s"else if (o == 1) new ${K}One(out(0))")
+        ee.line(s"else if (o < (n >>> 2)) new ${K}Arr(java.util.Arrays.copyOf(out, o), o)")
+        ee.line(s"else new ${K}Arr(out, o)")
+        ee.close()
+      }
+      ee.result
+    }
     val filterLeafMethods = {
       val ee = new Emit("  ")
       opKinds.foreach { k =>
@@ -1035,19 +1193,51 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line("var o = 0")
         ee.open("while (i < n)")
         ee.line("val e = a(i)")
-        ee.line("if (p.apply(e)) { out(o) = e; o += 1 }")
+        if k.isPrim then {
+          // BRANCHLESS keep (prims only): unconditional store + conditional cursor bump. Removes the
+          // mispredict on unpredictable predicates AND lets the loop vectorize - MEASURED @100k Int:
+          // random 3.3k -> 21.5k ops/s, predictable 3.3k-ish branchy -> 29.8k. Ref keeps the branchy
+          // form: an unconditional ref store pays a GC write barrier per REJECTED element too, and
+          // measured 10-38% slower on the (predictable) Str suite.
+          ee.line("out(o) = e")
+          ee.line("o += (if (p.apply(e)) 1 else 0)")
+        } else {
+          ee.line("if (p.apply(e)) { out(o) = e; o += 1 }")
+        }
         ee.line("i += 1")
         ee.close()
         // o <= n. o == n -> nothing filtered, reuse xs (reference identity). Else hand `out` through with logical
         // length `o` — SKIP the trim copy (slack = n - o); leaves iterate to `length`.
-        ee.line(s"if (o == n) xs else if (o == 0) Empty.INSTANCE else if (o == 1) new ${K}One(out(0)) else new ${K}Arr(out, o)")
+        ee.line(s"if (o == n) xs else trimLeaf${K}(out, o, n)")
+        // SLICE FAST-PATH: same standalone lifted loop over the leaf window (take/drop results).
+        ee.closeOpen(s"case s: SliceNode if s.base.isInstanceOf[${K}Arr] =>")
+        ee.line(s"val a = s.base.asInstanceOf[${K}Arr].arr")
+        ee.line("val so = s.offset")
+        ee.line("val n = s.length")
+        ee.line(s"val out = new Array[${k.arr}](n)")
+        ee.line("var i = 0")
+        ee.line("var o = 0")
+        ee.open("while (i < n)")
+        ee.line("val e = a(so + i)")
+        if k.isPrim then {
+          // BRANCHLESS keep (prims only): unconditional store + conditional cursor bump. Removes the
+          // mispredict on unpredictable predicates AND lets the loop vectorize - MEASURED @100k Int:
+          // random 3.3k -> 21.5k ops/s, predictable 3.3k-ish branchy -> 29.8k. Ref keeps the branchy
+          // form: an unconditional ref store pays a GC write barrier per REJECTED element too, and
+          // measured 10-38% slower on the (predictable) Str suite.
+          ee.line("out(o) = e")
+          ee.line("o += (if (p.apply(e)) 1 else 0)")
+        } else {
+          ee.line("if (p.apply(e)) { out(o) = e; o += 1 }")
+        }
+        ee.line("i += 1")
+        ee.close()
+        ee.line(s"if (o == n) xs else trimLeaf${K}(out, o, n)")
         ee.closeOpen("case _ =>")
         ee.line("val n = xs.length")
         ee.line(s"val out = new Array[${k.arr}](n)")
         ee.line(s"val o = Traversers.buildFiltered${K}(xs, out, 0, p)")
-        ee.line(
-          s"if (o == 0) Empty.INSTANCE else if (o == 1) new ${K}One(out(0)) else new ${K}Arr(out, o)"
-        )
+        ee.line(s"trimLeaf${K}(out, o, n)")
         ee.close()
         ee.close() // xs match
         ee.close() // def
@@ -1247,13 +1437,12 @@ object GenCores extends BleepCodegenScript("GenCores") {
       val ee = new Emit("  ")
       opKinds.foreach { k =>
         val K = k.name
-        // canonicalise ONE output buffer `b` filled to length `c` (c <= b.length) into a leaf — SKIP the trim
-        // copy: hand `b` through with logical length `c` (slack = b.length - c); leaves iterate to `length`.
-        def trim(b: String, c: String): String =
-          s"if ($c == 0) Empty.INSTANCE else if ($c == 1) new ${K}One($b(0)) else new ${K}Arr($b, $c)"
+        // canonicalise ONE output buffer `b` filled to length `c` via the shared trimLeaf (slack kept
+        // unless the kept fraction is < 1/4 — see trimLeafMethods).
+        def trim(b: String, c: String): String = s"trimLeaf${K}($b, $c, n)"
         ee.open(s"def partitionLeaf${K}(xs: FBase, p: Traversers.${K}Pred): scala.Tuple2[FBase, FBase] =")
         ee.open("xs match")
-        ee.line("case e: Empty => new scala.Tuple2(Empty.INSTANCE, Empty.INSTANCE)")
+        ee.line("case e: Empty => emptyPair")
         ee.line(s"case o: ${K}One => if (p.apply(o.elem)) new scala.Tuple2(xs, Empty.INSTANCE) else new scala.Tuple2(Empty.INSTANCE, xs)")
         ee.open(s"case leaf: ${K}Arr =>")
         ee.line("val a = leaf.arr")
@@ -1307,6 +1496,16 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line("f.apply(a(i))")
         ee.line("i += 1")
         ee.close()
+        // SLICE FAST-PATH: standalone lifted loop over the leaf window (take/drop results).
+        ee.closeOpen(s"case s: SliceNode if s.base.isInstanceOf[${K}Arr] =>")
+        ee.line(s"val a = s.base.asInstanceOf[${K}Arr].arr")
+        ee.line("val so = s.offset")
+        ee.line("val n = s.length")
+        ee.line("var i = 0")
+        ee.open("while (i < n)")
+        ee.line("f.apply(a(so + i))")
+        ee.line("i += 1")
+        ee.close()
         ee.closeOpen("case _ =>")
         ee.line(s"Traversers.foreachFwd${K}(xs, f)")
         ee.close()
@@ -1356,18 +1555,26 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line("val a = leaf.arr")
         ee.line("val n = leaf.length")
         ee.line(s"val out = new Array[$outArr](n + 1)")
+        // The running acc is a REGISTER local, not a reload of out(i): scan is a serial dependency
+        // chain, so `acc = f(out(i), a(i))` pays a store->load forward (~4-5 cycles) per element
+        // where the register form pays the op alone (ScanIntBenchmark measured 0.22-0.40x of iarray
+        // with the out(i) reload).
         if !backward then {
           ee.line(s"out(0) = ${store("z")}")
+          ee.line(s"var acc: $zT = z")
           ee.line("var i = 0")
           ee.open("while (i < n)")
-          ee.line(s"out(i + 1) = ${store(s"f.apply(${readPrev("i")}, a(i))")}")
+          ee.line("acc = f.apply(acc, a(i))")
+          ee.line(s"out(i + 1) = ${store("acc")}")
           ee.line("i += 1")
           ee.close()
         } else {
           ee.line(s"out(n) = ${store("z")}")
+          ee.line(s"var acc: $zT = z")
           ee.line("var i = n - 1")
           ee.open("while (i >= 0)")
-          ee.line(s"out(i) = ${store(s"f.apply(${readPrev("i + 1")}, a(i))")}")
+          ee.line("acc = f.apply(acc, a(i))")
+          ee.line(s"out(i) = ${store("acc")}")
           ee.line("i -= 1")
           ee.close()
         }
@@ -1415,6 +1622,14 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line("var i = if (from < 0) 0 else from")
         ee.line("while (i < n && !p.apply(a(i))) i += 1")
         ee.line("i")
+        // SLICE FAST-PATH: the same clamped empty-body scan over the leaf window; returns LOGICAL index.
+        ee.closeOpen(s"case s: SliceNode if s.base.isInstanceOf[${K}Arr] =>")
+        ee.line(s"val a = s.base.asInstanceOf[${K}Arr].arr")
+        ee.line("val so = s.offset")
+        ee.line("val n = s.length")
+        ee.line("var i = if (from < 0) 0 else from")
+        ee.line("while (i < n && !p.apply(a(so + i))) i += 1")
+        ee.line("i")
         ee.closeOpen("case _ =>")
         ee.line(s"val r = Traversers.scFwd${K}(xs, from, 0, p)")
         ee.line("if (r >= 0) r else ~r - 1")
@@ -1428,6 +1643,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line("val a = leaf.arr")
         ee.line("var i = if (end > leaf.length - 1) leaf.length - 1 else end")
         ee.line("while (i >= 0 && !p.apply(a(i))) i -= 1")
+        ee.line("if (i < 0) -1 else i")
+        // SLICE FAST-PATH: descending clamped scan over the leaf window; returns LOGICAL index.
+        ee.closeOpen(s"case s: SliceNode if s.base.isInstanceOf[${K}Arr] =>")
+        ee.line(s"val a = s.base.asInstanceOf[${K}Arr].arr")
+        ee.line("val so = s.offset")
+        ee.line("var i = if (end > s.length - 1) s.length - 1 else end")
+        ee.line("while (i >= 0 && !p.apply(a(so + i))) i -= 1")
         ee.line("if (i < 0) -1 else i")
         ee.closeOpen("case _ =>")
         ee.line(s"val r = Traversers.scBwd${K}(xs, end, xs.length - 1, p)")
@@ -1503,21 +1725,49 @@ object GenCores extends BleepCodegenScript("GenCores") {
       val narrow = (e: String) => K match { case "Short" => s"($e).toShort"; case "Byte" => s"($e).toByte"; case _ => e }
       s"reduceLeafFwd${K}${K}(xs, $seed, (acc, v) => ${narrow(combine("acc", "v"))}).asInstanceOf[B]"
     }
-    // count: Reduce whose combine folds a predicate into an Int. Only the Int input kind has a usable unboxed
-    // self-kind shared leaf method (reduceLeafFwdIntInt); other prim inputs (Long/Double) and Ref would need
-    // an I->Int fold the engine doesn't emit (cross-prim), so they stay on the old lowered walk.
-    def countSurface(k: Kind): String = {
-      if k.name != "Int" then {
-        // cold cross-kind count (Long/Double/Ref input would need an I->Int fold the engine doesn't emit):
-        // route through the SAME generic Ref-acc shared leaf method with the Int acc BOXED to Integer —
-        // NO inlined leaf loop. These cases are cold/rare, so the boxing is fine.
-        return s"reduceLeafFwd${k.name}Ref[java.lang.Integer](xs, java.lang.Integer.valueOf(0), (acc, v) => java.lang.Integer.valueOf(if (p(${wrapV(k)})) acc.intValue + 1 else acc.intValue)).intValue"
-      }
-      // realize the unboxed IntToIntFold SAM (combine folds the predicate into an Int acc) and CALL the
-      // shared leaf method — NO inlined leaf loop.
-      "reduceLeafFwdIntInt(xs, 0, (acc, v) => if (p(r.wrap(v))) acc + 1 else acc)"
+    // count: Reduce whose combine folds a predicate into an unboxed accumulator. Int input uses the
+    // self-kind fold directly; Ref input uses the existing RefToIntFold (previously it BOXED an Integer
+    // per matching element past the valueOf cache); Long/Double inputs count in a SELF-KIND accumulator
+    // (a long/double count is exact far past any array length) and narrow at the end — zero new
+    // machinery. Remaining prim kinds (Float/Short/Byte/Char/Boolean) keep the boxed Ref-acc path
+    // (a float count loses exactness past 2^24, and the others are cold).
+    def countSurface(k: Kind): String = k.name match {
+      case "Int" =>
+        "reduceLeafFwdIntInt(xs, 0, (acc, v) => if (p(r.wrap(v))) acc + 1 else acc)"
+      case "Ref" =>
+        s"reduceLeafFwdRefInt(xs, 0, (acc, v) => if (p(${wrapV(k)})) acc + 1 else acc)"
+      case "Long" =>
+        "reduceLeafFwdLongLong(xs, 0L, (acc, v) => if (p(r.wrap(v))) acc + 1L else acc).toInt"
+      case "Double" =>
+        "(reduceLeafFwdDoubleDouble(xs, 0.0, (acc, v) => if (p(r.wrap(v))) acc + 1.0 else acc)).toInt"
+      case _ =>
+        s"reduceLeafFwd${k.name}Ref[java.lang.Integer](xs, java.lang.Integer.valueOf(0), (acc, v) => java.lang.Integer.valueOf(if (p(${wrapV(k)})) acc.intValue + 1 else acc.intValue)).intValue"
     }
     val countV = dispatchA(k => countSurface(k))
+    // min/max: the generic form folds with ord.gt/ord.lt, whose erased (Object, Object) signature boxes
+    // BOTH arguments per element and leans on EA to delete them. For the standard orderings on a
+    // primitive FArray, fold with a RAW compare instead (Double/Float via j.l.Double.compare — exactly
+    // TotalOrdering's semantics incl. NaN, which the default implicit extends; a raw `>` would drop NaN).
+    def maxMinSurface(k: Kind, isMax: Boolean): String = {
+      val ordOp = if isMax then "gt" else "lt"
+      val generic = s"foldLeftImpl[A, Z](xs, applyAtImpl[A](xs, 0))((best, a) => if (ord.$ordOp(a, best)) a else best).asInstanceOf[A]"
+      val nat: Option[(String, String)] = k.name match {
+        case "Int" | "Long" | "Short" | "Byte" | "Char" =>
+          Some((s"ord.asInstanceOf[AnyRef] eq scala.math.Ordering.${k.name}", if isMax then "v > acc" else "v < acc"))
+        case "Double" =>
+          Some(("ord.isInstanceOf[scala.math.Ordering.Double.TotalOrdering]", s"java.lang.Double.compare(v, acc) ${if isMax then ">" else "<"} 0"))
+        case "Float" =>
+          Some(("ord.isInstanceOf[scala.math.Ordering.Float.TotalOrdering]", s"java.lang.Float.compare(v, acc) ${if isMax then ">" else "<"} 0"))
+        case _ => None
+      }
+      nat match {
+        case Some((cond, cmp)) =>
+          s"if ($cond) r.wrap(reduceLeafFwd${k.name}${k.name}(xs, r.unwrap(applyAtImpl[A](xs, 0)), (acc, v) => if ($cmp) v else acc)) else $generic"
+        case None => generic
+      }
+    }
+    val maxV = dispatchA(k => maxMinSurface(k, isMax = true))
+    val minV = dispatchA(k => maxMinSurface(k, isMax = false))
     val sumV = dispatchA(k => sumProductSurface(k, (acc, e) => s"$acc + $e", k.dflt, isProduct = false))
     val productV = {
       def one(k: Kind) = k.name match { case "Long" => "1L"; case "Double" => "1.0"; case "Float" => "1.0f"; case _ => "1" }
@@ -1730,45 +1980,20 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // One pass: size the output from the FIRST inner (cnt * firstLen) so a uniform flatMap (the common case)
     // never grows or trims — only non-uniform inner sizes fall back to ensureCap growth.
     val flatMapOne = {
-      // flatMap-as-map: build ONE segment (backing array) per source element — ZERO-COPY for leaf inners (store
-      // `lf.arr` directly) — and wrap them in a ${K}FlatMap node instead of flatten-copying into one contiguous
-      // leaf. `offs` = prefix sums = per-segment logical lengths (handles inner slack) + the random-access index.
-      // Non-leaf inners (One/Empty/tree) materialise to an exact array (rare). LEAF source reads its array directly;
-      // TREE source materialises the source ONCE, then the same loop. Canonicalise total 0 -> Empty, 1 -> ${K}One.
-      // ADAPTIVE, KIND-AWARE threshold (l0 = first inner's length): build the ${K}FlatMap node only where it is a
-      // STRICT win on BOTH throughput and allocation; else flatten-copy into one contiguous leaf (old path). The
-      // node's segmented traversal trades cache locality for less allocation — measured (flatMap(W).map.fold, node
-      // vs flatten): PRIMITIVES cross over at W>=32 (W16 0.94x thrpt / W32 1.04x / W64 1.04x — the between-segment
-      // cache miss amortises over W), REFS cross over at W>=8 (W4 0.99x / W8 1.03x / W16 1.03x — ref traversal isn't
-      // locality/vectorisation-bound the same way, and the copy avoided is costlier). Alloc is a win at ALL widths
-      // (~0.68-0.79x) but we gate on THROUGHPUT so the node never regresses. Narrow inners keep the old flatten path
-      // (avoids the tiny-segment per-flatMap loss that also compounds in chains). `f` is applied to `sa(0)` ONCE and
-      // reused as the first segment/copy. First-inner width is the sizing proxy (same as the old `cnt*l0` estimate);
-      // non-uniform inners still work — node grows nothing, flatten uses ensureCap.
-      def core(ka: Kind, kb: Kind, saExpr: String): String = {
-        val nodeMinWidth = if kb.name == "Ref" then 8 else 32
-        val segT = if kb.name == "Ref" then "Array[Object]" else s"Array[${kb.arr}]"
-        val readI = readVal(ka, "sa(i)")
-        val nodePath =
-          s"{ val segs = new Array[$segT](cnt); val offs = new Array[Int](cnt + 1); " +
-            s"inr0 match { case lf: ${kb.name}Arr => segs(0) = lf.arr; case _ => segs(0) = materialize${kb.name}(inr0) }; " +
-            s"var total = l0; var i = 1; while (i < cnt) { offs(i) = total; val inr = f($readI); inr match { case lf: ${kb.name}Arr => segs(i) = lf.arr; total += lf.length; case _ => { val m = materialize${kb.name}(inr); segs(i) = m; total += m.length } }; i += 1 }; " +
-            s"offs(cnt) = total; if (total == 0) Empty.INSTANCE else if (total == 1) { var j = 0; while (offs(j + 1) == offs(j)) j += 1; new ${kb.name}One(segs(j)(0)) } else new ${kb.name}FlatMap(segs, offs) }"
-        val flatPath =
-          s"{ val est = { val e = cnt * l0; if (e < 8) 8 else e }; var out: $segT = new $segT(est); " +
-            s"inr0 match { case lf: ${kb.name}Arr => System.arraycopy(lf.arr, 0, out, 0, l0); case _ => flatMapCopyOne${kb.name}(inr0, out, 0) }; " +
-            s"var off = l0; var i = 1; while (i < cnt) { val inr = f($readI); val ln = inr.length; out = ensureCap${kb.name}(out, off + ln); inr match { case lf: ${kb.name}Arr => System.arraycopy(lf.arr, 0, out, off, ln); case _ => flatMapCopyOne${kb.name}(inr, out, off) }; off += ln; i += 1 }; " +
-            s"if (off == 0) Empty.INSTANCE else if (off == 1) new ${kb.name}One(out(0)) else new ${kb.name}Arr(out, off) }"
-        s"{ val sa = $saExpr; val inr0 = f(${readVal(ka, "sa(0)")}); val l0 = inr0.length; if (l0 >= $nodeMinWidth) $nodePath else $flatPath }"
-      }
+      // HYBRID flatMap surface (design §5, same shape as map/filter/reduce): the surface only extracts the
+      // source backing array (leaf array directly, or materialize ONCE), realizes ONE IntToRefFn[FBase] SAM whose body is
+      // the unboxed source read + the user's inline `f`, and CALLS the shared flatMapShared${KB} driver —
+      // NO inlined node/flatten loop at the call site. (The old spliced loop measured a 35x PEA collapse
+      // when the caller also invoked a virtual FBase method on the result — see flatMapShared's comment.)
       withErr(
         "summonFrom {\n" + opKinds
           .map { ka =>
             val inner = "summonFrom {\n" + opKinds
               .map { kb =>
-                val leafCase = core(ka, kb, "leaf.arr")
-                val nodeCase = core(ka, kb, s"materialize${ka.name}(xs)")
-                s"          case rb: ${kb.name}Repr[B] => { if (cnt == 0) Empty.INSTANCE else (xs match { case leaf: ${ka.name}Arr => $leafCase; case _ => $nodeCase }) }"
+                val body =
+                  s"{ val sa = (xs match { case leaf: ${ka.name}Arr => leaf.arr; case _ => materialize${ka.name}(xs) }); " +
+                    s"flatMapShared${kb.name}(cnt, (i) => f(${readVal(ka, "sa(i)")})) }"
+                s"          case rb: ${kb.name}Repr[B] => { if (cnt == 0) Empty.INSTANCE else $body }"
               }
               .mkString("\n") + "\n        }"
             s"      case r: ${ka.name}Repr[A] => $inner"
@@ -1889,27 +2114,62 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // sorted has an Ordering, which IS a Comparator -> for Ref hand it straight to Arrays.sort (1 compare per
     // comparison; the lt-comparator would do up to 2). Primitives keep the unboxed natural mergesort.
     // natural primitive orderings -> hand the materialised array straight to java.util.Arrays.sort
-    // (dual-pivot, no boxing). Stability is irrelevant for primitives. Double is excluded: the implicit
-    // Ordering[Double] is IEEE (NaN handling differs from Arrays.sort's total order), so it keeps the mergesort.
-    val sortedNat = Map("Int" -> "scala.math.Ordering.Int", "Long" -> "scala.math.Ordering.Long")
+    // (dual-pivot, no boxing). Stability is irrelevant for primitives. Double/Float route on TotalOrdering
+    // (compare == java.lang.Double.compare == Arrays.sort's total order; the DEFAULT implicit
+    // DeprecatedDoubleOrdering extends it) — only a genuine IeeeOrdering keeps the mergesort.
+    val sortedNatCond = Map(
+      "Int" -> "ord.asInstanceOf[AnyRef] eq scala.math.Ordering.Int",
+      "Long" -> "ord.asInstanceOf[AnyRef] eq scala.math.Ordering.Long",
+      "Short" -> "ord.asInstanceOf[AnyRef] eq scala.math.Ordering.Short",
+      "Byte" -> "ord.asInstanceOf[AnyRef] eq scala.math.Ordering.Byte",
+      "Char" -> "ord.asInstanceOf[AnyRef] eq scala.math.Ordering.Char",
+      "Double" -> "ord.isInstanceOf[scala.math.Ordering.Double.TotalOrdering]",
+      "Float" -> "ord.isInstanceOf[scala.math.Ordering.Float.TotalOrdering]"
+    )
     val sortedV = dispatchA(k =>
       if k.name == "Ref" then
         s"{ val vals = materializeRef(xs); val n = vals.length; if (n < 2) xs else { java.util.Arrays.sort(vals, ord.asInstanceOf[java.util.Comparator[Object]]); new RefArr(vals, n) } }"
       else {
         val merge = s"new ${k.name}Arr(sort${k.name}(vals, n, (x, y) => ord.lt(${readVal(k, "x")}, ${readVal(k, "y")})), n)"
-        val body = sortedNat.get(k.name) match {
-          case Some(nat) => s"if (ord.asInstanceOf[AnyRef] eq $nat) { java.util.Arrays.sort(vals); new ${k.name}Arr(vals, n) } else $merge"
-          case None      => merge
+        val body = sortedNatCond.get(k.name) match {
+          case Some(cond) => s"if ($cond) { java.util.Arrays.sort(vals); new ${k.name}Arr(vals, n) } else $merge"
+          case None       => merge
         }
         s"{ val vals = materialize${k.name}(xs); val n = vals.length; if (n < 2) xs else $body }"
       }
     )
-    // sortBy: keys differ from values -> sort an UNBOXED int[] index by the materialized keys, then permute.
-    // (Java's Arrays.sort can't sort an int[] by a comparator without boxing to Integer[], which is slower
-    // than this — Java TimSort only helps the direct Ref element sorts above, where the array IS Object[].)
-    val sortByV = dispatchA(k =>
-      s"{ val vals = materialize${k.name}(xs); val n = vals.length; if (n < 2) xs else { val keys = mapImpl[A, B](xs)(f); val idx = new Array[Int](n); var t = 0; while (t < n) { idx(t) = t; t += 1 }; val sidx = sortInt(idx, n, (ii, jj) => ord.lt(applyAtImpl[B](keys, ii), applyAtImpl[B](keys, jj))); val out = ${allocPlain(k)}; var p = 0; while (p < n) { out(p) = vals(sidx(p)); p += 1 }; new ${k.name}Arr(out, n) } }"
-    )
+    // sortBy: keys are computed ONCE into a RAW kind-B array (no FBase intermediate, no per-compare
+    // applyAtImpl node-match — the old form paid a node dispatch + Ordering box per comparison, measured
+    // 0.19-0.30x of iarray). Natural-ordering fast paths:
+    //   - Int keys: pack (key << 32 | index) into a long[] and Arrays.sort(long[]) — NO comparator at
+    //     all; signed long order == signed key order, and the ascending index in the low bits makes it
+    //     STABLE for equal keys.
+    //   - Long keys: unboxed index-sort comparator karr(ii) < karr(jj).
+    //   - Double keys: any TotalOrdering (incl. the default implicit DeprecatedDoubleOrdering) compares
+    //     exactly like java.lang.Double.compare — unboxed comparator on that.
+    // Everything else: the stable index-sort with ord.lt over the raw key array.
+    def sortByBody(ka: Kind, kb: Kind): String = {
+      val karrAlloc = if kb.name == "Ref" then "new Array[Object](n)" else s"new Array[${kb.arr}](n)"
+      val keyAsB = (e: String) => if kb.name == "Ref" then s"($e).asInstanceOf[B]" else s"rb.wrap($e)"
+      val fillKeys =
+        s"val karr = $karrAlloc; var q = 0; while (q < n) { karr(q) = ${wr(kb, s"rb.unwrap(f(${readVal(ka, "vals(q)")}))")}; q += 1 }"
+      def permute(sidx: String): String =
+        s"val out = ${allocPlain(ka)}; var p = 0; while (p < n) { out(p) = vals($sidx); p += 1 }; new ${ka.name}Arr(out, n)"
+      def idxSort(cmp: String): String =
+        s"{ val idx = new Array[Int](n); var t = 0; while (t < n) { idx(t) = t; t += 1 }; val sidx = sortInt(idx, n, (ii, jj) => $cmp); ${permute("sidx(p)")} }"
+      val generic = idxSort(s"ord.lt(${keyAsB("karr(ii)")}, ${keyAsB("karr(jj)")})")
+      val fast = kb.name match {
+        case "Int" =>
+          s"if (ord.asInstanceOf[AnyRef] eq scala.math.Ordering.Int) { val packed = new Array[Long](n); var t = 0; while (t < n) { packed(t) = (karr(t).toLong << 32) | (t.toLong & 0xffffffffL); t += 1 }; java.util.Arrays.sort(packed); ${permute("(packed(p) & 0xffffffffL).toInt")} } else $generic"
+        case "Long" =>
+          s"if (ord.asInstanceOf[AnyRef] eq scala.math.Ordering.Long) ${idxSort("karr(ii) < karr(jj)")} else $generic"
+        case "Double" =>
+          s"if (ord.isInstanceOf[scala.math.Ordering.Double.TotalOrdering]) ${idxSort("java.lang.Double.compare(karr(ii), karr(jj)) < 0")} else $generic"
+        case _ => generic
+      }
+      s"{ val vals = materialize${ka.name}(xs); val n = vals.length; if (n < 2) xs else { $fillKeys; $fast } }"
+    }
+    val sortByV = dispatchA(ka => dispatchBmap(kb => sortByBody(ka, kb)))
     // groupBy/groupMap: ONE unboxed pass. Each element's key picks (or creates) a per-group `${Kind}Group`
     // buffer in a HashMap (no encounter-order promise — matches List/Vector groupBy, which use HashMap); the
     // element (groupBy) or f(element) (groupMap) is unwrapped and appended directly into that group's primitive
@@ -1930,8 +2190,15 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val combinationsV = dispatchA(k => s"{ if (k < 0 || k > xs.length) Iterator.empty else ${k.name}CombPerm.combinations(materialize${k.name}(xs), k) }")
     val permutationsV = dispatchA(k => s"${k.name}CombPerm.permutations(materialize${k.name}(xs))")
     val emptyB = dispatchA(k => s"Empty.INSTANCE")
+    // Ref tabulate allocates a TYPED backing array when a ClassTag[A] is summonable at the concrete
+    // call site (String[] instead of Object[]): toArray[A] then takes the unchecked arraycopy path
+    // (Object[] -> String[] pays a per-element store check — NewOpsStr toArray measured 0.15x of
+    // iarray on tabulate-built input). The store into the typed array is an exact-class check (cheap).
     val tabulate = dispatchA(k =>
-      s"if (n <= 0) Empty.INSTANCE else if (n == 1) new ${k.name}One(${wr(k, "r.unwrap(f(0))")}) else { val out = ${alloc(k, "r")}; var i = 0; while (i < n) { out(i) = ${wr(k, "r.unwrap(f(i))")}; i += 1 }; new ${k.name}Arr(out, n) }"
+      if k.name == "Ref" then
+        s"if (n <= 0) Empty.INSTANCE else if (n == 1) new RefOne(${wr(k, "r.unwrap(f(0))")}) else { val out = summonFrom { case ct: scala.reflect.ClassTag[A] => ct.newArray(n).asInstanceOf[Array[Object]]; case _ => new Array[Object](n) }; var i = 0; while (i < n) { out(i) = ${wr(k, "r.unwrap(f(i))")}; i += 1 }; new RefArr(out, n) }"
+      else
+        s"if (n <= 0) Empty.INSTANCE else if (n == 1) new ${k.name}One(${wr(k, "r.unwrap(f(0))")}) else { val out = ${alloc(k, "r")}; var i = 0; while (i < n) { out(i) = ${wr(k, "r.unwrap(f(i))")}; i += 1 }; new ${k.name}Arr(out, n) }"
     )
     val applyVar = dispatchA(k =>
       // iterate, never as(i): indexed access on a LinearSeq (List) is O(i) -> O(n^2). Iterator is O(1)/elem.
@@ -2363,13 +2630,19 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |// is supplied element-by-element by the inlined `xs.foreach` at the FArray call site.
        |trait GroupMapAcc[K, B] { def add(key: K, v: B): Unit; def result: Map[K, FBase] }
        |object FArrayOps {
+       |  // cached tuples for the empty results — partition/unzip on an empty FArray allocated a fresh
+       |  // Tuple2(Empty, Empty) per call (SlicingInt partition@0 measured 0.18x of List on that alone).
+       |  val emptyPair: scala.Tuple2[FBase, FBase] = new scala.Tuple2(Empty.INSTANCE, Empty.INSTANCE)
+       |  val emptyTriple: scala.Tuple3[FBase, FBase, FBase] = new scala.Tuple3(Empty.INSTANCE, Empty.INSTANCE, Empty.INSTANCE)
        |$dfsC
        |$ats
        |$mat
        |$flatMapCopyOne
+       |$flatMapShared
        |$sortArr
        |$reduceLeafMethods
        |$mapLeafMethods
+       |$trimLeafMethods
        |$filterLeafMethods
        |$distinctLeafMethods
        |$partitionLeafMethods
@@ -2421,6 +2694,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def foldRightImpl[A, Z](xs: FBase, z: Z)(inline op: (A, Z) => Z): Z = $foldRightV
        |  inline def iteratorImpl[A](xs: FBase): Iterator[A] = ($iteratorV).asInstanceOf[Iterator[A]]
        |  inline def countImpl[A](xs: FBase)(inline p: A => Boolean): Int = $countV
+       |  inline def maxImpl[A, Z >: A](xs: FBase)(using ord: Ordering[Z]): A = $maxV
+       |  inline def minImpl[A, Z >: A](xs: FBase)(using ord: Ordering[Z]): A = $minV
        |  inline def foreachImpl[A](xs: FBase)(inline f: A => Unit): Unit = $foreach
        |  inline def foreachWhileImpl[A](xs: FBase)(inline f: A => Boolean): Unit = $foreachWhileV
        |  inline def existsImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = { val length = xs.length; $existsV }
@@ -2439,13 +2714,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def filterNotImpl[A](xs: FBase)(inline p: A => Boolean): FBase = ${dispatchA(k =>
         s"filterLeaf${k.name}(xs, ${predSAM(k, s"!p(${wrapV(k)})")})"
       )}
-       |  inline def partitionImpl[A](xs: FBase)(inline p: A => Boolean): scala.Tuple2[FBase, FBase] = if (xs.length == 0) new scala.Tuple2(Empty.INSTANCE, Empty.INSTANCE) else $partition
+       |  inline def partitionImpl[A](xs: FBase)(inline p: A => Boolean): scala.Tuple2[FBase, FBase] = if (xs.length == 0) emptyPair else $partition
        |  inline def collectImpl[A, B](xs: FBase)(pf: PartialFunction[A, B]): FBase = $collect
        |  inline def partitionMapImpl[A, A1, A2](xs: FBase)(inline f: A => Either[A1, A2]): scala.Tuple2[FBase, FBase] = $partitionMap
        |  inline def containsImpl[A](xs: FBase, elem: A): Boolean = { val length = xs.length; $contains }
        |  inline def mapConserveImpl[A](xs: FBase)(inline f: A => A): FBase = { val n = xs.length; if (n == 0) xs else if (n == 1) { val e = applyAtImpl[A](xs, 0); val r = f(e); if (r.asInstanceOf[AnyRef] eq e.asInstanceOf[AnyRef]) xs else fromValues1[A](r) } else $mapConserve }
-       |  inline def unzipImpl[A, A1, A2](xs: FBase)(ev: A <:< (A1, A2)): (FBase, FBase) = { val n = xs.length; if (n == 0) (Empty.INSTANCE, Empty.INSTANCE) else $unzipV }
-       |  inline def unzip3Impl[A, A1, A2, A3](xs: FBase)(ev: A <:< (A1, A2, A3)): (FBase, FBase, FBase) = { val n = xs.length; if (n == 0) (Empty.INSTANCE, Empty.INSTANCE, Empty.INSTANCE) else $unzip3V }
+       |  inline def unzipImpl[A, A1, A2](xs: FBase)(ev: A <:< (A1, A2)): (FBase, FBase) = { val n = xs.length; if (n == 0) emptyPair else $unzipV }
+       |  inline def unzip3Impl[A, A1, A2, A3](xs: FBase)(ev: A <:< (A1, A2, A3)): (FBase, FBase, FBase) = { val n = xs.length; if (n == 0) emptyTriple else $unzip3V }
        |  inline def zipImpl[A, B](xs: FBase, that: FBase): FBase = { val n = if (xs.length < that.length) xs.length else that.length; if (n == 0) Empty.INSTANCE else if (n == 1) fromValues1[(A, B)]((applyAtImpl[A](xs, 0), applyAtImpl[B](that, 0))) else { $zipV } }
        |  inline def zipWithIndexImpl[A](xs: FBase): FBase = { val n = xs.length; if (n == 0) Empty.INSTANCE else if (n == 1) fromValues1[(A, Int)]((applyAtImpl[A](xs, 0), 0)) else { $zipIdxV } }
        |  inline def matchAll2Impl[A, B](xs: FBase, xsOff: Int, that: FBase, m: Int)(inline pred: (A, B) => Boolean): Boolean = $matchAll2V
@@ -2464,7 +2739,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def scanRightImpl[A, B](xs: FBase, z: B)(inline op: (A, B) => B): FBase = { val n = xs.length; if (n == 0) fromValues1[B](z) else if (n == 1) fromValues2[B](op(applyAtImpl[A](xs, 0), z), z) else $scanRightV }
        |  inline def combinationsImpl[A](xs: FBase, k: Int): Iterator[FBase] = ($combinationsV).asInstanceOf[Iterator[FBase]]
        |  inline def permutationsImpl[A](xs: FBase): Iterator[FBase] = ($permutationsV).asInstanceOf[Iterator[FBase]]
-       |  inline def groupByImpl[A, K](xs: FBase)(inline f: A => K): Map[K, FBase] = if (xs.length == 0) Map.empty[K, FBase] else $groupBy
+       |  inline def groupByImpl[A, K](xs: FBase)(inline f: A => K): Map[K, FBase] = if (xs.length == 0) Map.empty[K, FBase] else if (xs.length == 1) Map(f(applyAtImpl[A](xs, 0)) -> xs) else $groupBy
        |  inline def groupMapAcc[K, B]: GroupMapAcc[K, B] = $groupMapAcc
        |}
        |""".stripMargin
@@ -2523,6 +2798,12 @@ object GenCores extends BleepCodegenScript("GenCores") {
       val jp = jelem(p)
       e.open(s"public interface RefTo${p.name}Fold")
       e.line(s"$jp apply($jp acc, Object v);")
+      e.close()
+    }
+    // WIDENING cross-prim fold types (input I, wider acc Z) — ints.foldLeft(0L)(_ + _) etc. Fully unboxed.
+    wideningPairs.foreach { case (i, z) =>
+      e.open(s"public interface ${i.name}To${z.name}Fold")
+      e.line(s"${jelem(z)} apply(${jelem(z)} acc, ${jelem(i)} v);")
       e.close()
     }
     e.blank()
@@ -2584,6 +2865,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
       reduceTraverser(e, k, backward = false, refAcc = true)
       e.blank()
       reduceTraverser(e, k, backward = true, refAcc = true)
+      e.blank()
+    }
+    // WIDENING cross-prim reduce traversers (unboxed wider acc over a narrower prim input).
+    wideningPairs.foreach { case (i, z) =>
+      reduceTraverser(e, i, backward = false, refAcc = false, accPrim = Some(z))
+      e.blank()
+      reduceTraverser(e, i, backward = true, refAcc = false, accPrim = Some(z))
       e.blank()
     }
     // --- Build (map) traversers: ONE per covered (I, O) pair. Same lazy-stack walk skeleton as reduceFwd;
@@ -2989,29 +3277,48 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // the Java element type for this input kind (Pad filler / Updated leaf-array element type): each primitive's
     // jt; Ref -> Object.
     val je = prims.find(_.name == K).map(_.jt).getOrElse("Object")
-    // grow the single FBase[] child stack; a deferred Append/Prepend element rides as a ${K}One node.
+    // grow the single FBase[] child stack (and the tail arrays in lockstep once they exist).
     def ensureStack(): Unit = {
       e.open("if (stack == null)")
       e.line("stack = new FBase[16];")
       e.closeOpen("else if (sp == stack.length)")
       e.line("int nl = sp * 2;")
       e.line("stack = java.util.Arrays.copyOf(stack, nl);")
+      e.open("if (isTail != null)")
+      e.line("tail = java.util.Arrays.copyOf(tail, nl);")
+      e.line("isTail = java.util.Arrays.copyOf(isTail, nl);")
+      e.close()
       e.close()
     }
-    def pushOne(elem: String): Unit = {
+    // a deferred Append/Prepend element rides in a RAW tail slot (value array + flag array, both lazy)
+    // — the previous `new ${K}One(elem)` allocated a node PER DEFERRED ELEMENT, so a fold/map over an
+    // n-deep `:+` chain allocated n Ones. The pop loop acts on a flagged slot directly.
+    def pushTail(elem: String): Unit = {
       ensureStack()
-      e.line(s"stack[sp] = new ${K}One($elem);")
+      e.open("if (isTail == null)")
+      e.line(s"tail = new $je[stack.length];")
+      e.line("isTail = new boolean[stack.length];")
+      e.close()
+      e.line(s"tail[sp] = $elem;")
+      e.line("isTail[sp] = true;")
       e.line("sp += 1;")
     }
     def pushChild(child: String): Unit = {
       ensureStack()
+      // a popped tail slot can leave a stale flag at this depth — clear it so this child isn't misread.
+      e.open("if (isTail != null)")
+      e.line("isTail[sp] = false;")
+      e.close()
       e.line(s"stack[sp] = $child;")
       e.line("sp += 1;")
     }
+    def pushOne(elem: String): Unit = pushTail(elem)
 
     e.open(spec.sig)
     e.line("FBase cur = root;")
     e.line("FBase[] stack = null;")
+    e.line(s"$je[] tail = null;")
+    e.line("boolean[] isTail = null;")
     e.line("int sp = 0;")
     spec.prelude()
     e.open("while (cur != null)")
@@ -3145,14 +3452,19 @@ object GenCores extends BleepCodegenScript("GenCores") {
       }
     }
     e.close()
-    // advance: descend into `next`, else pop the explicit stack (a popped ${K}One acts as an ordinary node).
+    // advance: descend into `next`, else pop the explicit stack (a flagged tail slot acts its raw
+    // element directly; an FBase slot resumes the walk).
     e.open("if (next != null)")
     e.line("cur = next;")
     e.closeOpen("else")
     e.line("cur = null;")
     e.open("while (sp > 0 && cur == null)")
     e.line("sp -= 1;")
+    e.open("if (isTail != null && isTail[sp])")
+    spec.act("tail[sp]")
+    e.closeOpen("else")
     e.line("cur = stack[sp];")
+    e.close()
     e.close()
     e.close()
     e.close() // while (cur != null)
@@ -3165,17 +3477,21 @@ object GenCores extends BleepCodegenScript("GenCores") {
     * the first defer); a bare-leaf walk never touches it. ONLY ReverseNode recurses — fwd calls bwd on rev.base (and vice versa), so the direction flip rides
     * the JVM call boundary. (Deep bases over a NON-leaf use applyBoxed — minimal but correct; the leaf-base fast path is unboxed.)
     */
-  private def reduceTraverser(e: Emit, k: Kind, backward: Boolean, refAcc: Boolean): Unit = {
+  private def reduceTraverser(e: Emit, k: Kind, backward: Boolean, refAcc: Boolean, accPrim: Option[Kind] = None): Unit = {
     val K = k.name
     val je = jelem(k) // Java element type: int/long/double/Object
     val isRefInput = K == "Ref"
     val dir = if backward then "Bwd" else "Fwd"
     val other = if backward then "Fwd" else "Bwd"
-    val foldT = if refAcc then s"${K}ToRefFold<Z>" else s"${K}To${K}Fold"
+    // accPrim = Some(z): a WIDENING cross-prim accumulator (e.g. long acc over int input) — same walk,
+    // acc typed jelem(z), fold type ${K}To${Z}Fold. None: self-kind (acc == input kind).
+    val accName = accPrim.map(_.name).getOrElse(K)
+    val accJ = accPrim.map(jelem).getOrElse(je)
+    val foldT = if refAcc then s"${K}ToRefFold<Z>" else s"${K}To${accName}Fold"
     val sig =
       if refAcc then s"static <Z> Z reduce${dir}${K}Ref(FBase root, Z acc, $foldT f)"
-      else s"static $je reduce${dir}${K}${K}(FBase root, $je acc, $foldT f)"
-    val recur = if refAcc then s"reduce${other}${K}Ref" else s"reduce${other}${K}${K}"
+      else s"static $accJ reduce${dir}${K}${accName}(FBase root, $accJ acc, $foldT f)"
+    val recur = if refAcc then s"reduce${other}${K}Ref" else s"reduce${other}${K}${accName}"
     // Read a single boxed Object from a deep (non-leaf) base, cast to the element type. For prims the cast
     // unboxes via the boxed wrapper's value method; for Ref the element IS Object (pass-through).
     def fromBoxed(expr: String): String = fromBoxedK(k, expr)
@@ -3241,9 +3557,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
     }
 
     // --- the (skip,take)-windowed sub-traverser for deep (non-leaf) Slice/Pad/Updated bases (replaces runBoxed). ---
-    val accT = if refAcc then "Z" else je
-    val winName = s"reduceWindow${dir}${K}${if refAcc then "Ref" else K}"
-    val winOther = s"reduceWindow${other}${K}${if refAcc then "Ref" else K}"
+    val accT = if refAcc then "Z" else accJ
+    val winName = s"reduceWindow${dir}${K}${if refAcc then "Ref" else accName}"
+    val winOther = s"reduceWindow${other}${K}${if refAcc then "Ref" else accName}"
     val win = WinSpec(
       name = winName,
       other = winOther,
@@ -3412,13 +3728,21 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val name = if backward then s"buildFilteredBwd${K}" else s"buildFiltered${K}"
     val recur = if backward then s"buildFiltered${K}" else s"buildFilteredBwd${K}"
     val sig = s"static int $name(FBase root, $je[] out, int o, ${K}Pred p)"
-    // predicate-guarded write: keep + advance only on a hit. The cursor `o` advances ascending in BOTH directions.
+    // keep-write: prims are BRANCHLESS (unconditional store + conditional bump — no mispredict,
+    // vectorizes; measured 6-9x on the Scala leaf loops); Ref stays predicate-guarded (an
+    // unconditional ref store pays a GC write barrier per rejected element, measured slower).
+    // The cursor `o` advances ascending in BOTH directions.
     def writeElem(elem: String): Unit = e.scope {
       e.line(s"$je _e = $elem;")
-      e.open("if (p.apply(_e))")
-      e.line("out[o] = _e;")
-      e.line("o += 1;")
-      e.close()
+      if k.isPrim then {
+        e.line("out[o] = _e;")
+        e.line("o += p.apply(_e) ? 1 : 0;")
+      } else {
+        e.open("if (p.apply(_e))")
+        e.line("out[o] = _e;")
+        e.line("o += 1;")
+        e.close()
+      }
     }
     def fromBoxed(expr: String): String = fromBoxedK(k, expr)
     // a WHOLE-leaf run over the LOGICAL length `len` (may be < arr.length — slack). The READ index walks descending for the Bwd filter; the cursor advances asc.
@@ -3749,38 +4073,51 @@ object GenCores extends BleepCodegenScript("GenCores") {
         e.line(s"out[o] = f.apply($prevAcc, $elem);")
         e.line("o -= 1;")
       }
-    // a WHOLE-leaf run over the LOGICAL length `len` (may be < arr.length — slack). The acc is out[o±1], so the loop carries `o`, not an acc local.
+    // the register-acc variant for RUN loops: acc is seeded from the previously-written slot ONCE per
+    // run (the `acc` local emitted by runLeaf/run below), then carried in a register — a per-element
+    // out[o±1] reload puts a store->load forward on scan's serial dependency chain (measured 0.22-0.40x
+    // of iarray). Single-element arms (One/Prepend/Append/Pad-filler/Range) keep the out[o±1] read —
+    // no loop, no chain.
+    def writeElemAcc(elem: String): Unit = {
+      e.line(s"acc = f.apply(acc, $elem);")
+      e.line("out[o] = acc;")
+      e.line(if !writeBackward then "o += 1;" else "o -= 1;")
+    }
+    // a WHOLE-leaf run over the LOGICAL length `len` (may be < arr.length — slack). The acc is a register
+    // local seeded from out[o±1]; the loop carries both `o` and `acc`.
     def runLeaf(arr: String, len: String): Unit = e.scope {
       e.line(s"$je[] a = $arr;")
+      e.line(s"$zT acc = $prevAcc;")
       if !backward then {
         e.line("int i = 0;")
         e.line(s"int end = $len;")
         e.open("while (i < end)")
-        writeElem("a[i]")
+        writeElemAcc("a[i]")
         e.line("i += 1;")
         e.close()
       } else {
         e.line(s"int i = ($len) - 1;")
         e.open("while (i >= 0)")
-        writeElem("a[i]")
+        writeElemAcc("a[i]")
         e.line("i -= 1;")
         e.close()
       }
     }
     def run(arr: String, start: String, count: String): Unit = e.scope {
       e.line(s"$je[] a = $arr;")
+      e.line(s"$zT acc = $prevAcc;")
       if !backward then {
         e.line(s"int i = $start;")
         e.line(s"int end = i + ($count);")
         e.open("while (i < end)")
-        writeElem("a[i]")
+        writeElemAcc("a[i]")
         e.line("i += 1;")
         e.close()
       } else {
         e.line(s"int i = $start;")
         e.line(s"int end = i - ($count);")
         e.open("while (i > end)")
-        writeElem("a[i]")
+        writeElemAcc("a[i]")
         e.line("i -= 1;")
         e.close()
       }
@@ -3952,15 +4289,28 @@ object GenCores extends BleepCodegenScript("GenCores") {
       e.closeOpen("else if (sp == stack.length)")
       e.line("int nl = sp * 2;")
       e.line("stack = java.util.Arrays.copyOf(stack, nl);")
+      e.open("if (isTail != null)")
+      e.line("tail = java.util.Arrays.copyOf(tail, nl);")
+      e.line("isTail = java.util.Arrays.copyOf(isTail, nl);")
+      e.close()
       e.close()
     }
+    // raw tail slots (see emitMainWalk): no ${K}One allocation per deferred Append/Prepend element.
     def pushOne(elem: String): Unit = {
       ensureStack()
-      e.line(s"stack[sp] = new ${K}One($elem);")
+      e.open("if (isTail == null)")
+      e.line(s"tail = new $je[stack.length];")
+      e.line("isTail = new boolean[stack.length];")
+      e.close()
+      e.line(s"tail[sp] = $elem;")
+      e.line("isTail[sp] = true;")
       e.line("sp += 1;")
     }
     def pushChild(child: String): Unit = {
       ensureStack()
+      e.open("if (isTail != null)")
+      e.line("isTail[sp] = false;")
+      e.close()
       e.line(s"stack[sp] = $child;")
       e.line("sp += 1;")
     }
@@ -3968,6 +4318,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
     e.open(sig)
     e.line("FBase cur = root;")
     e.line("FBase[] stack = null;")
+    e.line(s"$je[] tail = null;")
+    e.line("boolean[] isTail = null;")
     e.line("int sp = 0;")
     e.open("while (cur != null)")
     e.line("FBase next = null;")
@@ -4112,14 +4464,19 @@ object GenCores extends BleepCodegenScript("GenCores") {
       }
     }
     e.close()
-    // advance: descend into `next`, else pop the explicit stack (a popped ${K}One tests the deferred element).
+    // advance: descend into `next`, else pop the explicit stack (a flagged tail slot tests the deferred
+    // element in place — oneScan may `return` the hit index, abandoning the walk).
     e.open("if (next != null)")
     e.line("cur = next;")
     e.closeOpen("else")
     e.line("cur = null;")
     e.open("while (sp > 0 && cur == null)")
     e.line("sp -= 1;")
+    e.open("if (isTail != null && isTail[sp])")
+    oneScan("tail[sp]")
+    e.closeOpen("else")
     e.line("cur = stack[sp];")
+    e.close()
     e.close()
     e.close()
     e.close() // while (cur != null)
@@ -4165,6 +4522,15 @@ object GenCores extends BleepCodegenScript("GenCores") {
   private def primCore(p: Prim): String = {
     val cls = s"${p.name}Arr"
     def one1(idx: String): String = s"new ${p.name}One(arr[$idx])"
+    // equals: the range Arrays.equals is a vectorized intrinsic — use it for every prim EXCEPT
+    // float/double, whose Arrays.equals uses BIT equality (NaN == NaN true, +0 != -0) while Scala ==
+    // is IEEE; those keep the manual != loop for List parity.
+    val eqBody = p.name match {
+      case "Float" | "Double" =>
+        "for (int i = 0; i < length; i++) if (arr[i] != other.arr[i]) return false;\n        return true;"
+      case _ =>
+        "return Arrays.equals(arr, 0, length, other.arr, 0, other.length);"
+    }
     s"""package farray;
        |
        |import java.util.Arrays;
@@ -4194,8 +4560,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |        if (!(obj instanceof $cls)) return Concat.elementwiseEquals(this, obj);
        |        $cls other = ($cls) obj;
        |        if (other.length != length) return false;
-       |        for (int i = 0; i < length; i++) if (arr[i] != other.arr[i]) return false;
-       |        return true;
+       |        $eqBody
        |    }
        |    @Override public String toString() { return Concat.render(this); }
        |}
@@ -4226,11 +4591,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |        if (!(obj instanceof RefArr)) return Concat.elementwiseEquals(this, obj);
        |        RefArr other = (RefArr) obj;
        |        if (other.length != length) return false;
-       |        for (int i = 0; i < length; i++) {
-       |            Object x = arr[i], y = other.arr[i];
-       |            if (x == null ? y != null : !x.equals(y)) return false;
-       |        }
-       |        return true;
+       |        // range Arrays.equals: same Objects.equals semantics as the old manual loop, null-safe.
+       |        return Arrays.equals(arr, 0, length, other.arr, 0, other.length);
        |    }
        |    @Override public String toString() { return Concat.render(this); }
        |}
@@ -4533,12 +4895,19 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    public final int[] offs;
        |    public ${name}FlatMap($jt[][] segs, int[] offs) { super(offs[offs.length - 1]); this.segs = segs; this.offs = offs; }
        |
-       |    /** Materialise to one contiguous leaf (length >= 2 here). Back-stop for random-access / windowing ops. */
+       |    /** Materialise to one contiguous leaf (length >= 2 here). Back-stop for random-access / windowing ops.
+       |     *  Memoised (benign racy publish, String.hashCode idiom) — take/drop/slice/init and windowed traversals
+       |     *  each called this, re-flattening the whole node every time. */
+       |    private ${name}Arr _flat;
        |    public ${name}Arr flat() {
+       |        ${name}Arr f = _flat;
+       |        if (f != null) return f;
        |        $jt[] out = new $jt[length];
        |        int o = 0;
        |        for (int s = 0; s < segs.length; s++) { int sl = offs[s + 1] - offs[s]; if (sl > 0) System.arraycopy(segs[s], 0, out, o, sl); o += sl; }
-       |        return new ${name}Arr(out, length);
+       |        f = new ${name}Arr(out, length);
+       |        _flat = f;
+       |        return f;
        |    }
        |
        |    @Override public Object applyBoxed(int i) {
@@ -4634,6 +5003,55 @@ object GenCores extends BleepCodegenScript("GenCores") {
         s"""       |        if (node instanceof ${name}One o) { hs[pos] = $eh2; return pos + 1; }"""
       }
       .mkString("\n")
+    // streamed per-kind run hashers: MurmurHash3 orderedHash over a leaf window with the
+    // arithmetic-progression (rangeHash) detection carried in scalars — no int[] buffer.
+    val runHashers = (prims.map(p => (p.name, p.jt)) :+ ("Ref", "Object"))
+      .map { case (name, jt) =>
+        val eh0 = ehName(name, "a[from]")
+        val ehi = ehName(name, "a[from + i]")
+        s"""       |    private static int hash${name}Run($jt[] a, int from, int n) {
+       |        if (n == 0) return finalizeHash(SEED, 0);
+       |        int h0 = $eh0;
+       |        if (n == 1) return finalizeHash(mix(SEED, h0), 1);
+       |        int prev = h0;
+       |        int diff = 0;
+       |        boolean isRange = true;
+       |        int acc = mix(SEED, h0);
+       |        for (int i = 1; i < n; i++) {
+       |            int h = $ehi;
+       |            if (i == 1) diff = h - prev;
+       |            else if (h - prev != diff) isRange = false;
+       |            acc = mix(acc, h);
+       |            prev = h;
+       |        }
+       |        if (isRange) return rangeHash(h0, diff, prev, SEED);
+       |        return finalizeHash(acc, n);
+       |    }"""
+      }
+      .mkString("\n")
+    // hashOf fast arms: leaf / One / slice-over-leaf stream directly (the common shapes); the old path
+    // allocated int[node.length] per hashCode call — and the fill slice arm allocated int[base.length]
+    // (hashing a 10-element slice of a 1M leaf allocated 4MB).
+    val hashOfFast = {
+      val leafArms = (prims.map(_.name) :+ "Ref")
+        .map(n => s"""       |        if (node instanceof ${n}Arr a) return hash${n}Run(a.arr, 0, a.length);""")
+        .mkString("\n")
+      val oneArms = oneKinds
+        .map { case (n, _, _) => s"""       |        if (node instanceof ${n}One o) return finalizeHash(mix(SEED, ${ehName(n, "o.elem")}), 1);""" }
+        .mkString("\n")
+      val sliceArms = (prims.map(_.name) :+ "Ref")
+        .map(n => s"""       |        if (node instanceof SliceNode s && s.base instanceof ${n}Arr a) return hash${n}Run(a.arr, s.offset, s.length);""")
+        .mkString("\n")
+      leafArms + "\n" + oneArms + "\n" + sliceArms
+    }
+    // fill's slice arm: read the (always-leaf, by construction) base window directly; keep the
+    // tmp-buffer fallback for a hypothetical non-leaf base.
+    val sliceFillArms = (prims.map(_.name) :+ "Ref")
+      .map { n =>
+        val ehE = ehName(n, "a.arr[s.offset + i]")
+        s"""       |            if (s.base instanceof ${n}Arr a) { if (rev) for (int i = s.length - 1; i >= 0; i--) hs[pos++] = $ehE; else for (int i = 0; i < s.length; i++) hs[pos++] = $ehE; return pos; }"""
+      }
+      .mkString("\n")
     val flatMapFill = padKinds
       .map { case (name, _, _) =>
         val ehE = ehName(name, "fm.segs[s][j]")
@@ -4655,10 +5073,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |            if (rg.length == 1) return finalizeHash(mix(SEED, rg.start), 1);
        |            return rangeHash(rg.start, rg.step, rg.start + (rg.length - 1) * rg.step, SEED);
        |        }
+$hashOfFast
+       |        if (node instanceof Empty) return finalizeHash(SEED, 0);
        |        int[] hs = new int[node.length];
        |        fill(node, false, hs, 0);
        |        return ordered(hs);
        |    }
+$runHashers
        |    private static int mix(int h, int d) { return scala.util.hashing.MurmurHash3$$.MODULE$$.mix(h, d); }
        |    private static int finalizeHash(int h, int n) { return scala.util.hashing.MurmurHash3$$.MODULE$$.finalizeHash(h, n); }
        |    private static int rangeHash(int start, int step, int last, int seed) { return scala.util.hashing.MurmurHash3$$.MODULE$$.rangeHash(start, step, last, seed); }
@@ -4686,7 +5107,10 @@ $prependFill
        |        if (node instanceof RefAppend ap) { if (rev) { hs[pos++] = scala.runtime.Statics.anyHash(ap.elem); return fill(ap.base, true, hs, pos); } else { pos = fill(ap.base, false, hs, pos); hs[pos++] = scala.runtime.Statics.anyHash(ap.elem); return pos; } }
        |        if (node instanceof RefPrepend pp) { if (rev) { pos = fill(pp.base, true, hs, pos); hs[pos++] = scala.runtime.Statics.anyHash(pp.elem); return pos; } else { hs[pos++] = scala.runtime.Statics.anyHash(pp.elem); return fill(pp.base, false, hs, pos); } }
        |        if (node instanceof ReverseNode r) { return fill(r.base, !rev, hs, pos); }
-       |        if (node instanceof SliceNode s) { int[] tmp = new int[s.base.length]; fill(s.base, false, tmp, 0); if (rev) for (int i = s.length - 1; i >= 0; i--) hs[pos++] = tmp[s.offset + i]; else for (int i = 0; i < s.length; i++) hs[pos++] = tmp[s.offset + i]; return pos; }
+       |        if (node instanceof SliceNode s) {
+$sliceFillArms
+       |            int[] tmp = new int[s.base.length]; fill(s.base, false, tmp, 0); if (rev) for (int i = s.length - 1; i >= 0; i--) hs[pos++] = tmp[s.offset + i]; else for (int i = 0; i < s.length; i++) hs[pos++] = tmp[s.offset + i]; return pos;
+       |        }
 $padFill
 $updatedFill
 $oneFill

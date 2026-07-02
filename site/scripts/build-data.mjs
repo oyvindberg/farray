@@ -42,7 +42,9 @@ final class SliceNode(base: FBase, off: Int, len: Int)    extends FBase  // take
 final class ReverseNode(base: FBase)                      extends FBase  // reverse
 final class IntPad(base: FBase, fill: Int, len: Int)      extends FBase  // padTo
 final class IntUpdated(base: FBase, i: Int, elem: Int)    extends FBase  // updated
-final class RangeNode(start: Int, step: Int, count: Int)  extends FBase  // FArray.range — elements never built`;
+final class RangeNode(start: Int, step: Int, count: Int)  extends FBase  // FArray.range — elements never built
+final class IntFlatMap(segs: Array[Array[Int]],           //  flatMap with wide inners — one segment per
+                       offs: Array[Int])                  extends FBase  //  inner, their arrays kept, not copied`;
 
 // Extract a brace-balanced `def` verbatim from generated source, starting at the line matching `sigRe`.
 function extractBraceDef(text, sigRe) {
@@ -391,6 +393,9 @@ if r.amount > 150 then r.category                   // and decodes \`category\` 
     { name: "map-dispatch-real", sig: /inline def mapImpl\[A, B\]/, file: "farray/FArrayOps.scala · generated · inline def mapImpl" },
     { name: "map-leaf", sig: /^\s*def mapLeafIntInt\(/, file: "farray/FArrayOps.scala · generated · def mapLeafIntInt" },
     { name: "map-leaf-ref", sig: /^\s*def mapLeafIntRef\[RO/, file: "farray/FArrayOps.scala · generated · def mapLeafIntRef" },
+    { name: "flatmap-shared", sig: /^\s*def flatMapSharedInt\(/, file: "farray/FArrayOps.scala · generated · def flatMapSharedInt — the compiled-once driver" },
+    { name: "flatmap-flat", sig: /^\s*def flatMapFlatInt\(/, file: "farray/FArrayOps.scala · generated · def flatMapFlatInt — the narrow-inner flatten loop" },
+    { name: "filter-leaf-int", sig: /^\s*def filterLeafInt\(/, file: "farray/FArrayOps.scala · generated · def filterLeafInt" },
   ];
   for (const e of EXTRACTS) {
     const code = extractBraceDef(genOps, e.sig);
