@@ -1754,6 +1754,22 @@ class FListTest:
     // 5 · decomposition reaches the fold's lambda — Stat never built; loop is acc + x*100
     Snapshots.check("fuse-opt-fold.snap", FuseDebug.show(ints.fuse.map(x => Stat(x, x * 100, x * 1000)).foldLeft(0)((acc, s) => acc + s.score)))
 
+  // The user-guide demos for the website's "Using .fuse" page — each the verbatim lowering of the
+  // pipeline above it. The collect ones are the headline: a stdlib `collect` allocates a PartialFunction
+  // and boxes every primitive through applyOrElse; fused, the match is spliced into the loop body.
+  @Test def test_fuse_guide_snapshots: Unit =
+    val ints = FArray(3, 14, 15, 92, 65, 35, 89, 79)
+    // 1 · collect, unboxed — no PartialFunction object, no isDefinedAt/apply double dispatch, no Integer;
+    //     the guard becomes the loop's `if`.
+    Snapshots.check("fuse-guide-collect.snap", FuseDebug.show(ints.fuse.map(_ + 1).collect { case x if x % 2 == 0 => x * 2 }.run))
+    // 2 · a short-circuit terminal — find stops the whole traversal at the first hit
+    Snapshots.check("fuse-guide-find.snap", FuseDebug.show(ints.fuse.map(_ * 3).find(_ > 100)))
+    // 3 · multi-aggregate — three answers from ONE pass, one unboxed accumulator each
+    Snapshots.check("fuse-guide-agg.snap", FuseDebug.show(ints.fuse.filter(_ % 2 == 0).agg(Agg.sum((x: Int) => x), Agg.count, Agg.max1((x: Int) => x))))
+    // 4 · unboxed group-reduce — Int keys and values stay unboxed in the hot loop (open-addressing map),
+    //     boxing only at the final O(#keys) materialization
+    Snapshots.check("fuse-guide-groupsum.snap", FuseDebug.show(ints.fuse.groupSum(_ % 3)(x => x)))
+
   // The five fused-JSON demos for the website's "Fused JSON" page — the SAME optimizer over byte ranges.
   // Mirrors farray.json.JsonDemo's pipelines (Event/Wide/Stats live there), regenerated to current codegen.
   @Test def test_fuse_json_snapshots: Unit =

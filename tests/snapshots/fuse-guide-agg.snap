@@ -1,0 +1,60 @@
+{
+  val $proxy: FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  } = FArray$package.$asInstanceOf$[FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  }]
+  val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
+  val Fuse_this: Fuse[Int] = (new Fuse[Int](xs$proxy): Fuse[Int]).filter(((_$: Int) => _$.%(2).==(0)))
+
+  ({
+    val src0: FBase = inline$base$i1[Int](Fuse_this).asInstanceOf[FBase]
+    val n0: Int = src0.length
+    var acc: Int = 0
+    var c: Int = 0
+    var best: Int = null.asInstanceOf[Int]
+    var seen: Boolean = false
+    src0 match {
+      case leaf: IntArr =>
+        val a: Array[Int] = leaf.arr
+        val len: Int = a.length
+        var i: Int = 0
+        while (i.<(len)) {
+          val v: Int = a.apply(i)
+          val `v₂`: Int = v.%(2)
+          val `v₃`: Boolean = `v₂`.==(0)
+          if (`v₃`) {
+            acc = acc.+(v)
+            c = c.+(1)
+            val kk: Int = v
+            if (seen.unary_!.||(kk.>(best))) {
+              best = kk
+              seen = true
+            } else ()
+            ()
+          } else ()
+          i = i.+(1)
+        }
+      case s =>
+        val `len₂`: Int = s.length
+        var `i₂`: Int = 0
+        while (`i₂`.<(`len₂`)) {
+          val `v₄`: Int = FArrayOps.intAt(s, `i₂`)
+          val `v₅`: Int = `v₄`.%(2)
+          val `v₆`: Boolean = `v₅`.==(0)
+          if (`v₆`) {
+            acc = acc.+(`v₄`)
+            c = c.+(1)
+            val `kk₂`: Int = `v₄`
+            if (seen.unary_!.||(`kk₂`.>(best))) {
+              best = `kk₂`
+              seen = true
+            } else ()
+            ()
+          } else ()
+          `i₂` = `i₂`.+(1)
+        }
+    }
+    scala.Tuple3.apply[Any, Any, Any](acc, c, if (seen) best else throw new NoSuchElementException("min1/max1 of empty fused pipeline"))
+  }.asInstanceOf[Tuple3[Int, Int, Int]]: Tuple3[Int, Int, Int])
+}

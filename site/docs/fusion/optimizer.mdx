@@ -1,0 +1,87 @@
+---
+title: The fuse optimizer
+sidebar_label: Inside the optimizer
+description: How the .fuse macro reads a whole pipeline off the typed syntax tree and emits the loop you'd have written by hand.
+---
+
+import Snippet from "@site/src/components/Snippet";
+import Related from "@site/src/components/Related";
+
+export function FuseEx({ src, gen }) {
+  return (
+    <div className="fuseex">
+      <p className="fuse-cap">you write</p>
+      <Snippet name={src} hideFull />
+      <p className="fuse-cap">the macro emits</p>
+      <Snippet name={gen} />
+    </div>
+  );
+}
+
+<p className="page__eyebrow">how the macro pulls it off</p>
+
+<p className="lede">
+  <code>xs.fuse.map(f).filter(p).&lt;terminal&gt;</code> is a macro, not a runtime data structure. At
+  compile time it reads the <em>whole</em> chain off the typed syntax tree and emits one specialized{" "}
+  <code>while</code> loop with your lambdas inlined into the body — no view nodes, no{" "}
+  <code>Function1</code>, no boxing, no megamorphism. What follows is the loop you'd have written by
+  hand, produced from the pipeline you'd actually want to write. Every emitted block is the verbatim
+  post-typer expansion (<code>FuseDebug.show</code>), checked into the repo as a golden test.
+</p>
+
+## One loop, no closures
+
+Three stages, one `int[]` scan. `_ + 1` becomes the bytecode `iadd`; no `Function1` is allocated; the
+filter is an `if` that wraps everything downstream of it. Compare a `View`, which stores three
+`Function1`s and calls each through an interface, per element.
+
+<FuseEx src="fuse-src-oneloop" gen="fuse-opt-oneloop" />
+
+## Dead-column elimination
+
+A tuple or case class is a set of independent **columns**. Here `map` builds three, then the pipeline
+reads only two of them. The optimizer never builds the tuple: column 2 (`x * 13`) is read by nobody,
+so it's dead and simply absent from the loop; column 0 (`x % 3`) is needed by the filter, so it's
+computed eagerly. A `View` allocates the 3-tuple — plus three boxed `Int`s — for every element, and
+throws most of it away.
+
+<FuseEx src="fuse-src-dce" gen="fuse-opt-dce" />
+
+## Compute-for-survivors — the sink
+
+Look at *where* `expensive(x)` lands: inside the `if`. Column 1 is needed only by the final `map`,
+which sits downstream of the filter, so it's computed only for elements that **survive**. An expensive
+column behind a selective filter runs a fraction of the time — an optimization the lazy-collection
+model can't even express, because it has no idea which columns a later stage will read.
+
+<FuseEx src="fuse-src-sink" gen="fuse-opt-sink" />
+
+## Common-subexpression elimination
+
+`x * x` is written twice but computed **once** — bound to one `val` and reused across both tuple
+components. Decomposition, dead-column elimination, the sink, and CSE all fall out of a single idea:
+model a product as independent lazy columns, and bind each at its first use.
+
+<FuseEx src="fuse-src-cse" gen="fuse-opt-cse" />
+
+## …and the decomposition reaches the fold's lambda
+
+The same column analysis reaches into a `foldLeft`/`reduce` lambda. Here the fold reads only
+`s.score`, so the optimizer never builds the `Stat`: its other fields — and the object itself — are
+dead and absent, and the loop is just `acc = acc + (x * 100)`. Without this, the fold would rebuild
+the entire product per element just to read one field.
+
+<FuseEx src="fuse-src-fold" gen="fuse-opt-fold" />
+
+---
+
+Emitted blocks are the verbatim post-typer expansion (`FuseDebug.show`), regenerated to current
+codegen and checked into `tests/snapshots/`. Shown, never executed.
+
+<Related
+  links={[
+    { to: "/fusion", label: "Using .fuse", desc: "The user guide: every stage and terminal, with their loops." },
+    { to: "/fusion/json", label: "The JSON experiment", desc: "The same optimizer, unchanged, turned loose on raw bytes." },
+    { to: "/operations/map", label: "How map stays unboxed", desc: "The eager gear below fusion, and why they split." },
+  ]}
+/>

@@ -1,0 +1,186 @@
+---
+title: Using .fuse
+sidebar_label: Using .fuse
+description: "The fusion user guide: every stage and terminal, the semantics, and the loops they compile to — all unboxed."
+---
+
+import Snippet from "@site/src/components/Snippet";
+import Related from "@site/src/components/Related";
+
+export function FuseEx({ src, gen }) {
+  return (
+    <div className="fuseex">
+      <p className="fuse-cap">you write</p>
+      <Snippet name={src} hideFull />
+      <p className="fuse-cap">the macro emits</p>
+      <Snippet name={gen} />
+    </div>
+  );
+}
+
+export function OpTable({ head, rows }) {
+  return (
+    <figure className="figure">
+      <table className="cx">
+        <thead>
+          <tr><th className="cx-op">{head}</th><th className="cx-b">notes</th></tr>
+        </thead>
+        <tbody>
+          {rows.map(([op, note]) => (
+            <tr key={op}>
+              <td className="cx-op">{op}</td>
+              <td className="cx-b">{note}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </figure>
+  );
+}
+
+<p className="page__eyebrow">the user guide</p>
+
+<p className="lede">
+  Write the chain you'd write anyway, put <code>.fuse</code> in front, and the terminal call compiles
+  the whole pipeline into one <code>while</code> loop — no intermediate collections, no{" "}
+  <code>Function1</code>s, nothing boxed. This page is the practical tour: every stage and terminal,
+  the semantics you're agreeing to, and what the loops actually look like. Every emitted block below
+  is the verbatim compiler output, checked in as a golden test.
+</p>
+
+Start with the shape of the thing. A fused pipeline is `xs.fuse` + any number of **stages** (they
+return `Fuse[A]` and cost nothing at runtime — they're markers the macro reads off the syntax tree) +
+exactly one **terminal** (the macro: it consumes the whole chain and emits the loop). Here's one worth
+staring at, because it shows the part no other collection library on the JVM can do — `collect`,
+**unboxed**:
+
+<FuseEx src="fuse-src-guide-collect" gen="fuse-guide-collect" />
+
+Look at what became of the partial function. In the standard library, `collect` allocates a
+`PartialFunction[Int, Int]` object and runs every element through `applyOrElse` — a generic method,
+so every `Int` boxes to `Integer` on the way in and out, twice per element. Here there is no
+`PartialFunction` at all: the `case x if x % 2 == 0 => x * 2` was spliced **into the loop body** as a
+plain pattern match on an unboxed `Int` — the guard is the branch, the result is stored straight into
+the output `int[]`. A "partial function" that compiles to an `if` is exactly what you meant when you
+wrote it.
+
+It composes, too. `zip` reads a second array in lock-step, and `collect` destructures the pair right
+there in the loop — both columns stay unboxed `Int`s throughout (the tuple in the match is the
+specialized `Tuple2$mcII$sp` scrutinee, holding raw ints — no `Integer` is ever created):
+
+<FuseEx src="fuse-src-guide-zipcollect" gen="fuse-guide-zipcollect" />
+
+## The rules of the game
+
+Four things to know before you lean on it — this is the entire contract:
+
+<ul className="points">
+  <li>
+    <strong>Stage lambdas are assumed pure.</strong> A fused pipeline is lazy and short-circuiting:
+    under <code>take</code>, <code>find</code>, <code>exists</code>, <code>head</code> a stage function
+    may run <em>fewer</em> times than in the strict <code>List</code> version, and
+    compute-for-survivors means a column read only after a <code>filter</code> is computed only for
+    elements that pass. For pure functions the result is identical; a side-effecting lambda can observe
+    the difference.
+  </li>
+  <li>
+    <strong>Element kinds are checked at compile time.</strong> <code>Int</code>/<code>Long</code>/
+    <code>Double</code> or a reference type. A primitive-backed FArray widened to <code>Any</code> is a
+    compile <em>error</em> — never a silent miscompile.
+  </li>
+  <li>
+    <strong>Stages are markers; the terminal is the macro.</strong> A <code>xs.fuse.map(f)</code> with
+    no terminal does nothing (and costs nothing). The chain must be written out at the call site — it's
+    read off the typed syntax tree, not built at runtime.
+  </li>
+  <li>
+    <strong>Adjacent stages are rewritten algebraically.</strong> <code>take(n).take(m)</code>{" "}
+    collapses to one clamped limit, <code>drop(n).drop(m)</code> to one counter, and a{" "}
+    <code>take</code> slides left past a <code>map</code> to meet another — you can compose freely
+    without leaving loop machinery behind.
+  </li>
+</ul>
+
+## The stages
+
+Everything here fuses into the single pass and returns `Fuse[…]`, so stages chain in any order:
+
+<OpTable
+  head="stage"
+  rows={[
+    ["map(f)", "the classic; tuple/case-class results decompose into independent lazy columns (see the optimizer page)"],
+    ["filter(p) · filterNot(p) · withFilter(p)", "becomes an if wrapping everything downstream; withFilter makes for-comprehension guards fuse"],
+    ["collect { case … }", "filter + map + pattern-match in one — matched inline, no PartialFunction object, unboxed"],
+    ["flatMap(f) · flatten", "nested loop over each inner FArray, spliced inline; short-circuits across the nesting"],
+    ["take(n) · drop(n) · slice(from, until)", "counters in the loop; adjacent takes/drops collapse to one"],
+    ["takeWhile(p)", "stops the whole traversal at the first failure"],
+    ["dropWhile(p)", "skips the leading run, then everything flows"],
+    ["takeRight(n)", "ring buffer, O(n) memory; can't short-circuit the source (the last n aren't known until the end)"],
+    ["distinct · distinctBy(f)", "first occurrence wins; a seen-set rides through the loop"],
+    ["scanLeft(z)(op)", "running fold — emits z, then each successive acc (one more element than the input)"],
+    ["zipWithIndex", "a position counter advanced in place — pairs decompose, so downstream (v, i) lambdas never see a tuple"],
+    ["zip(that) · map2(that)(f)", "lock-step read of a second FArray, stopping at the shorter; map2 never even forms the pair"],
+    ["tapEach(f)", "side effect per surviving element, element passes through"],
+    ["grouped(n)", "emits an FArray[A] chunk every n elements — a real stage: keep transforming chunks, short-circuits under take"],
+    ["foldAdjacentBy(key)(z)(op)", "streaming group-aggregate for input already clustered by key — one (k, acc) per run, O(1) memory"],
+    ["groupAdjacentBy(key)", "each run of equal keys as its own FArray[A] — O(largest run) memory, no hashmap"],
+    ["groupAdjacentReduceBy(key)(prep)(agg)", "nested fusion: a fused sub-pipeline per group; with a fold aggregate the rows are never materialized"],
+  ]}
+/>
+
+## The terminals
+
+One terminal ends the chain and triggers the rewrite. They come in families:
+
+<OpTable
+  head="terminal"
+  rows={[
+    ["run", "the fused FArray — one output array, sized once"],
+    ["foldLeft(z)(op) · fold · sum · product", "one accumulator carried above the loop, unboxed for primitive kinds"],
+    ["count · count(p) · size · length", "an Int counter, nothing built"],
+    ["foreach(f)", "run the pipeline for its effect"],
+    ["find(p) · exists(p) · forall(p) · contains(x)", "short-circuit: a done-flag stops the traversal — across flatMap nesting too"],
+    ["head · headOption · isEmpty · nonEmpty", "short-circuit after one element"],
+    ["indexWhere(p) · indexOf(x) · collectFirst(pf)", "short-circuit with a bare position counter — no (value, index) pair"],
+    ["reduce · min · max · minBy(f) · maxBy(f)", "seeded accumulator, no per-element Option; …Option variants for the empty case"],
+    ["last · lastOption", "one pass, keeps the most recent survivor"],
+    ["topN(n) · bottomN(n) · topNBy(n)(f) · bottomNBy(n)(f)", "the n best in one pass via a bounded heap — O(N log n), no full sort"],
+    ["groupReduceBy(key)(value)(op) · groupCount · groupSum", "one-pass group-reduce into a primitive-keyed table — Int keys and values stay unboxed in the loop"],
+    ["groupBy(f) · groupMapReduce(k)(f)(op)", "the stdlib-shaped variants, one fused pass into builders"],
+    ["partition(p) · span(p) · unzip", "one pass, two outputs"],
+    ["toList · toVector · toSet · toArray · toMap · to(factory) · mkString", "one fused pass into the builder"],
+    ["agg(a1, a2, …) · aggTo(Make.apply)(a1, …)", "several aggregates in ONE pass (tuple or your case class) — Agg.sum/count/min/max/avg/fold/reduce/minBy/maxBy/topNBy"],
+    ["sliding(n)", "overlapping windows of size n"],
+  ]}
+/>
+
+Three of those deserve to be seen compiled. First the short-circuit family — `find` plants a
+done-flag; the loop condition carries it, so the traversal stops the instant the answer exists:
+
+<FuseEx src="fuse-src-guide-find" gen="fuse-guide-find" />
+
+Then the multi-aggregate: three questions answered in **one pass**, each riding its own unboxed
+accumulator — `acc` for the sum, `c` for the count, `best`/`seen` for the max. Where you'd otherwise
+traverse three times (or box through a tuple-accumulating fold), the loop body is just three
+statements:
+
+<FuseEx src="fuse-src-guide-agg" gen="fuse-guide-agg" />
+
+And the group-reduce, because "unboxed" shouldn't stop at flat aggregates: `groupSum` compiles to a
+probe of a primitive-keyed open-addressing table — the `Int` key and the running `Int` sum live in
+raw slots, and boxing happens exactly once per *key*, at the final O(#keys) materialization into the
+`Map` you asked for. Not once per element:
+
+<FuseEx src="fuse-src-guide-groupsum" gen="fuse-guide-groupsum" />
+
+The emitted blocks above are golden tests in `tests/snapshots/`, regenerated on every build — what
+you see is what compiles. How the macro pulls all of this off — the column decomposition, dead-column
+elimination, compute-for-survivors — is [the next page](./optimizer.mdx).
+
+<Related
+  links={[
+    { to: "/fusion/optimizer", label: "Inside the optimizer", desc: "Column decomposition, DCE, the sink, CSE — with lowerings." },
+    { to: "/fusion/json", label: "The JSON experiment", desc: "The same optimizer pointed at raw bytes." },
+    { to: "/", label: "The 14-stage pipeline", desc: "What fusion buys on a real workload: ~36× the field." },
+  ]}
+/>

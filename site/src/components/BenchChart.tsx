@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useStore } from "../data/store";
-import { useTheme } from "../theme";
+import { useColorMode } from "@docusaurus/theme-common";
 import BenchSource from "./BenchSource";
 import {
   bandColor, edgeColor, kindOf, lc, nf, nfAxis, ours, verdictAt, type Chart,
@@ -56,7 +56,7 @@ function layout(chart: Chart) {
 export function Card({ chart, title }: { chart: Chart; title?: string }) {
   const { groups, frame } = useMemo(() => layout(chart), [chart]);
   const [hover, setHover] = useState<number | null>(null);
-  const dark = useTheme().theme === "dark";
+  const dark = useColorMode().colorMode === "dark";
 
   const legend = chart.impls.filter((v) => chart.xs.some((x) => chart.series[v]?.[x] > 0));
   const g = hover != null ? groups[hover] : null;

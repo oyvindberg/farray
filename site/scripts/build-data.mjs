@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * Produces the JSON files the SPA consumes, into site/public/data/:
+ * Produces the JSON files the site's components consume, into site/static/data/
+ * (Docusaurus copies static/ into the build verbatim):
  *
  *   bench.json     — the JMH results slimmed to {b:benchmark, p:params, s:score}.
  *                    The raw docs/bench-results.json is ~7.8 MB of percentiles + raw samples;
@@ -13,7 +14,8 @@
  *
  *   bench-sources.json / setbench-sources.json — every @Benchmark body, verbatim, per suite.
  *
- * Dev: re-run `npm run data` to refresh without restarting Vite. Prod: `vite build` bakes public/ into dist/.
+ * Dev: re-run `npm run data` to refresh without restarting the dev server. Prod: `docusaurus build`
+ * copies static/ into build/ (both dev and build run this script first via pre-scripts).
  */
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, existsSync } from "node:fs";
 import { dirname, resolve, relative, extname, join } from "node:path";
@@ -24,27 +26,32 @@ import { createHighlighter } from "shiki";
 // and the page's [data-theme] picks which to show, so code follows the site's light/dark mode.
 const THEMES = { light: "vitesse-light", dark: "vitesse-dark" };
 
-// Schematic of the core, faithful to the real FBase `permits` clause but collapsed across element kinds.
-const NODE_TREE = `// An FArray[A] is one of these. Each carrying-data node exists once per element
-// kind (Int, Long, Double, … , Ref) — generated, not hand-written.
+// Schematic of the core, faithful to the real FBase `permits` clause but collapsed across element
+// kinds: the Int-prefixed classes shown here each stand for NINE generated twins (one per kind).
+const NODE_TREE = `// An FArray[A] is one of these. There is no generic node anywhere: every shape that
+// touches an element is generated once per element kind — Int, Long, Double, Float,
+// Short, Byte, Char, Boolean, Ref. Each "Int…" class below stands for all nine twins
+// (IntArr beside LongArr, DoubleArr, …, RefArr); the pure-shape nodes exist once.
+// 7 element-carrying shapes × 9 kinds + 5 kind-free shapes = 68 final Java classes.
 sealed abstract class FBase
 
 // leaves — the data actually lives here:
-final class IntArr(arr: Array[Int])                       extends FBase  // a real int[]  (also Long/Double/…/Ref)
-final class IntOne(value: Int)                            extends FBase  // a single element
-case object Empty                                         extends FBase
+final class IntArr(arr: Array[Int])                       extends FBase  // ×9 — a real int[]; LongArr holds a long[], …, RefArr an Object[]
+final class IntOne(value: Int)                            extends FBase  // ×9 — a single unboxed element
+case object Empty                                         extends FBase  // once — carries no element, so no twins
 
-// lazy structural nodes — O(1) to build; they just point at their children:
-final class Concat(left: FBase, right: FBase)             extends FBase  // ++
-final class IntAppend(base: FBase, elem: Int)             extends FBase  // :+
-final class IntPrepend(elem: Int, base: FBase)            extends FBase  // +:
-final class SliceNode(base: FBase, off: Int, len: Int)    extends FBase  // take / drop / slice
-final class ReverseNode(base: FBase)                      extends FBase  // reverse
-final class IntPad(base: FBase, fill: Int, len: Int)      extends FBase  // padTo
-final class IntUpdated(base: FBase, i: Int, elem: Int)    extends FBase  // updated
-final class RangeNode(start: Int, step: Int, count: Int)  extends FBase  // FArray.range — elements never built
-final class IntFlatMap(segs: Array[Array[Int]],           //  flatMap with wide inners — one segment per
-                       offs: Array[Int])                  extends FBase  //  inner, their arrays kept, not copied`;
+// lazy structural nodes — O(1) to build; they just point at their children.
+// The ones that store an element are ×9 like the leaves; pure shapes exist once:
+final class Concat(left: FBase, right: FBase)             extends FBase  // once — ++
+final class IntAppend(base: FBase, elem: Int)             extends FBase  // ×9   — :+  (stores the appended elem)
+final class IntPrepend(elem: Int, base: FBase)            extends FBase  // ×9   — +:
+final class SliceNode(base: FBase, off: Int, len: Int)    extends FBase  // once — take / drop / slice
+final class ReverseNode(base: FBase)                      extends FBase  // once — reverse
+final class IntPad(base: FBase, fill: Int, len: Int)      extends FBase  // ×9   — padTo (stores the fill elem)
+final class IntUpdated(base: FBase, i: Int, elem: Int)    extends FBase  // ×9   — updated
+final class RangeNode(start: Int, step: Int, count: Int)  extends FBase  // once — FArray.range, elements never built
+final class IntFlatMap(segs: Array[Array[Int]],           // ×9   — flatMap with wide inners: one segment
+                       offs: Array[Int])                  extends FBase  //        per inner, arrays kept, not copied`;
 
 // Extract a brace-balanced `def` verbatim from generated source, starting at the line matching `sigRe`.
 function extractBraceDef(text, sigRe) {
@@ -69,7 +76,7 @@ const hl = (code, lang) =>
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, "../..");
-const OUT = resolve(HERE, "../public/data");
+const OUT = resolve(HERE, "../static/data");
 mkdirSync(OUT, { recursive: true });
 
 // ---------------------------------------------------------------- bench.json / setbench.json
@@ -280,7 +287,6 @@ function buildSnippets() {
   // Ingested whole (they are pure generated code, no markers) so the page can show what `.fuse` emits.
   const GOLDENS = [
     { name: "fuse-generated", file: "tests/snapshots/fuse-long-pipeline.snap" },
-    { name: "fuse-collect-generated", file: "tests/snapshots/fuse-collect-zip.snap" },
     { name: "map-generated", file: "tests/snapshots/map-inline.snap" },
   ];
   for (const g of GOLDENS) {
@@ -313,6 +319,23 @@ function buildSnippets() {
       code: short, html: hl(short, "scala"), full: raw, fullHtml: hl(raw, "scala"), fullLabel: "full expansion",
     };
   }
+  // The user-guide demos for the "Using .fuse" page — same treatment as the optimizer demos: the emitted
+  // loop by default (marker preamble stripped), the verbatim expansion one toggle away.
+  const FUSE_GUIDE = [
+    ["fuse-guide-collect", "tests/snapshots/fuse-guide-collect.snap"],
+    ["fuse-guide-zipcollect", "tests/snapshots/fuse-collect-zip.snap"],
+    ["fuse-guide-find", "tests/snapshots/fuse-guide-find.snap"],
+    ["fuse-guide-agg", "tests/snapshots/fuse-guide-agg.snap"],
+    ["fuse-guide-groupsum", "tests/snapshots/fuse-guide-groupsum.snap"],
+  ];
+  for (const [name, file] of FUSE_GUIDE) {
+    const raw = readFileSync(resolve(REPO, file), "utf8").replace(/^\n+|\n+$/g, "");
+    const short = polish(fuseLoop(raw));
+    out[name] = {
+      name, file, lang: "scala",
+      code: short, html: hl(short, "scala"), full: raw, fullHtml: hl(raw, "scala"), fullLabel: "full expansion",
+    };
+  }
   // The fused-JSON scanners for the "Fused JSON" page — the per-record byte scanner the macro emits,
   // cleaned to the runtime loop (proxy/placeholder noise dropped) with the verbatim expansion behind a toggle.
   const FUSE_JSON = ["sum", "cat", "count", "wide", "agg"];
@@ -338,6 +361,11 @@ function buildSnippets() {
     "fuse-src-jwide": "Json.ndjson[Wide](src).stream.filter(_.key > 90).map(_.payload).count",
     "fuse-src-jagg":
       'Json.ndjson[Event](src).stream.filter(_.status == "active")\n  .aggTo(Stats.apply)(Agg.sum(_.amount), Agg.count, Agg.max1(_.score))',
+    "fuse-src-guide-collect": "xs.fuse.map(_ + 1).collect { case x if x % 2 == 0 => x * 2 }.run",
+    "fuse-src-guide-zipcollect": "xs.fuse.zip(ys).collect { case (a, b) if (a + b) % 2 == 0 => a * b }.map(_ + 1).run",
+    "fuse-src-guide-find": "xs.fuse.map(_ * 3).find(_ > 100)",
+    "fuse-src-guide-agg": "xs.fuse.filter(_ % 2 == 0).agg(Agg.sum(x => x), Agg.count, Agg.max1(x => x))",
+    "fuse-src-guide-groupsum": "xs.fuse.groupSum(_ % 3)(x => x)",
   };
   for (const [name, code] of Object.entries(FUSE_OPT_SRC)) {
     out[name] = { name, file: "you write", lang: "scala", code, html: hl(code, "scala"), full: null, fullHtml: null };
@@ -375,7 +403,7 @@ if r.amount > 150 then r.category                   // and decodes \`category\` 
   // real FBase `permits` clause, collapsed across element kinds.
   const ILLUSTRATIONS = {
     "node-tree": {
-      file: "the core — schematic (the real hierarchy is generated Java, one final class per shape × kind)",
+      file: "the core — schematic (the real hierarchy is generated Java: 7 shapes × 9 element kinds + 5 kind-free = 68 final classes)",
       lang: "scala",
       code: NODE_TREE,
     },
