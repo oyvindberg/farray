@@ -802,21 +802,36 @@ object FArray:
       else if n == 0 then true
       else if n == 1 then FArrayOps.applyAtImpl[A](xs, 0) == FArrayOps.applyAtImpl[B](that, 0)
       else FArrayOps.matchAll2Impl[A, B](xs, 0, that, n)((a, b) => a == b)
+    // candidate scan: jump between occurrences of the slice's FIRST element with the short-circuit
+    // engine's indexOf (a vectorizable empty-body scan for prims), verify each candidate with ONE
+    // matchAll2, resume past it — instead of a matchAll2 call per position (position-stepping paid
+    // 0.75-0.78x vs IArray's stdlib KMP at 1k-100k).
     inline def indexOfSlice[B >: A](that: FArray[B]): Int =
       val m = that.length; val n = xs.length
       if m == 0 then 0
       else if m == 1 then xs.indexOf[B](FArrayOps.applyAtImpl[B](that, 0))
       else
+        val h = FArrayOps.applyAtImpl[B](that, 0)
+        val last = n - m
         var i = 0; var res = -1
-        while i + m <= n && res < 0 do if FArrayOps.matchAll2Impl[A, B](xs, i, that, m)((a, b) => a == b) then res = i else i += 1
+        while res < 0 && i <= last do
+          val c = FArrayOps.indexOfImpl[A, B](xs, h, i)
+          if c < 0 || c > last then i = last + 1
+          else if FArrayOps.matchAll2Impl[A, B](xs, c, that, m)((a, b) => a == b) then res = c
+          else i = c + 1
         res
     inline def lastIndexOfSlice[B >: A](that: FArray[B]): Int =
       val m = that.length; val n = xs.length
       if m == 0 then n
       else if m == 1 then xs.lastIndexOf[B](FArrayOps.applyAtImpl[B](that, 0))
       else
+        val h = FArrayOps.applyAtImpl[B](that, 0)
         var i = n - m; var res = -1
-        while i >= 0 && res < 0 do if FArrayOps.matchAll2Impl[A, B](xs, i, that, m)((a, b) => a == b) then res = i else i -= 1
+        while res < 0 && i >= 0 do
+          val c = FArrayOps.lastIndexOfImpl[A, B](xs, h, i)
+          if c < 0 then i = -1
+          else if FArrayOps.matchAll2Impl[A, B](xs, c, that, m)((a, b) => a == b) then res = c
+          else i = c - 1
         res
     inline def containsSlice[B >: A](that: FArray[B]): Boolean = indexOfSlice(that) >= 0
     def grouped(size: Int): Iterator[FArray[A]] =

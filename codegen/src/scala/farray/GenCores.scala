@@ -2157,17 +2157,35 @@ object GenCores extends BleepCodegenScript("GenCores") {
         s"val out = ${allocPlain(ka)}; var p = 0; while (p < n) { out(p) = vals($sidx); p += 1 }; new ${ka.name}Arr(out, n)"
       def idxSort(cmp: String): String =
         s"{ val idx = new Array[Int](n); var t = 0; while (t < n) { idx(t) = t; t += 1 }; val sidx = sortInt(idx, n, (ii, jj) => $cmp); ${permute("sidx(p)")} }"
-      val generic = idxSort(s"ord.lt(${keyAsB("karr(ii)")}, ${keyAsB("karr(jj)")})")
+      // With keys cached, sortedness is a cheap pre-scan (random input exits in ~2 compares):
+      // non-decreasing keys -> the stable-sorted result IS xs (identity, zero alloc — IArray's
+      // copy-first sortBy cannot do this); strictly-decreasing keys -> a lazy ReverseNode (strict,
+      // so reversal is stable). The desc scan only runs when the very first pair was descending.
+      // `lt(a, b)` compares two raw keys. (A tandem small-n insertion arm was MEASURED: +34% on
+      // presorted @10 but 37.1M -> 25.1M on random @10 — moving two arrays loses to the pack; the
+      // identity/reverse pre-scan takes the presorted case instead.)
+      def preScan(lt: (String, String) => String, sort: String): String =
+        s"{ var asc = 1; while (asc < n && !(${lt("karr(asc)", "karr(asc - 1)")})) asc += 1; " +
+          s"if (asc == n) xs " +
+          s"else if (asc == 1) { var dsc = 1; while (dsc < n && ${lt("karr(dsc)", "karr(dsc - 1)")}) dsc += 1; if (dsc == n) new ReverseNode(xs) else $sort } " +
+          s"else $sort }"
+      val genericCmp = (a: String, b: String) => s"ord.lt(${keyAsB(a)}, ${keyAsB(b)})"
+      val generic = preScan(genericCmp, idxSort(genericCmp("karr(ii)", "karr(jj)")))
+      val pack =
+        s"{ val packed = new Array[Long](n); var t = 0; while (t < n) { packed(t) = (karr(t).toLong << 32) | (t.toLong & 0xffffffffL); t += 1 }; java.util.Arrays.sort(packed); ${permute("(packed(p) & 0xffffffffL).toInt")} }"
       val fast = kb.name match {
         case "Int" =>
-          s"if (ord.asInstanceOf[AnyRef] eq scala.math.Ordering.Int) { val packed = new Array[Long](n); var t = 0; while (t < n) { packed(t) = (karr(t).toLong << 32) | (t.toLong & 0xffffffffL); t += 1 }; java.util.Arrays.sort(packed); ${permute("(packed(p) & 0xffffffffL).toInt")} } else $generic"
+          s"if (ord.asInstanceOf[AnyRef] eq scala.math.Ordering.Int) ${preScan((a, b) => s"$a < $b", pack)} else $generic"
         case "Long" =>
-          s"if (ord.asInstanceOf[AnyRef] eq scala.math.Ordering.Long) ${idxSort("karr(ii) < karr(jj)")} else $generic"
+          s"if (ord.asInstanceOf[AnyRef] eq scala.math.Ordering.Long) ${preScan((a, b) => s"$a < $b", idxSort("karr(ii) < karr(jj)"))} else $generic"
         case "Double" =>
-          s"if (ord.isInstanceOf[scala.math.Ordering.Double.TotalOrdering]) ${idxSort("java.lang.Double.compare(karr(ii), karr(jj)) < 0")} else $generic"
+          s"if (ord.isInstanceOf[scala.math.Ordering.Double.TotalOrdering]) ${preScan((a, b) => s"java.lang.Double.compare($a, $b) < 0", idxSort("java.lang.Double.compare(karr(ii), karr(jj)) < 0"))} else $generic"
         case _ => generic
       }
-      s"{ val vals = materialize${ka.name}(xs); val n = vals.length; if (n < 2) xs else { $fillKeys; $fast } }"
+      // sortBy only READS `vals` (keys derive from it, the permute copies out of it) — unlike
+      // sorted/sortWith nothing is mutated in place, so a leaf input hands its backing array straight
+      // in and skips the materialize copy. `n` must be the LOGICAL length (leaves carry slack).
+      s"{ val vals = (xs match { case leaf: ${ka.name}Arr => leaf.arr; case _ => materialize${ka.name}(xs) }); val n = xs.length; if (n < 2) xs else { $fillKeys; $fast } }"
     }
     val sortByV = dispatchA(ka => dispatchBmap(kb => sortByBody(ka, kb)))
     // groupBy/groupMap: ONE unboxed pass. Each element's key picks (or creates) a per-group `${Kind}Group`
