@@ -13,522 +13,13 @@ opaque type FArray[+A] <: AnyRef = FBase
 object FArray:
 
   inline def empty[A]: FArray[A] = FArrayOps.emptyImpl[A]
-  // small-arity overloads avoid the varargs Seq + boxing (hot inside flatMap inners); >3 falls back to varargs
-  inline def apply[A](a: A): FArray[A] = FArrayOps.fromValues1[A](a)
-  inline def apply[A](a: A, b: A): FArray[A] = FArrayOps.fromValues2[A](a, b)
-  inline def apply[A](a: A, b: A, c: A): FArray[A] = FArrayOps.fromValues3[A](a, b, c)
-  inline def apply[A](p1: A, p2: A, p3: A, p4: A): FArray[A] = FArrayOps.fromValues4[A](p1, p2, p3, p4)
-  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A): FArray[A] = FArrayOps.fromValues5[A](p1, p2, p3, p4, p5)
-  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A): FArray[A] = FArrayOps.fromValues6[A](p1, p2, p3, p4, p5, p6)
-  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A): FArray[A] = FArrayOps.fromValues7[A](p1, p2, p3, p4, p5, p6, p7)
-  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A): FArray[A] = FArrayOps.fromValues8[A](p1, p2, p3, p4, p5, p6, p7, p8)
-  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A): FArray[A] = FArrayOps.fromValues9[A](p1, p2, p3, p4, p5, p6, p7, p8, p9)
-  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A): FArray[A] =
-    FArrayOps.fromValues10[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10)
-  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A): FArray[A] =
-    FArrayOps.fromValues11[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11)
-  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A): FArray[A] =
-    FArrayOps.fromValues12[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12)
-  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A): FArray[A] =
-    FArrayOps.fromValues13[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13)
-  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A): FArray[A] =
-    FArrayOps.fromValues14[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14)
-  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A): FArray[A] =
-    FArrayOps.fromValues15[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15)
-  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A): FArray[A] =
-    FArrayOps.fromValues16[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16)
-  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A)
-      : FArray[A] = FArrayOps.fromValues17[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17)
-  inline def apply[A](p1: A, p2: A, p3: A, p4: A, p5: A, p6: A, p7: A, p8: A, p9: A, p10: A, p11: A, p12: A, p13: A, p14: A, p15: A, p16: A, p17: A, p18: A)
-      : FArray[A] = FArrayOps.fromValues18[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18)
-  inline def apply[A](
-      p1: A,
-      p2: A,
-      p3: A,
-      p4: A,
-      p5: A,
-      p6: A,
-      p7: A,
-      p8: A,
-      p9: A,
-      p10: A,
-      p11: A,
-      p12: A,
-      p13: A,
-      p14: A,
-      p15: A,
-      p16: A,
-      p17: A,
-      p18: A,
-      p19: A
-  ): FArray[A] = FArrayOps.fromValues19[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19)
-  inline def apply[A](
-      p1: A,
-      p2: A,
-      p3: A,
-      p4: A,
-      p5: A,
-      p6: A,
-      p7: A,
-      p8: A,
-      p9: A,
-      p10: A,
-      p11: A,
-      p12: A,
-      p13: A,
-      p14: A,
-      p15: A,
-      p16: A,
-      p17: A,
-      p18: A,
-      p19: A,
-      p20: A
-  ): FArray[A] = FArrayOps.fromValues20[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19, p20)
-  inline def apply[A](
-      p1: A,
-      p2: A,
-      p3: A,
-      p4: A,
-      p5: A,
-      p6: A,
-      p7: A,
-      p8: A,
-      p9: A,
-      p10: A,
-      p11: A,
-      p12: A,
-      p13: A,
-      p14: A,
-      p15: A,
-      p16: A,
-      p17: A,
-      p18: A,
-      p19: A,
-      p20: A,
-      p21: A
-  ): FArray[A] = FArrayOps.fromValues21[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19, p20, p21)
-  inline def apply[A](
-      p1: A,
-      p2: A,
-      p3: A,
-      p4: A,
-      p5: A,
-      p6: A,
-      p7: A,
-      p8: A,
-      p9: A,
-      p10: A,
-      p11: A,
-      p12: A,
-      p13: A,
-      p14: A,
-      p15: A,
-      p16: A,
-      p17: A,
-      p18: A,
-      p19: A,
-      p20: A,
-      p21: A,
-      p22: A
-  ): FArray[A] = FArrayOps.fromValues22[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19, p20, p21, p22)
-  inline def apply[A](
-      p1: A,
-      p2: A,
-      p3: A,
-      p4: A,
-      p5: A,
-      p6: A,
-      p7: A,
-      p8: A,
-      p9: A,
-      p10: A,
-      p11: A,
-      p12: A,
-      p13: A,
-      p14: A,
-      p15: A,
-      p16: A,
-      p17: A,
-      p18: A,
-      p19: A,
-      p20: A,
-      p21: A,
-      p22: A,
-      p23: A
-  ): FArray[A] = FArrayOps.fromValues23[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19, p20, p21, p22, p23)
-  inline def apply[A](
-      p1: A,
-      p2: A,
-      p3: A,
-      p4: A,
-      p5: A,
-      p6: A,
-      p7: A,
-      p8: A,
-      p9: A,
-      p10: A,
-      p11: A,
-      p12: A,
-      p13: A,
-      p14: A,
-      p15: A,
-      p16: A,
-      p17: A,
-      p18: A,
-      p19: A,
-      p20: A,
-      p21: A,
-      p22: A,
-      p23: A,
-      p24: A
-  ): FArray[A] = FArrayOps.fromValues24[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19, p20, p21, p22, p23, p24)
-  inline def apply[A](
-      p1: A,
-      p2: A,
-      p3: A,
-      p4: A,
-      p5: A,
-      p6: A,
-      p7: A,
-      p8: A,
-      p9: A,
-      p10: A,
-      p11: A,
-      p12: A,
-      p13: A,
-      p14: A,
-      p15: A,
-      p16: A,
-      p17: A,
-      p18: A,
-      p19: A,
-      p20: A,
-      p21: A,
-      p22: A,
-      p23: A,
-      p24: A,
-      p25: A
-  ): FArray[A] = FArrayOps.fromValues25[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19, p20, p21, p22, p23, p24, p25)
-  inline def apply[A](
-      p1: A,
-      p2: A,
-      p3: A,
-      p4: A,
-      p5: A,
-      p6: A,
-      p7: A,
-      p8: A,
-      p9: A,
-      p10: A,
-      p11: A,
-      p12: A,
-      p13: A,
-      p14: A,
-      p15: A,
-      p16: A,
-      p17: A,
-      p18: A,
-      p19: A,
-      p20: A,
-      p21: A,
-      p22: A,
-      p23: A,
-      p24: A,
-      p25: A,
-      p26: A
-  ): FArray[A] =
-    FArrayOps.fromValues26[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19, p20, p21, p22, p23, p24, p25, p26)
-  inline def apply[A](
-      p1: A,
-      p2: A,
-      p3: A,
-      p4: A,
-      p5: A,
-      p6: A,
-      p7: A,
-      p8: A,
-      p9: A,
-      p10: A,
-      p11: A,
-      p12: A,
-      p13: A,
-      p14: A,
-      p15: A,
-      p16: A,
-      p17: A,
-      p18: A,
-      p19: A,
-      p20: A,
-      p21: A,
-      p22: A,
-      p23: A,
-      p24: A,
-      p25: A,
-      p26: A,
-      p27: A
-  ): FArray[A] =
-    FArrayOps.fromValues27[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19, p20, p21, p22, p23, p24, p25, p26, p27)
-  inline def apply[A](
-      p1: A,
-      p2: A,
-      p3: A,
-      p4: A,
-      p5: A,
-      p6: A,
-      p7: A,
-      p8: A,
-      p9: A,
-      p10: A,
-      p11: A,
-      p12: A,
-      p13: A,
-      p14: A,
-      p15: A,
-      p16: A,
-      p17: A,
-      p18: A,
-      p19: A,
-      p20: A,
-      p21: A,
-      p22: A,
-      p23: A,
-      p24: A,
-      p25: A,
-      p26: A,
-      p27: A,
-      p28: A
-  ): FArray[A] =
-    FArrayOps.fromValues28[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19, p20, p21, p22, p23, p24, p25, p26, p27, p28)
-  inline def apply[A](
-      p1: A,
-      p2: A,
-      p3: A,
-      p4: A,
-      p5: A,
-      p6: A,
-      p7: A,
-      p8: A,
-      p9: A,
-      p10: A,
-      p11: A,
-      p12: A,
-      p13: A,
-      p14: A,
-      p15: A,
-      p16: A,
-      p17: A,
-      p18: A,
-      p19: A,
-      p20: A,
-      p21: A,
-      p22: A,
-      p23: A,
-      p24: A,
-      p25: A,
-      p26: A,
-      p27: A,
-      p28: A,
-      p29: A
-  ): FArray[A] = FArrayOps
-    .fromValues29[A](p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19, p20, p21, p22, p23, p24, p25, p26, p27, p28, p29)
-  inline def apply[A](
-      p1: A,
-      p2: A,
-      p3: A,
-      p4: A,
-      p5: A,
-      p6: A,
-      p7: A,
-      p8: A,
-      p9: A,
-      p10: A,
-      p11: A,
-      p12: A,
-      p13: A,
-      p14: A,
-      p15: A,
-      p16: A,
-      p17: A,
-      p18: A,
-      p19: A,
-      p20: A,
-      p21: A,
-      p22: A,
-      p23: A,
-      p24: A,
-      p25: A,
-      p26: A,
-      p27: A,
-      p28: A,
-      p29: A,
-      p30: A
-  ): FArray[A] = FArrayOps.fromValues30[A](
-    p1,
-    p2,
-    p3,
-    p4,
-    p5,
-    p6,
-    p7,
-    p8,
-    p9,
-    p10,
-    p11,
-    p12,
-    p13,
-    p14,
-    p15,
-    p16,
-    p17,
-    p18,
-    p19,
-    p20,
-    p21,
-    p22,
-    p23,
-    p24,
-    p25,
-    p26,
-    p27,
-    p28,
-    p29,
-    p30
-  )
-  inline def apply[A](
-      p1: A,
-      p2: A,
-      p3: A,
-      p4: A,
-      p5: A,
-      p6: A,
-      p7: A,
-      p8: A,
-      p9: A,
-      p10: A,
-      p11: A,
-      p12: A,
-      p13: A,
-      p14: A,
-      p15: A,
-      p16: A,
-      p17: A,
-      p18: A,
-      p19: A,
-      p20: A,
-      p21: A,
-      p22: A,
-      p23: A,
-      p24: A,
-      p25: A,
-      p26: A,
-      p27: A,
-      p28: A,
-      p29: A,
-      p30: A,
-      p31: A
-  ): FArray[A] = FArrayOps.fromValues31[A](
-    p1,
-    p2,
-    p3,
-    p4,
-    p5,
-    p6,
-    p7,
-    p8,
-    p9,
-    p10,
-    p11,
-    p12,
-    p13,
-    p14,
-    p15,
-    p16,
-    p17,
-    p18,
-    p19,
-    p20,
-    p21,
-    p22,
-    p23,
-    p24,
-    p25,
-    p26,
-    p27,
-    p28,
-    p29,
-    p30,
-    p31
-  )
-  inline def apply[A](
-      p1: A,
-      p2: A,
-      p3: A,
-      p4: A,
-      p5: A,
-      p6: A,
-      p7: A,
-      p8: A,
-      p9: A,
-      p10: A,
-      p11: A,
-      p12: A,
-      p13: A,
-      p14: A,
-      p15: A,
-      p16: A,
-      p17: A,
-      p18: A,
-      p19: A,
-      p20: A,
-      p21: A,
-      p22: A,
-      p23: A,
-      p24: A,
-      p25: A,
-      p26: A,
-      p27: A,
-      p28: A,
-      p29: A,
-      p30: A,
-      p31: A,
-      p32: A
-  ): FArray[A] = FArrayOps.fromValues32[A](
-    p1,
-    p2,
-    p3,
-    p4,
-    p5,
-    p6,
-    p7,
-    p8,
-    p9,
-    p10,
-    p11,
-    p12,
-    p13,
-    p14,
-    p15,
-    p16,
-    p17,
-    p18,
-    p19,
-    p20,
-    p21,
-    p22,
-    p23,
-    p24,
-    p25,
-    p26,
-    p27,
-    p28,
-    p29,
-    p30,
-    p31,
-    p32
-  )
-  // Larger literal arities go through applyMacro, which builds the typed backing array with unrolled
-  // primitive stores and wraps it into the leaf node directly (no varargs Seq, no boxing).
-  inline def apply[A](as: A*): FArray[A] = ${ FArrayMacros.applyMacro[A]('as) }
+  // ONE varargs apply: the macro pattern-matches the literal argument list at compile time and emits
+  // the construction directly for EVERY arity — Empty / ${K}One / a typed array filled with unrolled
+  // stores wrapped in ${K}Arr — no varargs Seq, no boxing, no overload wall, no runtime size checks.
+  // The param is `inline` so the inliner never proxies the varargs behind a Seq val (which would hide
+  // the literal list from the macro — and from the fuse macro's flatMap splat). A non-literal spread
+  // (`FArray(xs*)`) falls back to the runtime applyImpl.
+  inline def apply[A](inline as: A*): FArray[A] = ${ FArrayMacros.applyMacro[A]('as) }
   inline def tabulate[A](n: Int)(inline f: Int => A): FArray[A] = FArrayOps.tabulateImpl[A](n)(f)
   inline def fromArray[A](as: Array[A]): FArray[A] = FArrayOps.fromArrayImpl[A](as)
   inline def fromIterable[A](it: Iterable[A]): FArray[A] = FArrayOps.applyImpl[A](it.toSeq)
@@ -638,17 +129,15 @@ object FArray:
 
     inline def foldRight[Z](z: Z)(inline op: (A, Z) => Z): Z = FArrayOps.foldRightImpl[A, Z](xs, z)(op)
     inline def fold[B >: A](z: B)(inline op: (B, B) => B): B = xs.foldLeft[B](z)((acc, a) => op(acc, a))
+    // reduce* seed from the first/last ELEMENT via the seeded leaf methods — the composed form
+    // (drop(1)/take(n-1) + fold) allocated a SliceNode + did an applyAt dispatch per call, which
+    // dominated small inputs; only genuine trees compose now (inside the impl's cold arm).
     inline def reduceLeft[B >: A](inline op: (B, A) => B): B =
-      if xs.length == 1 then FArrayOps.applyAtImpl[A](xs, 0) else xs.drop(1).foldLeft[B](FArrayOps.applyAtImpl[A](xs, 0))(op)
+      if xs.length == 1 then FArrayOps.applyAtImpl[A](xs, 0) else FArrayOps.reduceLeftImpl[A, B](xs)(op)
     inline def reduce[B >: A](inline op: (B, B) => B): B =
-      if xs.length == 1 then FArrayOps.applyAtImpl[A](xs, 0) else xs.drop(1).foldLeft[B](FArrayOps.applyAtImpl[A](xs, 0))((acc, a) => op(acc, a))
+      if xs.length == 1 then FArrayOps.applyAtImpl[A](xs, 0) else FArrayOps.reduceLeftImpl[A, B](xs)((acc, a) => op(acc, a))
     inline def reduceRight[B >: A](inline op: (A, B) => B): B =
-      if xs.length == 1 then FArrayOps.applyAtImpl[A](xs, 0)
-      else
-        // seed from the last element, foldRight the prefix [0, n-1) — both ride the new Bwd reduce engine
-        // (take(n-1) is an O(1) SliceNode the engine traverses unboxed; no skip-flag, no Unit-Z side closure).
-        val n = xs.length
-        xs.take(n - 1).foldRight[B](FArrayOps.applyAtImpl[A](xs, n - 1))(op)
+      if xs.length == 1 then FArrayOps.applyAtImpl[A](xs, 0) else FArrayOps.reduceRightImpl[A, B](xs)(op)
     inline def reduceOption[B >: A](inline op: (B, B) => B): Option[B] =
       if xs.length == 0 then None else Some(xs.reduce[B](op))
 
@@ -743,8 +232,23 @@ object FArray:
       off >= 0 && FArrayOps.matchAll2Impl[A, B](xs, off, that, that.length)((a, b) => a == b)
 
     inline def padTo[B >: A](len: Int, elem: B): FArray[B] = FArrayOps.padToImpl[A, B](xs, len, elem)
+    // diff/intersect are MULTISET ops (each occurrence in `that` consumes at most one match), so a
+    // plain set can't back them — the unboxed backend is FMap[A, Int] when it lands. Interim: tiny
+    // inputs (n*m <= 64) skip the boxed HashMap entirely — a nested scan with consume-once flags is
+    // both faster there and multiset-correct.
     inline def diff[B >: A](that: FArray[B]): FArray[A] =
       if xs.length == 0 || that.length == 0 then xs
+      else if xs.length.toLong * that.length <= 64 then
+        val m = that.length
+        val used = new Array[Boolean](m)
+        xs.filter { a =>
+          var i = 0; var hit = -1
+          while hit < 0 && i < m do
+            if !used(i) && FArrayOps.applyAtImpl[B](that, i) == a then hit = i
+            i += 1
+          if hit >= 0 then { used(hit) = true; false }
+          else true
+        }
       else
         val rem = scala.collection.mutable.HashMap.empty[Any, Int]
         that.foreach(b => rem.update(b, rem.getOrElse(b, 0) + 1))
@@ -752,6 +256,17 @@ object FArray:
     inline def intersect[B >: A](that: FArray[B]): FArray[A] =
       if xs.length == 0 then xs
       else if that.length == 0 then FArray.empty[A]
+      else if xs.length.toLong * that.length <= 64 then
+        val m = that.length
+        val used = new Array[Boolean](m)
+        xs.filter { a =>
+          var i = 0; var hit = -1
+          while hit < 0 && i < m do
+            if !used(i) && FArrayOps.applyAtImpl[B](that, i) == a then hit = i
+            i += 1
+          if hit >= 0 then { used(hit) = true; true }
+          else false
+        }
       else
         val keep = scala.collection.mutable.HashMap.empty[Any, Int]
         that.foreach(b => keep.update(b, keep.getOrElse(b, 0) + 1))
@@ -802,21 +317,36 @@ object FArray:
       else if n == 0 then true
       else if n == 1 then FArrayOps.applyAtImpl[A](xs, 0) == FArrayOps.applyAtImpl[B](that, 0)
       else FArrayOps.matchAll2Impl[A, B](xs, 0, that, n)((a, b) => a == b)
+    // candidate scan: jump between occurrences of the slice's FIRST element with the short-circuit
+    // engine's indexOf (a vectorizable empty-body scan for prims), verify each candidate with ONE
+    // matchAll2, resume past it — instead of a matchAll2 call per position (position-stepping paid
+    // 0.75-0.78x vs IArray's stdlib KMP at 1k-100k).
     inline def indexOfSlice[B >: A](that: FArray[B]): Int =
       val m = that.length; val n = xs.length
       if m == 0 then 0
       else if m == 1 then xs.indexOf[B](FArrayOps.applyAtImpl[B](that, 0))
       else
+        val h = FArrayOps.applyAtImpl[B](that, 0)
+        val last = n - m
         var i = 0; var res = -1
-        while i + m <= n && res < 0 do if FArrayOps.matchAll2Impl[A, B](xs, i, that, m)((a, b) => a == b) then res = i else i += 1
+        while res < 0 && i <= last do
+          val c = FArrayOps.indexOfImpl[A, B](xs, h, i)
+          if c < 0 || c > last then i = last + 1
+          else if FArrayOps.matchAll2Impl[A, B](xs, c, that, m)((a, b) => a == b) then res = c
+          else i = c + 1
         res
     inline def lastIndexOfSlice[B >: A](that: FArray[B]): Int =
       val m = that.length; val n = xs.length
       if m == 0 then n
       else if m == 1 then xs.lastIndexOf[B](FArrayOps.applyAtImpl[B](that, 0))
       else
+        val h = FArrayOps.applyAtImpl[B](that, 0)
         var i = n - m; var res = -1
-        while i >= 0 && res < 0 do if FArrayOps.matchAll2Impl[A, B](xs, i, that, m)((a, b) => a == b) then res = i else i -= 1
+        while res < 0 && i >= 0 do
+          val c = FArrayOps.lastIndexOfImpl[A, B](xs, h, i)
+          if c < 0 then i = -1
+          else if FArrayOps.matchAll2Impl[A, B](xs, c, that, m)((a, b) => a == b) then res = c
+          else i = c - 1
         res
     inline def containsSlice[B >: A](that: FArray[B]): Boolean = indexOfSlice(that) >= 0
     def grouped(size: Int): Iterator[FArray[A]] =

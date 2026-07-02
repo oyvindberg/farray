@@ -779,8 +779,13 @@ object FuseMacro:
         case Block(Nil, inner)                                                           => litArity(inner)
         case Inlined(Some(Apply(fn, args)), _, _) if literalCtorSyms.contains(fn.symbol) =>
           args match
-            case List(Typed(Repeated(_, _), _)) | List(Repeated(_, _)) => None // varargs — not splatted
-            case _                                                     => Some(args.length)
+            // the ONE varargs `FArray.apply`: a LITERAL argument list presents as Repeated — the
+            // element count is right there. A spread (`FArray(xs*)`) has no Repeated — not a literal.
+            case List(Typed(Repeated(elems, _), _))                       => Some(elems.length)
+            case List(Repeated(elems, _))                                 => Some(elems.length)
+            case List(Typed(_, _)) if fArrayApplySyms.contains(fn.symbol) => None // spread — not splattable
+            case _                                                        => Some(args.length) // fixed-arity fromValuesN
+
         case Inlined(_, _, expansion) => litArity(expansion)
         case _                        => None
       // (2) extract the cur-substituted elements from the expansion: `new *One(e0)` (1) or the `out.update` stores

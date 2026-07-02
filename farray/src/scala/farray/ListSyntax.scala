@@ -26,6 +26,28 @@ object ListSyntax:
   final class Cons[A](private val xs: FArray[A]) extends AnyVal:
     def isEmpty: Boolean = xs.length == 0
     def get: Cons[A] = this
-    // generic (A abstract here), so read via the boxed accessor — like List[Int], which is boxed anyway
-    def _1: A = xs.boxedAt(0)
-    def _2: FArray[A] = xs.tail
+    // On a cons-built chain the node IS a ${K}Prepend — peel it with field reads (like List's own
+    // `::` match) instead of the virtual applyBoxed/drop pair, which measured 0.34x of List on
+    // head/tail recursion. Generic (A abstract), so prim elems box — exactly like List[Int].
+    def _1: A = xs.asInstanceOf[FBase] match
+      case p: RefPrepend     => p.elem.asInstanceOf[A]
+      case p: IntPrepend     => p.elem.asInstanceOf[A]
+      case p: LongPrepend    => p.elem.asInstanceOf[A]
+      case p: DoublePrepend  => p.elem.asInstanceOf[A]
+      case p: FloatPrepend   => p.elem.asInstanceOf[A]
+      case p: ShortPrepend   => p.elem.asInstanceOf[A]
+      case p: BytePrepend    => p.elem.asInstanceOf[A]
+      case p: CharPrepend    => p.elem.asInstanceOf[A]
+      case p: BooleanPrepend => p.elem.asInstanceOf[A]
+      case _                 => xs.boxedAt(0)
+    def _2: FArray[A] = xs.asInstanceOf[FBase] match
+      case p: RefPrepend     => p.base.asInstanceOf[FArray[A]]
+      case p: IntPrepend     => p.base.asInstanceOf[FArray[A]]
+      case p: LongPrepend    => p.base.asInstanceOf[FArray[A]]
+      case p: DoublePrepend  => p.base.asInstanceOf[FArray[A]]
+      case p: FloatPrepend   => p.base.asInstanceOf[FArray[A]]
+      case p: ShortPrepend   => p.base.asInstanceOf[FArray[A]]
+      case p: BytePrepend    => p.base.asInstanceOf[FArray[A]]
+      case p: CharPrepend    => p.base.asInstanceOf[FArray[A]]
+      case p: BooleanPrepend => p.base.asInstanceOf[FArray[A]]
+      case _                 => xs.tail
