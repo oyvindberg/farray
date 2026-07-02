@@ -1077,6 +1077,102 @@ object GenCores extends BleepCodegenScript("GenCores") {
       }
       ee.result
     }
+    // SEEDED reduce leaf methods — reduceLeft/reduce/reduceRight seed the accumulator from the
+    // first/last ELEMENT instead of a caller-supplied z. The composed form (`drop(1).foldLeft(head)`)
+    // pays a SliceNode allocation + an applyAt dispatch per call, which dominates at small n
+    // (ReduceInt @10 measured 0.75-0.86x of iarray). Here the leaf/One/slice shapes seed directly;
+    // only the cold tree arm keeps the composition. Self-kind prim acc + Ref-Ref only — cross-kind
+    // reduceLeft (Z a different kind than A) stays on the composed surface fallback.
+    val reduceSeedMethods = {
+      val ee = new Emit("  ")
+      def emit(k: Kind, backward: Boolean): Unit = {
+        val K = k.name
+        val isRef = !k.isPrim
+        val dir = if backward then "Bwd" else "Fwd"
+        val tparam = if isRef then "[Z <: AnyRef]" else ""
+        val accT = if isRef then "Z" else k.arr
+        val foldT = if isRef then s"Traversers.${K}ToRefFold[Z]" else s"Traversers.${K}To${K}Fold"
+        val cast = (e: String) => if isRef then s"($e).asInstanceOf[Z]" else e
+        // cold tree arm: the old composition — node alloc is fine off the hot path.
+        val leafCall = if isRef then s"reduceLeaf${dir}${K}Ref[Z]" else s"reduceLeaf${dir}${K}${K}"
+        val treeCall =
+          if !backward then s"$leafCall(xs.drop(1), ${cast(s"xs.applyBoxed(0)")}, f)"
+          else s"$leafCall(xs.take(xs.length - 1), ${cast(s"xs.applyBoxed(xs.length - 1)")}, f)"
+        val treeCallPrim =
+          if k.isPrim then {
+            if !backward then s"$leafCall(xs.drop(1), ${k.lc}At(xs, 0), f)"
+            else s"$leafCall(xs.take(xs.length - 1), ${k.lc}At(xs, xs.length - 1), f)"
+          } else treeCall
+        ee.open(s"def reduceSeed${dir}${K}$tparam(xs: FBase, f: $foldT): $accT = xs match")
+        ee.line(s"case o: ${K}One => ${cast("o.elem")}")
+        ee.open(s"case leaf: ${K}Arr =>")
+        ee.line("val a = leaf.arr")
+        ee.line("val n = leaf.length")
+        if !backward then {
+          ee.line(s"var acc: $accT = ${cast("a(0)")}")
+          ee.line("var i = 1")
+          ee.open("while (i < n)")
+          ee.line("acc = f.apply(acc, a(i))")
+          ee.line("i += 1")
+          ee.close()
+        } else {
+          ee.line(s"var acc: $accT = ${cast("a(n - 1)")}")
+          ee.line("var i = n - 2")
+          ee.open("while (i >= 0)")
+          ee.line("acc = f.apply(acc, a(i))")
+          ee.line("i -= 1")
+          ee.close()
+        }
+        ee.line("acc")
+        ee.closeOpen(s"case s: SliceNode if s.base.isInstanceOf[${K}Arr] =>")
+        ee.line(s"val a = s.base.asInstanceOf[${K}Arr].arr")
+        ee.line("val so = s.offset")
+        ee.line("val sn = s.length")
+        if !backward then {
+          ee.line(s"var acc: $accT = ${cast("a(so)")}")
+          ee.line("var i = so + 1")
+          ee.line("val e = so + sn")
+          ee.open("while (i < e)")
+          ee.line("acc = f.apply(acc, a(i))")
+          ee.line("i += 1")
+          ee.close()
+        } else {
+          ee.line(s"var acc: $accT = ${cast("a(so + sn - 1)")}")
+          ee.line("var i = so + sn - 2")
+          ee.open("while (i >= so)")
+          ee.line("acc = f.apply(acc, a(i))")
+          ee.line("i -= 1")
+          ee.close()
+        }
+        ee.line("acc")
+        ee.closeOpen("case _ =>")
+        ee.line(if k.isPrim then treeCallPrim else treeCall)
+        ee.close()
+        ee.close()
+      }
+      opKinds.foreach { k =>
+        emit(k, backward = false)
+        emit(k, backward = true)
+      }
+      ee.result
+    }
+    // seeded reduce surfaces: self-kind Z rides the seeded leaf method; anything else composes as before.
+    def reduceSurface(backward: Boolean): String = {
+      val dir = if backward then "Bwd" else "Fwd"
+      def comb(k: Kind, acc: String, el: String): String = if backward then s"op($el, $acc)" else s"op($acc, $el)"
+      def fallback(k: Kind): String =
+        if !backward then s"foldLeftImpl[A, Z](xs.drop(1), applyAtImpl[A](xs, 0))((zz, aa) => op(zz, aa))"
+        else s"foldRightImpl[A, Z](xs.take(xs.length - 1), applyAtImpl[A](xs, xs.length - 1))((aa, zz) => op(aa, zz))"
+      dispatchA { k =>
+        val K = k.name
+        if k.isPrim then
+          s"summonFrom { case rz: ${K}Repr[Z] => rz.wrap(reduceSeed${dir}${K}(xs, (acc, v) => rz.unwrap(${comb(k, "rz.wrap(acc)", wrapV(k))}))); case _ => ${fallback(k)} }"
+        else
+          s"reduceSeed${dir}Ref[Z & AnyRef](xs, (acc, v) => ${comb(k, "acc.asInstanceOf[Z]", wrapV(k))}.asInstanceOf[Z & AnyRef]).asInstanceOf[Z]"
+      }
+    }
+    val reduceLeftV = reduceSurface(backward = false)
+    val reduceRightV = reduceSurface(backward = true)
     // SHARED LEAF METHODS for the BUILD shape (map/mapConserve), one per covered (I, O) pair — the EXACT
     // analogue of the reduceLeaf* family. Each is a SMALL NON-inline method in FArrayOps: it peels
     // Empty/${I}One/top-${I}Arr with the unboxed leaf loop calling the realized Build SAM `f.apply`, and for a
@@ -2659,6 +2755,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |$flatMapShared
        |$sortArr
        |$reduceLeafMethods
+       |$reduceSeedMethods
        |$mapLeafMethods
        |$trimLeafMethods
        |$filterLeafMethods
@@ -2709,6 +2806,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def toArrayImpl[A, B](xs: FBase)(ct: scala.reflect.ClassTag[B]): Array[B] = if (xs.length == 0) ct.newArray(0) else if (xs.length == 1) { val out = ct.newArray(1); out(0) = applyAtImpl[A](xs, 0).asInstanceOf[B]; out } else $toArrayV
        |  inline def copyToArrayImpl[A, B](xs: FBase, dest: Array[B], start: Int, len: Int): Int = $copyToArrayV
        |  inline def foldLeftImpl[A, Z](xs: FBase, z: Z)(inline op: (Z, A) => Z): Z = $foldLeft
+       |  inline def reduceLeftImpl[A, Z >: A](xs: FBase)(inline op: (Z, A) => Z): Z = $reduceLeftV
+       |  inline def reduceRightImpl[A, Z >: A](xs: FBase)(inline op: (A, Z) => Z): Z = $reduceRightV
        |  inline def foldRightImpl[A, Z](xs: FBase, z: Z)(inline op: (A, Z) => Z): Z = $foldRightV
        |  inline def iteratorImpl[A](xs: FBase): Iterator[A] = ($iteratorV).asInstanceOf[Iterator[A]]
        |  inline def countImpl[A](xs: FBase)(inline p: A => Boolean): Int = $countV

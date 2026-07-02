@@ -638,17 +638,15 @@ object FArray:
 
     inline def foldRight[Z](z: Z)(inline op: (A, Z) => Z): Z = FArrayOps.foldRightImpl[A, Z](xs, z)(op)
     inline def fold[B >: A](z: B)(inline op: (B, B) => B): B = xs.foldLeft[B](z)((acc, a) => op(acc, a))
+    // reduce* seed from the first/last ELEMENT via the seeded leaf methods — the composed form
+    // (drop(1)/take(n-1) + fold) allocated a SliceNode + did an applyAt dispatch per call, which
+    // dominated small inputs; only genuine trees compose now (inside the impl's cold arm).
     inline def reduceLeft[B >: A](inline op: (B, A) => B): B =
-      if xs.length == 1 then FArrayOps.applyAtImpl[A](xs, 0) else xs.drop(1).foldLeft[B](FArrayOps.applyAtImpl[A](xs, 0))(op)
+      if xs.length == 1 then FArrayOps.applyAtImpl[A](xs, 0) else FArrayOps.reduceLeftImpl[A, B](xs)(op)
     inline def reduce[B >: A](inline op: (B, B) => B): B =
-      if xs.length == 1 then FArrayOps.applyAtImpl[A](xs, 0) else xs.drop(1).foldLeft[B](FArrayOps.applyAtImpl[A](xs, 0))((acc, a) => op(acc, a))
+      if xs.length == 1 then FArrayOps.applyAtImpl[A](xs, 0) else FArrayOps.reduceLeftImpl[A, B](xs)((acc, a) => op(acc, a))
     inline def reduceRight[B >: A](inline op: (A, B) => B): B =
-      if xs.length == 1 then FArrayOps.applyAtImpl[A](xs, 0)
-      else
-        // seed from the last element, foldRight the prefix [0, n-1) — both ride the new Bwd reduce engine
-        // (take(n-1) is an O(1) SliceNode the engine traverses unboxed; no skip-flag, no Unit-Z side closure).
-        val n = xs.length
-        xs.take(n - 1).foldRight[B](FArrayOps.applyAtImpl[A](xs, n - 1))(op)
+      if xs.length == 1 then FArrayOps.applyAtImpl[A](xs, 0) else FArrayOps.reduceRightImpl[A, B](xs)(op)
     inline def reduceOption[B >: A](inline op: (B, B) => B): Option[B] =
       if xs.length == 0 then None else Some(xs.reduce[B](op))
 
@@ -743,8 +741,22 @@ object FArray:
       off >= 0 && FArrayOps.matchAll2Impl[A, B](xs, off, that, that.length)((a, b) => a == b)
 
     inline def padTo[B >: A](len: Int, elem: B): FArray[B] = FArrayOps.padToImpl[A, B](xs, len, elem)
+    // diff/intersect are MULTISET ops (each occurrence in `that` consumes at most one match), so a
+    // plain set can't back them — the unboxed backend is FMap[A, Int] when it lands. Interim: tiny
+    // inputs (n*m <= 64) skip the boxed HashMap entirely — a nested scan with consume-once flags is
+    // both faster there and multiset-correct.
     inline def diff[B >: A](that: FArray[B]): FArray[A] =
       if xs.length == 0 || that.length == 0 then xs
+      else if xs.length.toLong * that.length <= 64 then
+        val m = that.length
+        val used = new Array[Boolean](m)
+        xs.filter { a =>
+          var i = 0; var hit = -1
+          while hit < 0 && i < m do
+            if !used(i) && FArrayOps.applyAtImpl[B](that, i) == a then hit = i
+            i += 1
+          if hit >= 0 then { used(hit) = true; false } else true
+        }
       else
         val rem = scala.collection.mutable.HashMap.empty[Any, Int]
         that.foreach(b => rem.update(b, rem.getOrElse(b, 0) + 1))
@@ -752,6 +764,16 @@ object FArray:
     inline def intersect[B >: A](that: FArray[B]): FArray[A] =
       if xs.length == 0 then xs
       else if that.length == 0 then FArray.empty[A]
+      else if xs.length.toLong * that.length <= 64 then
+        val m = that.length
+        val used = new Array[Boolean](m)
+        xs.filter { a =>
+          var i = 0; var hit = -1
+          while hit < 0 && i < m do
+            if !used(i) && FArrayOps.applyAtImpl[B](that, i) == a then hit = i
+            i += 1
+          if hit >= 0 then { used(hit) = true; true } else false
+        }
       else
         val keep = scala.collection.mutable.HashMap.empty[Any, Int]
         that.foreach(b => keep.update(b, keep.getOrElse(b, 0) + 1))
