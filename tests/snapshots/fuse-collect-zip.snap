@@ -20,54 +20,34 @@
     val cap: Int = java.lang.Math.min(n0, zn)
     val out: Array[Int] = new Array[Int](cap)
     var o: Int = 0
-    src0 match {
-      case leaf: IntArr =>
-        val `a₂`: Array[Int] = leaf.arr
-        val len: Int = `a₂`.length
-        var i: Int = 0
-        while (i.<(len).&&(done.unary_!)) {
-          val v: Int = `a₂`.apply(i)
-          if (c.>=(zn)) done = true else {
-            val pos: Int = c
-            c = c.+(1)
-            val `v₂`: Int = FArrayOps.intAt(zthat, pos)
-            new Tuple2$mcII$sp(v, `v₂`).asInstanceOf[Tuple2[Int, Int]] match {
-              case Tuple2(a, b) if `a₃`.+(`b₂`).%(2).==(0) =>
-                {
-                  val `v₃`: Int = `a₃`.*(`b₂`)
-                  val `v₄`: Int = `v₃`.+(1)
-                  out.update(o, `v₄`)
-                  o = o.+(1)
-                }
-              case _ =>
-                ()
+    val s: FBase = src0
+    val `a₂`: Array[Int] = s match {
+      case l: IntArr =>
+        (l.arr: Array[Int])
+      case _ =>
+        null
+    }
+    val len: Int = s.length
+    var i: Int = 0
+    while (i.<(len).&&(done.unary_!)) {
+      val v: Int = if (`a₂`.ne(null)) `a₂`.apply(i) else FArrayOps.intAt(s, i)
+      if (c.>=(zn)) done = true else {
+        val pos: Int = c
+        c = c.+(1)
+        val `v₂`: Int = FArrayOps.intAt(zthat, pos)
+        new Tuple2$mcII$sp(v, `v₂`).asInstanceOf[Tuple2[Int, Int]] match {
+          case Tuple2(a, b) if `a₃`.+(`b₂`).%(2).==(0) =>
+            {
+              val `v₃`: Int = `a₃`.*(`b₂`)
+              val `v₄`: Int = `v₃`.+(1)
+              out.update(o, `v₄`)
+              o = o.+(1)
             }
-          }
-          i = i.+(1)
+          case _ =>
+            ()
         }
-      case s =>
-        val `len₂`: Int = s.length
-        var `i₂`: Int = 0
-        while (`i₂`.<(`len₂`).&&(done.unary_!)) {
-          val `v₅`: Int = FArrayOps.intAt(s, `i₂`)
-          if (c.>=(zn)) done = true else {
-            val `pos₂`: Int = c
-            c = c.+(1)
-            val `v₆`: Int = FArrayOps.intAt(zthat, `pos₂`)
-            new Tuple2$mcII$sp(`v₅`, `v₆`).asInstanceOf[Tuple2[Int, Int]] match {
-              case Tuple2(a, b) if `a₄`.+(`b₃`).%(2).==(0) =>
-                {
-                  val `v₇`: Int = `a₄`.*(`b₃`)
-                  val `v₈`: Int = `v₇`.+(1)
-                  out.update(o, `v₈`)
-                  o = o.+(1)
-                }
-              case _ =>
-                ()
-            }
-          }
-          `i₂` = `i₂`.+(1)
-        }
+      }
+      i = i.+(1)
     }
     if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(out.apply(0)) else if (o.==(cap)) new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o)
   }.asInstanceOf[FArray[Int]]: FArray[Int])

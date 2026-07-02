@@ -20,36 +20,25 @@
         var acc: Int = z$proxy
 
         ({
-          src0 match {
-            case leaf: IntArr =>
-              val a: Array[Int] = leaf.arr
-              val len: Int = a.length
-              var i: Int = 0
-              while (i.<(len)) {
-                val v: Int = a.apply(i)
-                val `v₂`: Int = v.%(2)
-                val `v₃`: Boolean = `v₂`.==(0)
-                if (`v₃`) {
-                  val `v₄`: Int = expensive(v)
-                  acc = IntIsIntegral.plus(acc, `v₄`)
-                  ()
-                } else ()
-                i = i.+(1)
-              }
-            case s =>
-              val `len₂`: Int = s.length
-              var `i₂`: Int = 0
-              while (`i₂`.<(`len₂`)) {
-                val `v₅`: Int = FArrayOps.intAt(s, `i₂`)
-                val `v₆`: Int = `v₅`.%(2)
-                val `v₇`: Boolean = `v₆`.==(0)
-                if (`v₇`) {
-                  val `v₈`: Int = expensive(`v₅`)
-                  acc = IntIsIntegral.plus(acc, `v₈`)
-                  ()
-                } else ()
-                `i₂` = `i₂`.+(1)
-              }
+          val s: FBase = src0
+          val a: Array[Int] = s match {
+            case l: IntArr =>
+              (l.arr: Array[Int])
+            case t =>
+              if (t.length.>=(64)) FArrayOps.materializeInt(t) else null
+          }
+          val len: Int = s.length
+          var i: Int = 0
+          while (i.<(len)) {
+            val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+            val `v₂`: Int = v.%(2)
+            val `v₃`: Boolean = `v₂`.==(0)
+            if (`v₃`) {
+              val `v₄`: Int = expensive(v)
+              acc = IntIsIntegral.plus(acc, `v₄`)
+              ()
+            } else ()
+            i = i.+(1)
           }
           acc
         }: Int)
