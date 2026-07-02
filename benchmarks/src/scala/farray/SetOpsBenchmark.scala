@@ -53,6 +53,13 @@ class SetOpsIntBenchmark extends IntInputs {
   @Benchmark def iarray_distinctDups(): IArray[Int] = iarrayDups.distinct
   @Benchmark def ziochunk_distinctDups(): zio.Chunk[Int] = zioDups.distinct
 
+  // distinctBy with a dense Int key (x >> 3: 8x collapse) — the bitmap-kernel path over a computed column.
+  @Benchmark def farray_distinctBy(): FArray[Int] = farrayInput.distinctBy(_ >> 3)
+  @Benchmark def list_distinctBy(): List[Int] = listInput.distinctBy(_ >> 3)
+  @Benchmark def vector_distinctBy(): Vector[Int] = vectorInput.distinctBy(_ >> 3)
+  @Benchmark def iarray_distinctBy(): IArray[Int] = iarrayInput.distinctBy(_ >> 3)
+  @Benchmark def ziochunk_distinctBy(): zio.Chunk[Int] = zioChunkInput.distinctBy(_ >> 3)
+
   @Benchmark def farray_diff(): FArray[Int] = farrayInput.diff(farrayThat)
   @Benchmark def list_diff(): List[Int] = listInput.diff(listThat)
   @Benchmark def vector_diff(): Vector[Int] = vectorInput.diff(vectorThat)

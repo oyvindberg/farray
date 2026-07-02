@@ -185,9 +185,9 @@ object FArray:
     // Scala `==` semantics preserved exactly (NaN never collapses, ±0.0 does), identity return when nothing
     // was duplicated. Replaces the boxed mutable.HashSet[Any] + filter pass.
     inline def distinct: FArray[A] = FArrayOps.distinctImpl[A](xs)
-    inline def distinctBy[B](inline f: A => B): FArray[A] =
-      if xs.length <= 1 then xs
-      else { val seen = scala.collection.mutable.HashSet.empty[B]; xs.filter(a => seen.add(f(a))) }
+    // same seen-tables as distinct, keyed by an unboxed computed f(a) column; survivor indices gather the
+    // ORIGINAL elements (first occurrence per key wins, List semantics); identity return when no key repeats.
+    inline def distinctBy[B](inline f: A => B): FArray[A] = FArrayOps.distinctByImpl[A, B](xs)(f)
     inline def zip[B](that: FArray[B]): FArray[(A, B)] = FArrayOps.zipImpl[A, B](xs, that)
     inline def zipWithIndex: FArray[(A, Int)] = FArrayOps.zipWithIndexImpl[A](xs)
     inline def sortWith(inline lt: (A, A) => Boolean): FArray[A] = FArrayOps.sortWithImpl[A](xs)(lt)

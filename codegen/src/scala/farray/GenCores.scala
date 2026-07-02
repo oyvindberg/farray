@@ -1520,6 +1520,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       }
       ee.result
     }
+
     // SHARED LEAF METHODS for the PARTITION shape, one per input kind — the dual-output analogue of filterLeaf*.
     // ONE pass writes kept-true into outA[oa++] and kept-false into outB[ob++]; both outputs are trimmed leaves of
     // the SAME input kind. Empty -> (Empty, Empty); ${I}One -> (xs, Empty) or (Empty, xs) by the predicate; a
@@ -1994,6 +1995,91 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val filter = dispatchA(k => s"filterLeaf${k.name}(xs, ${predSAM(k, s"p(${wrapV(k)})")})")
     // distinct: no lambda — the inline surface is pure kind dispatch into the shared unboxed leaf method.
     val distinctV = dispatchA(k => s"distinctLeaf${k.name}(xs)")
+    // distinctBy[B]: A picks the source read + survivor copy; B picks the keys column + seen-kernel.
+    // ONE inlined loop writes raw f(a) keys; the kernel returns survivor indices (null = identity -> xs).
+    val distinctByV = {
+      // ONE FUSED PASS, no keys column (the first, column-based cut measured 0.59-0.78x vs zio.Chunk on
+      // collapse-heavy keys — three passes over a spilled column lose to competitors' single fused pass).
+      // The user's f inlines into the loop; the key is computed once per element and never recomputed (f
+      // may be impure/expensive — List evaluates it exactly once per element, so must we). Because there
+      // is no column, the position-index probe has nothing to compare against — the seen-tables store the
+      // KEY VALUES themselves behind F14 ctrl bytes (occupancy lives in ctrl, so no sentinel problem).
+      // Semantics identical to distinct's: Scala `==` on keys (NaN keys never collapse -> table bypass;
+      // ±0.0 canonicalize; Ref keys anyHash + `==`). Survivors append lazily; identity return on no-dup.
+      // One (ka,kb) instantiation per concrete call site — the same inline-footprint deal as mapImpl.
+      def setup(kb: Kind): String = kb.name match {
+        case "Boolean"        => "var seenT = false; var seenF = false"
+        case "Byte"           => "val words = new Array[Long](4)"
+        case "Short" | "Char" => "val words = new Array[Long](1024)"
+        case "Int"            =>
+          // Int keys get a WINDOWED BITMAP fast path (span 64n clamped to [4096, 65536] bits, centered on
+          // the first key) + a LAZY ctrl-table for out-of-window strays. Small-span keys — `_.length`,
+          // enum-ish codes, the canonical distinctBy shapes — stay on the ~4-cycle bit test the whole run
+          // (measured: the pure mix+probe fused cut regressed by-length 20-40% vs the bitmap); wide keys
+          // pay one branch and fall to the table, which is only allocated (and zeroed) if actually reached.
+          "var cap = 16; while (cap.toLong < (n.toLong << 1) && cap != (1 << 30)) cap <<= 1; " +
+            "val mask = cap - 1; var ctrl: Array[Byte] = null; var kv: Array[Int] = null; " +
+            "val bmSpan = if (n >= 1024) 65536 else { var s = 4096; while (s < (n << 6)) s <<= 1; s }; " +
+            "val words = new Array[Long](bmSpan >>> 6); var bmBase = 0; var bmInit = false"
+        case _ =>
+          val kv = kb.name match {
+            case "Float"           => "new Array[Int](cap)"
+            case "Long" | "Double" => "new Array[Long](cap)"
+            case _                 => "new Array[Object](cap)"
+          }
+          "var cap = 16; while (cap.toLong < (n.toLong << 1) && cap != (1 << 30)) cap <<= 1; " +
+            s"val mask = cap - 1; val ctrl = new Array[Byte](cap); val kv = $kv"
+      }
+      // sets `isNew` from the key `k` (a `var isNew = false` is in scope) and records the key.
+      def probe(kb: Kind): String = kb.name match {
+        case "Boolean"                 => "isNew = if (k) !seenT else !seenF; if (k) seenT = true else seenF = true"
+        case "Byte" | "Short" | "Char" =>
+          val bi = kb.name match { case "Byte" => "k & 0xff"; case "Short" => "k & 0xffff"; case _ => "k.toInt" }
+          s"val bi = $bi; isNew = (words(bi >>> 6) & (1L << bi)) == 0L; words(bi >>> 6) |= (1L << bi)"
+        case "Int" =>
+          "{ if (!bmInit) { bmInit = true; bmBase = k - (bmSpan >>> 1) }; val off = k - bmBase; " +
+            "if (off >= 0 && off < bmSpan) { isNew = (words(off >>> 6) & (1L << off)) == 0L; words(off >>> 6) |= (1L << off) } " +
+            "else { if (ctrl == null) { ctrl = new Array[Byte](cap); kv = new Array[Int](cap) }; " +
+            "val m = Mixers.mixInt(k); val fp = (((m >>> 24) & 0x7f) | 0x80).toByte; var h = m & mask; " +
+            "var probing = true; while (probing) { val c = ctrl(h); " +
+            "if (c == 0) { ctrl(h) = fp; kv(h) = k; isNew = true; probing = false } " +
+            "else if (c == fp && kv(h) == k) probing = false else h = (h + 1) & mask } } }"
+        case _ =>
+          // kk = the key's stored form; Float/Double bypass the table on a NaN key (it can never equal
+          // anything -> always a survivor) and canonicalize -0.0 so ±0.0 keys share bits.
+          val (guard, kk, mix) = kb.name match {
+            case "Long"   => ("", "k", "Mixers.mixLong(kk)")
+            case "Float"  => ("if (k != k) isNew = true else ", "java.lang.Float.floatToRawIntBits(if (k == 0.0f) 0.0f else k)", "Mixers.mixInt(kk)")
+            case "Double" => ("if (k != k) isNew = true else ", "java.lang.Double.doubleToRawLongBits(if (k == 0.0d) 0.0d else k)", "Mixers.mixLong(kk)")
+            case _        => ("", "k", "Mixers.mixInt(scala.runtime.Statics.anyHash(kk))")
+          }
+          s"$guard{ val kk = $kk; val m = $mix; val fp = (((m >>> 24) & 0x7f) | 0x80).toByte; var h = m & mask; " +
+            "var probing = true; while (probing) { val c = ctrl(h); " +
+            "if (c == 0) { ctrl(h) = fp; kv(h) = kk; isNew = true; probing = false } " +
+            "else if (c == fp && kv(h) == kk) probing = false else h = (h + 1) & mask } }"
+      }
+      def body(ka: Kind, kb: Kind): String = {
+        val readA = if ka.name == "Ref" then "src(i).asInstanceOf[A]" else "r.wrap(src(i))"
+        val key = if kb.name == "Ref" then s"(f($readA)).asInstanceOf[Object]" else s"rb.unwrap(f($readA))"
+        // survivor buffer: sized 2i+16 at the FIRST dup and grown geometrically (capped at n) — a full
+        // Array(n) here measured as the by-length bottleneck (800KB zeroed to keep 6 survivors at n=100k).
+        s"{ val src = (xs match { case lf: ${ka.name}Arr => lf.arr; case _ => materialize${ka.name}(xs) }); " +
+          s"var out: Array[${ka.arr}] = null; var w = 0; ${setup(kb)}; var i = 0; " +
+          s"while (i < n) { val v = src(i); val k = $key; var isNew = false; ${probe(kb)}; " +
+          "if (isNew) { if (out != null) { " +
+          "if (w == out.length) { var nc = out.length << 1; if (nc > n) nc = n; out = java.util.Arrays.copyOf(out, nc) }; " +
+          "out(w) = v; w += 1 } } " +
+          s"else if (out == null) { var c0 = (i << 1) + 16; if (c0 > n) c0 = n; out = new Array[${ka.arr}](c0); System.arraycopy(src, 0, out, 0, i); w = i }; i += 1 }; " +
+          s"if (out == null) xs else if (w == 1) new ${ka.name}One(out(0)) else new ${ka.name}Arr(out, w) }"
+      }
+      "summonFrom {\n" + opKinds
+        .map { ka =>
+          s"      case r: ${ka.name}Repr[A] => summonFrom {\n" +
+            opKinds.map(kb => s"          case rb: ${kb.name}Repr[B] => ${body(ka, kb)}").mkString("\n") +
+            s"\n          case _ => ${noReprErr("B")}\n        }"
+        }
+        .mkString("\n") + s"\n      case _ => ${noReprErr("A")}\n    }"
+    }
     // partition: ONE dual-output pass through the shared partitionLeaf${I} (kept-true -> _1, kept-false -> _2).
     // Same slim surface as filter — summon the input kind, realize the user predicate into the ${I}Pred SAM, CALL
     // the shared leaf method. The result FBase pair is wrapped to (FArray[A], FArray[A]) in FArray.scala.
@@ -2451,6 +2537,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def mapImpl[A, B](xs: FBase)(inline f: A => B): FBase = { val n = xs.length; $mapM }
        |  inline def filterImpl[A](xs: FBase)(inline p: A => Boolean): FBase = $filter
        |  inline def distinctImpl[A](xs: FBase): FBase = if (xs.length < 2) xs else $distinctV
+       |  inline def distinctByImpl[A, B](xs: FBase)(inline f: A => B): FBase = if (xs.length < 2) xs else { val n = xs.length; $distinctByV }
        |  inline def filterNotImpl[A](xs: FBase)(inline p: A => Boolean): FBase = ${dispatchA(k =>
         s"filterLeaf${k.name}(xs, ${predSAM(k, s"!p(${wrapV(k)})")})"
       )}

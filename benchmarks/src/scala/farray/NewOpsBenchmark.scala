@@ -31,6 +31,13 @@ class NewOpsStrBenchmark extends Inputs {
   @Benchmark def iarray_distinct(): IArray[String] = iarrayInput.distinct
   @Benchmark def ziochunk_distinct(): zio.Chunk[String] = zioChunkInput.distinct
 
+  // by-length: a tiny Int key space (1..6 digits) — heavy key collapse, the rebuild path.
+  @Benchmark def farray_distinctBy(): FArray[String] = farrayInput.distinctBy(_.length)
+  @Benchmark def list_distinctBy(): List[String] = listInput.distinctBy(_.length)
+  @Benchmark def vector_distinctBy(): Vector[String] = vectorInput.distinctBy(_.length)
+  @Benchmark def iarray_distinctBy(): IArray[String] = iarrayInput.distinctBy(_.length)
+  @Benchmark def ziochunk_distinctBy(): zio.Chunk[String] = zioChunkInput.distinctBy(_.length)
+
   @Benchmark def farray_groupBy(): Map[Int, FArray[String]] = farrayInput.groupBy(_.length)
   @Benchmark def list_groupBy(): Map[Int, List[String]] = listInput.groupBy(_.length)
   @Benchmark def vector_groupBy(): Map[Int, Vector[String]] = vectorInput.groupBy(_.length)
