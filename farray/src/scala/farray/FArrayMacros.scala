@@ -4,12 +4,10 @@ import scala.quoted.*
 
 private[farray] object FArrayMacros:
 
-  /** `FArray(a, b, c, …)` with a literal argument list constructs the LEAF NODE directly — arity 0 is
-    * `Empty.INSTANCE`, arity 1 a `${K}One`, arity n a typed backing array filled with unrolled stores and
-    * wrapped in `new ${K}Arr(out, n)`. No inline-def indirection, no varargs `Seq`, no boxing, no runtime
-    * canonicalisation (the arity is a compile-time fact): the expansion IS the optimal code, and it is
-    * exactly the shape `FuseMacro.literalFArrayElems` recognizes and splats. A non-literal spread
-    * (`FArray(xs*)`) falls back to the runtime `applyImpl`.
+  /** `FArray(a, b, c, …)` with a literal argument list constructs the LEAF NODE directly — arity 0 is `Empty.INSTANCE`, arity 1 a `${K}One`, arity n a typed
+    * backing array filled with unrolled stores and wrapped in `new ${K}Arr(out, n)`. No inline-def indirection, no varargs `Seq`, no boxing, no runtime
+    * canonicalisation (the arity is a compile-time fact): the expansion IS the optimal code, and it is exactly the shape `FuseMacro.literalFArrayElems`
+    * recognizes and splats. A non-literal spread (`FArray(xs*)`) falls back to the runtime `applyImpl`.
     */
   def applyMacro[A: Type](as: Expr[Seq[A]])(using Quotes): Expr[FArray[A]] =
     import quotes.reflect.*

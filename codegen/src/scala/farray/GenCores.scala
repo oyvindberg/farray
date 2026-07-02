@@ -1167,8 +1167,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
         val K = k.name
         if k.isPrim then
           s"summonFrom { case rz: ${K}Repr[Z] => rz.wrap(reduceSeed${dir}${K}(xs, (acc, v) => rz.unwrap(${comb(k, "rz.wrap(acc)", wrapV(k))}))); case _ => ${fallback(k)} }"
-        else
-          s"reduceSeed${dir}Ref[Z & AnyRef](xs, (acc, v) => ${comb(k, "acc.asInstanceOf[Z]", wrapV(k))}.asInstanceOf[Z & AnyRef]).asInstanceOf[Z]"
+        else s"reduceSeed${dir}Ref[Z & AnyRef](xs, (acc, v) => ${comb(k, "acc.asInstanceOf[Z]", wrapV(k))}.asInstanceOf[Z & AnyRef]).asInstanceOf[Z]"
       }
     }
     val reduceLeftV = reduceSurface(backward = false)

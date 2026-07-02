@@ -246,7 +246,8 @@ object FArray:
           while hit < 0 && i < m do
             if !used(i) && FArrayOps.applyAtImpl[B](that, i) == a then hit = i
             i += 1
-          if hit >= 0 then { used(hit) = true; false } else true
+          if hit >= 0 then { used(hit) = true; false }
+          else true
         }
       else
         val rem = scala.collection.mutable.HashMap.empty[Any, Int]
@@ -263,7 +264,8 @@ object FArray:
           while hit < 0 && i < m do
             if !used(i) && FArrayOps.applyAtImpl[B](that, i) == a then hit = i
             i += 1
-          if hit >= 0 then { used(hit) = true; true } else false
+          if hit >= 0 then { used(hit) = true; true }
+          else false
         }
       else
         val keep = scala.collection.mutable.HashMap.empty[Any, Int]
