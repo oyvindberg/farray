@@ -4,7 +4,7 @@ import BenchChart from "../components/BenchChart";
 import BenchPair from "../components/BenchPair";
 import Scorecard from "../components/Scorecard";
 
-// Finiteness propagation — the per-operation transfer functions (docs/fset-design.md §1.2).
+// Finiteness propagation — the per-operation transfer functions of the lazy algebra.
 const FINITENESS: { op: string; finite: string; note: string }[] = [
   { op: "a ∪ b", finite: "both finite", note: "infinite if either side is" },
   { op: "a ∩ b", finite: "either finite", note: "infinite ∩ finite is always finite — the gem of the table" },

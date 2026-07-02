@@ -100,11 +100,12 @@ FArray.tabulate(1_000_000)(i => i).fuse
   .foldLeft(0)(_ + _)   // one while-loop over the int[]; nothing allocated in between
 ```
 
-📖 **[Read the FArray story →](https://oyvindberg.github.io/farray/)** — how it's built and why it's fast, told through hoverable JMH charts and code extracted from source that compiles. Four pages: the story itself, [the fuse optimizer](https://oyvindberg.github.io/farray/#/fusion), [the fused JSON parser](https://oyvindberg.github.io/farray/#/json) it powers, and [the complete benchmark reference](https://oyvindberg.github.io/farray/#/reference) — every operation at every size, wins and losses alike.
+📖 **[Read the FArray story →](https://oyvindberg.github.io/farray/)** — how it's built and why it's fast, told through hoverable JMH charts and code extracted from source that compiles. Six pages: the story itself, [the fuse optimizer](https://oyvindberg.github.io/farray/#/fusion), [the fused JSON parser](https://oyvindberg.github.io/farray/#/json) it powers, [**FSet**](https://oyvindberg.github.io/farray/#/fset) — the immutable unboxed set built on the same core (frozen flat leaves + a lazy set algebra) — and the complete benchmark references for [FArray](https://oyvindberg.github.io/farray/#/reference) and [FSet](https://oyvindberg.github.io/farray/#/setbench), every operation at every size, wins and losses alike. The site *is* the documentation.
 
 Regenerate the numbers on your own machine:
 ```bash
-scripts/bench-run.sh                     # runs the JMH suite → docs/bench-results.json
+scripts/bench-run.sh                     # runs the FArray JMH suite → docs/bench-results.json
+scripts/setbench-run.sh                  # runs the FSet JMH suite → docs/set-bench-results.json
 cd site && npm install && npm run dev    # the site, live, on your fresh numbers
 ```
 Commit `docs/bench-results.json` and push — CI rebuilds and redeploys the site from it automatically.
