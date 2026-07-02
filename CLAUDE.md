@@ -36,10 +36,11 @@ keeping the full `IndexedSeq` API.
 
 ## Benchmark-driven workflow
 
-The benchmark report **is the scorecard and is checked in** under `docs/`:
-`bench-results.json` (raw JMH numbers) + `index.html` (rendered W/T/L charts — farray vs every
-competitor, per op × size: ≥1.05× win, 0.95–1.05× tie, <0.95× loss). Treat the report like code:
-**regenerate and commit it alongside the change that moved the numbers.**
+The scorecard **is the checked-in JSON** under `docs/`: `bench-results.json` (farray suite) and
+`set-bench-results.json` (fset suite) — raw JMH numbers, rendered by the site (`site/`, pages
+`#/reference` and `#/setbench`: W/T/L per op × size, ≥1.05× win, 0.95–1.05× tie, <0.95× loss).
+There is NO generated HTML report anymore. Treat the data like code: **re-measure and commit it
+alongside the change that moved the numbers.**
 
 **Fast round-trip (the common loop).** Because `docs/bench-results.json` already exists, the runner
 auto-selects **farray-only patch mode**: it re-measures *only* the `farray_*` methods and patches them
@@ -60,8 +61,8 @@ caffeinate -i bash scripts/bench-run.sh [warmup-iters] [measure-iters] [forks] [
   (in-shard JVM); `1` fork = more stable. `max-shards` caps peak memory (~2g per `-f1` fork).
 - Drives `org.openjdk.jmh.Main` as N parallel java processes (not `bleep run`, which serializes on the
   build server); captures the real classpath from one live `bleep run`.
-- **Always regenerates `docs/index.html`** (`scripts/bench_report.py`) at the end — always check the
-  refreshed report back in.
+- Ends at the refreshed `docs/bench-results.json` — view it via the site (`cd site && npm run dev`),
+  and always check the refreshed JSON back in.
 - Delete `docs/bench-results.json` to force a full-suite run (re-measures competitors too).
 - Beware under-warmed-up artifacts in a fast sweep; confirm a surprising number with `-f 2`/more iters
   before acting on it.

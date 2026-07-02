@@ -186,6 +186,54 @@ class FListTest:
     assert(s.distinct.asInstanceOf[AnyRef] eq s.asInstanceOf[AnyRef], "all-distinct Ref should be identity")
   }
   @Test def test_distinct_by: Unit = test1(_.distinctBy(_.length))(_.distinctBy(_.length))
+  @Test def test_distinct_by_kinds: Unit = {
+    // parity oracle: List.distinctBy. Compared via boxed .equals (a list containing NaN never == itself).
+    def check[A](arr: Array[A], got: List[A], expected: List[A]): Unit = {
+      val same = got.length == expected.length &&
+        got.lazyZip(expected).forall((x, y) => java.util.Objects.equals(x, y))
+      assert(same, s"distinctBy mismatch for ${arr.toList}: got $got, expected $expected")
+    }
+    // the classic: Ref elements, Int keys (String by length) — first occurrence per key wins
+    locally {
+      val a = Array("aa", "b", "cc", "ddd", "e", "ffff")
+      check(a, FArray.fromArray(a).distinctBy(_.length).toList, a.toList.distinctBy(_.length))
+    }
+    // Int elements, Int keys: dense keys (bitmap route) and sparse keys (position table)
+    locally {
+      val a = Array.tabulate(1000)(i => i)
+      check(a, FArray.fromArray(a).distinctBy(_ % 37).toList, a.toList.distinctBy(_ % 37))
+      check(a, FArray.fromArray(a).distinctBy(x => (x % 41) * 0x9e3779b1).toList, a.toList.distinctBy(x => (x % 41) * 0x9e3779b1))
+    }
+    // Int elements, Ref keys (cross-kind the other way)
+    locally {
+      val a = Array.tabulate(200)(i => i)
+      check(a, FArray.fromArray(a).distinctBy(x => "k" + (x % 13)).toList, a.toList.distinctBy(x => "k" + (x % 13)))
+    }
+    // Double keys: NaN keys never collapse, ±0.0 keys always collapse (List `==` semantics)
+    locally {
+      val a = Array(1, 2, 3, 4, 5, 6)
+      val key = (x: Int) =>
+        x match {
+          case 1 | 3 => Double.NaN
+          case 2     => -0.0
+          case 4     => 0.0
+          case _     => 7.5
+        }
+      check(a, FArray.fromArray(a).distinctBy(key).toList, a.toList.distinctBy(key))
+    }
+    // null keys and Boolean keys
+    locally {
+      val a = Array("a", "bb", "c", "dd")
+      val nk = (s: String) => if (s.length == 1) null else s.substring(0, 1)
+      check(a, FArray.fromArray(a).distinctBy(nk).toList, a.toList.distinctBy(nk))
+      check(a, FArray.fromArray(a).distinctBy(_.length == 1).toList, a.toList.distinctBy(_.length == 1))
+    }
+    // identity: all keys distinct returns the SAME instance
+    locally {
+      val d = FArray.fromArray(Array.tabulate(100)(i => i))
+      assert(d.distinctBy(_ * 3).asInstanceOf[AnyRef] eq d.asInstanceOf[AnyRef], "all-distinct-keys should be identity")
+    }
+  }
   @Test def test_drop: Unit = test1(_.drop(1))(_.drop(1))
   @Test def test_dropRight: Unit = test1(_.dropRight(1))(_.dropRight(1))
   @Test def test_dropWhile: Unit = test1(_.dropWhile(!_.headOption.contains('b')))(_.dropWhile(!_.headOption.contains('b')))
