@@ -1355,12 +1355,19 @@ object GenCores extends BleepCodegenScript("GenCores") {
     //     table (int[] of SOURCE indices, -1 empty — no sentinel-value problem, works for every kind).
     val distinctLeafMethods = {
       val ee = new Emit("  ")
-      // shared: the lazy-out bookkeeping around a per-element `isNew` flag.
+      // shared: the lazy-out bookkeeping around a per-element `isNew` flag. Survivor buffer sized 2i+16
+      // at the FIRST dup and grown geometrically (capped at n) — the full Array(n) alternative measured as
+      // a real cost on heavy-collapse inputs in distinctBy (zeroing n slots to keep a handful of survivors).
       def lazyOut(k: Kind): Unit = {
         ee.open("if (isNew)")
-        ee.line("if (out != null) { out(w) = v; w += 1 }")
+        ee.open("if (out != null)")
+        ee.line("if (w == out.length) { var nc = out.length << 1; if (nc > n) nc = n; out = java.util.Arrays.copyOf(out, nc) }")
+        ee.line("out(w) = v; w += 1")
+        ee.close()
         ee.closeOpen("else if (out == null)")
-        ee.line(s"out = new Array[${k.arr}](n)")
+        ee.line("var c0 = (i << 1) + 16")
+        ee.line("if (c0 > n) c0 = n")
+        ee.line(s"out = new Array[${k.arr}](c0)")
         ee.line("System.arraycopy(src, 0, out, 0, i)")
         ee.line("w = i")
         ee.close()
