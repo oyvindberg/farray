@@ -1,4 +1,4 @@
-// Faithful TypeScript port of scripts/bench_report.py's grouping + verdict + scorecard math.
+// The grouping + verdict + scorecard math (originally ported from the retired scripts/bench_report.py).
 // Input is the slimmed bench.json: {b: benchmark, p: params, s: score}[].
 
 export type Slim = { b: string; p: Record<string, string>; s: number };
