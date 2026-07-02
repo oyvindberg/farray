@@ -37,8 +37,9 @@ keeping the full `IndexedSeq` API.
 ## Benchmark-driven workflow
 
 The scorecard **is the checked-in JSON** under `docs/`: `bench-results.json` (farray suite) and
-`set-bench-results.json` (fset suite) — raw JMH numbers, rendered by the site (`site/`, pages
-`#/reference` and `#/setbench`: W/T/L per op × size, ≥1.05× win, 0.95–1.05× tie, <0.95× loss).
+`set-bench-results.json` (fset suite) — raw JMH numbers, rendered by the site (`site/`, a Docusaurus
+app; pages `/benchmarks/farray` and `/benchmarks/fset`: W/T/L per op × size, ≥1.05× win, 0.95–1.05×
+tie, <0.95× loss).
 There is NO generated HTML report anymore. Treat the data like code: **re-measure and commit it
 alongside the change that moved the numbers.**
 
