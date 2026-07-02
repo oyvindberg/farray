@@ -363,17 +363,19 @@ object GenCores extends BleepCodegenScript("GenCores") {
   }
 
   // Per-kind growable, unboxed accumulator for groupBy/groupMap. One instance per group; `add` appends an
-  // already-unwrapped Prim, doubling the backing array on demand (starts tiny: most groups are small). `toLeaf`
-  // wraps the buffer into a leaf node WITHOUT a second per-element pass — it reuses the backing array verbatim
-  // when full, else trims with a single Arrays.copyOf. This is what kills the old double-build: elements land
-  // unboxed in their final array on the first (only) pass; finalisation is O(#groups), not O(n).
+  // already-unwrapped Prim, doubling the backing array on demand. Capacity starts at 16: cap 4 cost ~2 extra
+  // realloc+copy rounds per group in the mid-size band (8 groups of n/8 elems @1000 was a 0.69x dip vs iarray).
+  // `toLeaf` wraps the buffer into a leaf WITHOUT a second per-element pass — backing array reused verbatim,
+  // except <1/4-full buffers trim with one Arrays.copyOf (bounds retained slack for high-cardinality keys, same
+  // heuristic as trimLeaf). This is what kills the old double-build: elements land unboxed in their final array
+  // on the first (only) pass; finalisation is O(#groups), not O(n).
   private def groupBufClass(k: Kind): String = {
     val arrT = if k.name == "Ref" then "Object" else k.arr
     s"""final class ${k.name}Group {
-       |  var arr: Array[$arrT] = new Array[$arrT](4)
+       |  var arr: Array[$arrT] = new Array[$arrT](16)
        |  var size: Int = 0
        |  def add(v: $arrT): Unit = { if (size == arr.length) arr = java.util.Arrays.copyOf(arr, size * 2); arr(size) = v; size += 1 }
-       |  def toLeaf: FBase = if (size == 0) Empty.INSTANCE else if (size == 1) new ${k.name}One(arr(0)) else new ${k.name}Arr(arr, size)
+       |  def toLeaf: FBase = if (size == 0) Empty.INSTANCE else if (size == 1) new ${k.name}One(arr(0)) else if (size < (arr.length >>> 2)) new ${k.name}Arr(java.util.Arrays.copyOf(arr, size), size) else new ${k.name}Arr(arr, size)
        |}""".stripMargin
   }
 
@@ -1274,8 +1276,46 @@ object GenCores extends BleepCodegenScript("GenCores") {
       val ee = new Emit("  ")
       opKinds.foreach { k =>
         val K = k.name
-        // the size-1/0 canonicaliser: k == 0 -> Empty, k == 1 -> ${K}One, else `out` wrapped directly with logical
-        // length k (k <= n; NO trim copy — slack `n - k`).
+        // Per-arm flat loop over the window `read(i)` for i in [0, n).
+        // PRIMS: BRANCHLESS keep — unconditional store + conditional cursor bump. Removes the mispredict on
+        // unpredictable predicates AND lets the loop vectorize - MEASURED @100k Int: random 3.3k -> 21.5k
+        // ops/s, predictable 3.3k-ish branchy -> 29.8k. (Needs `out` pre-allocated at full n — part of the
+        // vectorized shape, so prims keep the up-front allocation.)
+        // REF: branchy keep (an unconditional ref store pays a GC write barrier per REJECTED element too;
+        // branchless measured 10-38% slower on the predictable Str suite) + REJECT-PREFIX scan: the output
+        // array is NOT allocated until the first keeper, so an all-reject filter (and the rejected prefix
+        // generally) allocates nothing, and the buffer is right-sized to n - prefix.
+        def loopBody(read: String => String): Unit =
+          if k.isPrim then {
+            ee.line(s"val out = new Array[${k.arr}](n)")
+            ee.line("var i = 0")
+            ee.line("var o = 0")
+            ee.open("while (i < n)")
+            ee.line(s"val e = ${read("i")}")
+            ee.line("out(o) = e")
+            ee.line("o += (if (p.apply(e)) 1 else 0)")
+            ee.line("i += 1")
+            ee.close()
+            // o <= n. o == n -> nothing filtered, reuse xs (reference identity). Else hand `out` through with
+            // logical length `o` — SKIP the trim copy (slack = n - o); leaves iterate to `length`.
+            ee.line(s"if (o == n) xs else trimLeaf${K}(out, o, n)")
+          } else {
+            ee.line("var i = 0")
+            ee.line(s"while (i < n && !p.apply(${read("i")})) i += 1")
+            ee.open("if (i == n) Empty.INSTANCE else")
+            ee.line(s"val out = new Array[${k.arr}](n - i)")
+            ee.line(s"out(0) = ${read("i")}")
+            ee.line("var o = 1")
+            ee.line("i += 1")
+            ee.open("while (i < n)")
+            ee.line(s"val e = ${read("i")}")
+            ee.line("if (p.apply(e)) { out(o) = e; o += 1 }")
+            ee.line("i += 1")
+            ee.close()
+            // o == n only reachable with an empty rejected prefix -> reuse xs (reference identity).
+            ee.line(s"if (o == n) xs else trimLeaf${K}(out, o, out.length)")
+            ee.close()
+          }
         ee.open(s"def filterLeaf${K}(xs: FBase, p: Traversers.${K}Pred): FBase =")
         ee.open("xs match")
         ee.line("case e: Empty => Empty.INSTANCE")
@@ -1283,51 +1323,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.open(s"case leaf: ${K}Arr =>")
         ee.line("val a = leaf.arr")
         ee.line("val n = leaf.length")
-        ee.line(s"val out = new Array[${k.arr}](n)")
-        ee.line("var i = 0")
-        ee.line("var o = 0")
-        ee.open("while (i < n)")
-        ee.line("val e = a(i)")
-        if k.isPrim then {
-          // BRANCHLESS keep (prims only): unconditional store + conditional cursor bump. Removes the
-          // mispredict on unpredictable predicates AND lets the loop vectorize - MEASURED @100k Int:
-          // random 3.3k -> 21.5k ops/s, predictable 3.3k-ish branchy -> 29.8k. Ref keeps the branchy
-          // form: an unconditional ref store pays a GC write barrier per REJECTED element too, and
-          // measured 10-38% slower on the (predictable) Str suite.
-          ee.line("out(o) = e")
-          ee.line("o += (if (p.apply(e)) 1 else 0)")
-        } else {
-          ee.line("if (p.apply(e)) { out(o) = e; o += 1 }")
-        }
-        ee.line("i += 1")
-        ee.close()
-        // o <= n. o == n -> nothing filtered, reuse xs (reference identity). Else hand `out` through with logical
-        // length `o` — SKIP the trim copy (slack = n - o); leaves iterate to `length`.
-        ee.line(s"if (o == n) xs else trimLeaf${K}(out, o, n)")
+        loopBody(i => s"a($i)")
         // SLICE FAST-PATH: same standalone lifted loop over the leaf window (take/drop results).
         ee.closeOpen(s"case s: SliceNode if s.base.isInstanceOf[${K}Arr] =>")
         ee.line(s"val a = s.base.asInstanceOf[${K}Arr].arr")
         ee.line("val so = s.offset")
         ee.line("val n = s.length")
-        ee.line(s"val out = new Array[${k.arr}](n)")
-        ee.line("var i = 0")
-        ee.line("var o = 0")
-        ee.open("while (i < n)")
-        ee.line("val e = a(so + i)")
-        if k.isPrim then {
-          // BRANCHLESS keep (prims only): unconditional store + conditional cursor bump. Removes the
-          // mispredict on unpredictable predicates AND lets the loop vectorize - MEASURED @100k Int:
-          // random 3.3k -> 21.5k ops/s, predictable 3.3k-ish branchy -> 29.8k. Ref keeps the branchy
-          // form: an unconditional ref store pays a GC write barrier per REJECTED element too, and
-          // measured 10-38% slower on the (predictable) Str suite.
-          ee.line("out(o) = e")
-          ee.line("o += (if (p.apply(e)) 1 else 0)")
-        } else {
-          ee.line("if (p.apply(e)) { out(o) = e; o += 1 }")
-        }
-        ee.line("i += 1")
-        ee.close()
-        ee.line(s"if (o == n) xs else trimLeaf${K}(out, o, n)")
+        loopBody(i => s"a(so + $i)")
         ee.closeOpen("case _ =>")
         ee.line("val n = xs.length")
         ee.line(s"val out = new Array[${k.arr}](n)")
@@ -1784,6 +1786,10 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // FIRST element that FAILS the user predicate (the SAM is the negation). find/collectFirst do exactly ONE
     // applyAtImpl(hit) — one random access on the found index, never per-element.
     def predSAM(k: Kind, cond: String): String = s"(v) => $cond"
+    // Element-equality ops (contains/indexOf/lastIndexOf) don't need the element's static type — for Ref,
+    // comparing the raw `v: Object` skips the per-element checkcast that `wrapV` inserts (`equals` takes
+    // Object; the element stays the receiver, matching stdlib's `exists(_ == elem)`).
+    def eqVal(k: Kind): String = if k.name == "Ref" then "v" else wrapV(k)
     val existsV = dispatchA(k => s"scFwdLeaf${k.name}(xs, 0, ${predSAM(k, s"p(${wrapV(k)})")}) < length")
     val forallV = dispatchA(k => s"scFwdLeaf${k.name}(xs, 0, ${predSAM(k, s"!p(${wrapV(k)})")}) == length")
     val findV =
@@ -1791,7 +1797,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val indexWhereV =
       dispatchA(k => s"{ val i = scFwdLeaf${k.name}(xs, if (from < 0) 0 else from, ${predSAM(k, s"p(${wrapV(k)})")}); if (i < length) i else -1 }")
     val indexOfV =
-      dispatchA(k => s"{ val i = scFwdLeaf${k.name}(xs, if (from < 0) 0 else from, ${predSAM(k, s"${wrapV(k)} == elem")}); if (i < length) i else -1 }")
+      dispatchA(k => s"{ val i = scFwdLeaf${k.name}(xs, if (from < 0) 0 else from, ${predSAM(k, s"${eqVal(k)} == elem")}); if (i < length) i else -1 }")
     val collectFirstV = dispatchA(k =>
       s"{ val i = scFwdLeaf${k.name}(xs, 0, ${predSAM(k, s"pf.isDefinedAt(${wrapV(k)})")}); if (i < length) Some(pf(applyAtImpl[A](xs, i))) else None }"
     )
@@ -1800,7 +1806,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     )
     val prefixLenV = dispatchA(k => s"scFwdLeaf${k.name}(xs, 0, ${predSAM(k, s"!p(${wrapV(k)})")})")
     val lastIndexWhereV = dispatchA(k => s"scBwdLeaf${k.name}(xs, if (end > length - 1) length - 1 else end, ${predSAM(k, s"p(${wrapV(k)})")})")
-    val lastIndexOfV = dispatchA(k => s"scBwdLeaf${k.name}(xs, if (end > length - 1) length - 1 else end, ${predSAM(k, s"${wrapV(k)} == elem")})")
+    val lastIndexOfV = dispatchA(k => s"scBwdLeaf${k.name}(xs, if (end > length - 1) length - 1 else end, ${predSAM(k, s"${eqVal(k)} == elem")})")
     // count/sum/product: hybrid Reduce surfaces over the shared leaf method (design §2.1/§5). Each ONLY
     // realizes the combine SAM and CALLS reduceLeafFwd${I}${I} (which peels Empty/One/leaf and routes genuine
     // TREES through Traversers) — NO inlined leaf loop. The SAME shared leaf machinery as foldLeft. Prim inputs
@@ -1927,8 +1933,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
       )
     val scanLeftV = scanSurface(backward = false)
     val scanRightV = scanSurface(backward = true)
+    // Empty/One peel: without it both fall into the materialize arm — a fresh array + an anonymous
+    // ${K}Dfs + a full DFS + the cursor for zero/one elements (measured 0.31-0.35x of the shared
+    // empty-iterator / one-field-iterator the competitors return).
     val iteratorV = dispatchA(k =>
-      s"xs match { case leaf: ${k.name}Arr => new ${k.name}Cursor(leaf.arr, leaf.length); case _ => new ${k.name}Cursor(materialize${k.name}(xs), xs.length) }"
+      s"xs match { case leaf: ${k.name}Arr => new ${k.name}Cursor(leaf.arr, leaf.length); case o: ${k.name}One => scala.collection.Iterator.single(${
+          if k.name == "Ref" then "o.elem" else k.box("o.elem")
+        }); case _: Empty => scala.collection.Iterator.empty; case _ => new ${k.name}Cursor(materialize${k.name}(xs), xs.length) }"
     )
     // foreachWhile: a short-circuit scan for the FIRST element where f returns false (the SAM is the negation);
     // the hit index is discarded — we only need the side effects f produced up to the stop. ONE leaf-method call.
@@ -2142,7 +2153,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // fused short-circuiting contains (prim compares unboxed against the unwrapped elem). Empty-body scan.
     // contains: a short-circuit forward scan for the first element == elem (the ${I}Pred wraps the raw element to
     // A and compares to elem). One leaf-method call; hit -> index < length.
-    val contains = dispatchA(k => s"scFwdLeaf${k.name}(xs, 0, ${predSAM(k, s"${wrapV(k)} == elem")}) < length")
+    val contains = dispatchA(k => s"scFwdLeaf${k.name}(xs, 0, ${predSAM(k, s"${eqVal(k)} == elem")}) < length")
     val applyAt = dispatchA(k => if k.name == "Ref" then s"r.wrap(${k.lc}At(xs, i).asInstanceOf[A])" else s"r.wrap(${k.lc}At(xs, i))")
     // mapConserve: I == O == k (always a COVERED pair — prim-self + Ref->Ref). SAME slim surface as map, plus
     // the identity-check: scan for the first element f actually changes (reference !eq); if NONE, return xs with
@@ -2339,24 +2350,32 @@ object GenCores extends BleepCodegenScript("GenCores") {
     def sortByBody(ka: Kind, kb: Kind): String = {
       val karrAlloc = if kb.name == "Ref" then "new Array[Object](n)" else s"new Array[${kb.arr}](n)"
       val keyAsB = (e: String) => if kb.name == "Ref" then s"($e).asInstanceOf[B]" else s"rb.wrap($e)"
+      val rawKey = (i: String) => wr(kb, s"rb.unwrap(f(${readVal(ka, s"vals($i)")}))")
       val fillKeys =
-        s"val karr = $karrAlloc; var q = 0; while (q < n) { karr(q) = ${wr(kb, s"rb.unwrap(f(${readVal(ka, "vals(q)")}))")}; q += 1 }"
+        s"val karr = $karrAlloc; var q = 0; while (q < n) { karr(q) = ${rawKey("q")}; q += 1 }"
       def permute(sidx: String): String =
         s"val out = ${allocPlain(ka)}; var p = 0; while (p < n) { out(p) = vals($sidx); p += 1 }; new ${ka.name}Arr(out, n)"
       def idxSort(cmp: String): String =
         s"{ val idx = new Array[Int](n); var t = 0; while (t < n) { idx(t) = t; t += 1 }; val sidx = sortInt(idx, n, (ii, jj) => $cmp); ${permute("sidx(p)")} }"
-      // With keys cached, sortedness is a cheap pre-scan (random input exits in ~2 compares):
-      // non-decreasing keys -> the stable-sorted result IS xs (identity, zero alloc — IArray's
-      // copy-first sortBy cannot do this); strictly-decreasing keys -> a lazy ReverseNode (strict,
-      // so reversal is stable). The desc scan only runs when the very first pair was descending.
+      // FUSED sortedness pre-scan: keys stream one at a time against the previous — presorted input
+      // returns the identity `xs` with ZERO allocation and ONE pass (the old shape allocated karr and
+      // computed all n keys BEFORE scanning: the sole cost left on presorted sortBy, 0.68x of iarray
+      // @10). Strictly-descending keys -> a lazy ReverseNode (strict, so reversal is stable), still
+      // allocation-free; the desc probe only runs when the very first pair was descending. Only
+      // genuinely unsorted input allocates karr + recomputes the scanned prefix's keys (random input
+      // exits in ~2 compares, and stdlib sortBy calls f O(n log n) times, so <=2 calls/elem is fair).
       // `lt(a, b)` compares two raw keys. (A tandem small-n insertion arm was MEASURED: +34% on
       // presorted @10 but 37.1M -> 25.1M on random @10 — moving two arrays loses to the pack; the
       // identity/reverse pre-scan takes the presorted case instead.)
       def preScan(lt: (String, String) => String, sort: String): String =
-        s"{ var asc = 1; while (asc < n && !(${lt("karr(asc)", "karr(asc - 1)")})) asc += 1; " +
-          s"if (asc == n) xs " +
-          s"else if (asc == 1) { var dsc = 1; while (dsc < n && ${lt("karr(dsc)", "karr(dsc - 1)")}) dsc += 1; if (dsc == n) new ReverseNode(xs) else $sort } " +
-          s"else $sort }"
+        s"{ var prev: ${kb.arr} = ${rawKey("0")}; var q = 1; var moved = false; " +
+          s"while (q < n && !moved) { val cur: ${kb.arr} = ${rawKey("q")}; if (${lt("cur", "prev")}) moved = true else { prev = cur; q += 1 } }; " +
+          s"if (!moved) xs " +
+          s"else { var isRev = false; " +
+          s"if (q == 1) { var dprev: ${kb.arr} = ${rawKey("1")}; var dq = 2; var rising = false; " +
+          s"while (dq < n && !rising) { val dcur: ${kb.arr} = ${rawKey("dq")}; if (${lt("dcur", "dprev")}) { dprev = dcur; dq += 1 } else rising = true }; " +
+          s"if (!rising) isRev = true }; " +
+          s"if (isRev) new ReverseNode(xs) else { $fillKeys; $sort } } }"
       val genericCmp = (a: String, b: String) => s"ord.lt(${keyAsB(a)}, ${keyAsB(b)})"
       val generic = preScan(genericCmp, idxSort(genericCmp("karr(ii)", "karr(jj)")))
       val pack =
@@ -2373,7 +2392,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       // sortBy only READS `vals` (keys derive from it, the permute copies out of it) — unlike
       // sorted/sortWith nothing is mutated in place, so a leaf input hands its backing array straight
       // in and skips the materialize copy. `n` must be the LOGICAL length (leaves carry slack).
-      s"{ val vals = (xs match { case leaf: ${ka.name}Arr => leaf.arr; case _ => materialize${ka.name}(xs) }); val n = xs.length; if (n < 2) xs else { $fillKeys; $fast } }"
+      s"{ val vals = (xs match { case leaf: ${ka.name}Arr => leaf.arr; case _ => materialize${ka.name}(xs) }); val n = xs.length; if (n < 2) xs else { $fast } }"
     }
     val sortByV = dispatchA(ka => dispatchBmap(kb => sortByBody(ka, kb)))
     // groupBy/groupMap: ONE unboxed pass. Each element's key picks (or creates) a per-group `${Kind}Group`
@@ -2381,9 +2400,19 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // element (groupBy) or f(element) (groupMap) is unwrapped and appended directly into that group's primitive
     // array. A final O(#groups) pass wraps each buffer into a leaf — no second per-element rebuild. dispatch on
     // the VALUE kind: A for groupBy, B for groupMap.
-    val groupBy = dispatchA(k =>
-      s"{ val m = new java.util.HashMap[K, ${k.name}Group](); val c = new ${k.name}Dfs { ${runMethods(k, e0 => s"val e = $e0; val key = f(e); var g = m.get(key); if (g == null) { g = new ${k.name}Group(); m.put(key, g) }; g.add(${wr(k, "r.unwrap(e)")})")}; def onOne(v: ${k.arr}): Unit = { val e = ${readOne(k)}; val key = f(e); var g = m.get(key); if (g == null) { g = new ${k.name}Group(); m.put(key, g) }; g.add(${wr(k, "r.unwrap(e)")}) } }; dfsC${k.name}(xs, c); val b = Map.newBuilder[K, FBase]; val it = m.entrySet().iterator(); while (it.hasNext) { val en = it.next(); b += ((en.getKey, en.getValue.toLeaf)) }; b.result() }"
-    )
+    val groupBy = dispatchA { k =>
+      def perElem(e0: String) =
+        s"val e = $e0; val key = f(e); var g = m.get(key); if (g == null) { g = new ${k.name}Group(); m.put(key, g) }; g.add(${wr(k, "r.unwrap(e)")})"
+      // FLAT-LEAF FAST PATH: the common ${k.name}Arr / SliceNode-over-Arr inputs loop the backing array
+      // directly — no ${k.name}Dfs visitor allocation, no dfsC walk, no onRunF dispatch (that fixed
+      // per-call tax was ~1.5x the whole computation at n=10). Trees keep the visitor.
+      val leafLoop = (arr: String, off: String) => s"val a = $arr; var i = 0; while (i < n) { ${perElem(readVal(k, s"a($off)"))}; i += 1 }"
+      s"{ val m = new java.util.HashMap[K, ${k.name}Group](); xs match { " +
+        s"case leaf: ${k.name}Arr => { val n = leaf.length; ${leafLoop("leaf.arr", "i")} }; " +
+        s"case s: SliceNode if s.base.isInstanceOf[${k.name}Arr] => { val n = s.length; val so = s.offset; ${leafLoop(s"s.base.asInstanceOf[${k.name}Arr].arr", "so + i")} }; " +
+        s"case _ => { val c = new ${k.name}Dfs { ${runMethods(k, e0 => perElem(e0))}; def onOne(v: ${k.arr}): Unit = { ${perElem(readOne(k))} } }; dfsC${k.name}(xs, c) } }; " +
+        s"val b = Map.newBuilder[K, FBase]; val it = m.entrySet().iterator(); while (it.hasNext) { val en = it.next(); b += ((en.getKey, en.getValue.toLeaf)) }; b.result() }"
+    }
     // groupMap dispatches on the VALUE kind B (the unboxed buffer). The SOURCE A is read through the already
     // inlined/unboxed `xs.foreach` at the FArray call site, which hands each `a: A` to this accumulator. So the
     // value array stays unboxed for primitive B; A reads cost no extra boxing beyond what foreach already does.
@@ -2553,8 +2582,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def partitionMapImpl[A, A1, A2](xs: FBase)(inline f: A => Either[A1, A2]): scala.Tuple2[FBase, FBase] = $partitionMap
        |  inline def containsImpl[A](xs: FBase, elem: A): Boolean = { val length = xs.length; $contains }
        |  inline def mapConserveImpl[A](xs: FBase)(inline f: A => A): FBase = { val n = xs.length; if (n == 0) xs else if (n == 1) { val e = applyAtImpl[A](xs, 0); val r = f(e); if (r.asInstanceOf[AnyRef] eq e.asInstanceOf[AnyRef]) xs else fromValues1[A](r) } else $mapConserve }
-       |  inline def unzipImpl[A, A1, A2](xs: FBase)(ev: A <:< (A1, A2)): (FBase, FBase) = { val n = xs.length; if (n == 0) emptyPair else $unzipV }
-       |  inline def unzip3Impl[A, A1, A2, A3](xs: FBase)(ev: A <:< (A1, A2, A3)): (FBase, FBase, FBase) = { val n = xs.length; if (n == 0) emptyTriple else $unzip3V }
+       |  inline def unzipImpl[A, A1, A2](xs: FBase)(ev: A <:< (A1, A2)): (FBase, FBase) = { val n = xs.length; if (n == 0) emptyPair else if (n == 1) { val t = ev(applyAtImpl[A](xs, 0)); new scala.Tuple2(fromValues1[A1](t._1), fromValues1[A2](t._2)) } else $unzipV }
+       |  inline def unzip3Impl[A, A1, A2, A3](xs: FBase)(ev: A <:< (A1, A2, A3)): (FBase, FBase, FBase) = { val n = xs.length; if (n == 0) emptyTriple else if (n == 1) { val t = ev(applyAtImpl[A](xs, 0)); new scala.Tuple3(fromValues1[A1](t._1), fromValues1[A2](t._2), fromValues1[A3](t._3)) } else $unzip3V }
        |  inline def zipImpl[A, B](xs: FBase, that: FBase): FBase = { val n = if (xs.length < that.length) xs.length else that.length; if (n == 0) Empty.INSTANCE else if (n == 1) fromValues1[(A, B)]((applyAtImpl[A](xs, 0), applyAtImpl[B](that, 0))) else { $zipV } }
        |  inline def zipWithIndexImpl[A](xs: FBase): FBase = { val n = xs.length; if (n == 0) Empty.INSTANCE else if (n == 1) fromValues1[(A, Int)]((applyAtImpl[A](xs, 0), 0)) else { $zipIdxV } }
        |  inline def matchAll2Impl[A, B](xs: FBase, xsOff: Int, that: FBase, m: Int)(inline pred: (A, B) => Boolean): Boolean = $matchAll2V

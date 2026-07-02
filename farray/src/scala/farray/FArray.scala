@@ -351,7 +351,8 @@ object FArray:
     inline def containsSlice[B >: A](that: FArray[B]): Boolean = indexOfSlice(that) >= 0
     def grouped(size: Int): Iterator[FArray[A]] =
       val n = xs.length; val step = if size < 1 then 1 else size
-      Iterator.range(0, n, step).map(i => xs.slice(i, math.min(i + step, n)))
+      if n == 0 then Iterator.empty
+      else Iterator.range(0, n, step).map(i => xs.slice(i, math.min(i + step, n)))
     def sliding(size: Int, step: Int): Iterator[FArray[A]] =
       val n = xs.length; val sz = if size < 1 then 1 else size; val st = if step < 1 then 1 else step
       if n == 0 then Iterator.empty

@@ -2270,6 +2270,32 @@ object FuseMacro:
               else if o == out.length then new RefArr(out, o)
               else new RefArr(java.util.Arrays.copyOf(out, o), o)
             }.asTerm
+          else if adjCount == 1 then
+            // DEFERRED sink for run-emitting pipelines: a buffering stage emits once per RUN/window, not
+            // per element, so the branch amortizes — the first emit is held in a local and the output
+            // array only exists from the second emit on. A single-run pipeline (groupAdjacentReduceBy
+            // over a tiny input) then allocates NO array at all: just the RefOne (was 0.52-0.61x of List
+            // @1 paying an up-front Array[Object](cap) for one tuple).
+            '{
+              val cap = ${ capExpr(n0, counters) }; var out: Array[Object] = null; var single: Object = null; var o = 0
+              ${
+                loop(v =>
+                  '{
+                    val _v = ${ v.asExpr }.asInstanceOf[Object]
+                    if o == 0 then single = _v
+                    else {
+                      if out == null then { out = new Array[Object](cap); out(0) = single }
+                      out(o) = _v
+                    }
+                    o += 1
+                  }.asTerm
+                )
+              }
+              if o == 0 then (Empty.INSTANCE: FBase)
+              else if o == 1 then new RefOne(single)
+              else if o == cap then new RefArr(out, o)
+              else new RefArr(java.util.Arrays.copyOf(out, o), o)
+            }.asTerm
           else
             '{
               val cap = ${ capExpr(n0, counters) }; val out = new Array[Object](cap); var o = 0
