@@ -12,15 +12,13 @@
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
     }]
     val FArray$package$_this: $proxy.type = $proxy
-    val b$proxy: Int = x.+(1)
 
-    (({
-      val r: intRepr.type = intRepr
+    ({
       val out: Array[Int] = new Array[Int](2)
-      out.update(0, (x: Int))
-      out.update(1, (b$proxy: Int))
-      new IntArr(out, 2)
-    }: FBase): FArray[Int])
+      out.update(0, x)
+      out.update(1, x.+(1))
+      new IntArr(out, 2).asInstanceOf[FArray[Int]]
+    }: FArray[Int])
   }.$asInstanceOf$[FArray[Int]])).filter(((_$: Int) => _$.%(3).!=(0))).map[Int](((_$: Int) => _$.*(2))).flatMap[Int](((`x₂`: Int) => {
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -28,15 +26,13 @@
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
     }]
     val `FArray$package$_this₂`: $proxy.type = $proxy
-    val b$proxy: Int = `x₂`.^(5)
 
-    (({
-      val `r₂`: intRepr.type = intRepr
+    ({
       val `out₂`: Array[Int] = new Array[Int](2)
-      `out₂`.update(0, (`x₂`: Int))
-      `out₂`.update(1, (b$proxy: Int))
-      new IntArr(`out₂`, 2)
-    }: FBase): FArray[Int])
+      `out₂`.update(0, `x₂`)
+      `out₂`.update(1, `x₂`.^(5))
+      new IntArr(`out₂`, 2).asInstanceOf[FArray[Int]]
+    }: FArray[Int])
   }.$asInstanceOf$[FArray[Int]])).filter(((_$: Int) => _$.%(2).==(0))).map[Int](((_$: Int) => _$.-(7))).zip[Int](zipSrc).map[Int](((x$1: Tuple2[Int, Int]) => {
     val a: Int = x$1._1
     val b: Int = x$1._2
@@ -56,15 +52,13 @@
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
     }]
     val `FArray$package$_this₃`: $proxy.type = $proxy
-    val b$proxy: Int = `x₃`.+(3)
 
-    (({
-      val `r₃`: intRepr.type = intRepr
+    ({
       val `out₃`: Array[Int] = new Array[Int](2)
-      `out₃`.update(0, (`x₃`: Int))
-      `out₃`.update(1, (b$proxy: Int))
-      new IntArr(`out₃`, 2)
-    }: FBase): FArray[Int])
+      `out₃`.update(0, `x₃`)
+      `out₃`.update(1, `x₃`.+(3))
+      new IntArr(`out₃`, 2).asInstanceOf[FArray[Int]]
+    }: FArray[Int])
   }.$asInstanceOf$[FArray[Int]])).filter(((_$: Int) => _$.>(0)))
 
   ({
