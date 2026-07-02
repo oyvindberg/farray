@@ -1054,6 +1054,187 @@ object GenCores extends BleepCodegenScript("GenCores") {
       }
       ee.result
     }
+
+    // SHARED LEAF METHODS for DISTINCT, one per kind — the unboxed "seen" structure replaces the old
+    // boxed mutable.HashSet[Any] (which boxed every element, grew/rehashed ~log n times, and always
+    // rebuilt). Design (kernels borrowed from FSet, semantics re-derived for List parity):
+    //   * EQUALITY = Scala `==` exactly (measured: List(NaN,NaN).distinct keeps BOTH; List(0.0,-0.0)
+    //     keeps ONE). So Float/Double canonicalize -0.0 for hashing, and a NaN BYPASSES the table
+    //     entirely (it can never equal anything -> always a survivor, never needs storing). Ref hashes
+    //     with Statics.anyHash (null-safe, boxed-number-consistent) and compares with Scala `==`.
+    //   * The seen-table is sized ONCE (result <= n, cap = pow2 >= 2n) — no growth, no rehash, ever.
+    //   * LAZY OUTPUT: nothing is written until the FIRST duplicate; all-distinct returns `xs` itself
+    //     (identity, zero output allocation). On the first dup at i the survivor prefix [0,i) is copied.
+    //   * Tiny domains (Boolean/Byte/Short/Char) use whole-domain bitmaps; Int routes dense inputs
+    //     (span <= 64n and <= 2^20) to an offset bitmap, sparse to a position-index open-addressing
+    //     table (int[] of SOURCE indices, -1 empty — no sentinel-value problem, works for every kind).
+    val distinctLeafMethods = {
+      val ee = new Emit("  ")
+      // shared: the lazy-out bookkeeping around a per-element `isNew` flag.
+      def lazyOut(k: Kind): Unit = {
+        ee.open("if (isNew)")
+        ee.line("if (out != null) { out(w) = v; w += 1 }")
+        ee.closeOpen("else if (out == null)")
+        ee.line(s"out = new Array[${k.arr}](n)")
+        ee.line("System.arraycopy(src, 0, out, 0, i)")
+        ee.line("w = i")
+        ee.close()
+      }
+      def finish(k: Kind): Unit =
+        ee.line(s"if (out == null) xs else if (w == 1) new ${k.name}One(out(0)) else new ${k.name}Arr(out, w)")
+      // pow2 capacity >= 2n, capped at 2^30 (load <= 0.5 up to the cap).
+      def emitCap(): Unit = {
+        ee.line("var cap = 16")
+        ee.line("while (cap.toLong < (n.toLong << 1) && cap != (1 << 30)) cap <<= 1")
+        ee.line("val mask = cap - 1")
+      }
+      // the position-index probe: slots hold SOURCE indices; `hash` is an Int-typed mixed hash of `v`;
+      // `same` compares the probed source element against v (Scala `==` semantics per kind).
+      def emitPositionProbe(hash: String, same: String): Unit = {
+        ee.line(s"var h = $hash & mask")
+        ee.line("var isNew = false")
+        ee.line("var probing = true")
+        ee.open("while (probing)")
+        ee.line("val s = slots(h)")
+        ee.line("if (s == -1) { slots(h) = i; isNew = true; probing = false }")
+        ee.line(s"else if ($same) probing = false")
+        ee.line("else h = (h + 1) & mask")
+        ee.close()
+      }
+      opKinds.foreach { k =>
+        val K = k.name
+        ee.open(s"def distinctLeaf$K(xs: FBase): FBase =")
+        ee.line("val n = xs.length")
+        // a leaf hands its backing array straight in (index only [0,n) — slack!), trees materialize once
+        ee.line(s"val src = (xs match { case lf: ${K}Arr => lf.arr; case _ => materialize$K(xs) })")
+        ee.line(s"var out: Array[${k.arr}] = null")
+        ee.line("var w = 0")
+        K match {
+          case "Boolean" =>
+            ee.line("var seenT = false")
+            ee.line("var seenF = false")
+            ee.line("var i = 0")
+            ee.open("while (i < n)")
+            ee.line("val v = src(i)")
+            ee.line("val isNew = if (v) !seenT else !seenF")
+            ee.line("if (v) seenT = true else seenF = true")
+            lazyOut(k)
+            ee.line("i += 1")
+            ee.close()
+            finish(k)
+          case "Byte" | "Short" | "Char" =>
+            // whole-domain bitmap: 256 bits for Byte, 65536 for Short/Char (8KB — cache-friendly scratch).
+            val (words, idx) = K match {
+              case "Byte"  => ("4", "v & 0xff")
+              case "Short" => ("1024", "v & 0xffff")
+              case _       => ("1024", "v.toInt")
+            }
+            ee.line(s"val words = new Array[Long]($words)")
+            ee.line("var i = 0")
+            ee.open("while (i < n)")
+            ee.line("val v = src(i)")
+            ee.line(s"val idx = $idx")
+            ee.line("val isNew = (words(idx >>> 6) & (1L << idx)) == 0L")
+            ee.line("words(idx >>> 6) |= (1L << idx)")
+            lazyOut(k)
+            ee.line("i += 1")
+            ee.close()
+            finish(k)
+          case "Int" =>
+            // density router (FSet's rule): dense -> offset bitmap (test-and-set), sparse -> position table.
+            ee.line("var mn = src(0)")
+            ee.line("var mx = src(0)")
+            ee.line("var j = 1")
+            ee.line("while (j < n) { val v = src(j); if (v < mn) mn = v; if (v > mx) mx = v; j += 1 }")
+            ee.line("val span = mx.toLong - mn.toLong + 1L")
+            ee.open("if (span <= 64L * n && span <= 1048576L)")
+            ee.line("val words = new Array[Long](((span + 63L) >>> 6).toInt)")
+            ee.line("var i = 0")
+            ee.open("while (i < n)")
+            ee.line("val v = src(i)")
+            ee.line("val idx = v - mn")
+            ee.line("val isNew = (words(idx >>> 6) & (1L << idx)) == 0L")
+            ee.line("words(idx >>> 6) |= (1L << idx)")
+            lazyOut(k)
+            ee.line("i += 1")
+            ee.close()
+            ee.closeOpen("else")
+            emitCap()
+            ee.line("val slots = new Array[Int](cap)")
+            ee.line("java.util.Arrays.fill(slots, -1)")
+            ee.line("var i = 0")
+            ee.open("while (i < n)")
+            ee.line("val v = src(i)")
+            emitPositionProbe("Mixers.mixInt(v)", "src(s) == v")
+            lazyOut(k)
+            ee.line("i += 1")
+            ee.close()
+            ee.close()
+            finish(k)
+          case "Long" =>
+            emitCap()
+            ee.line("val slots = new Array[Int](cap)")
+            ee.line("java.util.Arrays.fill(slots, -1)")
+            ee.line("var i = 0")
+            ee.open("while (i < n)")
+            ee.line("val v = src(i)")
+            emitPositionProbe("Mixers.mixLong(v)", "src(s) == v")
+            lazyOut(k)
+            ee.line("i += 1")
+            ee.close()
+            finish(k)
+          case "Float" | "Double" =>
+            // numeric `==` semantics: NaN bypasses the table (never equal to anything -> always new);
+            // -0.0 canonicalizes to +0.0 for hashing; probe compares numerically (so ±0.0 collapse).
+            val (bits, mix, zero) =
+              if K == "Float" then ("java.lang.Float.floatToRawIntBits", "Mixers.mixInt", "0.0f")
+              else ("java.lang.Double.doubleToRawLongBits", "Mixers.mixLong", "0.0d")
+            emitCap()
+            ee.line("val slots = new Array[Int](cap)")
+            ee.line("java.util.Arrays.fill(slots, -1)")
+            ee.line("var i = 0")
+            ee.open("while (i < n)")
+            ee.line("val v = src(i)")
+            ee.open("if (v != v)")
+            ee.line("val isNew = true") // NaN: always a survivor, never stored
+            lazyOut(k)
+            ee.closeOpen("else")
+            emitPositionProbe(s"$mix($bits(if (v == $zero) $zero else v))", "src(s) == v")
+            lazyOut(k)
+            ee.close()
+            ee.line("i += 1")
+            ee.close()
+            finish(k)
+          case _ => // Ref
+            // F14-style scratch: 1-byte ctrl fingerprints reject a miss before touching the key object.
+            // Hash = Statics.anyHash (what HashSet uses: null-safe, boxed-number-consistent); compare =
+            // Scala `==` (BoxesRunTime.equals) — EXACTLY the old mutable.HashSet[Any] equivalence.
+            emitCap()
+            ee.line("val ctrl = new Array[Byte](cap)")
+            ee.line("val keys = new Array[Object](cap)")
+            ee.line("var i = 0")
+            ee.open("while (i < n)")
+            ee.line("val v = src(i)")
+            ee.line("val m = Mixers.mixInt(scala.runtime.Statics.anyHash(v))")
+            ee.line("val fp = (((m >>> 24) & 0x7f) | 0x80).toByte")
+            ee.line("var h = m & mask")
+            ee.line("var isNew = false")
+            ee.line("var probing = true")
+            ee.open("while (probing)")
+            ee.line("val c = ctrl(h)")
+            ee.line("if (c == 0) { ctrl(h) = fp; keys(h) = v; isNew = true; probing = false }")
+            ee.line("else if (c == fp && keys(h) == v) probing = false")
+            ee.line("else h = (h + 1) & mask")
+            ee.close()
+            lazyOut(k)
+            ee.line("i += 1")
+            ee.close()
+            finish(k)
+        }
+        ee.close() // def
+      }
+      ee.result
+    }
     // SHARED LEAF METHODS for the PARTITION shape, one per input kind — the dual-output analogue of filterLeaf*.
     // ONE pass writes kept-true into outA[oa++] and kept-false into outB[ob++]; both outputs are trimmed leaves of
     // the SAME input kind. Empty -> (Empty, Empty); ${I}One -> (xs, Empty) or (Empty, xs) by the predicate; a
@@ -1466,6 +1647,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // inlined leaf loop here. filterNotImpl passes the NEGATED predicate. The `if (o == n) xs` reference-identity
     // shortcut lives inside the leaf method.
     val filter = dispatchA(k => s"filterLeaf${k.name}(xs, ${predSAM(k, s"p(${wrapV(k)})")})")
+    // distinct: no lambda — the inline surface is pure kind dispatch into the shared unboxed leaf method.
+    val distinctV = dispatchA(k => s"distinctLeaf${k.name}(xs)")
     // partition: ONE dual-output pass through the shared partitionLeaf${I} (kept-true -> _1, kept-false -> _2).
     // Same slim surface as filter — summon the input kind, realize the user predicate into the ${I}Pred SAM, CALL
     // the shared leaf method. The result FBase pair is wrapped to (FArray[A], FArray[A]) in FArray.scala.
@@ -2188,6 +2371,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |$reduceLeafMethods
        |$mapLeafMethods
        |$filterLeafMethods
+       |$distinctLeafMethods
        |$partitionLeafMethods
        |$foreachLeafMethods
        |$scanLeafMethods
@@ -2251,6 +2435,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def prefixLengthImpl[A](xs: FBase)(inline p: A => Boolean): Int = $prefixLenV
        |  inline def mapImpl[A, B](xs: FBase)(inline f: A => B): FBase = { val n = xs.length; $mapM }
        |  inline def filterImpl[A](xs: FBase)(inline p: A => Boolean): FBase = $filter
+       |  inline def distinctImpl[A](xs: FBase): FBase = if (xs.length < 2) xs else $distinctV
        |  inline def filterNotImpl[A](xs: FBase)(inline p: A => Boolean): FBase = ${dispatchA(k =>
         s"filterLeaf${k.name}(xs, ${predSAM(k, s"!p(${wrapV(k)})")})"
       )}

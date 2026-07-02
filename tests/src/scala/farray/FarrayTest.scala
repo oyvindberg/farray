@@ -145,6 +145,46 @@ class FListTest:
   @Test def test_count: Unit = test1(_.count(_.contains('a')))(_.count(_.contains('a')))
   @Test def test_diff: Unit = test1(xs => xs.diff(xs.take(2)))(xs => xs.diff(xs.take(2)))
   @Test def test_distinct: Unit = test1(_.distinct)(_.distinct)
+  @Test def test_distinct_kinds: Unit = {
+    // parity oracle: List.distinct (Scala `==` semantics). The distinct/toList calls happen at CONCRETE
+    // element types (the inline kind dispatch demands it — a generic helper would fail to specialize).
+    // NOTE the comparison: Scala `==` can't compare the results (a list containing NaN never equals
+    // itself); boxed .equals (bit-equality: NaN==NaN, -0.0≠+0.0) is the right TEST equality here.
+    def check[A](arr: Array[A], got: List[A]): Unit = {
+      val expected = arr.toList.distinct
+      val same = got.length == expected.length &&
+        got.lazyZip(expected).forall((x, y) => java.util.Objects.equals(x, y))
+      assert(same, s"distinct mismatch for ${arr.toList}: got $got, expected $expected")
+    }
+    // Int: dense (bitmap route), sparse (position table), dup-heavy, all-same, extremes
+    locally { val a = Array.tabulate(1000)(i => i); check(a, FArray.fromArray(a).distinct.toList) }
+    locally { val a = Array.tabulate(1000)(i => i % 37); check(a, FArray.fromArray(a).distinct.toList) }
+    locally { val a = Array.tabulate(1000)(i => i * 0x9e3779b1); check(a, FArray.fromArray(a).distinct.toList) }
+    locally { val a = Array.fill(100)(7); check(a, FArray.fromArray(a).distinct.toList) }
+    locally { val a = Array(Int.MinValue, Int.MaxValue, 0, -1, Int.MinValue); check(a, FArray.fromArray(a).distinct.toList) }
+    // Long
+    locally { val a = Array.tabulate(500)(i => (i % 61).toLong * (Long.MaxValue / 7)); check(a, FArray.fromArray(a).distinct.toList) }
+    // Double/Float: NaN never collapses, -0.0/+0.0 ALWAYS collapse (List `==` semantics, verified)
+    locally { val a = Array(Double.NaN, 1.0, Double.NaN, -0.0, 0.0, 1.0); check(a, FArray.fromArray(a).distinct.toList) }
+    locally { val a = Array(Float.NaN, Float.NaN, -0.0f, 0.0f, 3.5f, 3.5f); check(a, FArray.fromArray(a).distinct.toList) }
+    // small domains
+    locally { val a = Array.tabulate(300)(i => (i % 100).toByte); check(a, FArray.fromArray(a).distinct.toList) }
+    locally { val a = Array.tabulate(300)(i => (i % 100).toShort); check(a, FArray.fromArray(a).distinct.toList) }
+    locally { val a = Array.tabulate(300)(i => ('a' + i % 30).toChar); check(a, FArray.fromArray(a).distinct.toList) }
+    locally { val a = Array(true, false, true, true); check(a, FArray.fromArray(a).distinct.toList) }
+    // Ref: dups, nulls, boxed-number `==` crossings (BoxesRunTime: (1: Any) == (1L: Any) is true)
+    locally { val a = Array.tabulate(200)(i => "s" + (i % 43)); check(a, FArray.fromArray(a).distinct.toList) }
+    locally { val a = Array[String]("a", null, "a", null, "b"); check(a, FArray.fromArray(a).distinct.toList) }
+    locally {
+      val a = Array[AnyRef](Int.box(1), Long.box(1L), "x", Int.box(1), "x")
+      check(a, FArray.fromArray(a).distinct.toList)
+    }
+    // identity: all-distinct input returns the SAME instance (no rebuild)
+    val d = FArray.fromArray(Array.tabulate(100)(i => i))
+    assert(d.distinct.asInstanceOf[AnyRef] eq d.asInstanceOf[AnyRef], "all-distinct should be identity")
+    val s = FArray.fromArray(Array.tabulate(100)(i => "s" + i))
+    assert(s.distinct.asInstanceOf[AnyRef] eq s.asInstanceOf[AnyRef], "all-distinct Ref should be identity")
+  }
   @Test def test_distinct_by: Unit = test1(_.distinctBy(_.length))(_.distinctBy(_.length))
   @Test def test_drop: Unit = test1(_.drop(1))(_.drop(1))
   @Test def test_dropRight: Unit = test1(_.dropRight(1))(_.dropRight(1))

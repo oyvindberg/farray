@@ -627,18 +627,12 @@ object GenSets extends BleepCodegenScript("GenSets") {
       ee.result
     }
 
-    // ---- the frozen HASH leaf build (§2.3): shared avalanche mixes + per-kind `buildHash` (open-addressing
-    // index over the dense `arr`, load ~0.5, linear probe). Prims index by the raw-bits mix; Ref caches each
-    // element's hashCode in a parallel array so a probe rejects misses with one int compare.
+    // ---- the frozen HASH leaf build (§2.3): per-kind `buildHash` (open-addressing index over the dense
+    // `arr`, load ~0.5, linear probe). Prims index by the raw-bits mix; Ref caches each element's hashCode
+    // in a parallel array so a probe rejects misses with one int compare. The mixers themselves live in the
+    // hand-written farray.Hashing (shared with FArrayOps' distinct tables) — imported at the top of FSetOps.
     val hashHelpers = {
       val ee = new Emit("  ")
-      ee.line("def mixInt(h0: Int): Int = { var h = h0; h ^= h >>> 16; h *= 0x85ebca6b; h ^= h >>> 13; h *= 0xc2b2ae35; h ^= h >>> 16; h }")
-      // ref-hash slot mix: the input is already String.hashCode (a decent polynomial hash), so a single
-      // Fibonacci multiply + high-bit fold suffices (~3 cycles vs mixInt's ~9) — the murmur avalanche is redundant.
-      ee.line("def mixRef(h0: Int): Int = { val x = h0 * 0x9e3779b1; x ^ (x >>> 16) }")
-      ee.line(
-        "def mixLong(h0: Long): Int = { var h = h0; h ^= h >>> 33; h *= 0xff51afd7ed558ccdL.toLong; h ^= h >>> 33; h *= 0xc4ceb9fe1a85ec53L.toLong; h ^= h >>> 33; (h ^ (h >>> 32)).toInt }"
-      )
       opKinds.foreach { k =>
         val K = k.name
         if k.isPrim then {
@@ -1924,6 +1918,7 @@ object GenSets extends BleepCodegenScript("GenSets") {
        |// the size walk live here, ONCE per kind; the inline surface (FSet.scala) only dispatches the kind via
        |// summonFrom on ${"$"}{K}Repr[A] and calls in. Primitives stay unboxed (Repr.unwrap, raw prim arrays).
        |import scala.compiletime.summonFrom
+       |import Mixers.{mixInt, mixLong, mixRef}
        |
        |object FSetOps {
        |

@@ -691,9 +691,10 @@ object FArray:
     inline def partition(inline p: A => Boolean): (FArray[A], FArray[A]) =
       val t = FArrayOps.partitionImpl[A](xs)(p); (t._1.asInstanceOf[FArray[A]], t._2.asInstanceOf[FArray[A]])
     inline def collect[B](pf: PartialFunction[A, B]): FArray[B] = FArrayOps.collectImpl[A, B](xs)(pf).asInstanceOf[FArray[B]]
-    inline def distinct: FArray[A] =
-      if xs.length <= 1 then xs
-      else { val seen = scala.collection.mutable.HashSet.empty[Any]; xs.filter(a => seen.add(a)) }
+    // unboxed per-kind seen-tables (domain/offset bitmaps, position-index probes, F14 ctrl bytes for refs),
+    // Scala `==` semantics preserved exactly (NaN never collapses, ±0.0 does), identity return when nothing
+    // was duplicated. Replaces the boxed mutable.HashSet[Any] + filter pass.
+    inline def distinct: FArray[A] = FArrayOps.distinctImpl[A](xs)
     inline def distinctBy[B](inline f: A => B): FArray[A] =
       if xs.length <= 1 then xs
       else { val seen = scala.collection.mutable.HashSet.empty[B]; xs.filter(a => seen.add(f(a))) }
