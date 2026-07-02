@@ -702,6 +702,20 @@ class FListTest:
     org.junit.Assert.assertEquals(List(4L, 8L), FArray(1L, 2L, 3L, 4L).fuse.filter(_ % 2L == 0L).map(_ * 2L).run.toList)
   @Test def test_fuse_tree_source: Unit = // non-leaf source (Concat) exercises the <kind>At fallback
     org.junit.Assert.assertEquals(List(20, 40, 60), (FArray(1, 2, 3) ++ FArray(4, 5, 6)).fuse.filter(_ % 2 == 0).map(_ * 10).run.toList)
+  // ---- slack leaves: groupBy values wrap the growable buffer, so arr.length > length. The fused loop
+  //      must run to the LOGICAL length, not the backing array's, or it processes garbage slack slots. ----
+  @Test def test_fuse_slack_leaf_map: Unit =
+    val odds = FArray(1, 2, 3, 4, 5).groupBy(_ % 2)(1) // FArray(1, 3, 5) over a cap-4 buffer
+    org.junit.Assert.assertEquals(List(2, 4, 6), odds.fuse.map(_ + 1).run.toList)
+  @Test def test_fuse_slack_leaf_count: Unit =
+    val odds = FArray(1, 2, 3, 4, 5).groupBy(_ % 2)(1)
+    org.junit.Assert.assertEquals(3, odds.fuse.count(_ => true))
+  @Test def test_fuse_slack_leaf_ref: Unit =
+    val short = FArray("a", "bb", "cc", "d", "e").groupBy(_.length)(1) // FArray("a", "d", "e"), slack slots are null
+    org.junit.Assert.assertEquals(List("A", "D", "E"), short.fuse.map(_.toUpperCase).run.toList)
+  @Test def test_fuse_slack_leaf_flatMap_inner: Unit = // slack leaf as the INNER of a fused flatMap
+    val odds = FArray(1, 2, 3, 4, 5).groupBy(_ % 2)(1)
+    org.junit.Assert.assertEquals(List(1, 3, 5, 1, 3, 5), FArray(0, 1).fuse.flatMap(_ => odds).run.toList)
 
   // ---- take / drop (positional) ----
   private val r10 = FArray.tabulate(10)(i => i) // 0..9

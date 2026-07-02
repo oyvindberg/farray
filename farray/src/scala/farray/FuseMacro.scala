@@ -1069,7 +1069,7 @@ object FuseMacro:
           case None =>
             // general flatMap: open a nested loop over f(cur); everything downstream runs inside it.
             val inner: Expr[FBase] = '{ ${ innerBody.asExpr }.asInstanceOf[FBase] }
-            loopOver(inner, kindOf(bTpe), bTpe, rest, ctx).asTerm
+            loopOver(inner, kindOf(bTpe), bTpe, rest, ctx, outer = false).asTerm
       case (CollectS(pf, bTpe), _) :: rest =>
         // inline the PartialFunction's match into the loop: each real case continues downstream, the synthetic
         // `case _ => default(x)` fallthrough becomes a skip. So collect is filter+map+match fused, no PF object.
@@ -1217,121 +1217,117 @@ object FuseMacro:
     // The shared INNER element loop over ONE realized chunk `s` (an `FBase` leaf/tree). Both the in-memory path
     // (one chunk = the whole FArray) and the streaming chunk-driver (many chunks) emit this verbatim — only the
     // SOURCE of `s` differs. `cond` already folds in `done`, so a satisfied short-circuit stops mid-chunk.
-    def elementLoop(src: Expr[FBase], k: Kind, elemTpe: TypeRepr, ss: List[(Stage, Int)], ctx: Ctx): Expr[Unit] =
+    def elementLoop(src: Expr[FBase], k: Kind, elemTpe: TypeRepr, ss: List[(Stage, Int)], ctx: Ctx, outer: Boolean): Expr[Unit] =
       def cond(len: Expr[Int], i: Expr[Int]): Expr[Boolean] = ctx.done match
         case Some(d) => '{ $i < $len && ! ${ d.read } }
         case None    => '{ $i < $len }
       def perElem(read: Term): Expr[Unit] =
         letBind(read)(x => buildBody(ss, x, ctx)).asExprOf[Unit]
-      // A `${K}Arr` LEAF fast-path peeled INLINE ahead of the `${kind}At` fallback. Why it matters: a `flatMap`
-      // inner builds a fresh small `${K}Arr` PER ELEMENT; reading it back through `${kind}At` (an FBase-typed
-      // megamorphic call) makes the freshly-allocated array ESCAPE, so the JIT can't scalar-replace it — on
-      // HotSpot C2 (weaker escape analysis than GraalVM) this turns a no-alloc fused pass into a per-element
-      // allocation and craters it (measured ~13x slower than eager). Reading `leaf.arr(i)` from a CONCRETE
-      // `${K}Arr` is monomorphic and INLINE (no call boundary) so EA proves the array stays local → scalar-
-      // replaced, no alloc, on both JVMs. The `${kind}At` arm still serves genuine tree sources (Concat/Slice/…).
-      // NOTE (measured, do NOT "simplify" back): routing this through the SHARED `foreachLeaf${K}`/`scFwdLeaf${K}`
-      // driver (push each element through a `${K}Consumer`/`${K}Pred` SAM) is 1.7-2.8x SLOWER here — passing the
-      // fresh inner array INTO a shared method is itself an escape boundary that defeats scalar replacement on
-      // BOTH C2 and GraalVM. The inline leaf-match is the point. Loop bound is `a.length` (the backing array's),
-      // NOT leaf.length, so the JIT drops the per-element bounds check.
-      elemTpe.asType match
-        case '[se] =>
-          k match
-            case Kind.KInt =>
-              '{
-                $src match
-                  case leaf: IntArr =>
-                    val a = leaf.arr; val len = a.length; var i = 0
-                    while ${ cond('len, 'i) } do { ${ perElem('{ a(i) }.asTerm) }; i += 1 }
-                  case s =>
-                    val len = s.length; var i = 0
-                    while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.intAt(s, i) }.asTerm) }; i += 1 }
-              }
-            case Kind.KLong =>
-              '{
-                $src match
-                  case leaf: LongArr =>
-                    val a = leaf.arr; val len = a.length; var i = 0
-                    while ${ cond('len, 'i) } do { ${ perElem('{ a(i) }.asTerm) }; i += 1 }
-                  case s =>
-                    val len = s.length; var i = 0
-                    while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.longAt(s, i) }.asTerm) }; i += 1 }
-              }
-            case Kind.KDouble =>
-              '{
-                $src match
-                  case leaf: DoubleArr =>
-                    val a = leaf.arr; val len = a.length; var i = 0
-                    while ${ cond('len, 'i) } do { ${ perElem('{ a(i) }.asTerm) }; i += 1 }
-                  case s =>
-                    val len = s.length; var i = 0
-                    while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.doubleAt(s, i) }.asTerm) }; i += 1 }
-              }
-            case Kind.KFloat =>
-              '{
-                $src match
-                  case leaf: FloatArr =>
-                    val a = leaf.arr; val len = a.length; var i = 0
-                    while ${ cond('len, 'i) } do { ${ perElem('{ a(i) }.asTerm) }; i += 1 }
-                  case s =>
-                    val len = s.length; var i = 0
-                    while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.floatAt(s, i) }.asTerm) }; i += 1 }
-              }
-            case Kind.KShort =>
-              '{
-                $src match
-                  case leaf: ShortArr =>
-                    val a = leaf.arr; val len = a.length; var i = 0
-                    while ${ cond('len, 'i) } do { ${ perElem('{ a(i) }.asTerm) }; i += 1 }
-                  case s =>
-                    val len = s.length; var i = 0
-                    while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.shortAt(s, i) }.asTerm) }; i += 1 }
-              }
-            case Kind.KByte =>
-              '{
-                $src match
-                  case leaf: ByteArr =>
-                    val a = leaf.arr; val len = a.length; var i = 0
-                    while ${ cond('len, 'i) } do { ${ perElem('{ a(i) }.asTerm) }; i += 1 }
-                  case s =>
-                    val len = s.length; var i = 0
-                    while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.byteAt(s, i) }.asTerm) }; i += 1 }
-              }
-            case Kind.KChar =>
-              '{
-                $src match
-                  case leaf: CharArr =>
-                    val a = leaf.arr; val len = a.length; var i = 0
-                    while ${ cond('len, 'i) } do { ${ perElem('{ a(i) }.asTerm) }; i += 1 }
-                  case s =>
-                    val len = s.length; var i = 0
-                    while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.charAt(s, i) }.asTerm) }; i += 1 }
-              }
-            case Kind.KBoolean =>
-              '{
-                $src match
-                  case leaf: BooleanArr =>
-                    val a = leaf.arr; val len = a.length; var i = 0
-                    while ${ cond('len, 'i) } do { ${ perElem('{ a(i) }.asTerm) }; i += 1 }
-                  case s =>
-                    val len = s.length; var i = 0
-                    while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.booleanAt(s, i) }.asTerm) }; i += 1 }
-              }
-            case Kind.KRef =>
-              '{
-                $src match
-                  case leaf: RefArr =>
-                    val a = leaf.arr; val len = a.length; var i = 0
-                    while ${ cond('len, 'i) } do { ${ perElem('{ a(i).asInstanceOf[se] }.asTerm) }; i += 1 }
-                  case s =>
-                    val len = s.length; var i = 0
-                    while ${ cond('len, 'i) } do { ${ perElem('{ FArrayOps.refAt(s, i).asInstanceOf[se] }.asTerm) }; i += 1 }
-              }
+      // ONE loop, emitted once — the fused body is NOT duplicated per source shape (a long fused body twice per
+      // loop was real bytecode bloat, and the old peeled leaf arm looped to `a.length`, reading slack slots —
+      // `${K}Arr` leaves carry slack: groupBy values wrap the growable buffer, arr.length > length).
+      //
+      // The element read is `if (a ne null) a(i) else <kind>At(s, i)`, with `a` bound ONCE before the loop:
+      //   • `${K}Arr` leaf → `leaf.arr`. For a fresh flatMap-inner leaf the JIT knows the exact type, folds the
+      //     match AND the null check, and EA/scalar replacement works exactly like the old peeled leaf arm.
+      //     (What breaks EA — measured, do NOT reintroduce — is pushing elements through a shared
+      //     `${K}Consumer`/driver call: 1.7-2.8x slower. A branch on a loop-invariant LOCAL is not a call
+      //     boundary: the JIT folds it by type speculation or unswitches the loop.)
+      //   • other node on an OUTER loop with NO done-flag → `materialize<K>(s)` once: the sink traverses
+      //     everything anyway, and a flat loop over the copy beats per-element `<kind>At` tree walks ~17x @100k
+      //     (FuseSourceShapeBench.treeFold). Gated on length >= 64 so One/tiny nodes don't pay the alloc.
+      //   • other node otherwise → null, i.e. per-element `<kind>At`: short-circuit sinks must not pre-flatten
+      //     (treeExistsEarly never traverses at all), and a shared flatMap-inner tree must not re-materialize
+      //     per outer element (flatMapTreeInner would become an alloc storm). Known cost: on C2 a very short
+      //     fallback loop pays the per-element null-check — fused flatMap over a shared TINY tree inner is
+      //     0.80x of the old dedicated intAt arm (C2 only; GraalVM ties). Materializing tiny inners instead
+      //     was MEASURED WORSE (828 vs 1015 ops/s, 15MB/op): the per-outer-element copy costs more than the
+      //     branch. Accepted — the shape is pathological (eager flatMap's ${K}FlatMap node serves it).
+      //
+      // Loop bound is `s.length` — the LOGICAL length, never `arr.length` (slack). Per the reduceLeaf note in
+      // GenCores, a single-bound loop on the logical length ties `a.length` exactly (loop predication); the
+      // compound `i < a.length && i < len` form is what kills vectorization — never that.
+      val mat = outer && ctx.done.isEmpty
+      def skeleton[Arr <: AnyRef](arrOf: Expr[FBase] => Expr[Arr], read: (Expr[Arr], Expr[Int]) => Term)(using Type[Arr]): Expr[Unit] =
+        elemTpe.asType match
+          case '[se] =>
+            '{
+              val s: FBase = $src
+              val a: Arr = ${ arrOf('s) }
+              val len: Int = s.length
+              var i: Int = 0
+              while ${ cond('len, 'i) } do
+                ${ perElem('{ if a ne null then ${ read('a, 'i).asExprOf[se] } else ${ readAtKind(elemTpe, 's, 'i).asExprOf[se] } }.asTerm) }
+                i += 1
+            }
+      k match
+        case Kind.KInt =>
+          skeleton[Array[Int]](
+            s =>
+              if mat then '{ $s match { case l: IntArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeInt(t) else null } }
+              else '{ $s match { case l: IntArr => l.arr; case _ => null } },
+            (a, i) => '{ $a($i) }.asTerm
+          )
+        case Kind.KLong =>
+          skeleton[Array[Long]](
+            s =>
+              if mat then '{ $s match { case l: LongArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeLong(t) else null } }
+              else '{ $s match { case l: LongArr => l.arr; case _ => null } },
+            (a, i) => '{ $a($i) }.asTerm
+          )
+        case Kind.KDouble =>
+          skeleton[Array[Double]](
+            s =>
+              if mat then '{ $s match { case l: DoubleArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeDouble(t) else null } }
+              else '{ $s match { case l: DoubleArr => l.arr; case _ => null } },
+            (a, i) => '{ $a($i) }.asTerm
+          )
+        case Kind.KFloat =>
+          skeleton[Array[Float]](
+            s =>
+              if mat then '{ $s match { case l: FloatArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeFloat(t) else null } }
+              else '{ $s match { case l: FloatArr => l.arr; case _ => null } },
+            (a, i) => '{ $a($i) }.asTerm
+          )
+        case Kind.KShort =>
+          skeleton[Array[Short]](
+            s =>
+              if mat then '{ $s match { case l: ShortArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeShort(t) else null } }
+              else '{ $s match { case l: ShortArr => l.arr; case _ => null } },
+            (a, i) => '{ $a($i) }.asTerm
+          )
+        case Kind.KByte =>
+          skeleton[Array[Byte]](
+            s =>
+              if mat then '{ $s match { case l: ByteArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeByte(t) else null } }
+              else '{ $s match { case l: ByteArr => l.arr; case _ => null } },
+            (a, i) => '{ $a($i) }.asTerm
+          )
+        case Kind.KChar =>
+          skeleton[Array[Char]](
+            s =>
+              if mat then '{ $s match { case l: CharArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeChar(t) else null } }
+              else '{ $s match { case l: CharArr => l.arr; case _ => null } },
+            (a, i) => '{ $a($i) }.asTerm
+          )
+        case Kind.KBoolean =>
+          skeleton[Array[Boolean]](
+            s =>
+              if mat then '{ $s match { case l: BooleanArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeBoolean(t) else null } }
+              else '{ $s match { case l: BooleanArr => l.arr; case _ => null } },
+            (a, i) => '{ $a($i) }.asTerm
+          )
+        case Kind.KRef =>
+          skeleton[Array[AnyRef]](
+            s =>
+              if mat then '{ $s match { case l: RefArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeRef(t) else null } }
+              else '{ $s match { case l: RefArr => l.arr; case _ => null } },
+            (a, i) => elemTpe.asType match { case '[b] => '{ $a($i).asInstanceOf[b] }.asTerm }
+          )
 
     // in-memory: ONE chunk = the whole FArray. Just the shared element loop.
-    def loopOver(src: Expr[FBase], k: Kind, elemTpe: TypeRepr, ss: List[(Stage, Int)], ctx: Ctx): Expr[Unit] =
-      elementLoop(src, k, elemTpe, ss, ctx)
+    def loopOver(src: Expr[FBase], k: Kind, elemTpe: TypeRepr, ss: List[(Stage, Int)], ctx: Ctx, outer: Boolean): Expr[Unit] =
+      elementLoop(src, k, elemTpe, ss, ctx, outer)
 
     // streaming: drive a `Source` — pull a chunk, run the shared element loop over it, repeat. CONSTANT MEMORY:
     // live data = stage state (hoisted above by withDone/declareSlots) + ONE chunk's backing array. `done` is
@@ -1349,7 +1345,7 @@ object FuseMacro:
         try
           var chunk: FArray[Any] | Source.End = src.pullChunk().asInstanceOf[FArray[Any] | Source.End]
           while (chunk ne Source.End) && $notDone do
-            ${ elementLoop('{ chunk.asInstanceOf[FArray[Any]].asInstanceOf[FBase] }, k, elemTpe, ss, ctx) }
+            ${ elementLoop('{ chunk.asInstanceOf[FArray[Any]].asInstanceOf[FBase] }, k, elemTpe, ss, ctx, outer = true) }
             chunk = if $notDone then src.pullChunk().asInstanceOf[FArray[Any] | Source.End] else Source.End
         finally src.close()
       }
@@ -1744,7 +1740,7 @@ object FuseMacro:
         (decomposedSrc, streamSrc) match
           case (Some(js), _) => RecordDecoder.lower(decoderInput(js, c))
           case (_, Some(ss)) => withEpilogue(c, withScanPrologue(c, loopOverSource(ss, srcK, srcElem, indexed, c)))
-          case _             => withEpilogue(c, withScanPrologue(c, loopOver(src0, srcK, srcElem, indexed, c)))
+          case _             => withEpilogue(c, withScanPrologue(c, loopOver(src0, srcK, srcElem, indexed, c, outer = true)))
       def loop(consume: Term => Term): Expr[Unit] = drive(ctx(consume))
       // shape-aware driver: the terminal consumes the element's decomposed Shape (so `op`/`f` projects columns
       // without rebuilding the product). `consume` is a materialize-then-apply fallback for non-segment paths.
@@ -2110,7 +2106,7 @@ object FuseMacro:
         (decomposedSrc, streamSrc) match
           case (Some(js), _) => RecordDecoder.lower(decoderInput(js, c))
           case (_, Some(ss)) => withEpilogue(c, withScanPrologue(c, loopOverSource(ss, srcK, srcElem, indexed, c)))
-          case _             => withEpilogue(c, withScanPrologue(c, loopOver(src0, srcK, srcElem, indexed, c)))
+          case _             => withEpilogue(c, withScanPrologue(c, loopOver(src0, srcK, srcElem, indexed, c, outer = true)))
       outK match
         case Kind.KInt =>
           if needsGrow then
