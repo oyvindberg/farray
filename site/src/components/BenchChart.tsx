@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useStore } from "../data/store";
 import { useTheme } from "../theme";
 import BenchSource from "./BenchSource";
@@ -151,15 +151,18 @@ interface Props {
   /** restrict to a single op token within an all-ops benchmark */
   op?: string;
   /** plain descriptive caption rendered under the figure */
-  caption?: string;
+  caption?: ReactNode;
   /** override the card title (single-match charts only) */
   title?: string;
   /** render just the grid (no <figure>/caption) — for embedding inside a custom layout */
   bare?: boolean;
+  /** which benchmark suite to look the class up in (default: the FArray suite) */
+  suite?: "farray" | "fset";
 }
 
-export default function BenchChart({ cls, op, caption, title, bare }: Props) {
-  const { charts, ready } = useStore();
+export default function BenchChart({ cls, op, caption, title, bare, suite = "farray" }: Props) {
+  const { charts: faCharts, setCharts, ready } = useStore();
+  const charts = suite === "fset" ? setCharts : faCharts;
   const matches = useMemo(
     () => charts.filter((c) => c.cls === cls && (op == null || c.op === op)),
     [charts, cls, op],

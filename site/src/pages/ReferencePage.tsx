@@ -39,7 +39,7 @@ export default function ReferencePage() {
     <article className="page">
       <header className="page__head">
         <p className="page__eyebrow">the complete scorecard</p>
-        <h1>Benchmarks</h1>
+        <h1>FArray benchmarks</h1>
         <p className="page__lede">
           The whole JMH suite, unabridged — every operation at every size, FArray against every competitor,
           wins and losses alike. The chapters up front pull out the highlights and explain the machinery; this

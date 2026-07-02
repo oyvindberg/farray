@@ -1,14 +1,17 @@
 #!/usr/bin/env node
 /**
- * Produces the two JSON files the SPA consumes, into site/public/data/:
+ * Produces the JSON files the SPA consumes, into site/public/data/:
  *
  *   bench.json     — the JMH results slimmed to {b:benchmark, p:params, s:score}.
  *                    The raw docs/bench-results.json is ~7.8 MB of percentiles + raw samples;
  *                    the report only ever needs name + params + primary score, so we drop the rest.
+ *   setbench.json  — the same slimming applied to docs/set-bench-results.json (the FSet suite).
  *
  *   snippets.json  — every `//start:NAME … //stop:NAME` region found in the real, compiled source
- *                    (farray / codegen / benchmarks / tests). Snippets are extracted, never typed —
- *                    if it is in the page, it compiles. Keyed by NAME -> {name, file, lang, code, full}.
+ *                    (farray / codegen / fset / gensets / benchmarks / tests). Snippets are extracted,
+ *                    never typed — if it is in the page, it compiles. Keyed by NAME -> {name, file, lang, code, full}.
+ *
+ *   bench-sources.json / setbench-sources.json — every @Benchmark body, verbatim, per suite.
  *
  * Dev: re-run `npm run data` to refresh without restarting Vite. Prod: `vite build` bakes public/ into dist/.
  */
@@ -69,9 +72,9 @@ const REPO = resolve(HERE, "../..");
 const OUT = resolve(HERE, "../public/data");
 mkdirSync(OUT, { recursive: true });
 
-// ---------------------------------------------------------------- bench.json
-function buildBench() {
-  const raw = JSON.parse(readFileSync(resolve(REPO, "docs/bench-results.json"), "utf8"));
+// ---------------------------------------------------------------- bench.json / setbench.json
+function buildBench(srcRel, outName) {
+  const raw = JSON.parse(readFileSync(resolve(REPO, srcRel), "utf8"));
   const slim = [];
   let skipped = 0;
   for (const b of raw) {
@@ -89,13 +92,13 @@ function buildBench() {
     else { skipped++; continue; }
     slim.push({ b: b.benchmark, p: b.params || {}, s });
   }
-  writeFileSync(resolve(OUT, "bench.json"), JSON.stringify(slim));
-  console.log(`bench.json: ${slim.length} entries (${skipped} non-ops/s skipped)`);
+  writeFileSync(resolve(OUT, outName), JSON.stringify(slim));
+  console.log(`${outName}: ${slim.length} entries (${skipped} non-ops/s skipped)`);
   return slim;
 }
 
 // ---------------------------------------------------------------- snippets.json
-const SOURCE_ROOTS = ["farray/src", "codegen/src", "benchmarks/src", "tests/src"];
+const SOURCE_ROOTS = ["farray/src", "codegen/src", "benchmarks/src", "tests/src", "fset/src", "gensets/src", "setbenchmarks/src", "fset-tests/src"];
 const LANG = { ".scala": "scala", ".java": "java" };
 const START = /\/\/\s*start:([\w.-]+)/;
 const STOP = /\/\/\s*stop:([\w.-]+)/;
@@ -417,6 +420,60 @@ if r.amount > 150 then r.category                   // and decodes \`category\` 
     };
   }
 
+  // ---- FSet: real op source extracted VERBATIM from the generated FSetOps / core, same rules as above.
+  // Requires a prior fset build (`bleep compile fset`) so the generated sources exist.
+  const GEN_SETS = resolve(REPO, ".bleep/generated-sources/fset/farray.GenSets/farray");
+  if (!existsSync(join(GEN_SETS, "FSetOps.scala")))
+    throw new Error(`generated FSetOps not found under ${GEN_SETS} — build fset first (e.g. \`bleep compile fset\`)`);
+  const genSetOps = readFileSync(join(GEN_SETS, "FSetOps.scala"), "utf8");
+  const SET_EXTRACTS = [
+    { name: "set-contains-int", sig: /^\s*def containsLeafInt\(/, file: "fset/FSetOps.scala · generated · def containsLeafInt" },
+    { name: "set-f14-probe", sig: /^\s*case h: SRefHash =>/, file: "fset/FSetOps.scala · generated · the SRefHash arm of containsLeafRef" },
+    { name: "set-merge-ref", sig: /^\s*def mergeUnionRef\(/, file: "fset/FSetOps.scala · generated · def mergeUnionRef" },
+    { name: "set-bitmap-merge", sig: /^\s*def bitmapMergeInt\(/, file: "fset/FSetOps.scala · generated · def bitmapMergeInt" },
+    { name: "set-materialize", sig: /^\s*def materializeTreeInt\(/, file: "fset/FSetOps.scala · generated · def materializeTreeInt" },
+    { name: "set-bitmap-builder", sig: /^private\[farray\] final class IntBitmapBuilder/, file: "fset/FSetOps.scala · generated · class IntBitmapBuilder" },
+    { name: "set-density-router", sig: /^\s*def buildSortedInt\(/, file: "fset/FSetOps.scala · generated · def buildSortedInt" },
+  ];
+  for (const e of SET_EXTRACTS) {
+    const code = extractBraceDef(genSetOps, e.sig);
+    out[e.name] = { name: e.name, file: e.file, lang: "scala", code, html: hl(code, "scala"), full: null, fullHtml: null };
+  }
+  // two of the generated Java core files, small enough to show whole (a leaf and a lazy algebra node).
+  for (const [name, f] of [["set-bitmap-leaf", "SIntBitmap.java"], ["set-union-node", "SUnion.java"]]) {
+    const code = readFileSync(join(GEN_SETS, f), "utf8").replace(/^package farray;\n+/, "").trim();
+    out[name] = {
+      name, file: `fset/${f} · generated`, lang: "java", code, html: hl(code, "java"), full: null, fullHtml: null,
+    };
+  }
+  // Schematic of the set core, faithful to the real SBase `permits` clause, collapsed across element kinds.
+  const SET_NODE_TREE = `// An FSet[A] is one of these. Each carrying-data leaf exists once per element
+// kind (Int, Long, Double, Ref) — generated, not hand-written.
+sealed abstract class SBase
+
+// materialized leaves — frozen, deduplicated, enumerable:
+case object SEmpty                                          extends SMaterialized
+final class SIntOne(elem: Int)                              extends SMaterialized  // a single element
+final class SIntSorted(arr: Array[Int])                     extends SMaterialized  // packed sorted int[]
+final class SIntHash(arr: Array[Int], index: Array[Int])    extends SMaterialized  // frozen open-addressing
+final class SRefHash(arr: Array[AnyRef], hashes: Array[Int],
+                     ctrl: Array[Byte], keys: Array[AnyRef]) extends SMaterialized // F14 ctrl + keys table
+final class SIntBitmap(base: Int, card: Int,
+                       words: Array[Long])                  extends SMaterialized  // dense-Int bitmap
+final class SIntRange(lo: Int, hi: Int)                     extends SMaterialized  // 16 bytes, any span
+
+// lazy algebra nodes — O(1) to build; they share their operands and memoize their merge:
+final class SUnion(left: SBase, right: SBase)               extends SView  // ++ ∪   (volatile memo)
+final class SInter(left: SBase, right: SBase)               extends SView  // &  ∩
+final class SDiff(left: SBase, right: SBase)                extends SView  // &~ ∖
+final class SXor(left: SBase, right: SBase)                 extends SView  // ^  ⊕
+final class SComplement(inner: SBase)                       extends SView  // ~  ¬ — membership-only`;
+  out["set-node-tree"] = {
+    name: "set-node-tree",
+    file: "the set core — schematic (the real hierarchy is generated Java, one final class per shape × kind)",
+    lang: "scala", code: SET_NODE_TREE, html: hl(SET_NODE_TREE, "scala"), full: null, fullHtml: null,
+  };
+
   // The opaque type + a few of its extension methods, assembled from VERBATIM lines of FArray.scala
   // (picked by signature so it survives edits) — every line is real, it's just a selection.
   const faLines = readFileSync(resolve(REPO, "farray/src/scala/farray/FArray.scala"), "utf8").split("\n");
@@ -453,7 +510,6 @@ if r.amount > 150 then r.category                   // and decodes \`category\` 
 // "what was measured" reveal on every chart is the truth, not a hand-written stand-in. (lihaoyi's
 // `sourcecode` only captures expression text at a single call site — it can't bulk-extract every
 // @Benchmark body without rewriting each benchmark and breaking JMH's `def` signatures — so we parse.)
-const BENCH_ROOT = "benchmarks/src/scala/farray";
 const leadingWs = (line) => line.match(/^(\s*)/)[1].length;
 
 // Bracket-depth delta of one line, ignoring brackets inside strings/char-literals/comments.
@@ -527,8 +583,8 @@ function extractFromFile(text) {
   return out;
 }
 
-function buildBenchSources(benchClasses) {
-  const files = walk(resolve(REPO, BENCH_ROOT), []);
+function buildBenchSources(rootRel, outName, benchClasses) {
+  const files = walk(resolve(REPO, rootRel), []);
   const byClass = {}; // cls -> { method -> { code, html } }
   let methodCount = 0;
   for (const file of files) {
@@ -547,16 +603,18 @@ function buildBenchSources(benchClasses) {
   if (byClass.LongMixedPipelineIntBenchmark && !byClass.ColdPipelineIntBenchmark) {
     byClass.ColdPipelineIntBenchmark = byClass.LongMixedPipelineIntBenchmark;
   }
-  writeFileSync(resolve(OUT, "bench-sources.json"), JSON.stringify(byClass));
-  console.log(`bench-sources.json: ${methodCount} methods across ${Object.keys(byClass).length} classes`);
+  writeFileSync(resolve(OUT, outName), JSON.stringify(byClass));
+  console.log(`${outName}: ${methodCount} methods across ${Object.keys(byClass).length} classes`);
 
-  // Coverage: every benchmark class that shows up in bench.json should have extracted source.
+  // Coverage: every benchmark class that shows up in the slimmed data should have extracted source.
   const missing = [...benchClasses].filter((c) => !byClass[c]).sort();
-  if (missing.length) console.warn(`  ⚠ ${missing.length} bench.json class(es) with NO source: ${missing.join(", ")}`);
-  else console.log(`  ✓ all ${benchClasses.size} bench.json classes have source`);
+  if (missing.length) console.warn(`  ⚠ ${missing.length} class(es) with NO source: ${missing.join(", ")}`);
+  else console.log(`  ✓ all ${benchClasses.size} benchmark classes have source`);
 }
 
-const slim = buildBench();
+const classesOf = (slim) => new Set(slim.map((e) => e.b.split(".").at(-2)));
+const slim = buildBench("docs/bench-results.json", "bench.json");
+const setSlim = buildBench("docs/set-bench-results.json", "setbench.json");
 buildSnippets();
-const benchClasses = new Set(slim.map((e) => e.b.split(".").at(-2)));
-buildBenchSources(benchClasses);
+buildBenchSources("benchmarks/src/scala/farray", "bench-sources.json", classesOf(slim));
+buildBenchSources("setbenchmarks/src/scala/farray", "setbench-sources.json", classesOf(setSlim));

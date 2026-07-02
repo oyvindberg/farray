@@ -12,6 +12,12 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
+# Serialize all benchmarking on this box through the shared mutex (see scripts/bench-lock.sh):
+# concurrent JMH runs contend and both measure garbage. Re-exec the whole sweep under the lock.
+if [ -z "${BENCH_LOCK_HELD:-}" ]; then
+  exec env BENCH_LOCK_HELD=1 bash scripts/bench-lock.sh bash "$0" "$@"
+fi
+
 WI="${1:-3}"; MI="${2:-5}"; FORKS="${3:-0}"
 MAXJ="${4:-6}"                                            # max shards running AT ONCE — caps peak memory (each -f1 fork ~2g)
 CORES="$(sysctl -n hw.ncpu 2>/dev/null || nproc)"

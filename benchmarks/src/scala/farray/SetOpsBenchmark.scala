@@ -22,6 +22,37 @@ class SetOpsIntBenchmark extends IntInputs {
     zioThat = zio.Chunk.fromArray(thatArr.clone())
   }
 
+  // distinct on the base input (dense 0..n-1, ALL distinct — the identity-return + bitmap showcase) and
+  // on a dup-heavy variant (75% duplicates, values in [0, size/4) — the rebuild path).
+  var farrayDups: FArray[Int] = _
+  var listDups: List[Int] = _
+  var vectorDups: Vector[Int] = _
+  var iarrayDups: IArray[Int] = _
+  var zioDups: zio.Chunk[Int] = _
+
+  @Setup
+  def setupDups(): Unit = {
+    val m = math.max(size / 4, 1)
+    val dupArr = Array.tabulate(size)(i => (i * 31) % m)
+    farrayDups = FArray.fromArray(dupArr.clone())
+    listDups = dupArr.toList
+    vectorDups = dupArr.toVector
+    iarrayDups = IArray.unsafeFromArray(dupArr.clone())
+    zioDups = zio.Chunk.fromArray(dupArr.clone())
+  }
+
+  @Benchmark def farray_distinct(): FArray[Int] = farrayInput.distinct
+  @Benchmark def list_distinct(): List[Int] = listInput.distinct
+  @Benchmark def vector_distinct(): Vector[Int] = vectorInput.distinct
+  @Benchmark def iarray_distinct(): IArray[Int] = iarrayInput.distinct
+  @Benchmark def ziochunk_distinct(): zio.Chunk[Int] = zioChunkInput.distinct
+
+  @Benchmark def farray_distinctDups(): FArray[Int] = farrayDups.distinct
+  @Benchmark def list_distinctDups(): List[Int] = listDups.distinct
+  @Benchmark def vector_distinctDups(): Vector[Int] = vectorDups.distinct
+  @Benchmark def iarray_distinctDups(): IArray[Int] = iarrayDups.distinct
+  @Benchmark def ziochunk_distinctDups(): zio.Chunk[Int] = zioDups.distinct
+
   @Benchmark def farray_diff(): FArray[Int] = farrayInput.diff(farrayThat)
   @Benchmark def list_diff(): List[Int] = listInput.diff(listThat)
   @Benchmark def vector_diff(): Vector[Int] = vectorInput.diff(vectorThat)

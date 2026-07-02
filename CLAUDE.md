@@ -50,6 +50,12 @@ re-run the competitors — edit `GenCores.scala`, run the sweep, read the refres
 caffeinate -i bash scripts/bench-run.sh [warmup-iters] [measure-iters] [forks] [max-shards]
 #   typical:  caffeinate -i bash scripts/bench-run.sh 3 5 1 6
 ```
+- **One JMH consumer per box — `scripts/bench-lock.sh`.** Multiple agents/sessions may work here
+  concurrently; two JMH runs contend and both measure garbage (and invite pkill collateral). The sweep
+  runners (`bench-run.sh` / `setbench-run.sh`) take the mutex automatically; **wrap ad-hoc runs
+  yourself**: `scripts/bench-lock.sh bleep run setbenchmarks-runner -- '<regex>' -f 1 ...`. The lock
+  waits (never fails), and steals a lock whose holder died. NEVER `pkill` JMH — the lock makes it
+  unnecessary.
 - Defaults: 3 warmup / 5 measure / 0 forks / 6 concurrent shards. `0` forks = fast & noisier
   (in-shard JVM); `1` fork = more stable. `max-shards` caps peak memory (~2g per `-f1` fork).
 - Drives `org.openjdk.jmh.Main` as N parallel java processes (not `bleep run`, which serializes on the

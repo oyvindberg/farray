@@ -6,7 +6,7 @@ export type Slim = { b: string; p: Record<string, string>; s: number };
 export type Section = "Primitive" | "String" | "ListLike" | "Diagnostics";
 export const SECTIONS: Section[] = ["Primitive", "String", "ListLike", "Diagnostics"];
 
-// variant -> [label, color]. FArray is the only saturated series (emerald); every competitor is
+// variant -> [label, color]. FArray/FSet is the only saturated series (emerald); every competitor is
 // desaturated so the eye reads "is green tallest?" at a glance and the chart stays calm.
 export const KNOWN: Record<string, [string, string]> = {
   farray: ["FArray", "#16a34a"],
@@ -17,6 +17,14 @@ export const KNOWN: Record<string, [string, string]> = {
   ziochunk: ["zio.Chunk", "#bd8aa6"], scalaRange: ["Range", "#8b9197"],
   farrayTree: ["FArray·tree", "#16a34a"], farrayMat: ["FArray·flat", "#6ee7a8"],
   ziochunkTree: ["zio·tree", "#bd8aa6"], ziochunkMat: ["zio·flat", "#d6b3c6"],
+  // ---- the FSet suite (subject = fset; competitors muted; same palette as scripts/setbench_report.py) ----
+  fset: ["FSet", "#16a34a"],
+  scalaset: ["scala.immut", "#8b5cf6"], scalamut: ["scala.mut", "#a78bfa"],
+  immbitset: ["immut.BitSet", "#0ea5e9"], jubitset: ["java.BitSet", "#38bdf8"],
+  fastutil: ["fastutil", "#f59e0b"], hppc: ["HPPC", "#f97316"],
+  eclipse: ["Eclipse", "#ec4899"], eclipsemut: ["Eclipse.mut", "#ec4899"], eclipseimm: ["Eclipse.immut", "#f9a8d4"],
+  roaring: ["Roaring", "#ef4444"], guava: ["Guava", "#14b8a6"],
+  juhashset: ["java.HashSet", "#64748b"], jusetof: ["java.Set.of", "#94a3b8"],
 };
 export const ORDER = Object.keys(KNOWN);
 const XPRIORITY = ["size", "numChunks", "chunkCount", "numLeaves", "n", "innerSize", "chunkSize", "leafSize"];
@@ -30,13 +38,19 @@ const SUBV = new Set([
 const STRUCTS = new Set(ORDER.filter((v) => !SUBV.has(v)));
 
 export const lc = (v: string): [string, string] => KNOWN[v] ?? [v, "#cbd5e1"];
-export const ours = (v: string): boolean => v.startsWith("farray");
+export const ours = (v: string): boolean => v.startsWith("farray") || v.startsWith("fset");
+
+// The FSet suite names classes by element-kind PREFIX (IntSetUnionBenchmark / StrSetUnionBenchmark);
+// the FArray suite by SUFFIX (MapIntBenchmark / MapStrBenchmark). Detect the prefix form first.
+const SET_PREFIX = /^(Int|Long|Str)Set/;
 
 function section(cls: string): Section {
   // benchmark classes are named by element-kind SUFFIX, e.g. MapIntBenchmark / MapStrBenchmark
   // (not IntMap…), so classify on the kind before the Benchmark/Bench tail. (FArray's own set ops —
-  // SetOpsInt/… — are ordinary element ops and stay Primitive/String; the future FSet collection gets
-  // its own page, not a section here.)
+  // SetOpsInt/… — are ordinary element ops and stay Primitive/String.) The FSet suite instead
+  // prefixes: IntSet…/StrSet… — those classify by the prefix.
+  const pm = cls.match(SET_PREFIX);
+  if (pm) return pm[1] === "Str" ? "String" : "Primitive";
   if (cls.startsWith("ListLike")) return "ListLike";
   const base = cls.replace(/Benchmark$|Bench$/, "");
   if (/(Int|Long)$/.test(base)) return "Primitive";
@@ -61,13 +75,17 @@ export interface Chart {
 }
 
 function niceTitle(cls: string, op: string): string {
-  // drop Benchmark/Bench tail and the element-kind suffix — the kind moves to a colored chip.
-  const nice = cls.replace(/Benchmark$|Bench$/, "").replace(/(Int|Long|Str)$/, "");
+  // drop Benchmark/Bench tail and the element-kind prefix/suffix — the kind moves to a colored chip.
+  const nice = SET_PREFIX.test(cls)
+    ? cls.replace(SET_PREFIX, "").replace(/Benchmark$|Bench$/, "")
+    : cls.replace(/Benchmark$|Bench$/, "").replace(/(Int|Long|Str)$/, "");
   return nice + (op ? ` · ${op}` : "");
 }
 
 // element kind of a benchmark class, for the per-chart Int/reference color chip.
 export function kindOf(cls: string): "int" | "ref" | null {
+  const pm = cls.match(SET_PREFIX);
+  if (pm) return pm[1] === "Str" ? "ref" : "int";
   const base = cls.replace(/Benchmark$|Bench$/, "");
   if (/(Int|Long)$/.test(base)) return "int";
   if (/Str$/.test(base)) return "ref";

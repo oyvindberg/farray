@@ -10,7 +10,7 @@ on:
     branches: [ 'main' ]
   pull_request:
     branches: [ 'main' ]
-    paths: [ 'site/**', 'docs/bench-results.json' ]
+    paths: [ 'site/**', 'docs/bench-results.json', 'docs/set-bench-results.json' ]
   workflow_dispatch:
 
 permissions:
@@ -33,8 +33,8 @@ jobs:
         with:
           extraFiles: bleep.yaml
       - name: Generate sources
-        # site/scripts/build-data.mjs extracts snippets from the generated FArrayOps
-        run: bleep sourcegen farray
+        # site/scripts/build-data.mjs extracts snippets from the generated FArrayOps + FSetOps
+        run: bleep sourcegen farray fset
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -45,10 +45,11 @@ jobs:
         run: |
           npm ci
           npm run build
-      - name: Keep the raw report and data reachable
+      - name: Keep the raw JMH data reachable
+        # the SPA bakes in the slimmed data; these are the full untrimmed JMH results for tooling/verification
         run: |
-          cp docs/report.html site/dist/report.html
           cp docs/bench-results.json site/dist/bench-results.json
+          cp docs/set-bench-results.json site/dist/set-bench-results.json
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site/dist
