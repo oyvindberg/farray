@@ -1,9 +1,9 @@
 package farray.json
 
 import scala.quoted.*
-import farray.{Ast, DecomposedInput, RecordColumns, Column}
+import farray.{Ast, DecodeRequest, RecordColumns, Column}
 
-/** The JSON byte decoder, lifted ENTIRELY out of the fusion engine. Given a [[DecomposedInput]] — the record type, the runtime [[ByteRecordSource]], the
+/** The JSON byte decoder, lifted ENTIRELY out of the fusion engine. Given a [[DecodeRequest]] — the record type, the runtime [[ByteRecordSource]], the
   * pipeline's field-reading lambdas, and the engine's `continue` callback — it emits a per-record projection scanner: only the live fields are scanned
   * (projection pushdown / dead-column elimination), a leading filter is evaluated at the byte level and the record abandoned if it fails (predicate pushdown),
   * a projected String is decoded lazily only for survivors (compute-for-survivors), and no per-record object is allocated for reduce/project pipelines.
@@ -16,7 +16,7 @@ import farray.{Ast, DecomposedInput, RecordColumns, Column}
   * `lower` and `planString` are the only entry points; everything else is nested inside them so a single `Quotes` (`q`) is shared across all the codegen
   * helpers — no path-dependent-type threading.
   */
-private[farray] object JsonDecode extends farray.RecordDecoderSpi:
+private[farray] object JsonDecode extends farray.RecordDecoder:
 
   /** the scanner kind for a field type — what the slot holds and how the column reads it. */
   private enum JKind { case JInt, JLong, JDouble, JString }
@@ -25,7 +25,7 @@ private[farray] object JsonDecode extends farray.RecordDecoderSpi:
     * `try/finally close()`. Each complete record is decoded to its live-field columns and handed to the engine's continuation; the framer behind the contract
     * owns boundary stitching, so this loop only ever sees complete, contiguous frames.
     */
-  def lower(using q: Quotes)(in: DecomposedInput[q.type]): Expr[Unit] =
+  def lower(using q: Quotes)(in: DecodeRequest[q.type]): Expr[Unit] =
     import q.reflect.*
 
     def jkindOf(t: TypeRepr): JKind =
@@ -269,7 +269,7 @@ private[farray] object JsonDecode extends farray.RecordDecoderSpi:
   /** the record fields + the live set (fields any stage/terminal lambda reads). `forcesWholeRecord` (topN/reduce/…) or a whole-param use makes every field
     * live.
     */
-  private def liveFields(using q: Quotes)(in: DecomposedInput[q.type]): (List[(String, q.reflect.TypeRepr)], Set[String]) =
+  private def liveFields(using q: Quotes)(in: DecodeRequest[q.type]): (List[(String, q.reflect.TypeRepr)], Set[String]) =
     import q.reflect.*
     val fields = Ast
       .productFields(in.srcElem)
@@ -293,7 +293,7 @@ private[farray] object JsonDecode extends farray.RecordDecoderSpi:
   /** a machine-checkable DESCRIPTION of the plan the decoder built — tests assert on the STRUCTURE (which fields are scanned, decoded vs sliced, the
     * predicate/early-out set, rebuild, terminal) rather than on brittle code/values.
     */
-  def planString(using q: Quotes)(in: DecomposedInput[q.type]): String =
+  def planString(using q: Quotes)(in: DecodeRequest[q.type]): String =
     import q.reflect.*
     val (fields, liveSet) = liveFields(in)
     def jks(t: TypeRepr): JKind =

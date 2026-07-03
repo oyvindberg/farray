@@ -1,7 +1,7 @@
 ({
   val b: Builder[String, List[String]] = List.newBuilder[String]
 
-  (({
+  ((({
     val src0: FBase = null.asInstanceOf[FBase]
     val n0: Int = 16
     val src: ByteRecordSource = inline$base$i1[String]({
@@ -71,6 +71,6 @@
       } else ()
     } finally src.close()
     ()
-  }.asInstanceOf[Unit]: Unit): Unit)
+  }.asInstanceOf[Unit]: Unit): Unit): Unit)
   b.result()
 }: List[String])

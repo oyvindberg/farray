@@ -1,4 +1,4 @@
-({
+(({
   val src0: FBase = inline$base$i1[Trade]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -40,4 +40,4 @@
   val n: Int = c
   val top: Double = if (seen) best else throw new NoSuchElementException("min1/max1 of empty fused pipeline")
   Summary.apply(total, n, top)
-}.asInstanceOf[Summary]: Summary)
+}.asInstanceOf[Summary]: Summary): Summary)

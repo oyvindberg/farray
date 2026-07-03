@@ -1,7 +1,7 @@
 ({
   val z$proxy: Int = IntIsIntegral.zero
 
-  (({
+  ((({
     val src0: FBase = inline$base$i1[Int]({
       val $proxy: FArray$package {
         type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -38,5 +38,5 @@
       }
       acc
     }: Int)
-  }.asInstanceOf[Int]: Int): Int)
+  }.asInstanceOf[Int]: Int): Int): Int)
 }: Int)

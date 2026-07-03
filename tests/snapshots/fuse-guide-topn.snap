@@ -1,4 +1,4 @@
-(({
+((({
   val src0: FBase = inline$base$i1[Trade]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -42,4 +42,4 @@
       if (_l.==(0)) Empty.INSTANCE else if (_l.==(1)) new RefOne(as$proxy.apply(0)) else new RefArr(as$proxy, _l)
     }: FBase): FArray[Trade])
   }.$asInstanceOf$[FArray[Trade]]
-}.asInstanceOf[FArray[Trade]]: FArray[Trade]): FArray[Trade])
+}.asInstanceOf[FArray[Trade]]: FArray[Trade]): FArray[Trade]): FArray[Trade])

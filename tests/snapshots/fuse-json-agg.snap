@@ -1,4 +1,4 @@
-({
+(({
   val src0: FBase = null.asInstanceOf[FBase]
   val n0: Int = 16
   var acc: Double = 0.0
@@ -98,4 +98,4 @@
   val n: Int = c
   val peak: Double = if (seen) best else throw new NoSuchElementException("min1/max1 of empty fused pipeline")
   JsonDemo.Stats.apply(revenue, n, peak)
-}.asInstanceOf[Stats]: Stats)
+}.asInstanceOf[Stats]: Stats): Stats)

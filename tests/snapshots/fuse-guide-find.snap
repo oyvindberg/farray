@@ -1,4 +1,4 @@
-({
+(({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -32,4 +32,4 @@
   }
 
   (res: Option[Any])
-}.asInstanceOf[Option[Int]]: Option[Int])
+}.asInstanceOf[Option[Int]]: Option[Int]): Option[Int])

@@ -91,10 +91,12 @@ FArray's implementation is **generated** — do NOT edit generated sources; edit
 - `codegen` — the `GenCores` generator.
 - `farray` — the library (generated `FBase`/`FArrayOps` + hand-written `FArray.scala`).
 - `example-json-decoder` (dependsOn `farray`) — the NDJSON record decoder as a downstream module.
-  Pipelines are shape-indexed (`Fuse[A, S]`); terminals are inline extensions provided by the shape's
-  `FuseLowering[S]` given (typeclass, found via the shape companion's implicit scope). This module
-  defines the `Ndjson` shape + `JsonLowering`, whose macros hand `JsonDecode` to the engine's `…With`
-  entry points as a plain argument — no registry, no reflection; the engine ships no decoder.
+  Pipelines are shape-indexed (`Fuse[A, S]`); terminal SYNTAX lives once in farray's capability traits
+  (`AggTerminals`/`SearchTerminals`/`GroupTerminals`/`PlanTerminals`/`MaterializeTerminals`,
+  bundle `StandardTerminals`), every method funneling into the shape lowering's single abstract
+  `inline def lower(self, t: Terminal[A, R])` hook. A module = shape + given + hook whose macro calls
+  `FuseMacro.lower(self, t, itsRecordDecoder)` — see `example-json-decoder/…/Integration.scala` (the
+  whole plug-in, one file; design: docs/fusion-integration-design.md). No registry, no reflection.
 - `tests` (dependsOn `farray`, `example-json-decoder`) — `FListTest`, parity vs `List`.
 - `benchmarks` / `benchmarks-runner` — JMH suites, driven by `scripts/bench-run.sh`.
 

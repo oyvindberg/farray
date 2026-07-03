@@ -1,4 +1,4 @@
-(({
+((({
   val src0: FBase = null.asInstanceOf[FBase]
   val n0: Int = 16
   var c: Int = 0
@@ -79,4 +79,4 @@
     } finally src.close()
     c
   }: Int)
-}.asInstanceOf[Int]: Int): Int)
+}.asInstanceOf[Int]: Int): Int): Int)

@@ -7,7 +7,7 @@
 ====================================================================================================
 // ints.fuse.map(_+1).filter(_%2==0).map(_*2).run
 ====================================================================================================
-({
+(({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -44,12 +44,12 @@
     i = i.+(1)
   }
   if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(out.apply(0)) else if (o.==(cap)) new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o)
-}.asInstanceOf[FArray[Int]]: FArray[Int])
+}.asInstanceOf[FArray[Int]]: FArray[Int]): FArray[Int])
 
 ====================================================================================================
 // ints.fuse.filter(_%2==0).take(2).map(_*10).run  [positional break]
 ====================================================================================================
-({
+(({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -97,12 +97,12 @@
     i = i.+(1)
   }
   if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(out.apply(0)) else if (o.==(cap)) new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o)
-}.asInstanceOf[FArray[Int]]: FArray[Int])
+}.asInstanceOf[FArray[Int]]: FArray[Int]): FArray[Int])
 
 ====================================================================================================
 // ints.fuse.drop(2).take(3).run
 ====================================================================================================
-({
+(({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -153,12 +153,12 @@
     i = i.+(1)
   }
   if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(out.apply(0)) else if (o.==(cap)) new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o)
-}.asInstanceOf[FArray[Int]]: FArray[Int])
+}.asInstanceOf[FArray[Int]]: FArray[Int]): FArray[Int])
 
 ====================================================================================================
 // ints.fuse.map(_+1).foldLeft(0)(_+_)
 ====================================================================================================
-(({
+((({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -190,12 +190,12 @@
     }
     acc
   }: Int)
-}.asInstanceOf[Int]: Int): Int)
+}.asInstanceOf[Int]: Int): Int): Int)
 
 ====================================================================================================
 // UNBOXED-PAIR: ints.fuse.map(x => (x, x*2)).run  [FArray[(Int,Int)] via @specialized Tuple2$mcII$sp — no boxing]
 ====================================================================================================
-({
+(({
   val src0: FBase = inline$base$i1[Tuple2[Int, Int]]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -227,12 +227,12 @@
     i = i.+(1)
   }
   if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new RefOne(out.apply(0)) else if (o.==(cap)) new RefArr(out, o) else new RefArr(java.util.Arrays.copyOf[Object](out, o), o)
-}.asInstanceOf[FArray[Tuple2[Int, Int]]]: FArray[Tuple2[Int, Int]])
+}.asInstanceOf[FArray[Tuple2[Int, Int]]]: FArray[Tuple2[Int, Int]]): FArray[Tuple2[Int, Int]])
 
 ====================================================================================================
 // ints.fuse.filter(_%2==0).count
 ====================================================================================================
-(({
+((({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -268,12 +268,12 @@
     }
     c
   }: Int)
-}.asInstanceOf[Int]: Int): Int)
+}.asInstanceOf[Int]: Int): Int): Int)
 
 ====================================================================================================
 // strs.fuse.map(_.toUpperCase).run  [Ref]
 ====================================================================================================
-({
+(({
   val src0: FBase = inline$base$i1[String]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -305,12 +305,12 @@
     i = i.+(1)
   }
   if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new RefOne(out.apply(0)) else if (o.==(cap)) new RefArr(out, o) else new RefArr(java.util.Arrays.copyOf[Object](out, o), o)
-}.asInstanceOf[FArray[String]]: FArray[String])
+}.asInstanceOf[FArray[String]]: FArray[String]): FArray[String])
 
 ====================================================================================================
 // strs.fuse.filter(_.nonEmpty).foreach(println)  [Ref, inlined op]
 ====================================================================================================
-(({
+((({
   val src0: FBase = inline$base$i1[String]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -342,12 +342,12 @@
     i = i.+(1)
   }
   ()
-}.asInstanceOf[Unit]: Unit): Unit)
+}.asInstanceOf[Unit]: Unit): Unit): Unit)
 
 ====================================================================================================
 // ints.fuse.flatMap(x => FArray(x, x*10)).map(_+1).run  [nested loop, growable out]
 ====================================================================================================
-({
+(({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -398,12 +398,12 @@
     i = i.+(1)
   }
   if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(`out₂`.apply(0)) else if (o.==(`out₂`.length)) new IntArr(`out₂`, o) else new IntArr(java.util.Arrays.copyOf(`out₂`, o), o)
-}.asInstanceOf[FArray[Int]]: FArray[Int])
+}.asInstanceOf[FArray[Int]]: FArray[Int]): FArray[Int])
 
 ====================================================================================================
 // ints.fuse.map(_+1).find(_%3==0)  [short-circuit via done]
 ====================================================================================================
-({
+(({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -437,12 +437,12 @@
   }
 
   (res: Option[Any])
-}.asInstanceOf[Option[Int]]: Option[Int])
+}.asInstanceOf[Option[Int]]: Option[Int]): Option[Int])
 
 ====================================================================================================
 // ints.fuse.zipWithIndex.filter(_._2%2==0).map(_._1).run  [(value,index) DECOMPOSED — no pair built]
 ====================================================================================================
-({
+(({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -480,12 +480,12 @@
     i = i.+(1)
   }
   if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(out.apply(0)) else if (o.==(cap)) new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o)
-}.asInstanceOf[FArray[Int]]: FArray[Int])
+}.asInstanceOf[FArray[Int]]: FArray[Int]): FArray[Int])
 
 ====================================================================================================
 // ints.fuse.zip(ys).map((a,b) => a+b).run  [lock-step; reads that(c); no pair built]
 ====================================================================================================
-({
+(({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -562,12 +562,12 @@
     i = i.+(1)
   }
   if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(`out₃`.apply(0)) else if (o.==(cap)) new IntArr(`out₃`, o) else new IntArr(java.util.Arrays.copyOf(`out₃`, o), o)
-}.asInstanceOf[FArray[Int]]: FArray[Int])
+}.asInstanceOf[FArray[Int]]: FArray[Int]): FArray[Int])
 
 ====================================================================================================
 // ints.fuse.map(x => (f(x)+1, f(x)+2)).map(_._1 + _._2).run  [CSE: f(x)=x*x once]
 ====================================================================================================
-({
+(({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -602,12 +602,12 @@
     i = i.+(1)
   }
   if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(out.apply(0)) else if (o.==(cap)) new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o)
-}.asInstanceOf[FArray[Int]]: FArray[Int])
+}.asInstanceOf[FArray[Int]]: FArray[Int]): FArray[Int])
 
 ====================================================================================================
 // ints.fuse.map(x=>(x+1, x*1000)).filter(_._1%2==0).map(_._2).run  [SINK: 2nd col inside the guard]
 ====================================================================================================
-({
+(({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -644,12 +644,12 @@
     i = i.+(1)
   }
   if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(out.apply(0)) else if (o.==(cap)) new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o)
-}.asInstanceOf[FArray[Int]]: FArray[Int])
+}.asInstanceOf[FArray[Int]]: FArray[Int]): FArray[Int])
 
 ====================================================================================================
 // COLLECT: ints.fuse.collect { case x if x%2==0 => x*10 }.run  [PF match INLINED — no PartialFunction object]
 ====================================================================================================
-({
+(({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -691,12 +691,12 @@
     i = i.+(1)
   }
   if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(out.apply(0)) else if (o.==(cap)) new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o)
-}.asInstanceOf[FArray[Int]]: FArray[Int])
+}.asInstanceOf[FArray[Int]]: FArray[Int]): FArray[Int])
 
 ====================================================================================================
 // TAKEWHILE: ints.fuse.takeWhile(_ < 5).run  [stops the stream via done on first failure]
 ====================================================================================================
-({
+(({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -730,12 +730,12 @@
     i = i.+(1)
   }
   if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(out.apply(0)) else if (o.==(cap)) new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o)
-}.asInstanceOf[FArray[Int]]: FArray[Int])
+}.asInstanceOf[FArray[Int]]: FArray[Int]): FArray[Int])
 
 ====================================================================================================
 // SCANLEFT: ints.fuse.scanLeft(0)(_ + _).run  [emit z prologue before the loop, then acc per element]
 ====================================================================================================
-({
+(({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -775,12 +775,12 @@
     i = i.+(1)
   }
   if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(out.apply(0)) else if (o.==(out.length)) new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o)
-}.asInstanceOf[FArray[Int]]: FArray[Int])
+}.asInstanceOf[FArray[Int]]: FArray[Int]): FArray[Int])
 
 ====================================================================================================
 // INDEXWHERE: ints.fuse.map(x => x*x).indexWhere(_ > 9)  [bare var idx + counter — NO pair allocated]
 ====================================================================================================
-({
+(({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -816,12 +816,12 @@
   }
 
   (idx: Int)
-}.asInstanceOf[Int]: Int)
+}.asInstanceOf[Int]: Int): Int)
 
 ====================================================================================================
 // MIN: ints.fuse.filter(_%2==0).min  [seeded var acc — NO per-element Option]
 ====================================================================================================
-((({
+(((({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -862,12 +862,12 @@
     i = i.+(1)
   }
   if (seeded) Some.apply[Int](acc) else None
-}.asInstanceOf[Option[Int]]: Option[Int]): Option[Int]).getOrElse[Int](throw new UnsupportedOperationException("min of an empty fused pipeline")).asInstanceOf[Int]: Int)
+}.asInstanceOf[Option[Int]]: Option[Int]): Option[Int]): Option[Int]).getOrElse[Int](throw new UnsupportedOperationException("min of an empty fused pipeline")).asInstanceOf[Int]: Int)
 
 ====================================================================================================
 // MINBY: ints.fuse.minBy(x => -x)  [best + bestKey in two vars — NO tuple, NO per-element Option]
 ====================================================================================================
-((({
+(((({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -905,12 +905,12 @@
     i = i.+(1)
   }
   if (seeded) Some.apply[Any](best) else None
-}.asInstanceOf[Option[Int]]: Option[Int]): Option[Int]).getOrElse[Int](throw new UnsupportedOperationException("minBy on an empty fused pipeline")): Int)
+}.asInstanceOf[Option[Int]]: Option[Int]): Option[Int]): Option[Int]).getOrElse[Int](throw new UnsupportedOperationException("minBy on an empty fused pipeline")): Int)
 
 ====================================================================================================
 // PRODUCT: map(x => Outer(Inner(x, x*99), x*3)).map(o => o.inner.x + o.z)  [nested case class, Inner.y DEAD]
 ====================================================================================================
-({
+(({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -943,7 +943,7 @@
     i = i.+(1)
   }
   if (`o₂`.==(0)) (Empty.INSTANCE: FBase) else if (`o₂`.==(1)) new IntOne(out.apply(0)) else if (`o₂`.==(cap)) new IntArr(out, `o₂`) else new IntArr(java.util.Arrays.copyOf(out, `o₂`), `o₂`)
-}.asInstanceOf[FArray[Int]]: FArray[Int])
+}.asInstanceOf[FArray[Int]]: FArray[Int]): FArray[Int])
 
 ====================================================================================================
 // DERIVED TERMINAL: ints.fuse.filter(_%2==0).map(_*10).sum  [foldLeft fusion: acc updated in one pass]
@@ -951,7 +951,7 @@
 ({
   val z$proxy: Int = IntIsIntegral.zero
 
-  (({
+  ((({
     val src0: FBase = inline$base$i1[Int]({
       val $proxy: FArray$package {
         type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -988,13 +988,13 @@
       }
       acc
     }: Int)
-  }.asInstanceOf[Int]: Int): Int)
+  }.asInstanceOf[Int]: Int): Int): Int)
 }: Int)
 
 ====================================================================================================
 // DCE-1: map(x => (x+1, expensive(x))).map(_._1)  [expensive(x) DEAD]
 ====================================================================================================
-({
+(({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -1026,12 +1026,12 @@
     i = i.+(1)
   }
   if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(out.apply(0)) else if (o.==(cap)) new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o)
-}.asInstanceOf[FArray[Int]]: FArray[Int])
+}.asInstanceOf[FArray[Int]]: FArray[Int]): FArray[Int])
 
 ====================================================================================================
 // DCE-2: zip(ys).map(_._1)  [zipped read DEAD]
 ====================================================================================================
-({
+(({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -1104,12 +1104,12 @@
     i = i.+(1)
   }
   if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(`out₃`.apply(0)) else if (o.==(cap)) new IntArr(`out₃`, o) else new IntArr(java.util.Arrays.copyOf(`out₃`, o), o)
-}.asInstanceOf[FArray[Int]]: FArray[Int])
+}.asInstanceOf[FArray[Int]]: FArray[Int]): FArray[Int])
 
 ====================================================================================================
 // DCE-3: zip(ys).map((a,b) => (a, expensive(b))).filter(_._1%4==0).map(_._1)  [expensive(b) AND ys DEAD]
 ====================================================================================================
-({
+(({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -1190,12 +1190,12 @@
     i = i.+(1)
   }
   if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(`out₃`.apply(0)) else if (o.==(cap)) new IntArr(`out₃`, o) else new IntArr(java.util.Arrays.copyOf(`out₃`, o), o)
-}.asInstanceOf[FArray[Int]]: FArray[Int])
+}.asInstanceOf[FArray[Int]]: FArray[Int]): FArray[Int])
 
 ====================================================================================================
 // DCE-4: collect { case x if x>2 => (x, expensive(x)) }.map(_._1)  [collect body decomposes: expensive DEAD]
 ====================================================================================================
-({
+(({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -1236,12 +1236,12 @@
     i = i.+(1)
   }
   if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(out.apply(0)) else if (o.==(cap)) new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o)
-}.asInstanceOf[FArray[Int]]: FArray[Int])
+}.asInstanceOf[FArray[Int]]: FArray[Int]): FArray[Int])
 
 ====================================================================================================
 // BLOG-HYGIENE-1: map(x => x+1).filter(x => x>2).map(x => x*x)  [same param name `x` in 3 lambdas]
 ====================================================================================================
-({
+(({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -1277,12 +1277,12 @@
     i = i.+(1)
   }
   if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(out.apply(0)) else if (o.==(cap)) new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o)
-}.asInstanceOf[FArray[Int]]: FArray[Int])
+}.asInstanceOf[FArray[Int]]: FArray[Int]): FArray[Int])
 
 ====================================================================================================
 // BLOG-HYGIENE-2: flatMap(x => FArray(x, x*10)).map(x => x+1)  [`x` reused across the nesting boundary]
 ====================================================================================================
-({
+(({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -1333,12 +1333,12 @@
     i = i.+(1)
   }
   if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(`out₂`.apply(0)) else if (o.==(`out₂`.length)) new IntArr(`out₂`, o) else new IntArr(java.util.Arrays.copyOf(`out₂`, o), o)
-}.asInstanceOf[FArray[Int]]: FArray[Int])
+}.asInstanceOf[FArray[Int]]: FArray[Int]): FArray[Int])
 
 ====================================================================================================
 // BLOG-NESTED-FLATMAP: flatMap(x => FArray(x, x+1)).flatMap(y => FArray(y*100))  [loop nest]
 ====================================================================================================
-({
+(({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -1421,12 +1421,12 @@
     i = i.+(1)
   }
   if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(`out₂`.apply(0)) else if (o.==(`out₂`.length)) new IntArr(`out₂`, o) else new IntArr(java.util.Arrays.copyOf(`out₂`, o), o)
-}.asInstanceOf[FArray[Int]]: FArray[Int])
+}.asInstanceOf[FArray[Int]]: FArray[Int]): FArray[Int])
 
 ====================================================================================================
 // BLOG-NESTED-TUPLE: map(x => ((x, x+1), (x+2, x+3))).map(t => t._1._1 + t._2._2)  [2 of 4 leaves live]
 ====================================================================================================
-({
+(({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -1459,12 +1459,12 @@
     i = i.+(1)
   }
   if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(out.apply(0)) else if (o.==(cap)) new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o)
-}.asInstanceOf[FArray[Int]]: FArray[Int])
+}.asInstanceOf[FArray[Int]]: FArray[Int]): FArray[Int])
 
 ====================================================================================================
 // BLOG-PREDICATE-LEVELS: filter(_>0).flatMap(x => FArray(x, -x)).filter(_%2==0).map(_+1)  [outer + inner guards]
 ====================================================================================================
-({
+(({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -1528,12 +1528,12 @@
     i = i.+(1)
   }
   if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(`out₂`.apply(0)) else if (o.==(`out₂`.length)) new IntArr(`out₂`, o) else new IntArr(java.util.Arrays.copyOf(`out₂`, o), o)
-}.asInstanceOf[FArray[Int]]: FArray[Int])
+}.asInstanceOf[FArray[Int]]: FArray[Int]): FArray[Int])
 
 ====================================================================================================
 // BLOG-MULTIFILTER: filter(_>1).filter(_<7).filter(_%2==0)  [three guards, one pass]
 ====================================================================================================
-({
+(({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -1574,12 +1574,12 @@
     i = i.+(1)
   }
   if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(out.apply(0)) else if (o.==(cap)) new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o)
-}.asInstanceOf[FArray[Int]]: FArray[Int])
+}.asInstanceOf[FArray[Int]]: FArray[Int]): FArray[Int])
 
 ====================================================================================================
 // BLOG-SINK-DCE: map(x => (x%3, x*7, x*13)).filter(_._1==0).map(_._2)  [col0 eager, col1 sunk, col2 dead]
 ====================================================================================================
-({
+(({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -1615,12 +1615,12 @@
     i = i.+(1)
   }
   if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(out.apply(0)) else if (o.==(cap)) new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o)
-}.asInstanceOf[FArray[Int]]: FArray[Int])
+}.asInstanceOf[FArray[Int]]: FArray[Int]): FArray[Int])
 
 ====================================================================================================
 // BLOG-DYNAMIC-TAKE: filter(_%2==0).take(k)  [k is a runtime val: clamp + counter + done]
 ====================================================================================================
-({
+(({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -1667,12 +1667,12 @@
     i = i.+(1)
   }
   if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(out.apply(0)) else if (o.==(cap)) new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o)
-}.asInstanceOf[FArray[Int]]: FArray[Int])
+}.asInstanceOf[FArray[Int]]: FArray[Int]): FArray[Int])
 
 ====================================================================================================
 // BLOG-DONE-NESTING: flatMap(x => FArray(x, x, x)).take(5)  [done breaks inner AND outer loop]
 ====================================================================================================
-({
+(({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -1746,12 +1746,12 @@
     i = i.+(1)
   }
   if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(`out₂`.apply(0)) else if (o.==(`out₂`.length)) new IntArr(`out₂`, o) else new IntArr(java.util.Arrays.copyOf(`out₂`, o), o)
-}.asInstanceOf[FArray[Int]]: FArray[Int])
+}.asInstanceOf[FArray[Int]]: FArray[Int]): FArray[Int])
 
 ====================================================================================================
 // BLOG-ORDER-A: filter(_%2==0).zipWithIndex.take(2)  [index counter advances INSIDE the filter guard]
 ====================================================================================================
-({
+(({
   val src0: FBase = inline$base$i1[Tuple2[Int, Int]]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -1801,12 +1801,12 @@
     i = i.+(1)
   }
   if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new RefOne(out.apply(0)) else if (o.==(cap)) new RefArr(out, o) else new RefArr(java.util.Arrays.copyOf[Object](out, o), o)
-}.asInstanceOf[FArray[Tuple2[Int, Int]]]: FArray[Tuple2[Int, Int]])
+}.asInstanceOf[FArray[Tuple2[Int, Int]]]: FArray[Tuple2[Int, Int]]): FArray[Tuple2[Int, Int]])
 
 ====================================================================================================
 // BLOG-ORDER-B: zipWithIndex.filter(_._1%2==0).take(2)  [index counter advances BEFORE the filter]
 ====================================================================================================
-({
+(({
   val src0: FBase = inline$base$i1[Tuple2[Int, Int]]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -1856,4 +1856,4 @@
     i = i.+(1)
   }
   if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new RefOne(out.apply(0)) else if (o.==(cap)) new RefArr(out, o) else new RefArr(java.util.Arrays.copyOf[Object](out, o), o)
-}.asInstanceOf[FArray[Tuple2[Int, Int]]]: FArray[Tuple2[Int, Int]])
+}.asInstanceOf[FArray[Tuple2[Int, Int]]]: FArray[Tuple2[Int, Int]]): FArray[Tuple2[Int, Int]])

@@ -1,4 +1,4 @@
-(({
+((({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -35,4 +35,4 @@
     ()
   }))
   b.result()
-}.asInstanceOf[[K >: Nothing <: Any, V >: Nothing <: Any] =>> Map[K, V][Int, Int]]: Map[Int, Int]): Map[Int, Int])
+}.asInstanceOf[Map[Int, Int]]: Map[Int, Int]): Map[Int, Int]): Map[Int, Int])

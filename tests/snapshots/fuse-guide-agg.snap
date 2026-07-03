@@ -1,4 +1,4 @@
-({
+(({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -40,4 +40,4 @@
     i = i.+(1)
   }
   scala.Tuple3.apply[Any, Any, Any](acc, c, if (seen) best else throw new NoSuchElementException("min1/max1 of empty fused pipeline"))
-}.asInstanceOf[Tuple3[Int, Int, Int]]: Tuple3[Int, Int, Int])
+}.asInstanceOf[Tuple3[Int, Int, Int]]: Tuple3[Int, Int, Int]): Tuple3[Int, Int, Int])

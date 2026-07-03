@@ -154,6 +154,11 @@ Your part is the whole list you just saw, so it bears spelling out:
   <li>Write the <code>filter</code>/<code>map</code> chain you'd write over any collection, and end in a terminal.</li>
 </ul>
 
+In fact, here is the **entire integration** — the one file that plugs the shape, the terminals and
+the decoder into the engine. Read it top to bottom and you have the whole model:
+
+<Snippet name="json-integration" hideFull />
+
 The compiler's part happens when the terminal macro fires, and none of it is JSON-shaped until the
 last step:
 

@@ -1,4 +1,4 @@
-({
+(({
   val src0: FBase = inline$base$i1[Int]({
     val $proxy: FArray$package {
       type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
@@ -33,4 +33,4 @@
     i = i.+(1)
   }
   if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(out.apply(0)) else if (o.==(cap)) new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o)
-}.asInstanceOf[FArray[Int]]: FArray[Int])
+}.asInstanceOf[FArray[Int]]: FArray[Int]): FArray[Int])

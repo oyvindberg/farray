@@ -1,4 +1,4 @@
-(({
+((({
   val src0: FBase = null.asInstanceOf[FBase]
   val n0: Int = 16
   var acc: Double = 0.0
@@ -41,4 +41,4 @@
     } finally src.close()
     acc
   }: Double)
-}.asInstanceOf[Double]: Double): Double)
+}.asInstanceOf[Double]: Double): Double): Double)
