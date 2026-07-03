@@ -361,6 +361,14 @@ function buildSnippets() {
     "fuse-src-jwide": "Json.ndjson[Wide](src).stream.filter(_.key > 90).map(_.payload).count",
     "fuse-src-jagg":
       'Json.ndjson[Event](src).stream.filter(_.status == "active")\n  .aggTo(Stats.apply)(Agg.sum(_.amount), Agg.count, Agg.max1(_.score))',
+    "fuse-src-jentry":
+      `// three ways in — all end at .stream, which hands you a Fuse[Event]:
+Json.ndjson[Event](bytes).stream                   // an in-memory NDJSON byte buffer
+Json.ndjsonFile[Event](path).stream                // a file of ANY size — constant memory
+Json.ndjsonStream[Event](inputStream).stream       // any InputStream — constant memory, owned + closed
+
+// from here it's the pipeline you already know:
+Json.ndjson[Event](bytes).stream.filter(_.amount > 150).map(_.category).toList`,
     "fuse-src-guide-collect": "xs.fuse.map(_ + 1).collect { case x if x % 2 == 0 => x * 2 }.run",
     "fuse-src-guide-zipcollect": "xs.fuse.zip(ys).collect { case (a, b) if (a + b) % 2 == 0 => a * b }.map(_ + 1).run",
     "fuse-src-guide-find": "xs.fuse.map(_ * 3).find(_ > 100)",

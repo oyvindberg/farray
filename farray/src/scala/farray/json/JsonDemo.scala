@@ -212,6 +212,7 @@ object JsonDemo:
     )
 
   // ════════════════════════════════════ records + jsoniter source ════════════════════════════════════════
+  // start:json-event
   final case class Event(
       id: Long,
       ts: Long,
@@ -234,10 +235,13 @@ object JsonDemo:
       source: String,
       label: String
   )
+  // stop:json-event
   final case class Wide(key: Int, f1: Int, f2: Int, f3: Double, payload: String)
 
   /** the case-class result of the multi-aggregate example. */
+  // start:json-stats
   final case class Stats(revenue: Double, n: Int, peak: Double)
+  // stop:json-stats
 
   val sample: Array[Byte] =
     ("""{"id":1,"ts":1700000001,"userId":42,"sessionId":7,"amount":250.50,"score":88.0,"lat":59.9,"lon":10.7,"age":34,"rank":2,"count":5,"flags":1,"name":"Ada","category":"books","region":"eu","status":"active","country":"NO","device":"ios","source":"web","label":"vip"}

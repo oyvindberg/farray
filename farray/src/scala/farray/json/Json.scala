@@ -18,6 +18,7 @@ import farray.{Fuse, ByteRecordSource}
   * `indexWhere`). Nested objects/arrays and `zip`/`flatMap`/`collect`/`takeWhile`/`distinct` over the JSON source are not yet supported (a clear compile
   * error).
   */
+// start:ndjson-source
 final class NdjsonSource[T](
     private val backing: Array[Byte],
     private val from: Int,
@@ -55,6 +56,7 @@ final class NdjsonSource[T](
       recEnd = e // exclusive end at the '\n' (or `until`)
       cursor = e + 1 // skip the '\n' for the next record
       true
+// stop:ndjson-source
 
 /** A STREAMING NDJSON source: constant-memory projection over an arbitrarily large byte stream (an `InputStream` / file), reusing the SAME decomposed scan-pass
   * as the in-memory [[NdjsonSource]] — only the framing differs. The [[Framer]] underneath owns the block reads + boundary stitch ("unfinished record"); the

@@ -166,10 +166,9 @@ That's why *misses* — half of real membership traffic — are where the frozen
 miss path is fastest-or-tied in the whole field at every size, mutable tables included. The honest gap
 is elsewhere: probe with a *scrambled mix* of hits and misses, defeating branch prediction, and the
 chained layout of `scala.mutable` and friends pulls 1.4–2× ahead on String. That loss is measured,
-understood, structural — and accepted; the section on
-[the experiments that didn't survive](#the-experiments-that-didnt-survive) shows how hard it was
-probed before being accepted. It's the one tax paid for a layout that wins nearly everything else on
-this page.
+understood, structural — and accepted, after a real fight: SWAR group probing, cheaper multiplicative
+hashes, higher load factors and ctrl-less small tables were each tried and killed by JMH. It's the
+one tax paid for a layout that wins nearly everything else on this page.
 
 ## Dense Int data wants to be a bitmap
 
@@ -366,56 +365,6 @@ not assumed: the first cut merged Ref leaves pairwise too, re-allocating at ever
     </>
   }
 />
-
-## The experiments that didn't survive
-
-A performance claim on this site has to survive measurement, and most ideas don't. This section
-exists because negative results are where the real understanding lives — and because it's the proof
-that the losses documented above are structural, not unexplored. Five plausible optimizations, each
-with an obvious story, each killed by JMH:
-
-**Eager single-element updates.** Surely `set + x` on a small bitmap should just copy the words and
-set the bit? Measured: 0.4× the lazy node. Scala's `BitSet1` keeps its word in a *field* — an
-array-backed copy can't match it, and the O(1) lazy node is the better persistent-update shape at
-every size. The "obvious" eager path lost to FSet's own laziness.
-
-**Dropping the F14 control bytes for small tables.** Hypothesis: the fingerprint byte is a pure tax on
-in-cache hits — an extra load before the key load you'll do anyway. Measured: hits didn't move (the
-byte was never the hit bottleneck), and *misses regressed 17%* — the control byte rejects a miss more
-cheaply than a key load plus a failed `.equals` even when everything is in L1. The ctrl byte earns its
-keep at every size.
-
-**SWAR Swiss-table probing.** First, the methodological find: a benchmark that probes one fixed key
-flatters whoever got lucky with that key's placement, so a varied-probe benchmark (1024 scrambled hits
-and misses per op, defeating branch prediction) was built — and it exposed that some single-probe
-"wins" were placement luck. SWAR group probing — pack eight fingerprints in a `long`, match
-branch-free — was the textbook fix. Measured on GraalVM: slower. The branch-collapse crossover the
-literature cites needs ~32k+ distinct probe targets; below that, the fixed per-group SWAR cost
-outweighs the branches it saves.
-
-**A cheap multiplicative hash, verified at build time.** The frozen table's superpower is that it can
-*check* a layout before shipping it, so: replace the ~9-cycle murmur mix with a 3-cycle Fibonacci
-multiply and reseed at build until max displacement is small. Measured: dead — misses down 33–46%. The
-mechanism is the interesting part: a multiplicative-only hash is *linear*, so key families differing
-by a constant land as a constant *shift* of the stored population, and miss probes walk straight
-through stored clusters. Build-time verification can't save it, because it only sees stored keys —
-miss cost depends on the correlation between probes and storage, and only a nonlinear avalanche kills
-that. That's what murmur was buying all along.
-
-**Higher load factors via fastrange.** The fast C++ tables (abseil, F14, hashbrown) run load factor
-0.875; FSet runs 0.5. Copy them? Measured: a big loss. Their high load factor and their SIMD group
-probing are a *package* — the SIMD tolerates the crowded table — and the SIMD half is exactly what
-died in the previous experiment. Adopting half a recipe means longer probe chains with nothing to
-absorb them.
-
-What survived is small and precise: a **capacity-banded hash mix**. Tiny tables keep the full
-avalanche; mid-band tables (2¹⁰–2¹⁵) use a cheap Fibonacci fold that doubled String hit throughput at
-1000; large tables use a nonlinear xorshift-first mix worth another 10–14% at 100k. The lever was the
-hash function's cost, never the probe layout. And with inlining explicitly ruled out too (the probe
-fully inlines, `String.equals` devirtualized — verified via Graal's inlining traces), the remaining
-scattered-String gap against chained mutable tables is simply the execution profile of two flat arrays
-versus pointer chains under random access. That's the whole tax. Everything else on this page is what
-it bought.
 
 ## Where it lands
 
