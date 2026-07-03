@@ -90,7 +90,10 @@ FArray's implementation is **generated** — do NOT edit generated sources; edit
 ### Project layout (`bleep.yaml`)
 - `codegen` — the `GenCores` generator.
 - `farray` — the library (generated `FBase`/`FArrayOps` + hand-written `FArray.scala`).
-- `tests` (dependsOn `farray`) — `FListTest`, parity vs `List`.
+- `example-json-decoder` (dependsOn `farray`) — the NDJSON record decoder as a downstream module: it
+  plugs `farray.json.JsonDecode` into the engine's `RecordDecoder` seam, which discovers it
+  reflectively at macro-expansion time (the engine ships no decoder).
+- `tests` (dependsOn `farray`, `example-json-decoder`) — `FListTest`, parity vs `List`.
 - `benchmarks` / `benchmarks-runner` — JMH suites, driven by `scripts/bench-run.sh`.
 
 ### Build notes

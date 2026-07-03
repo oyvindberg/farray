@@ -123,9 +123,11 @@ skip-versus-decode, predicate early-out) belongs to the *engine*; the source own
 I/O.
 
 Which means the entire in-memory NDJSON adapter is this — one implementation of that trait, plus one
-line (`def stream = new Fuse[T](this)`) to enter the pipeline. This is the real class, verbatim, and
-the shape of what *you'd* write to plug any record-framed format — CSV, log lines, length-prefixed
-binary — into the same optimizer:
+line (`def stream = new Fuse[T](this)`) to enter the pipeline. And the build enforces the claim: none
+of the JSON code lives in farray. It sits in its own `example-json-decoder` module, downstream of the
+engine, plugged in through a tiny discovery seam — exactly the position *your* decoder would occupy.
+This is the real class, verbatim, and the shape of what you'd write to plug any record-framed format
+— CSV, log lines, length-prefixed binary — into the same optimizer:
 
 <Snippet name="ndjson-source" hideFull />
 
@@ -179,8 +181,9 @@ last step:
     <strong>Then it rejoins the ordinary optimizer.</strong> The decoded fields re-enter the engine
     as columns — the same columns a tuple-returning <code>map</code> produces — so dead-column
     elimination and compute-for-survivors work over byte ranges for free. The JSON-specific part is
-    one pluggable decoder behind a 17-line seam; a columnar or protobuf decoder would dispatch
-    through the same seam without the engine changing.
+    one pluggable decoder living in its own module (<code>example-json-decoder</code>), discovered on
+    the compile classpath when the macro expands; a columnar or protobuf decoder would plug into the
+    same seam without the engine changing.
   </li>
 </ul>
 

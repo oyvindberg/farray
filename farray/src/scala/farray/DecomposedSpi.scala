@@ -56,3 +56,10 @@ private[farray] final class Column[Q <: Quotes & Singleton](using val q: Q)(
     val read: (q.reflect.Term => q.reflect.Term) => q.reflect.Term,
     val isString: Boolean
 )
+
+/** The engine-side interface a record decoder implements. Decoders live in DOWNSTREAM modules (the NDJSON one in `example-json-decoder`) and are discovered by
+  * [[RecordDecoder]] reflectively at macro-expansion time — the engine itself ships none.
+  */
+private[farray] trait RecordDecoderSpi:
+  def lower(using q: Quotes)(in: DecomposedInput[q.type]): Expr[Unit]
+  def planString(using q: Quotes)(in: DecomposedInput[q.type]): String

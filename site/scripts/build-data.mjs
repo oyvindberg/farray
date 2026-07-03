@@ -105,7 +105,7 @@ function buildBench(srcRel, outName) {
 }
 
 // ---------------------------------------------------------------- snippets.json
-const SOURCE_ROOTS = ["farray/src", "codegen/src", "benchmarks/src", "tests/src", "fset/src", "gensets/src", "setbenchmarks/src", "fset-tests/src"];
+const SOURCE_ROOTS = ["farray/src", "example-json-decoder/src", "codegen/src", "benchmarks/src", "tests/src", "fset/src", "gensets/src", "setbenchmarks/src", "fset-tests/src"];
 const LANG = { ".scala": "scala", ".java": "java" };
 const START = /\/\/\s*start:([\w.-]+)/;
 const STOP = /\/\/\s*stop:([\w.-]+)/;
