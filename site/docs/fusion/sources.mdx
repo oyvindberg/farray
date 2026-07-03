@@ -44,6 +44,13 @@ to reuse one read buffer forever:
 
 <Snippet name="source-trait" hideFull />
 
+And the shape is not a metaphor — it's a type parameter. A pipeline is a `Fuse[A, S]`, where `S`
+names the source shape (`FuseNative` for the first two, a decoder module's shape like `Ndjson` for
+the third), and each shape's terminals are provided by its `FuseLowering[S]` typeclass instance,
+found in the shape companion's implicit scope. That's how a decoder module plugs in — an ordinary
+given, no registry — and why a terminal a shape doesn't support is a missing *member*, not a runtime
+surprise.
+
 So "fusion" is not an array trick. It's a compile-time streaming engine: a pipeline is a plan, a
 source is where the bytes or elements come from, and the terminal compiles plan × source into the one
 loop you'd have written by hand.

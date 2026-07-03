@@ -1,38 +1,37 @@
-{
-  val $proxy: FArray$package {
-    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
-  } = FArray$package.$asInstanceOf$[FArray$package {
-    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
-  }]
-  val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
-  val Fuse_this: Fuse[Int] = (new Fuse[Int](xs$proxy): Fuse[Int]).map[Tuple3[Int, Int, Int]](((x: Int) => Tuple3.apply[Int, Int, Int](x.%(3), x.*(7), x.*(13)))).filter(((_$: Tuple3[Int, Int, Int]) => _$._1.==(0))).map[Int](((_$: Tuple3[Int, Int, Int]) => _$._2))
+({
+  val src0: FBase = inline$base$i1[Int]({
+    val $proxy: FArray$package {
+      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+    } = FArray$package.$asInstanceOf$[FArray$package {
+      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+    }]
+    val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
 
-  ({
-    val src0: FBase = inline$base$i1[Int](Fuse_this).asInstanceOf[FBase]
-    val n0: Int = src0.length
-    val cap: Int = n0
-    val out: Array[Int] = new Array[Int](cap)
-    var o: Int = 0
-    val s: FBase = src0
-    val a: Array[Int] = s match {
-      case l: IntArr =>
-        (l.arr: Array[Int])
-      case t =>
-        if (t.length.>=(64)) FArrayOps.materializeInt(t) else null
-    }
-    val len: Int = s.length
-    var i: Int = 0
-    while (i.<(len)) {
-      val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
-      val `v₂`: Int = v.%(3)
-      val `v₃`: Boolean = `v₂`.==(0)
-      if (`v₃`) {
-        val `v₄`: Int = v.*(7)
-        out.update(o, `v₄`)
-        o = o.+(1)
-      } else ()
-      i = i.+(1)
-    }
-    if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(out.apply(0)) else if (o.==(cap)) new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o)
-  }.asInstanceOf[FArray[Int]]: FArray[Int])
-}
+    (new Fuse[Int, FuseNative](xs$proxy): Fuse[Int, FuseNative])
+  }.map[Tuple3[Int, Int, Int]](((x: Int) => Tuple3.apply[Int, Int, Int](x.%(3), x.*(7), x.*(13)))).filter(((_$: Tuple3[Int, Int, Int]) => _$._1.==(0))).map[Int](((_$: Tuple3[Int, Int, Int]) => _$._2))).asInstanceOf[FBase]
+  val n0: Int = src0.length
+  val cap: Int = n0
+  val out: Array[Int] = new Array[Int](cap)
+  var o: Int = 0
+  val s: FBase = src0
+  val a: Array[Int] = s match {
+    case l: IntArr =>
+      (l.arr: Array[Int])
+    case t =>
+      if (t.length.>=(64)) FArrayOps.materializeInt(t) else null
+  }
+  val len: Int = s.length
+  var i: Int = 0
+  while (i.<(len)) {
+    val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+    val `v₂`: Int = v.%(3)
+    val `v₃`: Boolean = `v₂`.==(0)
+    if (`v₃`) {
+      val `v₄`: Int = v.*(7)
+      out.update(o, `v₄`)
+      o = o.+(1)
+    } else ()
+    i = i.+(1)
+  }
+  if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(out.apply(0)) else if (o.==(cap)) new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o)
+}.asInstanceOf[FArray[Int]]: FArray[Int])

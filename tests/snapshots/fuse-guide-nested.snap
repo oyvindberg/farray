@@ -1,60 +1,59 @@
-{
-  val $proxy: FArray$package {
-    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
-  } = FArray$package.$asInstanceOf$[FArray$package {
-    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
-  }]
-  val xs$proxy: trades & FArray[Trade] = trades.$asInstanceOf$[trades & FArray[Trade]]
-  val Fuse_this: Fuse[Trade] = (new Fuse[Trade](xs$proxy): Fuse[Trade])
-  val `Fuse_this₂`: Fuse[Tuple2[Int, Double]] = (Fuse_this.groupAdjacentReduceByMarker[Int, Double, Double](((_$: Trade) => _$.day))(((_$: Fuse[Trade]) => _$.map[Double](((_$: Trade) => _$.amount)).filter(((_$: Double) => _$.>(20.0)))))(AggRaw.sum[Double, Double](((x: Double) => x))(DoubleIsFractional)): Fuse[Tuple2[Int, Double]])
+({
+  val src0: FBase = inline$base$i1[Tuple2[Int, Double]]({
+    val $proxy: FArray$package {
+      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+    } = FArray$package.$asInstanceOf$[FArray$package {
+      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+    }]
+    val xs$proxy: trades & FArray[Trade] = trades.$asInstanceOf$[trades & FArray[Trade]]
+    val Fuse_this: Fuse[Trade, FuseNative] = (new Fuse[Trade, FuseNative](xs$proxy): Fuse[Trade, FuseNative])
 
-  ({
-    val src0: FBase = inline$base$i1[Tuple2[Int, Double]](`Fuse_this₂`).asInstanceOf[FBase]
-    val n0: Int = src0.length
-    var curKey: Int = null.asInstanceOf[Int]
-    var started: Boolean = false
-    var acc: Double = 0.0
-    val cap: Int = n0
-    val out: Array[Object] = new Array[Object](cap)
-    var o: Int = 0
-    val s: FBase = src0
-    val a: Array[Object] = s match {
-      case l: RefArr =>
-        (l.arr: Array[Object])
-      case t =>
-        if (t.length.>=(64)) FArrayOps.materializeRef(t) else null
-    }
-    val len: Int = s.length
-    var i: Int = 0
-    while (i.<(len)) {
-      val v: Trade = if (a.ne(null)) a.apply(i).asInstanceOf[Trade] else FArrayOps.refAt(s, i).asInstanceOf[Trade]
-      val `v₂`: Int = v.day
-      if (started.unary_!) {
-        curKey = `v₂`
-        acc = 0.0
-        val `v₃`: Double = v.amount
-        val `v₄`: Boolean = `v₃`.>(20.0)
-        if (`v₄`) acc = acc.+(`v₃`) else ()
-        started = true
-      } else if (`v₂`.==(curKey)) {
-        val `v₅`: Double = v.amount
-        val `v₆`: Boolean = `v₅`.>(20.0)
-        if (`v₆`) acc = acc.+(`v₅`) else ()
-      } else {
-        out.update(o, new Tuple2$mcID$sp(curKey, acc).asInstanceOf[Tuple2[Int, Double]].asInstanceOf[Object])
-        o = o.+(1)
-        curKey = `v₂`
-        acc = 0.0
-        val `v₇`: Double = v.amount
-        val `v₈`: Boolean = `v₇`.>(20.0)
-        if (`v₈`) acc = acc.+(`v₇`) else ()
-      }
-      i = i.+(1)
-    }
-    if (started) {
+    (Fuse_this.groupAdjacentReduceByMarker[Int, Double, Double](((_$: Trade) => _$.day))(((_$: Fuse[Trade, FuseNative]) => _$.map[Double](((_$: Trade) => _$.amount)).filter(((_$: Double) => _$.>(20.0)))))(AggRaw.sum[Double, Double](((x: Double) => x))(DoubleIsFractional)): Fuse[Tuple2[Int, Double], FuseNative])
+  }).asInstanceOf[FBase]
+  val n0: Int = src0.length
+  var curKey: Int = null.asInstanceOf[Int]
+  var started: Boolean = false
+  var acc: Double = 0.0
+  val cap: Int = n0
+  val out: Array[Object] = new Array[Object](cap)
+  var o: Int = 0
+  val s: FBase = src0
+  val a: Array[Object] = s match {
+    case l: RefArr =>
+      (l.arr: Array[Object])
+    case t =>
+      if (t.length.>=(64)) FArrayOps.materializeRef(t) else null
+  }
+  val len: Int = s.length
+  var i: Int = 0
+  while (i.<(len)) {
+    val v: Trade = if (a.ne(null)) a.apply(i).asInstanceOf[Trade] else FArrayOps.refAt(s, i).asInstanceOf[Trade]
+    val `v₂`: Int = v.day
+    if (started.unary_!) {
+      curKey = `v₂`
+      acc = 0.0
+      val `v₃`: Double = v.amount
+      val `v₄`: Boolean = `v₃`.>(20.0)
+      if (`v₄`) acc = acc.+(`v₃`) else ()
+      started = true
+    } else if (`v₂`.==(curKey)) {
+      val `v₅`: Double = v.amount
+      val `v₆`: Boolean = `v₅`.>(20.0)
+      if (`v₆`) acc = acc.+(`v₅`) else ()
+    } else {
       out.update(o, new Tuple2$mcID$sp(curKey, acc).asInstanceOf[Tuple2[Int, Double]].asInstanceOf[Object])
       o = o.+(1)
-    } else ()
-    if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new RefOne(out.apply(0)) else if (o.==(cap)) new RefArr(out, o) else new RefArr(java.util.Arrays.copyOf[Object](out, o), o)
-  }.asInstanceOf[FArray[Tuple2[Int, Double]]]: FArray[Tuple2[Int, Double]])
-}
+      curKey = `v₂`
+      acc = 0.0
+      val `v₇`: Double = v.amount
+      val `v₈`: Boolean = `v₇`.>(20.0)
+      if (`v₈`) acc = acc.+(`v₇`) else ()
+    }
+    i = i.+(1)
+  }
+  if (started) {
+    out.update(o, new Tuple2$mcID$sp(curKey, acc).asInstanceOf[Tuple2[Int, Double]].asInstanceOf[Object])
+    o = o.+(1)
+  } else ()
+  if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new RefOne(out.apply(0)) else if (o.==(cap)) new RefArr(out, o) else new RefArr(java.util.Arrays.copyOf[Object](out, o), o)
+}.asInstanceOf[FArray[Tuple2[Int, Double]]]: FArray[Tuple2[Int, Double]])

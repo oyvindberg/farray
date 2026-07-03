@@ -90,9 +90,11 @@ FArray's implementation is **generated** — do NOT edit generated sources; edit
 ### Project layout (`bleep.yaml`)
 - `codegen` — the `GenCores` generator.
 - `farray` — the library (generated `FBase`/`FArrayOps` + hand-written `FArray.scala`).
-- `example-json-decoder` (dependsOn `farray`) — the NDJSON record decoder as a downstream module: it
-  plugs `farray.json.JsonDecode` into the engine's `RecordDecoder` seam, which discovers it
-  reflectively at macro-expansion time (the engine ships no decoder).
+- `example-json-decoder` (dependsOn `farray`) — the NDJSON record decoder as a downstream module.
+  Pipelines are shape-indexed (`Fuse[A, S]`); terminals are inline extensions provided by the shape's
+  `FuseLowering[S]` given (typeclass, found via the shape companion's implicit scope). This module
+  defines the `Ndjson` shape + `JsonLowering`, whose macros hand `JsonDecode` to the engine's `…With`
+  entry points as a plain argument — no registry, no reflection; the engine ships no decoder.
 - `tests` (dependsOn `farray`, `example-json-decoder`) — `FListTest`, parity vs `List`.
 - `benchmarks` / `benchmarks-runner` — JMH suites, driven by `scripts/bench-run.sh`.
 

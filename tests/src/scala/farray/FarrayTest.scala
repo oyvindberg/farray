@@ -913,8 +913,11 @@ class FListTest:
   // re-emit. We check the EXECUTED block (after the `val src0` marker) contains no `new Array`/`${K}Arr`. Float and
   // Char are the kinds the old matcher missed; the non-literal `tabulate` inner is the negative control.
   @Test def test_fuse_flatMap_splats: Unit =
-    def execAllocs(code: String): Int = // `new Array`/`*Arr` ctors in the EXECUTED block (after the run-marker)
-      val exec = code.indexOf("val src0") match { case -1 => code; case i => code.substring(i) }
+    def execAllocs(code: String): Int = // `new Array`/`*Arr` ctors in the EXECUTED block (after the run-marker).
+      // Count from `val n0` (the line AFTER the src0 binding): with extension-provided terminals the receiver
+      // chain — including the source's own construction — inlines INTO src0's initializer, and the source's
+      // array allocation is not the loop's business.
+      val exec = code.indexOf("val n0") match { case -1 => code; case i => code.substring(i) }
       "new Array\\[".r.findAllIn(exec).size + "new \\w+Arr\\(".r.findAllIn(exec).size
     val intCode = FuseDebug.show(FArray(7).fuse.flatMap(x => FArray(x, x + 1)).foldLeft(0)((a, x) => a + x))
     val floatCode = FuseDebug.show(FArray(7.0f).fuse.flatMap(x => FArray(x, x + 1.0f)).foldLeft(0.0f)((a, x) => a + x))

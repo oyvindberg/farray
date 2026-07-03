@@ -25,13 +25,14 @@ final class NdjsonSource[T](
     private val until: Int
 ) extends ByteRecordSource:
   /** Start the fused pipeline over this source. Named `stream` (not `fuse`) to signal at the call site that the data is a byte SOURCE consumed record-by-record
-    * — `Json.ndjson[T](bytes).stream.filter(…).map(…)` — not an in-memory `FArray` (which uses `.fuse`). The macro reads `T`'s fields + the downstream
-    * `filter`/`map` accesses and generates the per-record projection scanner.
+    * — `Json.ndjson[T](bytes).stream.filter(…).map(…)` — not an in-memory `FArray` (which uses `.fuse`). The [[Ndjson]] shape brings [[JsonLowering]]'s
+    * terminals into scope (typeclass, via the shape companion), whose macros read `T`'s fields + the downstream `filter`/`map` accesses and generate the
+    * per-record projection scanner.
     */
-  inline def stream: Fuse[T] = new Fuse[T](this)
+  inline def stream: Fuse[T, Ndjson] = new Fuse[T, Ndjson](this)
 
   /** alias for `stream` (the in-memory verb), for readers who already know `.fuse`. */
-  inline def fuse: Fuse[T] = new Fuse[T](this)
+  inline def fuse: Fuse[T, Ndjson] = new Fuse[T, Ndjson](this)
 
   // ── ByteRecordSource: the in-memory case is the trivial one-chunk framer. The whole buffer IS the one chunk;
   //    `nextRecord` walks newline-framed records from `from` to `until`. No carry buffer, no Partial — every record
@@ -64,8 +65,8 @@ final class NdjsonSource[T](
   * the runtime carries no `T`.
   */
 final class StreamingNdjsonSource[T](read: (Array[Byte], Int, Int) => Int, blockSize: Int, doClose: () => Unit) extends Framer(read, blockSize, doClose):
-  inline def stream: Fuse[T] = new Fuse[T](this)
-  inline def fuse: Fuse[T] = new Fuse[T](this)
+  inline def stream: Fuse[T, Ndjson] = new Fuse[T, Ndjson](this)
+  inline def fuse: Fuse[T, Ndjson] = new Fuse[T, Ndjson](this)
 
 object Json:
   /** wrap an in-memory NDJSON byte buffer as a projectable SOURCE of `T` records — start a pipeline with `.stream`:

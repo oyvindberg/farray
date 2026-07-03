@@ -1,107 +1,106 @@
-{
-  val $proxy: FArray$package {
-    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
-  } = FArray$package.$asInstanceOf$[FArray$package {
-    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
-  }]
-  val xs$proxy: trades & FArray[Trade] = trades.$asInstanceOf$[trades & FArray[Trade]]
-  val Fuse_this: Fuse[Int] = (new Fuse[Trade](xs$proxy): Fuse[Trade]).groupAdjacentBy[Int](((_$: Trade) => _$.day)).map[Int](((_$: FArray[Trade]) => FArray.length[Trade](_$))).take(2)
+({
+  val src0: FBase = inline$base$i1[Int]({
+    val $proxy: FArray$package {
+      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+    } = FArray$package.$asInstanceOf$[FArray$package {
+      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+    }]
+    val xs$proxy: trades & FArray[Trade] = trades.$asInstanceOf$[trades & FArray[Trade]]
 
-  ({
-    val src0: FBase = inline$base$i1[Int](Fuse_this).asInstanceOf[FBase]
-    val n0: Int = src0.length
-    var done: Boolean = false
-    var curKey: Int = null.asInstanceOf[Int]
-    var started: Boolean = false
-    var buf: Array[Object] = new Array[Object](16)
-    var bn: Int = 0
-    val lim: Int = {
-      val t: Int = 2
+    (new Fuse[Trade, FuseNative](xs$proxy): Fuse[Trade, FuseNative])
+  }.groupAdjacentBy[Int](((_$: Trade) => _$.day)).map[Int](((_$: FArray[Trade]) => FArray.length[Trade](_$))).take(2)).asInstanceOf[FBase]
+  val n0: Int = src0.length
+  var done: Boolean = false
+  var curKey: Int = null.asInstanceOf[Int]
+  var started: Boolean = false
+  var buf: Array[Object] = new Array[Object](16)
+  var bn: Int = 0
+  val lim: Int = {
+    val t: Int = 2
 
-      (if (t.<(0)) 0 else t: Int)
-    }
-    var c: Int = 0
-    val cap: Int = java.lang.Math.min(n0, lim)
-    val out: Array[Int] = new Array[Int](cap)
-    var o: Int = 0
-    val s: FBase = src0
-    val a: Array[Object] = s match {
-      case l: RefArr =>
-        (l.arr: Array[Object])
-      case _ =>
-        null
-    }
-    val len: Int = s.length
-    var i: Int = 0
-    while (i.<(len).&&(done.unary_!)) {
-      val v: Trade = if (a.ne(null)) a.apply(i).asInstanceOf[Trade] else FArrayOps.refAt(s, i).asInstanceOf[Trade]
-      val `v₂`: Int = v.day
-      if (started.unary_!) {
-        curKey = `v₂`
-        bn = 0
-        if (bn.>=(buf.length)) buf = java.util.Arrays.copyOf[Object](buf, buf.length.*(2)) else ()
-        buf.update(bn, v.asInstanceOf[Object])
-        bn = bn.+(1)
-        started = true
-      } else if (`v₂`.==(curKey)) {
-        if (bn.>=(buf.length)) buf = java.util.Arrays.copyOf[Object](buf, buf.length.*(2)) else ()
-        buf.update(bn, v.asInstanceOf[Object])
-        bn = bn.+(1)
-      } else {
-        val cv: Int = c
-        if (cv.>=(lim)) done = true else {
-          val `v₃`: Int = FArray.length[Trade]({
-            val $proxy: FArray$package {
-              type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
-            } = FArray$package.$asInstanceOf$[FArray$package {
-              type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
-            }]
-            val FArray$package$_this: $proxy.type = $proxy
-            val as$proxy: Array[Object] = java.util.Arrays.copyOf[Object](buf, bn)
-
-            (({
-              val r: refRepr[Trade] = refRepr[Trade]
-              val _l: Int = as$proxy.length
-              if (_l.==(0)) Empty.INSTANCE else if (_l.==(1)) new RefOne(as$proxy.apply(0)) else new RefArr(as$proxy, _l)
-            }: FBase): FArray[Trade])
-          }.$asInstanceOf$[FArray[Trade]])
-          out.update(o, `v₃`)
-          o = o.+(1)
-          c = c.+(1)
-          if (cv.+(1).>=(lim)) done = true else ()
-        }
-        curKey = `v₂`
-        bn = 0
-        if (bn.>=(buf.length)) buf = java.util.Arrays.copyOf[Object](buf, buf.length.*(2)) else ()
-        buf.update(bn, v.asInstanceOf[Object])
-        bn = bn.+(1)
-      }
-      i = i.+(1)
-    }
-    if (done.unary_!) if (started) {
-      val `cv₂`: Int = c
-      if (`cv₂`.>=(lim)) done = true else {
-        val `v₄`: Int = FArray.length[Trade]({
+    (if (t.<(0)) 0 else t: Int)
+  }
+  var c: Int = 0
+  val cap: Int = java.lang.Math.min(n0, lim)
+  val out: Array[Int] = new Array[Int](cap)
+  var o: Int = 0
+  val s: FBase = src0
+  val a: Array[Object] = s match {
+    case l: RefArr =>
+      (l.arr: Array[Object])
+    case _ =>
+      null
+  }
+  val len: Int = s.length
+  var i: Int = 0
+  while (i.<(len).&&(done.unary_!)) {
+    val v: Trade = if (a.ne(null)) a.apply(i).asInstanceOf[Trade] else FArrayOps.refAt(s, i).asInstanceOf[Trade]
+    val `v₂`: Int = v.day
+    if (started.unary_!) {
+      curKey = `v₂`
+      bn = 0
+      if (bn.>=(buf.length)) buf = java.util.Arrays.copyOf[Object](buf, buf.length.*(2)) else ()
+      buf.update(bn, v.asInstanceOf[Object])
+      bn = bn.+(1)
+      started = true
+    } else if (`v₂`.==(curKey)) {
+      if (bn.>=(buf.length)) buf = java.util.Arrays.copyOf[Object](buf, buf.length.*(2)) else ()
+      buf.update(bn, v.asInstanceOf[Object])
+      bn = bn.+(1)
+    } else {
+      val cv: Int = c
+      if (cv.>=(lim)) done = true else {
+        val `v₃`: Int = FArray.length[Trade]({
           val $proxy: FArray$package {
             type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
           } = FArray$package.$asInstanceOf$[FArray$package {
             type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
           }]
-          val `FArray$package$_this₂`: $proxy.type = $proxy
+          val FArray$package$_this: $proxy.type = $proxy
           val as$proxy: Array[Object] = java.util.Arrays.copyOf[Object](buf, bn)
 
           (({
-            val `r₂`: refRepr[Trade] = refRepr[Trade]
-            val `_l₂`: Int = as$proxy.length
-            if (`_l₂`.==(0)) Empty.INSTANCE else if (`_l₂`.==(1)) new RefOne(as$proxy.apply(0)) else new RefArr(as$proxy, `_l₂`)
+            val r: refRepr[Trade] = refRepr[Trade]
+            val _l: Int = as$proxy.length
+            if (_l.==(0)) Empty.INSTANCE else if (_l.==(1)) new RefOne(as$proxy.apply(0)) else new RefArr(as$proxy, _l)
           }: FBase): FArray[Trade])
         }.$asInstanceOf$[FArray[Trade]])
-        out.update(o, `v₄`)
+        out.update(o, `v₃`)
         o = o.+(1)
         c = c.+(1)
-        if (`cv₂`.+(1).>=(lim)) done = true else ()
+        if (cv.+(1).>=(lim)) done = true else ()
       }
-    } else () else ()
-    if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(out.apply(0)) else if (o.==(cap)) new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o)
-  }.asInstanceOf[FArray[Int]]: FArray[Int])
-}
+      curKey = `v₂`
+      bn = 0
+      if (bn.>=(buf.length)) buf = java.util.Arrays.copyOf[Object](buf, buf.length.*(2)) else ()
+      buf.update(bn, v.asInstanceOf[Object])
+      bn = bn.+(1)
+    }
+    i = i.+(1)
+  }
+  if (done.unary_!) if (started) {
+    val `cv₂`: Int = c
+    if (`cv₂`.>=(lim)) done = true else {
+      val `v₄`: Int = FArray.length[Trade]({
+        val $proxy: FArray$package {
+          type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+        } = FArray$package.$asInstanceOf$[FArray$package {
+          type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+        }]
+        val `FArray$package$_this₂`: $proxy.type = $proxy
+        val as$proxy: Array[Object] = java.util.Arrays.copyOf[Object](buf, bn)
+
+        (({
+          val `r₂`: refRepr[Trade] = refRepr[Trade]
+          val `_l₂`: Int = as$proxy.length
+          if (`_l₂`.==(0)) Empty.INSTANCE else if (`_l₂`.==(1)) new RefOne(as$proxy.apply(0)) else new RefArr(as$proxy, `_l₂`)
+        }: FBase): FArray[Trade])
+      }.$asInstanceOf$[FArray[Trade]])
+      out.update(o, `v₄`)
+      o = o.+(1)
+      c = c.+(1)
+      if (`cv₂`.+(1).>=(lim)) done = true else ()
+    }
+  } else () else ()
+  if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(out.apply(0)) else if (o.==(cap)) new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o)
+}.asInstanceOf[FArray[Int]]: FArray[Int])

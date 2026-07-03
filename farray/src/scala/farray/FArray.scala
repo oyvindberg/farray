@@ -113,7 +113,7 @@ object FArray:
     private[farray] def boxedAt(i: Int): A = (xs: FBase).applyBoxed(i).asInstanceOf[A]
 
     /** enter a fused pipeline: `xs.fuse.map(..).filter(..).run` compiles to one unboxed loop. */
-    inline def fuse: Fuse[A] = new Fuse[A](xs)
+    inline def fuse: Fuse[A, FuseNative] = new Fuse[A, FuseNative](xs)
     inline def foldLeft[Z](z: Z)(inline op: (Z, A) => Z): Z = FArrayOps.foldLeftImpl[A, Z](xs, z)(op)
     inline def foreach(inline f: A => Unit): Unit = FArrayOps.foreachImpl[A](xs)(f)
 

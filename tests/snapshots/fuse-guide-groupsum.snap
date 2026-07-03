@@ -1,43 +1,38 @@
-{
-  val $proxy: FArray$package {
-    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
-  } = FArray$package.$asInstanceOf$[FArray$package {
-    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
-  }]
-  val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
-  val Fuse_this: Fuse[Int] = (new Fuse[Int](xs$proxy): Fuse[Int])
+(({
+  val src0: FBase = inline$base$i1[Int]({
+    val $proxy: FArray$package {
+      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+    } = FArray$package.$asInstanceOf$[FArray$package {
+      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+    }]
+    val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
 
-  ({
-    val `Fuse_this₂`: Fuse_this.type = Fuse_this
-
-    ({
-      val src0: FBase = inline$base$i1[Int](`Fuse_this₂`).asInstanceOf[FBase]
-      val n0: Int = src0.length
-      val m: IntKeyMap = new IntKeyMap(16, true)
-      val s: FBase = src0
-      val a: Array[Int] = s match {
-        case l: IntArr =>
-          (l.arr: Array[Int])
-        case t =>
-          if (t.length.>=(64)) FArrayOps.materializeInt(t) else null
-      }
-      val len: Int = s.length
-      var i: Int = 0
-      while (i.<(len)) {
-        val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
-        val slot: Int = m.probe(v.%(3))
-        if (m.wasNew()) m.setValuePrim(slot, v.toLong) else m.setValuePrim(slot, {
-          val x: Int = m.getValuePrim(slot).toInt
-          IntIsIntegral.plus(x, v)
-        }.toLong)
-        i = i.+(1)
-      }
-      val b: Builder[Tuple2[Int, Int], Map[Int, Int]] = Map.newBuilder[Int, Int]
-      m.foreachEntryPrim(((k: Integer, `l₂`: Long) => {
-        b.+=(Tuple2.apply[Int, Int](k.asInstanceOf[Int], `l₂`.toInt))
-        ()
-      }))
-      b.result()
-    }.asInstanceOf[[K >: Nothing <: Any, V >: Nothing <: Any] =>> Map[K, V][Int, Int]]: Map[Int, Int])
-  }: Map[Int, Int])
-}
+    (new Fuse[Int, FuseNative](xs$proxy): Fuse[Int, FuseNative])
+  }).asInstanceOf[FBase]
+  val n0: Int = src0.length
+  val m: IntKeyMap = new IntKeyMap(16, true)
+  val s: FBase = src0
+  val a: Array[Int] = s match {
+    case l: IntArr =>
+      (l.arr: Array[Int])
+    case t =>
+      if (t.length.>=(64)) FArrayOps.materializeInt(t) else null
+  }
+  val len: Int = s.length
+  var i: Int = 0
+  while (i.<(len)) {
+    val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+    val slot: Int = m.probe(v.%(3))
+    if (m.wasNew()) m.setValuePrim(slot, v.toLong) else m.setValuePrim(slot, {
+      val x: Int = m.getValuePrim(slot).toInt
+      IntIsIntegral.plus(x, v)
+    }.toLong)
+    i = i.+(1)
+  }
+  val b: Builder[Tuple2[Int, Int], Map[Int, Int]] = Map.newBuilder[Int, Int]
+  m.foreachEntryPrim(((k: Integer, `l₂`: Long) => {
+    b.+=(Tuple2.apply[Int, Int](k.asInstanceOf[Int], `l₂`.toInt))
+    ()
+  }))
+  b.result()
+}.asInstanceOf[[K >: Nothing <: Any, V >: Nothing <: Any] =>> Map[K, V][Int, Int]]: Map[Int, Int]): Map[Int, Int])

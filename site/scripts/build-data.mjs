@@ -177,6 +177,26 @@ function firstOuterBranch(code) {
   ].join("\n");
 }
 
+
+// The lowering now inlines the receiver chain INTO `src0`'s initializer (terminals are extension methods).
+// For the short view, collapse that nested block back to the opaque `(Fuse_this)` the pages always showed —
+// the verbatim tree stays one toggle away.
+function collapseBase(code) {
+  const idx = code.indexOf("inline$base$i1[");
+  if (idx < 0) return code;
+  const braceStart = code.indexOf("({", idx);
+  if (braceStart < 0) return code;
+  let depth = 0, k = braceStart + 1; // at the '{'
+  for (; k < code.length; k++) {
+    const ch = code[k];
+    if (ch === "{") depth++;
+    else if (ch === "}") { depth--; if (depth === 0) break; }
+  }
+  if (k >= code.length) return code;
+  return (code.slice(0, braceStart + 1) + "Fuse_this" + code.slice(k + 1))
+    .split("\n").filter((l) => l.trim() !== "").join("\n");
+}
+
 // From a FuseDebug.show golden, keep just the `({ … })` block the macro actually emits — i.e. drop the
 // `$proxy`/`Fuse_this` marker preamble (dead-code-eliminated at runtime) and show the loop.
 function fuseLoop(code) {
@@ -313,7 +333,7 @@ function buildSnippets() {
   for (const key of FUSE_OPT) {
     const file = `tests/snapshots/fuse-opt-${key}.snap`;
     const raw = readFileSync(resolve(REPO, file), "utf8").replace(/^\n+|\n+$/g, "");
-    const short = polish(fuseLoop(raw));
+    const short = polish(collapseBase(fuseLoop(raw)));
     out[`fuse-opt-${key}`] = {
       name: `fuse-opt-${key}`, file, lang: "scala",
       code: short, html: hl(short, "scala"), full: raw, fullHtml: hl(raw, "scala"), fullLabel: "full expansion",
@@ -335,7 +355,7 @@ function buildSnippets() {
   ];
   for (const [name, file] of FUSE_GUIDE) {
     const raw = readFileSync(resolve(REPO, file), "utf8").replace(/^\n+|\n+$/g, "");
-    const short = polish(fuseLoop(raw));
+    const short = polish(collapseBase(fuseLoop(raw)));
     out[name] = {
       name, file, lang: "scala",
       code: short, html: hl(short, "scala"), full: raw, fullHtml: hl(raw, "scala"), fullLabel: "full expansion",

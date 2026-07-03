@@ -1,0 +1,234 @@
+package farray
+
+import scala.annotation.implicitNotFound
+import scala.reflect.ClassTag
+
+/** The TYPECLASS that gives a source shape its fused terminals. An instance is an object providing the terminals as `inline` extension methods on `Fuse[A, S]`,
+  * each lowered by the module's own macro — so the engine ships no decoder knowledge, a decoder module plugs in by publishing a given in its shape's companion
+  * (found via the implicit scope of `Fuse[A, S]`, no imports needed), and a terminal a shape doesn't support is simply NOT A MEMBER: the scope of each source
+  * shape is spelled in the types, at compile time.
+  *
+  * The trait itself is the search key; the terminals live on the concrete instance type, which is why a lowering given must be declared at its singleton type
+  * (e.g. `given lowering: NativeLowering.type = NativeLowering`) — extension-method lookup resolves members on the given's declared type.
+  */
+@implicitNotFound(
+  "the fused pipeline over source shape ${S} has no lowering on the classpath — add the module that provides `FuseLowering[${S}]` (for JSON byte sources: example-json-decoder)"
+)
+trait FuseLowering[S]
+
+/** The source shape of engine-native pipelines: an in-memory `FArray` (`xs.fuse`) or a chunked [[Source]] (`src.fuse`). Its lowering — the full terminal set —
+  * is [[NativeLowering]], published here so it rides the implicit scope of every `Fuse[A, FuseNative]`.
+  */
+sealed trait FuseNative
+object FuseNative:
+  given lowering: NativeLowering.type = NativeLowering
+
+/** The engine's own lowering: every terminal, lowered by [[FuseMacro]] with no record decoder attached. */
+object NativeLowering extends FuseLowering[FuseNative]:
+  extension [A](inline self: Fuse[A, FuseNative])
+    // ---- terminals (macros: rewrite the whole chain into one fused loop) ----
+    inline def run: FArray[A] = ${ FuseMacro.runImpl[A, FuseNative]('self) }
+    // foreach/foldLeft/count desugar to a single-aggregate `agg(...)`, sharing the Agg/AState terminal machinery
+    // (one accumulator carried above the loop, one step per element). Same generated loop as the old dedicated
+    // terminals; one lowering path instead of three.
+    inline def foreach(inline f: A => Unit): Unit = self.agg(Agg.foreach[A](f))
+    inline def foldLeft[Z](z: Z)(inline op: (Z, A) => Z): Z = self.agg(Agg.fold[A, Z](z)(op))
+
+    /** number of elements surviving the whole pipeline. */
+    inline def count: Int = self.agg(Agg.count[A])
+
+    /** number of elements matching `p` (one fused pass). */
+    inline def count(inline p: A => Boolean): Int = self.filter(p).count
+    // ---- short-circuit terminals: stop as soon as the answer is known (across flatMap nesting) ----
+    inline def find(inline p: A => Boolean): Option[A] = ${ FuseMacro.findImpl[A, FuseNative]('self, 'p) }
+    inline def exists(inline p: A => Boolean): Boolean = ${ FuseMacro.existsImpl[A, FuseNative]('self, 'p) }
+    inline def forall(inline p: A => Boolean): Boolean = ${ FuseMacro.forallImpl[A, FuseNative]('self, 'p) }
+    inline def headOption: Option[A] = ${ FuseMacro.headOptionImpl[A, FuseNative]('self) }
+    inline def head: A = ${ FuseMacro.headImpl[A, FuseNative]('self) }
+
+    /** A machine-checkable DESCRIPTION of the plan the macro built for this pipeline (not a real terminal — the pipeline is analyzed, never executed). Tests
+      * assert on this structure rather than on brittle generated code or coincidentally-correct output values.
+      */
+    inline def plan: String = ${ FuseMacro.planImpl[A, FuseNative]('self) }
+
+    /** plan of the pipeline AS IF it ended in a fold whose `op` reads the element. */
+    inline def planFold[Z](inline op: (Z, A) => Z): String = ${ FuseMacro.planFoldImpl[A, FuseNative, Z]('self, 'op) }
+
+    /** plan of the pipeline AS IF it ended in these aggregates. */
+    inline def planAgg(inline aggs: Agg[A, Any]*): String = ${ FuseMacro.planAggImpl[A, FuseNative]('self, 'aggs) }
+
+    // ---- multi-aggregate: run several aggregations in ONE fused pass, carrying one accumulator each. The
+    //      aggregates' read fields are merged automatically (union computed, shared field once, survivor-gated). ----
+    inline def agg[R1, R2](inline a1: Agg[A, R1], inline a2: Agg[A, R2]): (R1, R2) =
+      ${ FuseMacro.aggImpl[A, FuseNative, (R1, R2)]('self, '{ List(a1, a2) }) }
+    inline def agg[R1, R2, R3](inline a1: Agg[A, R1], inline a2: Agg[A, R2], inline a3: Agg[A, R3]): (R1, R2, R3) =
+      ${ FuseMacro.aggImpl[A, FuseNative, (R1, R2, R3)]('self, '{ List(a1, a2, a3) }) }
+    inline def agg[R1, R2, R3, R4](inline a1: Agg[A, R1], inline a2: Agg[A, R2], inline a3: Agg[A, R3], inline a4: Agg[A, R4]): (R1, R2, R3, R4) =
+      ${ FuseMacro.aggImpl[A, FuseNative, (R1, R2, R3, R4)]('self, '{ List(a1, a2, a3, a4) }) }
+
+    // ---- aggregate into a CASE CLASS (or any product): the aggregate results are passed to `make` (typically a
+    //      case-class constructor) instead of a tuple — same single fused pass, same column merge. E.g.
+    //      `xs.fuse.aggTo(Summary.apply)(Agg.sum(_.x), Agg.count, Agg.max(_.y))`. ----
+    inline def aggTo[R1, R2, R](inline make: (R1, R2) => R)(inline a1: Agg[A, R1], inline a2: Agg[A, R2]): R =
+      ${ FuseMacro.aggToImpl[A, FuseNative, R]('self, '{ List(a1, a2) }, 'make) }
+    inline def aggTo[R1, R2, R3, R](inline make: (R1, R2, R3) => R)(inline a1: Agg[A, R1], inline a2: Agg[A, R2], inline a3: Agg[A, R3]): R =
+      ${ FuseMacro.aggToImpl[A, FuseNative, R]('self, '{ List(a1, a2, a3) }, 'make) }
+    inline def aggTo[R1, R2, R3, R4, R](
+        inline make: (R1, R2, R3, R4) => R
+    )(inline a1: Agg[A, R1], inline a2: Agg[A, R2], inline a3: Agg[A, R3], inline a4: Agg[A, R4]): R =
+      ${ FuseMacro.aggToImpl[A, FuseNative, R]('self, '{ List(a1, a2, a3, a4) }, 'make) }
+
+    /** run ONE aggregate, returning its result bare (no Tuple1). The single-aggregate base for the standalone sugar below; the whole pipeline still fuses. */
+    inline def agg[R1](inline a1: Agg[A, R1]): R1 =
+      ${ FuseMacro.aggImpl[A, FuseNative, R1]('self, '{ List(a1) }) }
+
+    // ---- standalone top-N: the n best elements by a key, in ONE fused pass via a bounded size-n heap
+    //      (O(N log n) time, O(n) memory — no full sort, no O(N) buffer). Returns FArray[A], best-first. ----
+    /** the `n` elements with the largest `key(a)`, best-first. */
+    inline def topNBy[B](n: Int)(inline key: A => B)(using Ordering[B]): FArray[A] = self.agg(Agg.topNBy(n)(key))
+
+    /** the `n` elements with the smallest `key(a)`, best-first. */
+    inline def bottomNBy[B](n: Int)(inline key: A => B)(using Ordering[B]): FArray[A] = self.agg(Agg.bottomNBy(n)(key))
+
+    /** the `n` largest elements by natural ordering, best-first. */
+    inline def topN[A1 >: A](n: Int)(using Ordering[A1]): FArray[A1] = self.agg(Agg.largest[A1](n))
+
+    /** the `n` smallest elements by natural ordering, best-first. */
+    inline def bottomN[A1 >: A](n: Int)(using Ordering[A1]): FArray[A1] = self.agg(Agg.smallest[A1](n))
+
+    // ===== derived terminals — pure sugar over the base terminals above; the whole pipeline still fuses =====
+
+    // ---- conversions (one fused pass into a builder via foreach) ----
+    inline def toList: List[A] = { val b = List.newBuilder[A]; self.foreach(b += _); b.result() }
+    inline def toVector: Vector[A] = { val b = Vector.newBuilder[A]; self.foreach(b += _); b.result() }
+    inline def toSeq: Seq[A] = self.toVector
+    inline def toSet[B >: A]: Set[B] = { val b = Set.newBuilder[B]; self.foreach(b += _); b.result() }
+    inline def toArray[B >: A](using ClassTag[B]): Array[B] = { val b = Array.newBuilder[B]; self.foreach(b += _); b.result() }
+    inline def toMap[K, V](using ev: A <:< (K, V)): Map[K, V] =
+      val b = Map.newBuilder[K, V]; self.foreach(a => b += ev(a)); b.result()
+    inline def mkString(start: String, sep: String, end: String): String =
+      val sb = new java.lang.StringBuilder(start); var first = true
+      self.foreach { a => if first then first = false else sb.append(sep); sb.append(String.valueOf(a.asInstanceOf[Object])) }
+      sb.append(end).toString
+    inline def mkString(sep: String): String = self.mkString("", sep, "")
+    inline def mkString: String = self.mkString("", "", "")
+
+    // ---- reductions (one fused pass via foldLeft) ----
+    inline def fold[B >: A](z: B)(inline op: (B, B) => B): B = self.foldLeft[B](z)((acc, a) => op(acc, a))
+    inline def sum[B >: A](using num: Numeric[B]): B = self.foldLeft[B](num.zero)((acc, a) => num.plus(acc, a))
+    inline def product[B >: A](using num: Numeric[B]): B = self.foldLeft[B](num.one)((acc, a) => num.times(acc, a))
+    // reduce/min/max/last desugar to `reduceOption` (a single-aggregate `agg(Agg.reduceL(...))`): seeded
+    // accumulator, no per-element Option, one Some at the end. minBy/maxBy desugar to `agg(Agg.minBy/maxBy(...))`:
+    // best element + its key in two vars. All share the Agg/AState terminal machinery.
+    inline def reduceLeft[B >: A](inline op: (B, A) => B): B =
+      self.reduceOption[B](op).getOrElse(throw new UnsupportedOperationException("reduceLeft on an empty fused pipeline"))
+    inline def reduce[B >: A](inline op: (B, B) => B): B =
+      self.reduceOption[B]((acc, a) => op(acc, a)).getOrElse(throw new UnsupportedOperationException("reduce on an empty fused pipeline"))
+    inline def min[B >: A](using ord: Ordering[B]): A =
+      self
+        .reduceOption[B]((acc, a) => if ord.lteq(acc, a) then acc else a)
+        .getOrElse(throw new UnsupportedOperationException("min of an empty fused pipeline"))
+        .asInstanceOf[A]
+    inline def max[B >: A](using ord: Ordering[B]): A =
+      self
+        .reduceOption[B]((acc, a) => if ord.gteq(acc, a) then acc else a)
+        .getOrElse(throw new UnsupportedOperationException("max of an empty fused pipeline"))
+        .asInstanceOf[A]
+    inline def minBy[B](inline f: A => B)(using ord: Ordering[B]): A =
+      self.minByOption[B](f).getOrElse(throw new UnsupportedOperationException("minBy on an empty fused pipeline"))
+    inline def maxBy[B](inline f: A => B)(using ord: Ordering[B]): A =
+      self.maxByOption[B](f).getOrElse(throw new UnsupportedOperationException("maxBy on an empty fused pipeline"))
+
+    // ---- last (one fused pass — keeps the most recent survivor) ----
+    inline def lastOption: Option[A] = self.reduceOption[A]((_, a) => a)
+    inline def last: A = self.reduceOption[A]((_, a) => a).getOrElse(throw new NoSuchElementException("last of an empty fused pipeline"))
+
+    // ---- predicates / counts ----
+    inline def contains[B >: A](elem: B): Boolean = self.exists(_ == elem)
+    inline def isEmpty: Boolean = !self.exists(_ => true)
+    inline def nonEmpty: Boolean = self.exists(_ => true)
+    inline def size: Int = self.count
+    inline def length: Int = self.count
+
+    // ---- positional / partial (short-circuit) ----
+    // dedicated IndexWhere terminal: a bare `var idx` + position counter, no (value, index) pair allocated.
+    inline def indexWhere(inline p: A => Boolean): Int = ${ FuseMacro.indexWhereImpl[A, FuseNative]('self, 'p) }
+    inline def indexOf[B >: A](elem: B): Int = self.indexWhere(_ == elem)
+    inline def collectFirst[B](pf: PartialFunction[A, B]): Option[B] = self.find(pf.isDefinedAt).map(pf)
+
+    // ---- generic conversion: build any collection from a std Factory in one fused pass ----
+    inline def to[C1](factory: scala.collection.Factory[A, C1]): C1 =
+      val b = factory.newBuilder; self.foreach(b += _); b.result()
+
+    // ---- Option-returning reductions (empty → None instead of throwing). These now desugar to a single-aggregate
+    //      `agg(...)`, sharing the Agg/AState terminal machinery (the dedicated ReduceOpt/ExtremumBy terminals were
+    //      folded into `Agg.reduceL`/`Agg.minBy`/`Agg.maxBy`). ----
+    inline def reduceOption[B >: A](inline op: (B, A) => B): Option[B] = self.agg(Agg.reduceL[A, B](op))
+    inline def reduceLeftOption[B >: A](inline op: (B, A) => B): Option[B] = self.reduceOption[B](op)
+    inline def minOption[B >: A](using ord: Ordering[B]): Option[A] =
+      self.reduceOption[B]((acc, a) => if ord.lteq(acc, a) then acc else a).asInstanceOf[Option[A]]
+    inline def maxOption[B >: A](using ord: Ordering[B]): Option[A] =
+      self.reduceOption[B]((acc, a) => if ord.gteq(acc, a) then acc else a).asInstanceOf[Option[A]]
+    inline def minByOption[B](inline f: A => B)(using ord: Ordering[B]): Option[A] = self.agg(Agg.minBy[A, B](f))
+    inline def maxByOption[B](inline f: A => B)(using ord: Ordering[B]): Option[A] = self.agg(Agg.maxBy[A, B](f))
+
+    // ---- groupBy: one fused pass into per-key builders ----
+    inline def groupBy[K](inline f: A => K): Map[K, List[A]] =
+      val m = scala.collection.mutable.LinkedHashMap.empty[K, scala.collection.mutable.Builder[A, List[A]]]
+      self.foreach(a => m.getOrElseUpdate(f(a), List.newBuilder[A]) += a)
+      m.view.mapValues(_.result()).toMap
+    inline def groupMapReduce[K, B](inline key: A => K)(inline f: A => B)(inline reduce: (B, B) => B): Map[K, B] =
+      val m = scala.collection.mutable.LinkedHashMap.empty[K, B]
+      self.foreach { a =>
+        val k = key(a); val b = f(a); m.updateWith(k) { case Some(o) => Some(reduce(o, b)); case None => Some(b) }
+      }
+      m.toMap
+
+    /** group by `key`, combine each element's `value` per key with `reduce`, in ONE fused pass — into a primitive- keyed open-addressing map (an Int key stays
+      * UNBOXED in the hot loop, an Int/Long/Double value too), boxing only at the final O(#keys) materialization to `Map[K,B]`. The fast analogue of
+      * `groupMapReduce`.
+      */
+    inline def groupReduceBy[K, B](inline key: A => K)(inline value: A => B)(inline reduce: (B, B) => B): Map[K, B] =
+      ${ FuseMacro.groupReduceByImpl[A, FuseNative, K, B]('self, 'key, 'value, 'reduce) }
+
+    /** group-reduce with `value = identity` — combine the elements themselves per key. (`A1 >: A` so the covariant element type may appear in `reduce`'s
+      * contravariant position, like `reduce`/`+:`.)
+      */
+    inline def groupReduce[K, A1 >: A](inline key: A => K)(inline reduce: (A1, A1) => A1): Map[K, A1] =
+      self.groupReduceBy(key)(a => (a: A1))(reduce)
+
+    /** count elements per key (unboxed Int accumulator). */
+    inline def groupCount[K](inline key: A => K): Map[K, Int] =
+      self.groupReduceBy(key)(_ => 1)((x, y) => x + y)
+
+    /** sum the projected `value` per key (unboxed for Int/Long/Double values). */
+    inline def groupSum[K, B](inline key: A => K)(inline value: A => B)(using num: Numeric[B]): Map[K, B] =
+      self.groupReduceBy(key)(value)((x, y) => num.plus(x, y))
+
+    // ---- multi-output terminals: one fused pass into two builders ----
+    inline def partition(inline p: A => Boolean): (FArray[A], FArray[A]) =
+      val y = List.newBuilder[A]; val n = List.newBuilder[A]
+      self.foreach(a => if p(a) then y += a else n += a)
+      (FArray.from(y.result()), FArray.from(n.result()))
+    inline def span(inline p: A => Boolean): (FArray[A], FArray[A]) =
+      val pre = List.newBuilder[A]; val post = List.newBuilder[A]; var go = true
+      self.foreach(a => if go && p(a) then pre += a else { go = false; post += a })
+      (FArray.from(pre.result()), FArray.from(post.result()))
+    inline def unzip[A1, A2](using ev: A <:< (A1, A2)): (FArray[A1], FArray[A2]) =
+      val l = List.newBuilder[A1]; val r = List.newBuilder[A2]
+      self.foreach { a =>
+        val t = ev(a); l += t._1; r += t._2
+      }
+      (FArray.from(l.result()), FArray.from(r.result()))
+
+    // ---- windowing ----
+    /** overlapping windows of size `n` stepping by 1; a shorter-than-`n` stream yields one partial window. */
+    inline def sliding(n: Int): FArray[FArray[A]] =
+      require(n > 0, "sliding size must be > 0")
+      val out = List.newBuilder[FArray[A]]; val window = scala.collection.mutable.ArrayDeque.empty[A]; var emitted = false
+      self.foreach { a =>
+        window += a; if window.length > n then window.removeHead()
+        if window.length == n then { out += FArray.from(window.toList); emitted = true }
+      }
+      if !emitted && window.nonEmpty then out += FArray.from(window.toList)
+      FArray.from(out.result())

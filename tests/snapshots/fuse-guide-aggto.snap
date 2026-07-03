@@ -1,44 +1,43 @@
-{
-  val $proxy: FArray$package {
-    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
-  } = FArray$package.$asInstanceOf$[FArray$package {
-    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
-  }]
-  val xs$proxy: trades & FArray[Trade] = trades.$asInstanceOf$[trades & FArray[Trade]]
-  val Fuse_this: Fuse[Trade] = (new Fuse[Trade](xs$proxy): Fuse[Trade])
+({
+  val src0: FBase = inline$base$i1[Trade]({
+    val $proxy: FArray$package {
+      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+    } = FArray$package.$asInstanceOf$[FArray$package {
+      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+    }]
+    val xs$proxy: trades & FArray[Trade] = trades.$asInstanceOf$[trades & FArray[Trade]]
 
-  ({
-    val src0: FBase = inline$base$i1[Trade](Fuse_this).asInstanceOf[FBase]
-    val n0: Int = src0.length
-    var acc: Double = 0.0
-    var c: Int = 0
-    var best: Double = null.asInstanceOf[Double]
-    var seen: Boolean = false
-    val s: FBase = src0
-    val a: Array[Object] = s match {
-      case l: RefArr =>
-        (l.arr: Array[Object])
-      case t =>
-        if (t.length.>=(64)) FArrayOps.materializeRef(t) else null
-    }
-    val len: Int = s.length
-    var i: Int = 0
-    while (i.<(len)) {
-      val v: Trade = if (a.ne(null)) a.apply(i).asInstanceOf[Trade] else FArrayOps.refAt(s, i).asInstanceOf[Trade]
-      val `v₂`: Double = v.amount
-      acc = acc.+(`v₂`)
-      c = c.+(1)
-      val `v₃`: Double = v.amount
-      val kk: Double = `v₃`
-      if (seen.unary_!.||(kk.>(best))) {
-        best = kk
-        seen = true
-      } else ()
-      i = i.+(1)
-    }
-    val total: Double = acc
-    val n: Int = c
-    val top: Double = if (seen) best else throw new NoSuchElementException("min1/max1 of empty fused pipeline")
-    Summary.apply(total, n, top)
-  }.asInstanceOf[Summary]: Summary)
-}
+    (new Fuse[Trade, FuseNative](xs$proxy): Fuse[Trade, FuseNative])
+  }).asInstanceOf[FBase]
+  val n0: Int = src0.length
+  var acc: Double = 0.0
+  var c: Int = 0
+  var best: Double = null.asInstanceOf[Double]
+  var seen: Boolean = false
+  val s: FBase = src0
+  val a: Array[Object] = s match {
+    case l: RefArr =>
+      (l.arr: Array[Object])
+    case t =>
+      if (t.length.>=(64)) FArrayOps.materializeRef(t) else null
+  }
+  val len: Int = s.length
+  var i: Int = 0
+  while (i.<(len)) {
+    val v: Trade = if (a.ne(null)) a.apply(i).asInstanceOf[Trade] else FArrayOps.refAt(s, i).asInstanceOf[Trade]
+    val `v₂`: Double = v.amount
+    acc = acc.+(`v₂`)
+    c = c.+(1)
+    val `v₃`: Double = v.amount
+    val kk: Double = `v₃`
+    if (seen.unary_!.||(kk.>(best))) {
+      best = kk
+      seen = true
+    } else ()
+    i = i.+(1)
+  }
+  val total: Double = acc
+  val n: Int = c
+  val top: Double = if (seen) best else throw new NoSuchElementException("min1/max1 of empty fused pipeline")
+  Summary.apply(total, n, top)
+}.asInstanceOf[Summary]: Summary)

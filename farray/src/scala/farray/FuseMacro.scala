@@ -25,39 +25,60 @@ enum TTag:
 object FuseMacro:
 
   // ---------- entry points (one per terminal) ----------
-  def runImpl[A: Type](self: Expr[Fuse[A]])(using Quotes): Expr[FArray[A]] =
-    '{ ${ core[A](self, TTag.Run, Nil) }.asInstanceOf[FArray[A]] }
+  def runImpl[A: Type, S: Type](self: Expr[Fuse[A, S]])(using Quotes): Expr[FArray[A]] = runImplWith(self, null)
+  private[farray] def runImplWith[A: Type, S: Type](self: Expr[Fuse[A, S]], decoder: RecordDecoderSpi | Null)(using Quotes): Expr[FArray[A]] =
+    '{ ${ core[A](self, TTag.Run, Nil, decoder) }.asInstanceOf[FArray[A]] }
 
   // (foreach/foldLeft/count are NOT separate macro entry points — they desugar to a single-aggregate `agg(...)`
   //  in Fuse.scala and flow through aggImpl, sharing the Agg/AState terminal machinery.)
 
   // multi-aggregate: `aggs` is `List(Agg.xxx(...), …)`; the macro reads each `Agg.xxx(...)` call off the AST,
   // carries one accumulator per aggregate in one loop, and returns a tuple `R` of the finished results.
-  def aggImpl[A: Type, R: Type](self: Expr[Fuse[A]], aggs: Expr[List[Agg[A, Any]]])(using Quotes): Expr[R] =
-    '{ ${ core[A](self, TTag.Agg, List(aggs)) }.asInstanceOf[R] }
+  def aggImpl[A: Type, S: Type, R: Type](self: Expr[Fuse[A, S]], aggs: Expr[List[Agg[A, Any]]])(using Quotes): Expr[R] = aggImplWith(self, aggs, null)
+  private[farray] def aggImplWith[A: Type, S: Type, R: Type](self: Expr[Fuse[A, S]], aggs: Expr[List[Agg[A, Any]]], decoder: RecordDecoderSpi | Null)(using
+      Quotes
+  ): Expr[R] =
+    '{ ${ core[A](self, TTag.Agg, List(aggs), decoder) }.asInstanceOf[R] }
   // like aggImpl but the finished results are passed to `make` (a case-class constructor / any productN builder)
   // instead of tupled — so `aggTo(Summary.apply)(…)` returns a `Summary`. `make` is args(1) for the Agg case.
-  def aggToImpl[A: Type, R: Type](self: Expr[Fuse[A]], aggs: Expr[List[Agg[A, Any]]], make: Expr[Any])(using Quotes): Expr[R] =
-    '{ ${ core[A](self, TTag.Agg, List(aggs, make)) }.asInstanceOf[R] }
+  def aggToImpl[A: Type, S: Type, R: Type](self: Expr[Fuse[A, S]], aggs: Expr[List[Agg[A, Any]]], make: Expr[Any])(using Quotes): Expr[R] =
+    aggToImplWith(self, aggs, make, null)
+  private[farray] def aggToImplWith[A: Type, S: Type, R: Type](
+      self: Expr[Fuse[A, S]],
+      aggs: Expr[List[Agg[A, Any]]],
+      make: Expr[Any],
+      decoder: RecordDecoderSpi | Null
+  )(using
+      Quotes
+  ): Expr[R] =
+    '{ ${ core[A](self, TTag.Agg, List(aggs, make), decoder) }.asInstanceOf[R] }
 
   // primitive-keyed group-reduce: group by key(a), combine value(a) per key with reduce. One fused pass into an
   // open-addressing map (unboxed Int/Long key, primitive value array for prim B), materialized to Map[K,B].
-  def groupReduceByImpl[A: Type, K: Type, B: Type](self: Expr[Fuse[A]], key: Expr[A => K], value: Expr[A => B], reduce: Expr[(B, B) => B])(using
+  def groupReduceByImpl[A: Type, S: Type, K: Type, B: Type](self: Expr[Fuse[A, S]], key: Expr[A => K], value: Expr[A => B], reduce: Expr[(B, B) => B])(using
       Quotes
   ): Expr[Map[K, B]] =
-    '{ ${ core[A](self, TTag.GroupReduce, List(key, value, reduce)) }.asInstanceOf[Map[K, B]] }
+    groupReduceByImplWith(self, key, value, reduce, null)
+  private[farray] def groupReduceByImplWith[A: Type, S: Type, K: Type, B: Type](
+      self: Expr[Fuse[A, S]],
+      key: Expr[A => K],
+      value: Expr[A => B],
+      reduce: Expr[(B, B) => B],
+      decoder: RecordDecoderSpi | Null
+  )(using Quotes): Expr[Map[K, B]] =
+    '{ ${ core[A](self, TTag.GroupReduce, List(key, value, reduce), decoder) }.asInstanceOf[Map[K, B]] }
 
   /** NESTED FUSION stage. `groupAdjacentReduceBy` is inline so its `Agg.*` argument reaches a macro splice (else `@compileTimeOnly` fires before the outer
     * `.run` macro can read it). This impl CONSUMES that `Agg.*` here by rewriting it to the non-compileTimeOnly `AggRaw.*` twin (same method name → same
     * `parseAgg1` shape), then re-emits the non-inline `groupAdjacentReduceByMarker` call carrying the rewritten agg. The `.run`/agg macro parses that marker
     * normally — the agg now survives in the tree as a plain value.
     */
-  def groupReduceStageImpl[A: Type, K: Type, B: Type, R: Type](
-      self: Expr[Fuse[A]],
+  def groupReduceStageImpl[A: Type, S: Type, K: Type, B: Type, R: Type](
+      self: Expr[Fuse[A, S]],
       key: Expr[A => K],
-      prep: Expr[Fuse[A] => Fuse[B]],
+      prep: Expr[Fuse[A, S] => Fuse[B, S]],
       agg: Expr[Agg[B, R]]
-  )(using Quotes): Expr[Fuse[(K, R)]] =
+  )(using Quotes): Expr[Fuse[(K, R), S]] =
     import quotes.reflect.*
     // rewrite every `Agg.<name>` selection to `AggRaw.<name>` (the compileTimeOnly twin → plain). Match by the Agg
     // module symbol so an `import farray.Agg` alias is handled too.
@@ -68,43 +89,78 @@ object FuseMacro:
         case Select(qual, name) if qual.symbol == aggMod => Select.unique(Ref(aggRawMod), name)
         case _                                           => super.transformTerm(t)(owner)
     val aggRaw = rewriter.transformTerm(agg.asTerm)(Symbol.spliceOwner).asExprOf[Agg[B, R]]
+    // NB: `$self` may re-emit as an inline `this`-proxy Ident (`Fuse_this`); the terminal's peel dereferences it
+    // through the Inlined-bindings environment (see `unwrapChain`). Do NOT splice `underlyingArgument` here — it
+    // substitutes proxy references with their right-hand sides IN PLACE, duplicating side effects (a
+    // `fromIterable` receiver would read its iterator twice per element).
     '{ $self.groupAdjacentReduceByMarker[K, B, R]($key)($prep)($aggRaw) }
 
   // plan description (testing): TTag.Plan returns a String describing the built plan, never runs the loop.
-  def planImpl[A: Type](self: Expr[Fuse[A]])(using Quotes): Expr[String] =
-    '{ ${ core[A](self, TTag.Plan, Nil) }.asInstanceOf[String] }
+  def planImpl[A: Type, S: Type](self: Expr[Fuse[A, S]])(using Quotes): Expr[String] = planImplWith(self, null)
+  private[farray] def planImplWith[A: Type, S: Type](self: Expr[Fuse[A, S]], decoder: RecordDecoderSpi | Null)(using Quotes): Expr[String] =
+    '{ ${ core[A](self, TTag.Plan, Nil, decoder) }.asInstanceOf[String] }
   // planFold: same, but the live-set also reflects a fold `op` that reads the element directly.
-  def planFoldImpl[A: Type, Z: Type](self: Expr[Fuse[A]], op: Expr[(Z, A) => Z])(using Quotes): Expr[String] =
-    '{ ${ core[A](self, TTag.Plan, List(op)) }.asInstanceOf[String] }
+  def planFoldImpl[A: Type, S: Type, Z: Type](self: Expr[Fuse[A, S]], op: Expr[(Z, A) => Z])(using Quotes): Expr[String] = planFoldImplWith(self, op, null)
+  private[farray] def planFoldImplWith[A: Type, S: Type, Z: Type](self: Expr[Fuse[A, S]], op: Expr[(Z, A) => Z], decoder: RecordDecoderSpi | Null)(using
+      Quotes
+  ): Expr[String] =
+    '{ ${ core[A](self, TTag.Plan, List(op), decoder) }.asInstanceOf[String] }
   // planAgg: the live-set reflects the union of the aggregates' read fields. Passes the varargs Seq as args(0)
   // (parseAggList's seqElems already peels a Repeated/Typed(Repeated) — the varargs literal form).
-  def planAggImpl[A: Type](self: Expr[Fuse[A]], aggs: Expr[Seq[Agg[A, Any]]])(using Quotes): Expr[String] =
-    '{ ${ core[A](self, TTag.Plan, List(aggs)) }.asInstanceOf[String] }
+  def planAggImpl[A: Type, S: Type](self: Expr[Fuse[A, S]], aggs: Expr[Seq[Agg[A, Any]]])(using Quotes): Expr[String] = planAggImplWith(self, aggs, null)
+  private[farray] def planAggImplWith[A: Type, S: Type](self: Expr[Fuse[A, S]], aggs: Expr[Seq[Agg[A, Any]]], decoder: RecordDecoderSpi | Null)(using
+      Quotes
+  ): Expr[String] =
+    '{ ${ core[A](self, TTag.Plan, List(aggs), decoder) }.asInstanceOf[String] }
 
-  def findImpl[A: Type](self: Expr[Fuse[A]], p: Expr[A => Boolean])(using Quotes): Expr[Option[A]] =
-    '{ ${ core[A](self, TTag.Find, List(p)) }.asInstanceOf[Option[A]] }
+  def findImpl[A: Type, S: Type](self: Expr[Fuse[A, S]], p: Expr[A => Boolean])(using Quotes): Expr[Option[A]] = findImplWith(self, p, null)
+  private[farray] def findImplWith[A: Type, S: Type](self: Expr[Fuse[A, S]], p: Expr[A => Boolean], decoder: RecordDecoderSpi | Null)(using
+      Quotes
+  ): Expr[Option[A]] =
+    '{ ${ core[A](self, TTag.Find, List(p), decoder) }.asInstanceOf[Option[A]] }
 
-  def existsImpl[A: Type](self: Expr[Fuse[A]], p: Expr[A => Boolean])(using Quotes): Expr[Boolean] =
-    '{ ${ core[A](self, TTag.Exists, List(p)) }.asInstanceOf[Boolean] }
+  def existsImpl[A: Type, S: Type](self: Expr[Fuse[A, S]], p: Expr[A => Boolean])(using Quotes): Expr[Boolean] = existsImplWith(self, p, null)
+  private[farray] def existsImplWith[A: Type, S: Type](self: Expr[Fuse[A, S]], p: Expr[A => Boolean], decoder: RecordDecoderSpi | Null)(using
+      Quotes
+  ): Expr[Boolean] =
+    '{ ${ core[A](self, TTag.Exists, List(p), decoder) }.asInstanceOf[Boolean] }
 
-  def forallImpl[A: Type](self: Expr[Fuse[A]], p: Expr[A => Boolean])(using Quotes): Expr[Boolean] =
-    '{ ${ core[A](self, TTag.Forall, List(p)) }.asInstanceOf[Boolean] }
+  def forallImpl[A: Type, S: Type](self: Expr[Fuse[A, S]], p: Expr[A => Boolean])(using Quotes): Expr[Boolean] = forallImplWith(self, p, null)
+  private[farray] def forallImplWith[A: Type, S: Type](self: Expr[Fuse[A, S]], p: Expr[A => Boolean], decoder: RecordDecoderSpi | Null)(using
+      Quotes
+  ): Expr[Boolean] =
+    '{ ${ core[A](self, TTag.Forall, List(p), decoder) }.asInstanceOf[Boolean] }
 
-  def headOptionImpl[A: Type](self: Expr[Fuse[A]])(using Quotes): Expr[Option[A]] =
-    '{ ${ core[A](self, TTag.HeadOption, Nil) }.asInstanceOf[Option[A]] }
+  def headOptionImpl[A: Type, S: Type](self: Expr[Fuse[A, S]])(using Quotes): Expr[Option[A]] =
+    '{ ${ core[A](self, TTag.HeadOption, Nil, null) }.asInstanceOf[Option[A]] }
 
-  def headImpl[A: Type](self: Expr[Fuse[A]])(using Quotes): Expr[A] =
-    '{ ${ core[A](self, TTag.Head, Nil) }.asInstanceOf[A] }
+  def headImpl[A: Type, S: Type](self: Expr[Fuse[A, S]])(using Quotes): Expr[A] =
+    '{ ${ core[A](self, TTag.Head, Nil, null) }.asInstanceOf[A] }
 
   // index of the first survivor satisfying `p` (post-upstream-filtering position), or -1 — short-circuits.
-  def indexWhereImpl[A: Type](self: Expr[Fuse[A]], p: Expr[A => Boolean])(using Quotes): Expr[Int] =
-    '{ ${ core[A](self, TTag.IndexWhere, List(p)) }.asInstanceOf[Int] }
+  def indexWhereImpl[A: Type, S: Type](self: Expr[Fuse[A, S]], p: Expr[A => Boolean])(using Quotes): Expr[Int] = indexWhereImplWith(self, p, null)
+  private[farray] def indexWhereImplWith[A: Type, S: Type](self: Expr[Fuse[A, S]], p: Expr[A => Boolean], decoder: RecordDecoderSpi | Null)(using
+      Quotes
+  ): Expr[Int] =
+    '{ ${ core[A](self, TTag.IndexWhere, List(p), decoder) }.asInstanceOf[Int] }
   // (seeded reduce and extremum-by-element now flow through the Agg machinery — `Agg.reduceL` / `Agg.minBy` /
   //  `Agg.maxBy` — so the standalone reduceOption/minByOption/maxByOption terminals desugar to a single-agg call.)
 
   // ---------- shared lowering core (Exprs cross the boundary; Terms are derived inside) ----------
-  private def core[A: Type](self: Expr[Fuse[A]], tag: TTag, extraExprs: List[Expr[Any]])(using Quotes): Expr[Any] =
+  private def core[A: Type](self: Expr[Fuse[A, ?]], tag: TTag, extraExprs: List[Expr[Any]], decoder: RecordDecoderSpi | Null)(using Quotes): Expr[Any] =
     import quotes.reflect.*
+
+    /** The record decoder for a decomposed byte source. The engine ships none: a decoder module's own terminal macros pass theirs (e.g. example-json-decoder's
+      * pass `JsonDecode`); the native lowering passes nothing, so a byte source reaching a native terminal is a clear error — in practice unreachable, because
+      * the shape type keeps native terminals off decoder pipelines entirely.
+      */
+    def requireDecoder(d: RecordDecoderSpi | Null): RecordDecoderSpi =
+      if d == null then
+        report.errorAndAbort(
+          "fuse: this pipeline reads a record-framed byte source, but the terminal was lowered without a record decoder. " +
+            "Use the decoder module's pipeline (e.g. example-json-decoder's `.stream`)."
+        )
+      else d
 
     // --- stage model ---
     sealed trait Stage
@@ -247,8 +303,9 @@ object FuseMacro:
     def unwrap(t: Term): Term = Ast.unwrap(t)
 
     def fuseElem(t: TypeRepr): TypeRepr = t.widen.dealias match
-      case AppliedType(_, List(a)) => a
-      case other                   => report.errorAndAbort(s"fuse: expected Fuse[_], got ${other.show}")
+      case AppliedType(_, List(a, _)) => a
+      case AppliedType(_, List(a))    => a // an inner prep chain may present a 1-arg alias
+      case other                      => report.errorAndAbort(s"fuse: expected Fuse[_, _], got ${other.show}")
 
     /** parse the INNER pipeline of a nested fusion: `prep: Fuse[A] => Fuse[B]` whose body is a stage chain rooted at the lambda param `g` (the run's rows). The
       * source base case is `Ident(g)` (vs `new Fuse(src)` for the outer parse). v1 supports only STATELESS inner stages (map/filter/filterNot/collect) — no
@@ -269,8 +326,33 @@ object FuseMacro:
           report.errorAndAbort(s"fuse: unsupported per-group stage in groupAdjacentReduceBy (v1 supports map/filter/filterNot/collect only): ${other.show}")
       go(body, Nil)
 
+    /** `unwrap` plus proxy chasing, for PARSING the chain only (the bindings stay alive inside the retained `'self` tree in the emitted code). The
+      * extension-provided terminals (FuseLowering) and the inline stage sugar (`slice`, `flatten`) add inline hops whose expansions wrap the receiver in
+      * `Inlined`/`Block` layers with `Fuse_this`/`…proxy` ValDef bindings and reference them by Ident — we record every binding we strip and dereference idents
+      * through that environment.
+      */
+    val chainEnv = scala.collection.mutable.HashMap.empty[Symbol, Term]
+    def recordBindings(stats: List[Statement]): Unit =
+      stats.foreach:
+        case vd: ValDef if vd.rhs.isDefined => chainEnv(vd.symbol) = vd.rhs.get
+        case _                              => ()
+    def unwrapChain(t: Term): Term =
+      t match
+        case Inlined(_, bindings, e) =>
+          recordBindings(bindings)
+          unwrapChain(e)
+        case Typed(e, _)                                             => unwrapChain(e)
+        case Block(stats, e) if stats.forall(_.isInstanceOf[ValDef]) =>
+          recordBindings(stats)
+          unwrapChain(e)
+        case id: Ident if chainEnv.contains(id.symbol) => unwrapChain(chainEnv(id.symbol))
+        case id: Ident                                 =>
+          val ua = id.underlyingArgument
+          if !(ua eq id) then unwrapChain(ua) else id
+        case other => other
+
     def parse(t0: Term, acc: List[Stage]): (Term, TypeRepr, List[Stage]) =
-      unwrap(t0) match
+      unwrapChain(t0) match
         case Apply(TypeApply(Select(prev, "map"), _), List(f))                             => parse(prev, MapS(unwrap(f)) :: acc)
         case Apply(TypeApply(Select(prev, "flatMap"), List(b)), List(f))                   => parse(prev, FlatMapS(unwrap(f), b.tpe) :: acc)
         case Apply(Select(prev, "filter"), List(p))                                        => parse(prev, FilterS(unwrap(p), false) :: acc)
@@ -1408,7 +1490,7 @@ object FuseMacro:
 
     if tag == TTag.Plan then
       return decomposedSrc match
-        case Some(js) => Expr(RecordDecoder.planString(decoderInput(js, Ctx(t => t, None, Map.empty))))
+        case Some(js) => Expr(requireDecoder(decoder).planString(decoderInput(js, Ctx(t => t, None, Map.empty))))
         case None     => Expr(s"InMemoryPlan(elem=${srcElem.typeSymbol.name}, terminal=$tag, stages=${stages.length})")
 
     // --- declare loop-state vars (above the loop), then assemble the terminal body ---
@@ -1738,7 +1820,7 @@ object FuseMacro:
       def ctx(consume: Term => Term) = Ctx(consume, done, counters)
       def drive(c: Ctx): Expr[Unit] =
         (decomposedSrc, streamSrc) match
-          case (Some(js), _) => RecordDecoder.lower(decoderInput(js, c))
+          case (Some(js), _) => requireDecoder(decoder).lower(decoderInput(js, c))
           case (_, Some(ss)) => withEpilogue(c, withScanPrologue(c, loopOverSource(ss, srcK, srcElem, indexed, c)))
           case _             => withEpilogue(c, withScanPrologue(c, loopOver(src0, srcK, srcElem, indexed, c, outer = true)))
       def loop(consume: Term => Term): Expr[Unit] = drive(ctx(consume))
@@ -2104,7 +2186,7 @@ object FuseMacro:
       def loop(consume: Term => Term): Expr[Unit] =
         val c = ctx(consume)
         (decomposedSrc, streamSrc) match
-          case (Some(js), _) => RecordDecoder.lower(decoderInput(js, c))
+          case (Some(js), _) => requireDecoder(decoder).lower(decoderInput(js, c))
           case (_, Some(ss)) => withEpilogue(c, withScanPrologue(c, loopOverSource(ss, srcK, srcElem, indexed, c)))
           case _             => withEpilogue(c, withScanPrologue(c, loopOver(src0, srcK, srcElem, indexed, c, outer = true)))
       outK match

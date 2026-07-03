@@ -173,4 +173,4 @@ object Source:
   /** Enter the fused pipeline over a streaming source: `src.fuse.filter(_ > 0).map(_ * 2).sum` runs in constant memory (one chunk live at a time). Identical
     * surface to `FArray#fuse` — the macro wraps the element loop in an outer chunk-pull loop.
     */
-  extension [A](src: Source[A]) inline def fuse: Fuse[A] = new Fuse[A](src)
+  extension [A](src: Source[A]) inline def fuse: Fuse[A, FuseNative] = new Fuse[A, FuseNative](src)

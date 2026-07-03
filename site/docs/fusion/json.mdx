@@ -123,11 +123,11 @@ skip-versus-decode, predicate early-out) belongs to the *engine*; the source own
 I/O.
 
 Which means the entire in-memory NDJSON adapter is this — one implementation of that trait, plus one
-line (`def stream = new Fuse[T](this)`) to enter the pipeline. And the build enforces the claim: none
-of the JSON code lives in farray. It sits in its own `example-json-decoder` module, downstream of the
-engine, plugged in through a tiny discovery seam — exactly the position *your* decoder would occupy.
-This is the real class, verbatim, and the shape of what you'd write to plug any record-framed format
-— CSV, log lines, length-prefixed binary — into the same optimizer:
+line (`def stream = new Fuse[T, Ndjson](this)`) to enter the pipeline. And the build enforces the
+claim: none of the JSON code lives in farray. It sits in its own `example-json-decoder` module,
+downstream of the engine, plugged in as a **typeclass instance** — exactly the position *your*
+decoder would occupy. This is the real class, verbatim, and the shape of what you'd write to plug any
+record-framed format — CSV, log lines, length-prefixed binary — into the same optimizer:
 
 <Snippet name="ndjson-source" hideFull />
 
@@ -159,10 +159,13 @@ last step:
 
 <ul className="points">
   <li>
-    <strong>The source's static type picks the lowering.</strong> The macro walks the chain back to
-    the expression the pipeline started from and checks its type: an <code>FArray</code> lowers to
-    the indexed loops from the guide; a <code>ByteRecordSource</code> takes the record path. A
-    compile-time type test — no runtime dispatch, no registry.
+    <strong>The source shape is a type parameter, and the lowering is a typeclass.</strong> A pipeline
+    is a <code>Fuse[A, S]</code>, where <code>S</code> names the source shape — <code>.fuse</code> on
+    an <code>FArray</code> gives <code>Fuse[A, FuseNative]</code>, <code>.stream</code> here gives{" "}
+    <code>Fuse[Event, Ndjson]</code>. The terminals are not members of <code>Fuse</code> at all: they
+    are inline extension methods provided by the shape's <code>FuseLowering[S]</code> given, found in
+    the shape companion's implicit scope. No registry, no reflection — ordinary typeclass resolution,
+    and each shape brings exactly the terminals it supports.
   </li>
   <li>
     <strong>The case class is read off the types.</strong> <code>.stream</code> on an{" "}
@@ -180,16 +183,18 @@ last step:
   <li>
     <strong>Then it rejoins the ordinary optimizer.</strong> The decoded fields re-enter the engine
     as columns — the same columns a tuple-returning <code>map</code> produces — so dead-column
-    elimination and compute-for-survivors work over byte ranges for free. The JSON-specific part is
-    one pluggable decoder living in its own module (<code>example-json-decoder</code>), discovered on
-    the compile classpath when the macro expands; a columnar or protobuf decoder would plug into the
-    same seam without the engine changing.
+    elimination and compute-for-survivors work over byte ranges for free. The JSON-specific part
+    lives entirely in <code>example-json-decoder</code>: its lowering's terminal macros call the
+    engine's entry points and hand over the decoder as an ordinary argument, at macro-expansion time.
+    A columnar or protobuf decoder would be one more shape + lowering pair, with the engine unchanged.
   </li>
 </ul>
 
 And the failure mode is the compiler, not the runtime: a field type outside{" "}
-<code>Int</code>/<code>Long</code>/<code>Double</code>/<code>String</code>, or a stage the record
-path doesn't support yet, is an error at the call site.
+<code>Int</code>/<code>Long</code>/<code>Double</code>/<code>String</code> or an unsupported stage is
+an error at the call site — and an unsupported <em>terminal</em> is simply not a member of{" "}
+<code>Fuse[Event, Ndjson]</code>, because only the terminals the record path supports exist on the
+JSON shape.
 
 ## The pipeline is the one you already know
 
@@ -207,11 +212,14 @@ over a JSON source. Concretely, in the current experiment:
     <strong>Terminals — the field-reading set:</strong> <code>sum</code> · <code>foldLeft</code> /{" "}
     <code>fold</code> · <code>reduce</code> · <code>count</code> · <code>foreach</code> ·{" "}
     <code>toList</code> · <code>find</code> · <code>exists</code> · <code>forall</code> ·{" "}
-    <code>indexWhere</code> · the multi-aggregates <code>agg</code> / <code>aggTo</code> — plus
-    everything the guide showed desugaring onto these (<code>toVector</code>/<code>toSet</code>/
-    <code>mkString</code> via <code>foreach</code>; <code>min</code>/<code>max</code>/
-    <code>minBy</code>/<code>maxBy</code> via the reduce aggregates; <code>isEmpty</code>/
-    <code>nonEmpty</code>/<code>contains</code> via <code>exists</code>).
+    <code>indexWhere</code> · the multi-aggregates <code>agg</code> / <code>aggTo</code> · the unboxed
+    group-reduce family <code>groupReduceBy</code>/<code>groupSum</code>/<code>groupCount</code> · the
+    bounded-heap <code>topNBy</code>/<code>bottomNBy</code> — plus everything the guide showed
+    desugaring onto these (<code>toVector</code>/<code>toSet</code>/<code>mkString</code> via{" "}
+    <code>foreach</code>; <code>min</code>/<code>max</code>/<code>minBy</code>/<code>maxBy</code> via
+    the reduce aggregates; <code>isEmpty</code>/<code>nonEmpty</code>/<code>contains</code> via{" "}
+    <code>exists</code>). These are exactly the members of the JSON shape's lowering — the list above
+    IS the API, enforced by the compiler.
   </li>
   <li>
     <strong>Not yet:</strong> nested objects/arrays (records are flat{" "}
