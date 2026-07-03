@@ -76,6 +76,12 @@ plain pattern match on an unboxed `Int` — the guard is the branch, the result 
 the output `int[]`. A "partial function" that compiles to an `if` is exactly what you meant when you
 wrote it.
 
+(If you open the *full expansion*, you'll also see the original `.map(…).collect(…)` calls retained
+above the loop, inside `src0`'s initializer. Those are the stage **markers** — their bodies just
+return `this`; the loop reads the source through them so every binding stays in scope. They run once
+per pipeline call, not per element, and the JIT scalar-replaces the wrapper and lambdas — which is
+why a fused pipeline measures at ~zero allocation *including* them.)
+
 ## The rules of the game
 
 Four things to know before you lean on it — this is the entire contract:
