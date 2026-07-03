@@ -184,16 +184,18 @@ function firstOuterBranch(code) {
 function collapseBase(code) {
   const idx = code.indexOf("inline$base$i1[");
   if (idx < 0) return code;
-  const braceStart = code.indexOf("({", idx);
-  if (braceStart < 0) return code;
-  let depth = 0, k = braceStart + 1; // at the '{'
+  const parenStart = code.indexOf("(", code.indexOf("]", idx));
+  if (parenStart < 0) return code;
+  // paren-match the WHOLE argument — the receiver chain including its trailing marker calls
+  // (.map(...).collect(...)) — and collapse it to the opaque Fuse_this the pages always showed.
+  let depth = 0, k = parenStart;
   for (; k < code.length; k++) {
     const ch = code[k];
-    if (ch === "{") depth++;
-    else if (ch === "}") { depth--; if (depth === 0) break; }
+    if (ch === "(") depth++;
+    else if (ch === ")") { depth--; if (depth === 0) break; }
   }
   if (k >= code.length) return code;
-  return (code.slice(0, braceStart + 1) + "Fuse_this" + code.slice(k + 1))
+  return (code.slice(0, parenStart + 1) + "Fuse_this" + code.slice(k))
     .split("\n").filter((l) => l.trim() !== "").join("\n");
 }
 
