@@ -1794,6 +1794,9 @@ class FListTest:
     )
     // 9 · top-N via a bounded size-n heap — no full sort, no O(N) buffer
     Snapshots.check("fuse-guide-topn.snap", FuseDebug.show(trades.fuse.topNBy(2)(_.amount)))
+    // 10 · algebraic stage rewriting — take(7).map(f).take(3): the inner take slides left past the map and
+    //      fuses with the outer into ONE clamped limit (see RewriteTest for the structural assertions)
+    Snapshots.check("fuse-guide-taketake.snap", FuseDebug.show(ints.fuse.take(7).map(_ * 2).take(3).run))
 
   // The five fused-JSON demos for the website's "Fused JSON" page — the SAME optimizer over byte ranges.
   // Mirrors farray.json.JsonDemo's pipelines (Event/Wide/Stats live there), regenerated to current codegen.

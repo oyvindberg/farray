@@ -1,7 +1,7 @@
 ---
-title: The fuse optimizer
-sidebar_label: Inside the optimizer
-description: How the .fuse macro reads a whole pipeline off the typed syntax tree and emits the loop you'd have written by hand.
+title: The optimizer
+sidebar_label: The optimizer
+description: "The shared brain: products decomposed into independent columns, dead columns never computed, expensive columns computed only for survivors."
 ---
 
 import Snippet from "@site/src/components/Snippet";
@@ -18,24 +18,15 @@ export function FuseEx({ src, gen }) {
   );
 }
 
-<p className="page__eyebrow">how the macro pulls it off</p>
+<p className="page__eyebrow">concept four of five</p>
 
 <p className="lede">
-  <code>xs.fuse.map(f).filter(p).&lt;terminal&gt;</code> is a macro, not a runtime data structure. At
-  compile time it reads the <em>whole</em> chain off the typed syntax tree and emits one specialized{" "}
-  <code>while</code> loop with your lambdas inlined into the body — no view nodes, no{" "}
-  <code>Function1</code>, no boxing, no megamorphism. What follows is the loop you'd have written by
-  hand, produced from the pipeline you'd actually want to write. Every emitted block is the verbatim
-  post-typer expansion (<code>FuseDebug.show</code>), checked into the repo as a golden test.
+  Fusing stages into one loop removes the plumbing tax. This page is about the second engine inside
+  the engine — the part that removes work you <em>wrote but never needed</em>. Its single organizing
+  idea: a product — a tuple, a case class, later a JSON record — is not a value, it's a set of
+  independent <strong>columns</strong>, and each column is computed at its first read or not at all.
+  Everything below falls out of that idea; every emitted block is a golden test.
 </p>
-
-## One loop, no closures
-
-Three stages, one `int[]` scan. `_ + 1` becomes the bytecode `iadd`; no `Function1` is allocated; the
-filter is an `if` that wraps everything downstream of it. Compare a `View`, which stores three
-`Function1`s and calls each through an interface, per element.
-
-<FuseEx src="fuse-src-oneloop" gen="fuse-opt-oneloop" />
 
 ## Dead-column elimination
 

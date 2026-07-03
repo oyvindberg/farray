@@ -123,7 +123,7 @@ compiled to.
 
 That the Scala 3 macro system can do this — read a call chain off the tree, work out which columns
 nobody downstream reads, and emit the specialized loop you'd have written by hand — is, frankly, a
-little phenomenal. There's a whole page on [how the macro pulls it off](./fusion/optimizer.mdx). But
+little phenomenal. There's a whole section building [the fusion engine up from first principles](./fusion/index.mdx). But
 fusion is the summit, and we're at the trailhead. The pages that follow are the climb: the Java core
 the loop runs over, the Scala that keeps it unboxed, and the cost model that makes the whole thing
 hang together.
@@ -131,7 +131,7 @@ hang together.
 <Related
   links={[
     { to: "/design/java-core", label: "Start the climb", desc: "The generated Java core the loops run over." },
-    { to: "/fusion", label: "Using .fuse", desc: "The user guide — every stage and terminal, with the loops they compile to." },
+    { to: "/fusion", label: "The fusion engine", desc: "From first principles: sources, stages, terminals, the optimizer — and the receipts." },
     { to: "/benchmarks/farray", label: "FArray benchmarks", desc: "The complete scorecard — every op, every size, every rival." },
   ]}
 />

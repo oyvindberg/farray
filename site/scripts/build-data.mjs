@@ -364,6 +364,7 @@ function buildSnippets() {
     ["fuse-guide-groupadj", "tests/snapshots/fuse-guide-groupadj.snap"],
     ["fuse-guide-nested", "tests/snapshots/fuse-guide-nested.snap"],
     ["fuse-guide-topn", "tests/snapshots/fuse-guide-topn.snap"],
+    ["fuse-guide-taketake", "tests/snapshots/fuse-guide-taketake.snap"],
   ];
   for (const [name, file] of FUSE_GUIDE) {
     const raw = readFileSync(resolve(REPO, file), "utf8").replace(/^\n+|\n+$/g, "");
@@ -416,6 +417,7 @@ Json.ndjson[Event](bytes).stream.filter(_.amount > 150).map(_.category).toList`,
     "fuse-src-guide-groupadj": "trades.fuse.groupAdjacentBy(_.day).map(_.length).take(2).run",
     "fuse-src-guide-nested": "trades.fuse.groupAdjacentReduceBy(_.day)(_.map(_.amount).filter(_ > 20.0))(Agg.sum(x => x)).run",
     "fuse-src-guide-topn": "trades.fuse.topNBy(2)(_.amount)",
+    "fuse-src-guide-taketake": "xs.fuse.take(7).map(_ * 2).take(3).run",
   };
   for (const [name, code] of Object.entries(FUSE_OPT_SRC)) {
     out[name] = { name, file: "you write", lang: "scala", code, html: hl(code, "scala"), full: null, fullHtml: null };

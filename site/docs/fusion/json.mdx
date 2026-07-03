@@ -1,7 +1,7 @@
 ---
-title: Fused JSON — an experiment
-sidebar_label: "Experiment: fused JSON"
-description: A pure experiment turning the fusion optimizer loose on raw JSON bytes — proof the machinery reaches far beyond collections.
+title: The JSON integration
+sidebar_label: The JSON integration
+description: "A JSON decoder plugged into the fusion engine as a typeclass instance — beating the JVM's best hand-tuned parser on projection queries, with the whole integration in one readable file."
 ---
 
 import Link from "@docusaurus/Link";
@@ -76,241 +76,154 @@ export const WIDE_BENCH = {
   ],
 };
 
-<p className="page__eyebrow">a 100% experiment — the same optimizer, over bytes</p>
-
-:::info[This page is an experiment, on purpose]
-
-Nothing here is a JSON library, and none of it is on FArray's roadmap. It exists to answer exactly one
-question: **is the fusion optimizer really about collections, or is it about pipelines?** So we
-pointed it, *unchanged*, at raw JSON bytes — and it beat the JVM's best hand-tuned parser on
-projection queries. Read it as a demonstration of how far the fusion machinery reaches, not as a
-product.
-
-:::
+<p className="page__eyebrow">concept five of five — the engine, pointed at bytes</p>
 
 <p className="lede">
-  The insight that makes it work: a JSON object is a <strong>product</strong> whose fields are{" "}
-  <strong>columns</strong> — sourced from byte ranges instead of tuple slots. So the same optimizer
-  from <Link to="/fusion/optimizer">the optimizer page</Link>, <em>unchanged</em>, becomes a projection-aware
-  JSON parser. Wrap a byte buffer as a source, start a pipeline with <code>.stream</code>, and the
-  macro reads your <code>.filter(…).map(…)</code> chain, works out which fields it actually touches,
-  and emits one specialized per-record scanner over the raw <code>byte[]</code>. Dead fields are
-  skipped at the byte level. A projected string is decoded only for survivors. A record whose filter
-  fails is abandoned mid-scan. No per-record object is ever allocated.
+  You have a few gigabytes of NDJSON and one question: total revenue where <code>amount > 150</code>.
+  Here is the entire program — a case class and a query. No codec, no <code>derives</code>, no
+  registration; the case class <em>is</em> the schema:
 </p>
-
-## The setup — a record type and a source
-
-Everything on this page starts from code you'd actually write, and there are only two pieces. The
-first is a plain case class describing the record — **no codec, no `derives`, no annotations**. The
-macro reads the field names and types straight off the case class; this is the 20-field record every
-example below runs against:
 
 <Snippet name="json-event" hideFull />
 
-The second piece is a **source** — and this is the part of the page most worth internalizing:
-`Json.ndjson` is not engine magic, it's *user-level code*. The fusion engine
-([the sources page](./sources.mdx)) is a streaming consumer,
-and its whole contract for byte data is one small trait, `ByteRecordSource`: "hand me the byte range
-of the next complete record, in constant memory, and tell me when records run out." Six members:
+<p className="fuse-cap">you write</p>
+<Snippet name="fuse-src-jsum" hideFull />
+
+And here is what that does to the field — including jsoniter-scala driven by a hand-written,
+zero-object `JsonReader` loop, which is as fast as JSON gets on the JVM by conventional means:
+
+<BenchTable bench={SUM_BENCH} />
+
+:::info[An experiment, on purpose]
+
+Nothing on this page is a JSON library, and none of it is on FArray's roadmap. It exists to answer
+one question: **is the fusion engine about collections, or about pipelines?** So the engine was
+pointed, unchanged, at raw bytes. Read it as a measure of how far the machinery reaches — and as the
+worked example of how a format plugs in.
+
+:::
+
+## Why that number is possible
+
+A JSON object is a **product** whose fields are **columns** — sourced from byte ranges instead of
+tuple slots. That makes every trick from <Link to="/fusion/optimizer">the optimizer page</Link> apply
+verbatim, at the byte level: the macro computes the *live set* — the fields your filters, maps and
+aggregates actually touch — and emits a per-record scanner where every live field gets a typed byte
+reader and **every other field is skipped without being decoded**. A 20-field record queried on one
+field costs one number-parse and nineteen byte-skips. No `Event` object is ever built.
+
+The queries on this page run against a 10 000-record, ~3.2 MB NDJSON buffer of that 20-field `Event`
+— realistic field mix, every query touching 1–2 fields: the projection case where pushdown pays.
+Throughput is ops/s over the whole buffer (÷10 000 ≈ per record); every rival runs that library's
+best idiom for the same query.
+
+## The whole integration, one file
+
+Before the demos, the part a library author should read closely. This is the **entire** plug-in —
+the shape, the typeclass instance, the hook. Not a sketch; the file, verbatim:
+
+<Snippet name="json-integration" hideFull />
+
+Unpacking it against <Link to="/fusion/terminals">the lowerings page</Link>: `Ndjson` is the source
+shape; the given in its companion puts `JsonLowering`'s terminals on every `Fuse[A, Ndjson]`;
+`StandardTerminals` declares which families this shape supports (everything except element
+materialization — so `.sum` scans bytes while `.run` *does not compile*); and the five-line hook
+hands the engine `JsonDecode` — the decoder — as an ordinary argument at macro-expansion time.
+
+The other two pieces are just as inspectable. The **source** contract is six methods — "hand me the
+byte range of the next complete record, in constant memory":
 
 <Snippet name="byte-record-source" hideFull />
 
-The engine drives it with a two-level loop — `while nextChunk()` / `while nextRecord()` /
-decode `buf[recordStart, recordEnd)` — done-gated at both levels so a downstream `find` or `take`
-stops pulling, and wrapped in `try/finally close()`. Everything column-aware (which keys are live,
-skip-versus-decode, predicate early-out) belongs to the *engine*; the source owns only framing and
-I/O.
-
-Which means the entire in-memory NDJSON adapter is this — one implementation of that trait, plus one
-line (`def stream = new Fuse[T, Ndjson](this)`) to enter the pipeline. And the build enforces the
-claim: none of the JSON code lives in farray. It sits in its own `example-json-decoder` module,
-downstream of the engine, plugged in as a **typeclass instance** — exactly the position *your*
-decoder would occupy. This is the real class, verbatim, and the shape of what you'd write to plug any
-record-framed format — CSV, log lines, length-prefixed binary — into the same optimizer:
+…and the in-memory NDJSON source is one small implementation of it, plus `def stream` to enter the
+pipeline:
 
 <Snippet name="ndjson-source" hideFull />
 
-Three constructors package that up, one per place your bytes live — an `FArray` pipeline starts with
-`.fuse`, a byte source starts with `.stream` (the different verb is deliberate: a call-site signal
-that records are being consumed out of raw bytes):
+The **decoder** (`JsonDecode.scala`) is the format's genuine work — given one framed record and the
+live set, emit the byte-level readers. The engine keeps everything column-aware: live-set analysis,
+skip-versus-decode, predicate placement, the loop itself. That split of labor is why the decoder
+stays small, and why a CSV or length-prefixed-binary decoder would be the same shape: implement the
+framing, implement the per-field reads, publish a given.
+
+Three ways in, one per place your bytes live — the file and stream variants run in constant memory
+(one block + the largest record), with the source closed on every exit path:
 
 <p className="fuse-cap">you write</p>
 <Snippet name="fuse-src-jentry" hideFull />
 
-The buffer variant scans in place — its `nextChunk()` returns `true` exactly once, as you just saw.
-The file and `InputStream` variants swap in a framer whose `nextChunk()` reads the next block and
-stitches records that straddle block boundaries, which is all it takes to make the same scanner run
-in **constant memory** — O(one block + the largest record) — over a stream of any size, with the
-source *owned*: closed on exhaustion, on short-circuit, and on exception alike.
+## The demos
 
-## How that can possibly work
+Each isolates one optimizer behavior over bytes, with the generated scanner and, where a fair rival
+exists, that library's best idiom for the same query.
 
-Your part is the whole list you just saw, so it bears spelling out:
+### Projection pushdown — read 1 field of 20
 
-<ul className="points">
-  <li>Define a flat case class. It <em>is</em> the schema — no codec to derive, no given to import, nothing to register.</li>
-  <li>Pick the constructor for where your bytes live; <code>.stream</code> into the pipeline.</li>
-  <li>Write the <code>filter</code>/<code>map</code> chain you'd write over any collection, and end in a terminal.</li>
-</ul>
-
-In fact, here is the **entire integration** — the one file that plugs the shape, the terminals and
-the decoder into the engine. Read it top to bottom and you have the whole model:
-
-<Snippet name="json-integration" hideFull />
-
-The compiler's part happens when the terminal macro fires, and none of it is JSON-shaped until the
-last step:
-
-<ul className="points">
-  <li>
-    <strong>The source shape is a type parameter, and the lowering is a typeclass.</strong> A pipeline
-    is a <code>Fuse[A, S]</code>, where <code>S</code> names the source shape — <code>.fuse</code> on
-    an <code>FArray</code> gives <code>Fuse[A, FuseNative]</code>, <code>.stream</code> here gives{" "}
-    <code>Fuse[Event, Ndjson]</code>. The terminals are not members of <code>Fuse</code> at all: they
-    are inline extension methods provided by the shape's <code>FuseLowering[S]</code> given, found in
-    the shape companion's implicit scope. No registry, no reflection — ordinary typeclass resolution,
-    and each shape brings exactly the terminals it supports.
-  </li>
-  <li>
-    <strong>The case class is read off the types.</strong> <code>.stream</code> on an{" "}
-    <code>NdjsonSource[Event]</code> gives a <code>Fuse[Event]</code>, and the macro enumerates{" "}
-    <code>Event</code>'s fields — names and kinds — straight from the type. That's the whole reason
-    no codec exists: there is nothing a codec would know that the case class doesn't already say.
-  </li>
-  <li>
-    <strong>The pipeline's lambdas decide what gets decoded.</strong> The macro computes the{" "}
-    <em>live set</em> — the fields your filters, maps and aggregates actually touch. Each live field
-    gets a byte-reader spliced in for its kind (<code>JsonScanner.readDoubleAt</code>, a lazy{" "}
-    <code>(start, len)</code> slice for a String); every other field gets <code>skipValue</code>.
-    The scanners shown below are exactly those splices, assembled per record.
-  </li>
-  <li>
-    <strong>Then it rejoins the ordinary optimizer.</strong> The decoded fields re-enter the engine
-    as columns — the same columns a tuple-returning <code>map</code> produces — so dead-column
-    elimination and compute-for-survivors work over byte ranges for free. The JSON-specific part
-    lives entirely in <code>example-json-decoder</code>: its lowering's terminal macros call the
-    engine's entry points and hand over the decoder as an ordinary argument, at macro-expansion time.
-    A columnar or protobuf decoder would be one more shape + lowering pair, with the engine unchanged.
-  </li>
-</ul>
-
-And the failure mode is the compiler, not the runtime: a field type outside{" "}
-<code>Int</code>/<code>Long</code>/<code>Double</code>/<code>String</code> or an unsupported stage is
-an error at the call site — and an unsupported <em>terminal</em> is simply not a member of{" "}
-<code>Fuse[Event, Ndjson]</code>, because only the terminals the record path supports exist on the
-JSON shape.
-
-## The pipeline is the one you already know
-
-`.stream` hands you the same `Fuse[Event]` you know from [the user guide](./index.mdx) — you already
-know what `filter` and `map` mean, and they mean exactly that here. Most of the surface simply works
-over a JSON source. Concretely, in the current experiment:
-
-<ul className="points">
-  <li>
-    <strong>Stages:</strong> <code>filter</code> and <code>map</code> (and for-comprehension guards
-    via <code>withFilter</code>) — which covers the projection-and-predicate queries this page is
-    about.
-  </li>
-  <li>
-    <strong>Terminals — the field-reading set:</strong> <code>sum</code> · <code>foldLeft</code> /{" "}
-    <code>fold</code> · <code>reduce</code> · <code>count</code> · <code>foreach</code> ·{" "}
-    <code>toList</code> · <code>find</code> · <code>exists</code> · <code>forall</code> ·{" "}
-    <code>indexWhere</code> · the multi-aggregates <code>agg</code> / <code>aggTo</code> · the unboxed
-    group-reduce family <code>groupReduceBy</code>/<code>groupSum</code>/<code>groupCount</code> · the
-    bounded-heap <code>topNBy</code>/<code>bottomNBy</code> — plus everything the guide showed
-    desugaring onto these (<code>toVector</code>/<code>toSet</code>/<code>mkString</code> via{" "}
-    <code>foreach</code>; <code>min</code>/<code>max</code>/<code>minBy</code>/<code>maxBy</code> via
-    the reduce aggregates; <code>isEmpty</code>/<code>nonEmpty</code>/<code>contains</code> via{" "}
-    <code>exists</code>). These are exactly the members of the JSON shape's lowering — the list above
-    IS the API, enforced by the compiler.
-  </li>
-  <li>
-    <strong>Not yet:</strong> nested objects/arrays (records are flat{" "}
-    <code>Int</code>/<code>Long</code>/<code>Double</code>/<code>String</code> fields, compact
-    one-record-per-line NDJSON), and the <code>zip</code>/<code>flatMap</code>/<code>collect</code>/
-    <code>takeWhile</code>/<code>distinct</code> stages — each is a clear <em>compile error</em> over
-    a JSON source, never a silent fallback to something slower.
-  </li>
-</ul>
-
-## The benchmark
-
-The dataset is NDJSON — one JSON object per line — of **10 000 records**, **~3.2 MB**, each a
-**20-field** object (~334 bytes: a realistic mix of longs, ints, doubles, and strings). Every query
-touches just **1–2 of those 20 fields** — the projection case where pushdown pays. Throughput is
-ops/s over the whole 10 000-record buffer; allocation is bytes per buffer-op (÷10 000 ≈ bytes per
-record). Every parser runs the same query: the fuse row is the generated scanner, and each rival row
-is that library's best idiom for "read a couple of fields per line."
-
-## Projection pushdown — read 1 field of 20
-
-The pipeline reads only `amount`. Every other field is a dead column with no slot: the generated
-scanner hands it to `skipValue`, which advances past its bytes without decoding or allocating
-anything. A 20-field record costs one number-parse and nineteen byte-skips. No `Event` is built; the
-fold runs into a `var`.
+The pipeline reads only `amount`. Every other field is a dead column with no slot: the scanner hands
+it to `skipValue`, which advances past its bytes without decoding or allocating anything. No `Event`
+is built; the fold runs into a `var`:
 
 <JsonEx
-  src="fuse-src-jsum" gen="fuse-json-sum" bench={SUM_BENCH}
+  src="fuse-src-jsum" gen="fuse-json-sum"
   rival="rival-sum"
   rivalLabel="the field — jsoniter-scala (hand-written reader, no object), jawn, and Jackson, all the same query"
 />
 
-## Lazy decode — a String built only for survivors
+### Lazy decode — a String built only for survivors
 
-`category` gets a slot, but a string slot is just `(start, len)` into the buffer — not a decoded
-String. `amount` decodes, because the filter needs it; `category` stays a byte slice and becomes a
-real `String` only inside the survivor `if`. Rejected rows never allocate a String. It's the same
-compute-for-survivors sink from [the optimizer page](./optimizer.mdx), now operating on bytes.
+`category` gets a slot, but a string slot is just `(start, len)` into the buffer. `amount` decodes
+because the filter needs it; `category` becomes a real `String` only inside the survivor branch.
+Rejected rows never allocate one — the compute-for-survivors sink, operating on bytes:
 
 <JsonEx
   src="fuse-src-jcat" gen="fuse-json-cat"
   rival="rival-cat" rivalLabel="jsoniter-scala, narrow codec (only the read fields; the rest skipped)"
 />
 
-## Discard-DCE — count never decodes the projection
+### Discard-DCE — count never decodes the projection
 
-`count` ignores the element, so `map(_.category)` is a dead value. The optimizer captures the slice
-but never turns it into a String — zero String allocations across the whole run. The same holds for
-`isEmpty`/`nonEmpty`, and for `map(expensive).count`, where `expensive` never runs at all. Dead-column
-elimination, reaching all the way to the terminal.
+`count` ignores the element, so `map(_.category)` is a dead value: the slice is captured, the
+`String` never built — zero String allocations across the run. Dead-column elimination reaching all
+the way to the terminal:
 
 <JsonEx src="fuse-src-jcount" gen="fuse-json-count" bench={COUNT_BENCH} />
 
-## Predicate-fail early-out — abandon a record mid-scan
+### Predicate-fail early-out — abandon a record mid-scan
 
-The filter field is decoded *during* the scan; the instant it's known, the predicate runs inline, and
-on failure the record is abandoned right there — the scanner never even looks for the later projected
-field. Here `key` comes first, `payload` (a long string) comes last, and 90% of records are rejected:
-each rejected record costs only "scan to `key`, compare, stop." On fat, selective queries this is the
-biggest win of all.
+The filter field is decoded *during* the scan, the predicate runs the instant it's known, and a
+failing record is abandoned right there — the scanner never even looks for the later projected
+field. Here `key` comes first, `payload` (a long string) last, and 90% of records fail: each
+rejected record costs "scan to `key`, compare, stop":
 
 <JsonEx src="fuse-src-jwide" gen="fuse-json-wide" bench={WIDE_BENCH} />
 
-## Multi-aggregate — three aggregates, one pass, into a case class
+### Multi-aggregate — three answers, one scan, into a case class
 
-Sum the amount, count the rows, and take the peak score of the active events. The aggregates are the
-guide's `Agg` values (`Agg.sum`, `Agg.count`, `Agg.max1`, …), and the result lands in your own case
-class:
+`aggTo` runs sum, count and max in a single fused scan — 3 of 20 fields read, each exactly once, one
+unboxed accumulator each, landing in your own case class:
 
 <Snippet name="json-stats" hideFull />
 
-`aggTo` runs all three in a single fused scan, carrying one unboxed accumulator each. The columns the aggregates read are
-merged automatically: `amount`, `status`, and `score` are scanned — 3 of 20 fields, each exactly once
-— and `count` reads nothing extra. The result is a case class, not a tuple; no `Event` is ever built,
-and the sum and max compile to `dadd`/`dcmp`, not a boxing `Numeric`/`Ordering`.
-
 <JsonEx src="fuse-src-jagg" gen="fuse-json-agg" />
+
+## The pipeline surface over JSON
+
+`.stream` hands you the same pipeline type as everywhere else, narrowed to what the record path
+supports: `filter`/`map`/`withFilter` stages; the aggregation, search, group-reduce and plan terminal
+families (`sum`, `foldLeft`, `count`, `find`, `exists`, `toList`, `agg`/`aggTo`, `groupSum`,
+`topNBy`, …). Records are flat `Int`/`Long`/`Double`/`String` case classes over one-line NDJSON.
+Everything outside that — nested objects, `zip`, `flatMap`, `collect` — is a compile error at the
+call site, and an unsupported *terminal* is simply not a member. No silent fallback exists.
 
 ---
 
-Scanners are the verbatim post-typer expansion (`FuseDebug.show`), regenerated to current codegen and
-checked into `tests/snapshots/`. Numbers are JMH (`-prof gc`) from `benchmarks/JsonProjectionBenchmark`.
+Scanners are the verbatim post-typer expansion, regenerated to current codegen and checked into
+`tests/snapshots/`. Numbers are JMH (`-prof gc`) from `benchmarks/JsonProjectionBenchmark`.
 
 <Related
   links={[
-    { to: "/fusion/optimizer", label: "Back to the optimizer", desc: "The column analysis all of this rides on." },
-    { to: "/", label: "The FArray story", desc: "Where the fusion machinery comes from." },
+    { to: "/fusion/benchmarks", label: "Next: The receipts", desc: "The fusion benchmarks, end to end." },
+    { to: "/fusion/terminals", label: "Terminals & lowerings", desc: "The typeclass machinery this page plugs into." },
+    { to: "/fusion/optimizer", label: "The optimizer", desc: "The column analysis, over tuples instead of bytes." },
   ]}
 />
