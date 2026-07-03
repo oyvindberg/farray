@@ -65,8 +65,8 @@ object FuseMacro:
     '{ ${ core[A](self, tag, extras.asInstanceOf[List[Expr[Any]]], decoder) }.asInstanceOf[R] }
 
   /** the native lowering's splice entry — the engine's own shapes, no record decoder. */
-  def lowerNative[A: Type, R: Type](self: Expr[Fuse[A, FuseNative]], t: Expr[Terminal[A, R]])(using Quotes): Expr[R] =
-    lower[A, FuseNative, R](self, t, null)
+  def lowerNative[A: Type, R: Type](self: Expr[Fuse[A, Chunks]], t: Expr[Terminal[A, R]])(using Quotes): Expr[R] =
+    lower[A, Chunks, R](self, t, null)
 
   /** NESTED FUSION stage. `groupAdjacentReduceBy` is inline so its `Agg.*` argument reaches a macro splice (else `@compileTimeOnly` fires before the outer
     * `.run` macro can read it). This impl CONSUMES that `Agg.*` here by rewriting it to the non-compileTimeOnly `AggRaw.*` twin (same method name → same

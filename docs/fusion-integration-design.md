@@ -23,7 +23,7 @@ A fused pipeline is `Fuse[A, S]`:
 | noun | what it is | who provides it |
 |---|---|---|
 | **stages** | shape-generic markers on `Fuse` (`map`, `filter`, `collect`, …) — free, read off the AST | farray, once |
-| **shape `S`** | a phantom type naming the source format (`FuseNative`, `Ndjson`, your `Csv`) | the format module (1 line) |
+| **shape `S`** | a phantom type naming the source format (`Chunks`, `Ndjson`, your `Csv`) | the format module (1 line) |
 | **lowering** | `S`'s `FuseLowering[S]` given: the terminals the shape supports (inherited syntax) + one `lower` hook | the format module (~5 lines) |
 | **terminal** | the pipeline-ending call, reified as `Terminal[A, R]` and handed to the hook | farray, once |
 
@@ -48,7 +48,7 @@ read *its* bytes; everything column-aware is the engine's.
 | `FuseMacro.*ImplWith` (13 entries) | one `FuseMacro.lower(self, terminal, decoder)` | the single module-facing engine entry |
 | — | `Terminal[A, R]` (new) | the reified terminal request — typed, marker-only, consumed at expansion |
 | — | capability traits (new, below) | the shared syntax |
-| `FuseNative`, `Ndjson` | unchanged | shape names; fine |
+| `Chunks`, `Ndjson` | unchanged | shape names; fine |
 
 ## Capability traits — the shared syntax, written once in farray
 
@@ -149,7 +149,7 @@ framing. Compare today's ~150 lines of duplicated terminal defs.
 ## Migration steps
 
 1. farray: `Terminal` ADT + `FuseMacro.lower` dispatch (subsumes the 13 `…ImplWith` entries).
-2. farray: capability traits; `NativeLowering` becomes `StandardTerminals + MaterializeTerminals`
+2. farray: capability traits; `ChunksLowering` becomes `StandardTerminals + MaterializeTerminals`
    with a 3-line hook; delete the hand-written terminal block.
 3. Renames: `RecordDecoderSpi → RecordDecoder`, `DecomposedInput → DecodeRequest`.
 4. json module: `Integration.scala` (one file); delete the boilerplate `JsonFuse.scala`.

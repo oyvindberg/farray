@@ -139,7 +139,7 @@ Three consequences, in increasing order of importance:
   </li>
 </ul>
 
-The native shape (`FuseNative` — in-memory arrays and chunk streams) mixes in everything. The JSON
+The native shape (`Chunks` — in-memory arrays and chunk streams) mixes in everything. The JSON
 shape takes `StandardTerminals` and skips `MaterializeTerminals` — which is exactly why
 `Json.ndjson[T](bytes).stream.run` is a compile error while `.sum` is a byte-level scanner: the
 difference between the two shapes is spelled where a reader can see it, in the mixin list.

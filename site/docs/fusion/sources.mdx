@@ -66,7 +66,7 @@ sequence, and a file's lines, without ever holding the data:
 
 ## The shape is in the type
 
-The entry point stamps the pipeline: `xs.fuse` gives `Fuse[A, FuseNative]`, and the JSON module's
+The entry point stamps the pipeline: `xs.fuse` gives `Fuse[A, Chunks]`, and the JSON module's
 `.stream` gives `Fuse[T, Ndjson]`. That phantom parameter — the **source shape** — is how the rest of
 the machine stays honest: stages are shape-generic, but{" "}
 <Link to="/fusion/terminals">which terminals exist, and how they lower</Link>, is decided per shape

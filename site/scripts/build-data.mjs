@@ -208,6 +208,14 @@ function collapseBase(code) {
     .split("\n").filter((l) => l.trim() !== "").join("\n");
 }
 
+
+// The ONE view of a fuse golden: the FULL expansion, verbatim modulo pure cosmetics (infix operators,
+// proxy renames, erased-cast removal, inline-accessor renames). No elisions, no toggle.
+function fuseFull(raw) {
+  return polish(stripOpaqueNoise(raw))
+    .replace(/inline\$(buf|until|from)\$i1\([^)]*\)/g, "src.$1");
+}
+
 // From a FuseDebug.show golden, keep just the `({ … })` block the macro actually emits — i.e. drop the
 // `$proxy`/`Fuse_this` marker preamble (dead-code-eliminated at runtime) and show the loop.
 function fuseLoop(code) {
@@ -345,10 +353,10 @@ function buildSnippets() {
   for (const key of FUSE_OPT) {
     const file = `tests/snapshots/fuse-opt-${key}.snap`;
     const raw = readFileSync(resolve(REPO, file), "utf8").replace(/^\n+|\n+$/g, "");
-    const short = polish(stripOpaqueNoise(collapseBase(fuseLoop(raw))));
+    const code = fuseFull(raw);
     out[`fuse-opt-${key}`] = {
       name: `fuse-opt-${key}`, file, lang: "scala",
-      code: short, html: hl(short, "scala"), full: raw, fullHtml: hl(raw, "scala"), fullLabel: "full expansion",
+      code, html: hl(code, "scala"), full: null, fullHtml: null,
     };
   }
   // The user-guide demos for the "Using .fuse" page — same treatment as the optimizer demos: the emitted
@@ -368,10 +376,10 @@ function buildSnippets() {
   ];
   for (const [name, file] of FUSE_GUIDE) {
     const raw = readFileSync(resolve(REPO, file), "utf8").replace(/^\n+|\n+$/g, "");
-    const short = polish(stripOpaqueNoise(collapseBase(fuseLoop(raw))));
+    const code = fuseFull(raw);
     out[name] = {
       name, file, lang: "scala",
-      code: short, html: hl(short, "scala"), full: raw, fullHtml: hl(raw, "scala"), fullLabel: "full expansion",
+      code, html: hl(code, "scala"), full: null, fullHtml: null,
     };
   }
   // The fused-JSON scanners for the "Fused JSON" page — the per-record byte scanner the macro emits,
@@ -380,10 +388,10 @@ function buildSnippets() {
   for (const key of FUSE_JSON) {
     const file = `tests/snapshots/fuse-json-${key}.snap`;
     const raw = readFileSync(resolve(REPO, file), "utf8").replace(/^\n+|\n+$/g, "");
-    const short = cleanJson(raw);
+    const code = fuseFull(raw);
     out[`fuse-json-${key}`] = {
       name: `fuse-json-${key}`, file, lang: "scala",
-      code: short, html: hl(short, "scala"), full: raw, fullHtml: hl(raw, "scala"), fullLabel: "full expansion",
+      code, html: hl(code, "scala"), full: null, fullHtml: null,
     };
   }
   // the "you write" pipeline for each demo (verbatim from the snapshot tests / JsonDemo).

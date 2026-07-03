@@ -209,13 +209,13 @@ trait MaterializeTerminals[S] extends ShapeLowering[S]:
 trait StandardTerminals[S] extends AggTerminals[S], SearchTerminals[S], GroupTerminals[S], PlanTerminals[S]
 
 /** The source shape of engine-native pipelines: an in-memory `FArray` (`xs.fuse`) or a chunked [[Source]] (`src.fuse`). Its lowering — the full terminal set —
-  * is [[NativeLowering]], published here so it rides the implicit scope of every `Fuse[A, FuseNative]`.
+  * is [[ChunksLowering]], published here so it rides the implicit scope of every `Fuse[A, Chunks]`.
   */
-sealed trait FuseNative
-object FuseNative:
-  given lowering: NativeLowering.type = NativeLowering
+sealed trait Chunks
+object Chunks:
+  given lowering: ChunksLowering.type = ChunksLowering
 
 /** The engine's own lowering: every capability, lowered by [[FuseMacro]] with no record decoder attached. */
-object NativeLowering extends StandardTerminals[FuseNative], MaterializeTerminals[FuseNative]:
-  inline def lower[A, R](inline self: Fuse[A, FuseNative], inline t: Terminal[A, R]): R =
+object ChunksLowering extends StandardTerminals[Chunks], MaterializeTerminals[Chunks]:
+  inline def lower[A, R](inline self: Fuse[A, Chunks], inline t: Terminal[A, R]): R =
     ${ FuseMacro.lowerNative[A, R]('self, 't) }
