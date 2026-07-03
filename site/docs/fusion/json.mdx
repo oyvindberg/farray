@@ -142,6 +142,52 @@ stitches records that straddle block boundaries, which is all it takes to make t
 in **constant memory** — O(one block + the largest record) — over a stream of any size, with the
 source *owned*: closed on exhaustion, on short-circuit, and on exception alike.
 
+## How that can possibly work
+
+Your part is the whole list you just saw, so it bears spelling out:
+
+<ul className="points">
+  <li>Define a flat case class. It <em>is</em> the schema — no codec to derive, no given to import, nothing to register.</li>
+  <li>Pick the constructor for where your bytes live; <code>.stream</code> into the pipeline.</li>
+  <li>Write the <code>filter</code>/<code>map</code> chain you'd write over any collection, and end in a terminal.</li>
+</ul>
+
+The compiler's part happens when the terminal macro fires, and none of it is JSON-shaped until the
+last step:
+
+<ul className="points">
+  <li>
+    <strong>The source's static type picks the lowering.</strong> The macro walks the chain back to
+    the expression the pipeline started from and checks its type: an <code>FArray</code> lowers to
+    the indexed loops from the guide; a <code>ByteRecordSource</code> takes the record path. A
+    compile-time type test — no runtime dispatch, no registry.
+  </li>
+  <li>
+    <strong>The case class is read off the types.</strong> <code>.stream</code> on an{" "}
+    <code>NdjsonSource[Event]</code> gives a <code>Fuse[Event]</code>, and the macro enumerates{" "}
+    <code>Event</code>'s fields — names and kinds — straight from the type. That's the whole reason
+    no codec exists: there is nothing a codec would know that the case class doesn't already say.
+  </li>
+  <li>
+    <strong>The pipeline's lambdas decide what gets decoded.</strong> The macro computes the{" "}
+    <em>live set</em> — the fields your filters, maps and aggregates actually touch. Each live field
+    gets a byte-reader spliced in for its kind (<code>JsonScanner.readDoubleAt</code>, a lazy{" "}
+    <code>(start, len)</code> slice for a String); every other field gets <code>skipValue</code>.
+    The scanners shown below are exactly those splices, assembled per record.
+  </li>
+  <li>
+    <strong>Then it rejoins the ordinary optimizer.</strong> The decoded fields re-enter the engine
+    as columns — the same columns a tuple-returning <code>map</code> produces — so dead-column
+    elimination and compute-for-survivors work over byte ranges for free. The JSON-specific part is
+    one pluggable decoder behind a 17-line seam; a columnar or protobuf decoder would dispatch
+    through the same seam without the engine changing.
+  </li>
+</ul>
+
+And the failure mode is the compiler, not the runtime: a field type outside{" "}
+<code>Int</code>/<code>Long</code>/<code>Double</code>/<code>String</code>, or a stage the record
+path doesn't support yet, is an error at the call site.
+
 ## The pipeline is the one you already know
 
 `.stream` hands you the same `Fuse[Event]` you know from [the user guide](./index.mdx) — you already
