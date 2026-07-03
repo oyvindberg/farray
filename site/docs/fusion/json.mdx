@@ -110,7 +110,7 @@ example below runs against:
 
 The second piece is a **source** — and this is the part of the page most worth internalizing:
 `Json.ndjson` is not engine magic, it's *user-level code*. The fusion engine
-([the guide's last section](./index.mdx#where-pipelines-start--sources)) is a streaming consumer,
+([the sources page](./sources.mdx)) is a streaming consumer,
 and its whole contract for byte data is one small trait, `ByteRecordSource`: "hand me the byte range
 of the next complete record, in constant memory, and tell me when records run out." Six members:
 

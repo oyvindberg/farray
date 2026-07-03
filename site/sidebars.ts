@@ -34,7 +34,7 @@ const sidebars: SidebarsConfig = {
       type: "category",
       label: "Fusion",
       collapsed: false,
-      items: ["fusion/index", "fusion/optimizer", "fusion/json"],
+      items: ["fusion/index", "fusion/sources", "fusion/optimizer", "fusion/json"],
     },
     {
       type: "category",

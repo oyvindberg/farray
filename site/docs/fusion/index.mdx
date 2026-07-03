@@ -4,7 +4,6 @@ sidebar_label: Using .fuse
 description: "The fusion user guide: every stage and terminal, the semantics, and the loops they compile to — all unboxed."
 ---
 
-import Link from "@docusaurus/Link";
 import Snippet from "@site/src/components/Snippet";
 import Related from "@site/src/components/Related";
 
@@ -174,46 +173,15 @@ raw slots, and boxing happens exactly once per *key*, at the final O(#keys) mate
 
 <FuseEx src="fuse-src-guide-groupsum" gen="fuse-guide-groupsum" />
 
-## Where pipelines start — sources
-
-One last piece of the API, and it changes what fusion *is*: the thing before the first stage.
-Everything above read from an in-memory `FArray`, but the engine is really a **streaming consumer**
-— the stages and terminals are defined against a *source*, and the macro lowers the same chain over
-three source shapes:
-
-<ul className="points">
-  <li>
-    <strong>An in-memory <code>FArray</code></strong> — <code>xs.fuse</code>. The degenerate case: the
-    whole collection is one chunk, and you get the tight indexed loops shown all over this page.
-  </li>
-  <li>
-    <strong>A chunked <code>Source[A]</code></strong> — <code>Source.fromIterator(it).fuse</code>,{" "}
-    <code>Source.unfold(z)(step)</code>, <code>Source.iterate(x)(f)</code>. Pull-based and{" "}
-    <em>chunk-granular</em>: one virtual <code>pullChunk</code> call hands the loop a whole unboxed
-    leaf (~4096 elements), so the hot path stays the same element loop — no per-element virtual call,
-    no boxed sentinel. Constant memory, and the driver wraps the loop in{" "}
-    <code>try/finally close()</code>, so a file or socket behind the source is released on exhaustion,
-    on short-circuit (<code>take</code>/<code>find</code> stopping early), and on exception alike.
-  </li>
-  <li>
-    <strong>A record-framed byte source</strong> (<code>ByteRecordSource</code>) —{" "}
-    <code>{"Json.ndjson[Rec](bytes).stream"}</code>: elements decoded straight out of raw bytes, fields
-    the pipeline doesn't read skipped at the byte level. Same stages, same terminals, same optimizer —
-    and the source itself is ordinary user-writable code, shown in full on{" "}
-    <Link to="/fusion/json">the JSON experiment page</Link>.
-  </li>
-</ul>
-
-So "fusion" is not an array trick. It's a compile-time streaming engine: a pipeline is a plan, a
-source is where the bytes or elements come from, and the terminal compiles plan × source into the one
-loop you'd have written by hand.
-
 The emitted blocks above are golden tests in `tests/snapshots/`, regenerated on every build — what
-you see is what compiles. How the macro pulls all of this off — the column decomposition, dead-column
+you see is what compiles. One thing this page took for granted: every pipeline here started from an
+in-memory `FArray`, but the engine is a streaming consumer and `xs.fuse` is only one of
+[the sources a pipeline can start from](./sources.mdx). How the macro pulls all of this off — the column decomposition, dead-column
 elimination, compute-for-survivors — is [the next page](./optimizer.mdx).
 
 <Related
   links={[
+    { to: "/fusion/sources", label: "Sources", desc: "Fusion as a streaming engine — the three places a pipeline can start." },
     { to: "/fusion/optimizer", label: "Inside the optimizer", desc: "Column decomposition, DCE, the sink, CSE — with lowerings." },
     { to: "/fusion/json", label: "The JSON experiment", desc: "The same optimizer pointed at raw bytes." },
     { to: "/", label: "The 14-stage pipeline", desc: "What fusion buys on a real workload: ~36× the field." },

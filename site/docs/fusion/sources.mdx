@@ -1,0 +1,56 @@
+---
+title: Where pipelines start — sources
+sidebar_label: Sources
+description: "Fusion is a streaming engine: the same stages and terminals lower over an in-memory FArray, a chunked Source, or raw bytes."
+---
+
+import Link from "@docusaurus/Link";
+import Snippet from "@site/src/components/Snippet";
+import Related from "@site/src/components/Related";
+
+<p className="lede">
+  The piece of the API that changes what fusion <em>is</em>: the thing before the first stage.
+  Everything in <Link to="/fusion">the guide</Link> read from an in-memory <code>FArray</code>, but
+  the engine is really a <strong>streaming consumer</strong> — the stages and terminals are defined
+  against a <em>source</em>, and the macro lowers the same chain over three source shapes.
+</p>
+
+<ul className="points">
+  <li>
+    <strong>An in-memory <code>FArray</code></strong> — <code>xs.fuse</code>. The degenerate case: the
+    whole collection is one chunk, and you get the tight indexed loops shown all over the guide.
+  </li>
+  <li>
+    <strong>A chunked <code>Source[A]</code></strong> — <code>Source.fromIterator(it).fuse</code>,{" "}
+    <code>Source.unfold(z)(step)</code>, <code>Source.iterate(x)(f)</code>. Pull-based and{" "}
+    <em>chunk-granular</em>: one virtual <code>pullChunk</code> call hands the loop a whole unboxed
+    leaf (~4096 elements), so the hot path stays the same element loop — no per-element virtual call,
+    no boxed sentinel. Constant memory, and the driver wraps the loop in{" "}
+    <code>try/finally close()</code>, so a file or socket behind the source is released on exhaustion,
+    on short-circuit (<code>take</code>/<code>find</code> stopping early), and on exception alike.
+  </li>
+  <li>
+    <strong>A record-framed byte source</strong> (<code>ByteRecordSource</code>) —{" "}
+    <code>{"Json.ndjson[Rec](bytes).stream"}</code>: elements decoded straight out of raw bytes,
+    fields the pipeline doesn't read skipped at the byte level. Same stages, same terminals, same
+    optimizer — and the source itself is ordinary user-writable code, shown in full on{" "}
+    <Link to="/fusion/json">the JSON experiment page</Link>.
+  </li>
+</ul>
+
+The chunked contract is two methods. A source hands back leaves until it's done, and promises a chunk
+is only valid until the next pull — which is exactly the license an `InputStream`-backed source needs
+to reuse one read buffer forever:
+
+<Snippet name="source-trait" hideFull />
+
+So "fusion" is not an array trick. It's a compile-time streaming engine: a pipeline is a plan, a
+source is where the bytes or elements come from, and the terminal compiles plan × source into the one
+loop you'd have written by hand.
+
+<Related
+  links={[
+    { to: "/fusion/json", label: "The JSON experiment", desc: "A ByteRecordSource in full — the adapter you could write yourself." },
+    { to: "/fusion", label: "Using .fuse", desc: "The stages and terminals every source shares." },
+  ]}
+/>
