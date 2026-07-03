@@ -9,6 +9,10 @@ case class P2(a: Int, b: Int)
 case class Inner(x: Int, y: Int)
 case class Outer(inner: Inner, z: Int)
 case class Stat(id: Int, score: Int, weight: Int) // fused-optimizer fold-decomposition demo
+// start:guide-trade
+case class Trade(day: Int, amount: Double) // the guide's running record: a day-clustered trade log
+case class Summary(total: Double, n: Int, top: Double) // where the guide's aggTo example lands
+// stop:guide-trade
 case class Box[T](v: T, n: Int) // GENERIC case class (type-arg threading in mkProduct)
 case class Rec(base: Int, label: String, extra: Int) // mixed Int/String/Int fields
 object Cx: // top-level helpers (opaque method-call columns)
@@ -1769,6 +1773,24 @@ class FListTest:
     // 4 · unboxed group-reduce — Int keys and values stay unboxed in the hot loop (open-addressing map),
     //     boxing only at the final O(#keys) materialization
     Snapshots.check("fuse-guide-groupsum.snap", FuseDebug.show(ints.fuse.groupSum(_ % 3)(x => x)))
+    // 5-9 use a realistic record: a day-clustered trade log (Trade / Summary defined at top level).
+    val trades = FArray(Trade(1, 250.5), Trade(1, 99.0), Trade(2, 12.0), Trade(2, 41.5), Trade(3, 5.0))
+    // 5 · aggTo — several unboxed aggregates in one pass, landing in the user's own case class
+    Snapshots.check(
+      "fuse-guide-aggto.snap",
+      FuseDebug.show(trades.fuse.aggTo(Summary.apply)(Agg.sum(_.amount), Agg.count, Agg.max1(_.amount)))
+    )
+    // 6 · the adjacent family — input already clustered by key: one (key, acc) per run, O(1) memory
+    Snapshots.check("fuse-guide-foldadj.snap", FuseDebug.show(trades.fuse.foldAdjacentBy(_.day)(0.0)((acc, t) => acc + t.amount).run))
+    // 7 · groupAdjacentBy — each run's ROWS as an FArray, one run buffered at a time, short-circuits downstream
+    Snapshots.check("fuse-guide-groupadj.snap", FuseDebug.show(trades.fuse.groupAdjacentBy(_.day).map(_.length).take(2).run))
+    // 8 · nested fusion — a fused sub-pipeline per run; the run's rows are never materialized
+    Snapshots.check(
+      "fuse-guide-nested.snap",
+      FuseDebug.show(trades.fuse.groupAdjacentReduceBy(_.day)(_.map(_.amount).filter(_ > 20.0))(Agg.sum((x: Double) => x)).run)
+    )
+    // 9 · top-N via a bounded size-n heap — no full sort, no O(N) buffer
+    Snapshots.check("fuse-guide-topn.snap", FuseDebug.show(trades.fuse.topNBy(2)(_.amount)))
 
   // The five fused-JSON demos for the website's "Fused JSON" page — the SAME optimizer over byte ranges.
   // Mirrors farray.json.JsonDemo's pipelines (Event/Wide/Stats live there), regenerated to current codegen.

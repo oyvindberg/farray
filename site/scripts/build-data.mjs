@@ -327,6 +327,11 @@ function buildSnippets() {
     ["fuse-guide-find", "tests/snapshots/fuse-guide-find.snap"],
     ["fuse-guide-agg", "tests/snapshots/fuse-guide-agg.snap"],
     ["fuse-guide-groupsum", "tests/snapshots/fuse-guide-groupsum.snap"],
+    ["fuse-guide-aggto", "tests/snapshots/fuse-guide-aggto.snap"],
+    ["fuse-guide-foldadj", "tests/snapshots/fuse-guide-foldadj.snap"],
+    ["fuse-guide-groupadj", "tests/snapshots/fuse-guide-groupadj.snap"],
+    ["fuse-guide-nested", "tests/snapshots/fuse-guide-nested.snap"],
+    ["fuse-guide-topn", "tests/snapshots/fuse-guide-topn.snap"],
   ];
   for (const [name, file] of FUSE_GUIDE) {
     const raw = readFileSync(resolve(REPO, file), "utf8").replace(/^\n+|\n+$/g, "");
@@ -374,6 +379,11 @@ Json.ndjson[Event](bytes).stream.filter(_.amount > 150).map(_.category).toList`,
     "fuse-src-guide-find": "xs.fuse.map(_ * 3).find(_ > 100)",
     "fuse-src-guide-agg": "xs.fuse.filter(_ % 2 == 0).agg(Agg.sum(x => x), Agg.count, Agg.max1(x => x))",
     "fuse-src-guide-groupsum": "xs.fuse.groupSum(_ % 3)(x => x)",
+    "fuse-src-guide-aggto": "trades.fuse.aggTo(Summary.apply)(Agg.sum(_.amount), Agg.count, Agg.max1(_.amount))",
+    "fuse-src-guide-foldadj": "trades.fuse.foldAdjacentBy(_.day)(0.0)((acc, t) => acc + t.amount).run",
+    "fuse-src-guide-groupadj": "trades.fuse.groupAdjacentBy(_.day).map(_.length).take(2).run",
+    "fuse-src-guide-nested": "trades.fuse.groupAdjacentReduceBy(_.day)(_.map(_.amount).filter(_ > 20.0))(Agg.sum(x => x)).run",
+    "fuse-src-guide-topn": "trades.fuse.topNBy(2)(_.amount)",
   };
   for (const [name, code] of Object.entries(FUSE_OPT_SRC)) {
     out[name] = { name, file: "you write", lang: "scala", code, html: hl(code, "scala"), full: null, fullHtml: null };

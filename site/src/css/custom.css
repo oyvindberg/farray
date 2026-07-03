@@ -465,6 +465,19 @@ table.score .sc-total { font-weight: 700; }
 .ref-loading { font-family: var(--mono); color: var(--ink-faint); font-size: 13px; padding: 20px 0; }
 .ref-grid { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
 
+/* ----- dense API sheet — the "you already know these" list ----- */
+.api-sheet {
+  max-width: none; margin: 0 0 16px; padding: 13px 16px 11px;
+  background: var(--panel); border: 1px solid var(--hair); border-radius: 9px;
+  line-height: 2.05;
+}
+.api-sheet .api-label {
+  font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--ink-faint); margin-right: 12px;
+}
+.api-sheet code { font-size: 12px; white-space: nowrap; }
+.api-sheet .api-sep { color: var(--ink-faint); margin: 0 1px; }
+
 /* ----- related-pages cards ----- */
 .related { margin: 56px 0 8px; }
 .related__title {
