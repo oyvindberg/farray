@@ -1,14 +1,9 @@
 ((({
-  val src0: FBase = inline$base$i1[Stat]({
-    val $proxy: FArray$package {
-      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
-    } = FArray$package.$asInstanceOf$[FArray$package {
-      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
-    }]
+  val src0: FBase = {
     val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
 
-    (new Fuse[Int, FuseNative](xs$proxy): Fuse[Int, FuseNative])
-  }.map[Stat](((x: Int) => Stat.apply(x, x.*(100), x.*(1000))))).asInstanceOf[FBase]
+    (xs$proxy: ints)
+  }.asInstanceOf[FBase]
   val n0: Int = src0.length
   var acc: Int = 0
 

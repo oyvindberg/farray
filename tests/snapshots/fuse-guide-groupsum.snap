@@ -1,14 +1,9 @@
 ((({
-  val src0: FBase = inline$base$i1[Int]({
-    val $proxy: FArray$package {
-      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
-    } = FArray$package.$asInstanceOf$[FArray$package {
-      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
-    }]
+  val src0: FBase = {
     val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
 
-    (new Fuse[Int, FuseNative](xs$proxy): Fuse[Int, FuseNative])
-  }).asInstanceOf[FBase]
+    (xs$proxy: ints)
+  }.asInstanceOf[FBase]
   val n0: Int = src0.length
   val m: IntKeyMap = new IntKeyMap(16, true)
   val s: FBase = src0

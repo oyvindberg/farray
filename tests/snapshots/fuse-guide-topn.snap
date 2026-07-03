@@ -1,14 +1,9 @@
 ((({
-  val src0: FBase = inline$base$i1[Trade]({
-    val $proxy: FArray$package {
-      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
-    } = FArray$package.$asInstanceOf$[FArray$package {
-      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
-    }]
+  val src0: FBase = {
     val xs$proxy: trades & FArray[Trade] = trades.$asInstanceOf$[trades & FArray[Trade]]
 
-    (new Fuse[Trade, FuseNative](xs$proxy): Fuse[Trade, FuseNative])
-  }).asInstanceOf[FBase]
+    (xs$proxy: trades)
+  }.asInstanceOf[FBase]
   val n0: Int = src0.length
   val heap: DoubleTopNHeap = new DoubleTopNHeap(2, true)
   val s: FBase = src0

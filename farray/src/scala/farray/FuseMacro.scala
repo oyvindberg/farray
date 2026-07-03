@@ -281,10 +281,13 @@ object FuseMacro:
       * through that environment.
       */
     val chainEnv = scala.collection.mutable.HashMap.empty[Symbol, Term]
+    val chainBindings = scala.collection.mutable.ListBuffer.empty[ValDef] // stripping order = outer -> inner
     def recordBindings(stats: List[Statement]): Unit =
       stats.foreach:
-        case vd: ValDef if vd.rhs.isDefined => chainEnv(vd.symbol) = vd.rhs.get
-        case _                              => ()
+        case vd: ValDef if vd.rhs.isDefined =>
+          if !chainEnv.contains(vd.symbol) then chainBindings += vd
+          chainEnv(vd.symbol) = vd.rhs.get
+        case _ => ()
     def unwrapChain(t: Term): Term =
       t match
         case Inlined(_, bindings, e) =>
@@ -563,13 +566,30 @@ object FuseMacro:
         kTpe.asType match
           case '[kk] => '{ ${ a.asExprOf[kk] } == ${ b.asExprOf[kk] } }
 
-    // The RUNTIME source: read the value the `Fuse` wrapper already holds (`self.base`), NOT a re-splice of the
-    // raw source expression. The source has already been evaluated once when the `Fuse` was constructed; splicing
-    // the original (often INLINED, e.g. `FArray.fromIterable(...)`) tree a SECOND time emits a duplicate inlined
-    // block whose internal `$proxy` bindings collide with the first copy — yielding silently WRONG results (a
-    // hard-won finding: `filter.map.take` returned `[12,0]` instead of `[-12,12]` whenever the source wasn't a
-    // bare local val). `srcTerm` is still used below for COMPILE-TIME type analysis only. `Fuse.base: AnyRef`.
-    val selfBase: Expr[AnyRef] = '{ ${ self }.base }
+    // The RUNTIME source: the bare source term, with the chain bindings it (transitively) references hoisted
+    // into the same expression — emitted at EXACTLY ONE place per lowering (each terminal path splices it once).
+    // The receiver chain itself — the dead marker calls and their lambdas — is NOT emitted at all. Two hard-won
+    // rules hold this together: (1) never splice the source twice (an inlined `fromIterable(...)` source spliced
+    // as a second copy collided its `$proxy` bindings and returned silently WRONG results — the pre-husk-removal
+    // design existed to avoid that; now the single splice IS the only copy); (2) hoist binding DEFINITIONS and
+    // keep references pointing at them — substituting references with right-hand sides duplicates side effects
+    // (the `underlyingArgument` lesson: `it.next()` evaluated twice per element).
+    val selfBase: Expr[AnyRef] =
+      val needed = scala.collection.mutable.LinkedHashSet.empty[Symbol]
+      def markNeeded(t: Term): Unit =
+        new TreeTraverser {
+          override def traverseTree(tree: Tree)(owner: Symbol): Unit =
+            tree match
+              case id: Ident if chainEnv.contains(id.symbol) && !needed.contains(id.symbol) =>
+                needed += id.symbol
+                markNeeded(chainEnv(id.symbol))
+              case _ => ()
+            super.traverseTree(tree)(owner)
+        }.traverseTree(t)(Symbol.spliceOwner)
+      markNeeded(srcTerm)
+      val binds = chainBindings.filter(vd => needed.contains(vd.symbol)).toList
+      val term = if binds.isEmpty then srcTerm else Block(binds, srcTerm)
+      term.asExprOf[AnyRef]
 
     // A decomposed BYTE-RECORD source: the engine lowers it to a per-record projection scanner via the
     // `ByteRecordSource` contract (nextChunk/nextRecord/recordStart/recordEnd), dispatched through `RecordDecoder`.

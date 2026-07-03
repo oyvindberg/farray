@@ -181,6 +181,15 @@ function firstOuterBranch(code) {
 // The lowering now inlines the receiver chain INTO `src0`'s initializer (terminals are extension methods).
 // For the short view, collapse that nested block back to the opaque `(Fuse_this)` the pages always showed —
 // the verbatim tree stays one toggle away.
+
+// drop the opaque-type encoding noise from a short view: `x$proxy` -> `x`, and the compiler's
+// `.$asInstanceOf$[...]` casts (erased; zero bytecode). Same spirit as stripProxy, for the fuse goldens.
+function stripOpaqueNoise(s) {
+  return s
+    .replace(/\.\$asInstanceOf\$\[(?:[^\[\]]|\[[^\]]*\])*\]/g, "")
+    .replace(/(\w+)\$proxy/g, "$1");
+}
+
 function collapseBase(code) {
   const idx = code.indexOf("inline$base$i1[");
   if (idx < 0) return code;
@@ -233,7 +242,7 @@ function polish(s) {
 // The JSON scanners nest a few dead wrapper blocks; mirror JsonDemo.clean — drop the proxy/placeholder
 // preamble (down to the first real accumulator/statement), strip noise, balance, then polish.
 function cleanJson(code) {
-  code = collapseBase(code); // same treatment as the FArray snippets: the retained marker chain → (Fuse_this)
+  code = stripOpaqueNoise(collapseBase(code)); // same cleanup as the FArray snippets
   const lines = code.split("\n");
   const isPreamble = (l) => {
     const t = l.trim().replace(/`/g, "");
@@ -336,7 +345,7 @@ function buildSnippets() {
   for (const key of FUSE_OPT) {
     const file = `tests/snapshots/fuse-opt-${key}.snap`;
     const raw = readFileSync(resolve(REPO, file), "utf8").replace(/^\n+|\n+$/g, "");
-    const short = polish(collapseBase(fuseLoop(raw)));
+    const short = polish(stripOpaqueNoise(collapseBase(fuseLoop(raw))));
     out[`fuse-opt-${key}`] = {
       name: `fuse-opt-${key}`, file, lang: "scala",
       code: short, html: hl(short, "scala"), full: raw, fullHtml: hl(raw, "scala"), fullLabel: "full expansion",
@@ -358,7 +367,7 @@ function buildSnippets() {
   ];
   for (const [name, file] of FUSE_GUIDE) {
     const raw = readFileSync(resolve(REPO, file), "utf8").replace(/^\n+|\n+$/g, "");
-    const short = polish(collapseBase(fuseLoop(raw)));
+    const short = polish(stripOpaqueNoise(collapseBase(fuseLoop(raw))));
     out[name] = {
       name, file, lang: "scala",
       code: short, html: hl(short, "scala"), full: raw, fullHtml: hl(raw, "scala"), fullLabel: "full expansion",

@@ -1,14 +1,9 @@
 (({
-  val src0: FBase = inline$base$i1[Int]({
-    val $proxy: FArray$package {
-      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
-    } = FArray$package.$asInstanceOf$[FArray$package {
-      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
-    }]
+  val src0: FBase = {
     val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
 
-    (new Fuse[Int, FuseNative](xs$proxy): Fuse[Int, FuseNative])
-  }.map[Tuple3[Int, Int, Int]](((x: Int) => Tuple3.apply[Int, Int, Int](x.%(3), x.*(7), x.*(13)))).filter(((_$: Tuple3[Int, Int, Int]) => _$._1.==(0))).map[Int](((_$: Tuple3[Int, Int, Int]) => _$._2))).asInstanceOf[FBase]
+    (xs$proxy: ints)
+  }.asInstanceOf[FBase]
   val n0: Int = src0.length
   val cap: Int = n0
   val out: Array[Int] = new Array[Int](cap)

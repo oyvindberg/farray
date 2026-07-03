@@ -1,14 +1,9 @@
 (({
-  val src0: FBase = inline$base$i1[Int]({
-    val $proxy: FArray$package {
-      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
-    } = FArray$package.$asInstanceOf$[FArray$package {
-      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
-    }]
+  val src0: FBase = {
     val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
 
-    (new Fuse[Int, FuseNative](xs$proxy): Fuse[Int, FuseNative])
-  }.map[Tuple2[Int, Int]](((x: Int) => Tuple2.apply[Int, Int](x.*(x).+(1), x.*(x).+(2)))).map[Int](((t: Tuple2[Int, Int]) => t._1.+(t._2)))).asInstanceOf[FBase]
+    (xs$proxy: ints)
+  }.asInstanceOf[FBase]
   val n0: Int = src0.length
   val cap: Int = n0
   val out: Array[Int] = new Array[Int](cap)
@@ -18,7 +13,7 @@
     case l: IntArr =>
       (l.arr: Array[Int])
     case t =>
-      if (`t₂`.length.>=(64)) FArrayOps.materializeInt(`t₂`) else null
+      if (t.length.>=(64)) FArrayOps.materializeInt(t) else null
   }
   val len: Int = s.length
   var i: Int = 0

@@ -1,17 +1,9 @@
 (({
-  val src0: FBase = inline$base$i1[Int]({
-    val $proxy: FArray$package {
-      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
-    } = FArray$package.$asInstanceOf$[FArray$package {
-      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
-    }]
+  val src0: FBase = {
     val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
 
-    (new Fuse[Int, FuseNative](xs$proxy): Fuse[Int, FuseNative])
-  }.zip[Int](ys).collect[Int](((x$1: Tuple2[Int, Int]) => x$1 match {
-    case Tuple2(a, b) if a.+(b).%(2).==(0) =>
-      a.*(b)
-  })).map[Int](((_$: Int) => _$.+(1)))).asInstanceOf[FBase]
+    (xs$proxy: ints)
+  }.asInstanceOf[FBase]
   val n0: Int = src0.length
   var done: Boolean = false
   val zthat: FBase = ys.asInstanceOf[FBase]
@@ -21,7 +13,7 @@
   val out: Array[Int] = new Array[Int](cap)
   var o: Int = 0
   val s: FBase = src0
-  val `a₂`: Array[Int] = s match {
+  val a: Array[Int] = s match {
     case l: IntArr =>
       (l.arr: Array[Int])
     case _ =>
@@ -30,15 +22,15 @@
   val len: Int = s.length
   var i: Int = 0
   while (i.<(len).&&(done.unary_!)) {
-    val v: Int = if (`a₂`.ne(null)) `a₂`.apply(i) else FArrayOps.intAt(s, i)
+    val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
     if (c.>=(zn)) done = true else {
       val pos: Int = c
       c = c.+(1)
       val `v₂`: Int = FArrayOps.intAt(zthat, pos)
       new Tuple2$mcII$sp(v, `v₂`).asInstanceOf[Tuple2[Int, Int]] match {
-        case Tuple2(a, b) if `a₃`.+(`b₂`).%(2).==(0) =>
+        case Tuple2(a, b) if `a₂`.+(b).%(2).==(0) =>
           {
-            val `v₃`: Int = `a₃`.*(`b₂`)
+            val `v₃`: Int = `a₂`.*(b)
             val `v₄`: Int = `v₃`.+(1)
             out.update(o, `v₄`)
             o = o.+(1)

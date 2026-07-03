@@ -5,11 +5,11 @@
   var c: Int = 0
   var best: Double = null.asInstanceOf[Double]
   var seen: Boolean = false
-  val src: ByteRecordSource = inline$base$i1[Event]({
+  val src: ByteRecordSource = {
     val NdjsonSource_this: NdjsonSource[Event] = (new NdjsonSource[Event](`src₂`, 0, `src₂`.length): NdjsonSource[Event])
 
-    (new Fuse[Event, Ndjson](NdjsonSource_this): Fuse[Event, Ndjson])
-  }.filter(((_$: Event) => _$.status.==("active")))).asInstanceOf[ByteRecordSource]
+    (NdjsonSource_this: NdjsonSource[Event])
+  }.asInstanceOf[ByteRecordSource]
   val keyBytes: Array[Byte] = JsonScanner.internKey("amount")
   val `keyBytes₂`: Array[Byte] = JsonScanner.internKey("score")
   val `keyBytes₃`: Array[Byte] = JsonScanner.internKey("status")

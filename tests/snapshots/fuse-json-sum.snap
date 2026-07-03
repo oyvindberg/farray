@@ -4,11 +4,11 @@
   var acc: Double = 0.0
 
   ({
-    val src: ByteRecordSource = inline$base$i1[Double]({
+    val src: ByteRecordSource = {
       val NdjsonSource_this: NdjsonSource[Event] = (new NdjsonSource[Event](`src₂`, 0, `src₂`.length): NdjsonSource[Event])
 
-      (new Fuse[Event, Ndjson](NdjsonSource_this): Fuse[Event, Ndjson])
-    }.filter(((_$: Event) => _$.amount.>(150))).map[Double](((_$: Event) => _$.amount))).asInstanceOf[ByteRecordSource]
+      (NdjsonSource_this: NdjsonSource[Event])
+    }.asInstanceOf[ByteRecordSource]
     val keyBytes: Array[Byte] = JsonScanner.internKey("amount")
     try while (src.nextChunk().&&(true)) while (src.nextRecord().&&(true)) {
       val buf: Array[Byte] = src.buf

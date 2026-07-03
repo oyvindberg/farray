@@ -1,14 +1,9 @@
 (({
-  val src0: FBase = inline$base$i1[Int]({
-    val $proxy: FArray$package {
-      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
-    } = FArray$package.$asInstanceOf$[FArray$package {
-      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
-    }]
+  val src0: FBase = {
     val xs$proxy: trades & FArray[Trade] = trades.$asInstanceOf$[trades & FArray[Trade]]
 
-    (new Fuse[Trade, FuseNative](xs$proxy): Fuse[Trade, FuseNative])
-  }.groupAdjacentBy[Int](((_$: Trade) => _$.day)).map[Int](((_$: FArray[Trade]) => FArray.length[Trade](_$))).take(2)).asInstanceOf[FBase]
+    (xs$proxy: trades)
+  }.asInstanceOf[FBase]
   val n0: Int = src0.length
   var done: Boolean = false
   var curKey: Int = null.asInstanceOf[Int]

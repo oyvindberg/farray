@@ -1,14 +1,9 @@
 (({
-  val src0: FBase = inline$base$i1[Tuple2[Int, Double]]({
-    val $proxy: FArray$package {
-      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
-    } = FArray$package.$asInstanceOf$[FArray$package {
-      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
-    }]
+  val src0: FBase = {
     val xs$proxy: trades & FArray[Trade] = trades.$asInstanceOf$[trades & FArray[Trade]]
 
-    (new Fuse[Trade, FuseNative](xs$proxy): Fuse[Trade, FuseNative])
-  }.foldAdjacentBy[Int, Double](((_$: Trade) => _$.day))(0.0)(((acc: Double, t: Trade) => acc.+(t.amount)))).asInstanceOf[FBase]
+    (xs$proxy: trades)
+  }.asInstanceOf[FBase]
   val n0: Int = src0.length
   var curKey: Int = null.asInstanceOf[Int]
   var acc0: Double = null.asInstanceOf[Double]
@@ -22,7 +17,7 @@
     case l: RefArr =>
       (l.arr: Array[Object])
     case t =>
-      if (`t₂`.length.>=(64)) FArrayOps.materializeRef(`t₂`) else null
+      if (t.length.>=(64)) FArrayOps.materializeRef(t) else null
   }
   val len: Int = s.length
   var i: Int = 0
@@ -34,8 +29,8 @@
       acc0 = seed0.+(v.amount)
       started = true
     } else if (`v₂`.==(curKey)) acc0 = {
-      val `acc₂`: Double = acc0
-      `acc₂`.+(v.amount)
+      val acc: Double = acc0
+      acc.+(v.amount)
     } else {
       out.update(o, new Tuple2$mcID$sp(curKey, acc0).asInstanceOf[Tuple2[Int, Double]].asInstanceOf[Object])
       o = o.+(1)

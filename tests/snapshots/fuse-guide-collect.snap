@@ -1,17 +1,9 @@
 (({
-  val src0: FBase = inline$base$i1[Int]({
-    val $proxy: FArray$package {
-      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
-    } = FArray$package.$asInstanceOf$[FArray$package {
-      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
-    }]
+  val src0: FBase = {
     val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
 
-    (new Fuse[Int, FuseNative](xs$proxy): Fuse[Int, FuseNative])
-  }.map[Int](((_$: Int) => _$.+(1))).collect[Int](((x$1: Int) => x$1 match {
-    case x if x.%(2).==(0) =>
-      x.*(2)
-  }))).asInstanceOf[FBase]
+    (xs$proxy: ints)
+  }.asInstanceOf[FBase]
   val n0: Int = src0.length
   val cap: Int = n0
   val out: Array[Int] = new Array[Int](cap)
@@ -29,9 +21,9 @@
     val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
     val `v₂`: Int = v.+(1)
     `v₂` match {
-      case x if `x₂`.%(2).==(0) =>
+      case x if x.%(2).==(0) =>
         {
-          val `v₃`: Int = `x₂`.*(2)
+          val `v₃`: Int = x.*(2)
           out.update(o, `v₃`)
           o = o.+(1)
         }

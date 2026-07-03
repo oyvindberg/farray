@@ -4,11 +4,11 @@
   var c: Int = 0
 
   ({
-    val src: ByteRecordSource = inline$base$i1[String]({
+    val src: ByteRecordSource = {
       val NdjsonSource_this: NdjsonSource[Wide] = (new NdjsonSource[Wide](wsrc, 0, wsrc.length): NdjsonSource[Wide])
 
-      (new Fuse[Wide, Ndjson](NdjsonSource_this): Fuse[Wide, Ndjson])
-    }.filter(((_$: Wide) => _$.key.>(90))).map[String](((_$: Wide) => _$.payload))).asInstanceOf[ByteRecordSource]
+      (NdjsonSource_this: NdjsonSource[Wide])
+    }.asInstanceOf[ByteRecordSource]
     val keyBytes: Array[Byte] = JsonScanner.internKey("key")
     val `keyBytes₂`: Array[Byte] = JsonScanner.internKey("payload")
     try while (src.nextChunk().&&(true)) while (src.nextRecord().&&(true)) {

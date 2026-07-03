@@ -1,15 +1,9 @@
 (({
-  val src0: FBase = inline$base$i1[Tuple2[Int, Double]]({
-    val $proxy: FArray$package {
-      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
-    } = FArray$package.$asInstanceOf$[FArray$package {
-      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
-    }]
+  val src0: FBase = {
     val xs$proxy: trades & FArray[Trade] = trades.$asInstanceOf$[trades & FArray[Trade]]
-    val Fuse_this: Fuse[Trade, FuseNative] = (new Fuse[Trade, FuseNative](xs$proxy): Fuse[Trade, FuseNative])
 
-    (Fuse_this.groupAdjacentReduceByMarker[Int, Double, Double](((_$: Trade) => _$.day))(((_$: Fuse[Trade, FuseNative]) => _$.map[Double](((_$: Trade) => _$.amount)).filter(((_$: Double) => _$.>(20.0)))))(AggRaw.sum[Double, Double](((x: Double) => x))(DoubleIsFractional)): Fuse[Tuple2[Int, Double], FuseNative])
-  }).asInstanceOf[FBase]
+    (xs$proxy: trades)
+  }.asInstanceOf[FBase]
   val n0: Int = src0.length
   var curKey: Int = null.asInstanceOf[Int]
   var started: Boolean = false
