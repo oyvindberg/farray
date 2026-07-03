@@ -233,6 +233,7 @@ function polish(s) {
 // The JSON scanners nest a few dead wrapper blocks; mirror JsonDemo.clean — drop the proxy/placeholder
 // preamble (down to the first real accumulator/statement), strip noise, balance, then polish.
 function cleanJson(code) {
+  code = collapseBase(code); // same treatment as the FArray snippets: the retained marker chain → (Fuse_this)
   const lines = code.split("\n");
   const isPreamble = (l) => {
     const t = l.trim().replace(/`/g, "");
