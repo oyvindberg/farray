@@ -49,9 +49,11 @@ inline def += (elem: A): FBuilder[A] = { builderAddImpl[A](b, elem); b }
 //                                        summonFrom[${K}Repr[A]] → IntGroup → store an int
 ```
 
-Every other method (`++=`, `sizeHint`, `clear`, `result`) is a plain virtual call on the base — none
-of them touch a primitive element type, so none can box. `result()` hands the internal buffer to a
-leaf under the house slack rules — no defensive copy — and `clear()` keeps the array for cheap reuse.
+Every other method (`++=`, `sizeHint`, `result`) is a plain virtual call on the base — none of them
+touch a primitive element type, so none can box. `result()` hands the internal buffer to a leaf under
+the house slack rules — no defensive copy — and, because appends only ever write past the end, that
+shared buffer is safe: call `result()` as often as you like and keep filling after; every snapshot
+stays valid (there's no `clear()`, the one op that could break it).
 
 ## The API
 
@@ -62,7 +64,6 @@ b += 2
 b ++= FArray(3, 4, 5)      // bulk: leaves arraycopy'd, trees materialized once
 b.sizeHint(1024)           // pre-grow the backing array
 val fa = b.result()        // slack-wrap into a leaf, no defensive copy
-b.clear()                  // reset to empty, keep the array
 ```
 
 Plus `addOne`/`addAll` aliases, `length`/`knownSize`/`isEmpty`/`nonEmpty`, and — for stdlib interop —
@@ -100,9 +101,13 @@ builder has `sizeHint` too and speeds up the same way, which is exactly why the 
 everyone unsized. Hinting just lands FArray closer to the `tabulate` known-N ceiling; reach for it
 when you can, and when you can't, the doubling growth is the standard amortized-O(1) append.
 
-Two honest edges: `result()` hands back the *shared* buffer — the contract is result-then-stop (or
-`clear()` and rebuild), not keep-appending — and tiny reference builds (≈10 elements) are the one
-spot a warm `ArrayBuffer` edges you.
+One honest edge remains — tiny reference builds (≈10 elements), where a warm `ArrayBuffer` edges you.
+But the usual builder footgun is *absent by construction*: `result()` hands back the shared buffer
+with no copy, yet you can call it as often as you like and keep appending afterward, and every
+snapshot stays valid. Appends only ever write past the current end, and a regrow reallocates a fresh
+array — so a committed prefix is never overwritten. There is deliberately no `clear()`: it is the one
+operation that *could* clobber a shared snapshot, so it doesn't exist. Start over with a fresh
+`FArray.newBuilder`.
 
 <Related
   links={[

@@ -3,7 +3,7 @@ package farray
 import org.junit.Test
 
 // Parity of FBuilder against the stdlib List builder across every element kind, plus the empty / size-1
-// boundaries, ++= (FArray fast path incl. trees), sizeHint, clear-and-reuse, and the boxing asScala adapter.
+// boundaries, ++= (FArray fast path incl. trees), sizeHint, repeatable result() + append-after-result safety, and the boxing asScala adapter.
 class FBuilderTest:
 
   // NB: `toList` is inline+kind-dispatched, so it can't be called on an abstract A; the boxed `toSeq`
@@ -89,15 +89,24 @@ class FBuilderTest:
     while i < 300 do { b += i; i += 1 } // forces a regrow past the hint too
     check(b.result(), (0 until 300).toList)
 
-  // ---- clear then reuse ----
-  @Test def clear_reuse: Unit =
+  // ---- result() is repeatable and safe to keep appending after (no clear() to corrupt a shared prefix) ----
+  @Test def result_repeatable_and_append_safe: Unit =
     val b = FArray.newBuilder[Int]
     b += 1; b += 2; b += 3
-    assert(b.length == 3)
-    b.clear()
-    assert(b.length == 0 && b.isEmpty)
-    b += 9; b += 8
-    check(b.result(), List(9, 8))
+    val fa1 = b.result() // shares the buffer at length 3
+    b += 4; b += 5 // monotonic appends past length 3
+    val fa2 = b.result() // shares the buffer at length 5
+    check(fa1, List(1, 2, 3)) // fa1 must be UNCHANGED by the later appends
+    check(fa2, List(1, 2, 3, 4, 5))
+
+  @Test def result_survives_regrow_after_snapshot: Unit =
+    // snapshot small, then append enough to force a regrow (16 -> …): the snapshot keeps the old array
+    val b = FArray.newBuilder[Int]
+    for i <- 0 until 8 do b += i
+    val snap = b.result()
+    for i <- 8 until 5000 do b += i // regrows several times
+    check(snap, (0 until 8).toList) // still intact
+    assert(b.result().length == 5000)
 
   // ---- knownSize / nonEmpty ----
   @Test def size_accessors: Unit =

@@ -40,9 +40,6 @@ object FBuilder:
     /** grow the backing array so at least `n` elements fit without a further regrow. */
     inline def sizeHint(n: Int): Unit = b.sizeHint(n)
 
-    /** reset to empty, KEEPING the backing array (so a reused builder pays no re-alloc). */
-    inline def clear(): Unit = b.clear()
-
     /** number of elements accumulated so far. */
     inline def length: Int = b.knownSize
 
@@ -51,7 +48,9 @@ object FBuilder:
     inline def nonEmpty: Boolean = b.knownSize > 0
 
     /** hand the accumulated buffer to an `FArray` leaf WITHOUT a defensive copy — the house slack rule (`trimLeaf`: keep the buffer verbatim unless less than a
-      * quarter full, else one `Arrays.copyOf`). After `result()` the builder still owns the array; keep filling only after a [[clear]].
+      * quarter full, else one `Arrays.copyOf`). SAFE to call repeatedly, and safe to keep appending afterwards: appends are monotonic (they only ever write at
+      * index `size`, never below), and a regrow reallocates a fresh array — so every `FArray` a prior `result()` handed out keeps reading an unchanged prefix.
+      * No `clear()` exists precisely because it is the one operation that could clobber such a shared prefix; make a fresh `FArray.newBuilder` to start over.
       */
     inline def result(): FArray[A] = b.result.asInstanceOf[FArray[A]]
 
