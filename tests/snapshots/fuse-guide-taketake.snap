@@ -25,11 +25,11 @@
   val len: Int = s.length
   var i: Int = 0
   while (i.<(len).&&(done.unary_!)) {
-    val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+    val elem: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
     val cv: Int = c
     if (cv.>=(lim)) done = true else {
-      val `v₂`: Int = v.*(2)
-      out.update(o, `v₂`)
+      val mapped: Int = elem.*(2)
+      out.update(o, mapped)
       o = o.+(1)
       c = c.+(1)
       if (cv.+(1).>=(lim)) done = true else ()

@@ -7,8 +7,8 @@ package farray
   * off the AST, peel the stage list + the (inlined) lambdas, and emit the fused loop. The `Fuse` wrapper itself is elided by the macro — only `xs` and the
   * lambda bodies survive into the generated code.
   *
-  * `S` is the pipeline's SOURCE SHAPE — a phantom type naming where elements come from, e.g. [[Chunks]] (an in-memory `FArray` or a chunked [[Source]]) or
-  * a decoder module's shape (`farray.json.Ndjson`). The stage markers are shape-generic; the TERMINALS are not members of this class at all. They are inline
+  * `S` is the pipeline's SOURCE SHAPE — a phantom type naming where elements come from, e.g. [[Chunks]] (an in-memory `FArray` or a chunked [[Source]]) or a
+  * decoder module's shape (`farray.json.Ndjson`). The stage markers are shape-generic; the TERMINALS are not members of this class at all. They are inline
   * extension methods provided by the shape's [[FuseLowering]] given (found in the shape companion's implicit scope), so each source shape brings exactly the
   * terminals it supports, lowered by its own macro: an unsupported terminal is "not a member", at compile time, and a decoder module plugs in as an ordinary
   * typeclass instance — no registry, no reflection.

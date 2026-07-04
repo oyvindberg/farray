@@ -19,15 +19,15 @@
   val len: Int = s.length
   var i: Int = 0
   while (i.<(len)) {
-    val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
-    val `v₂`: Int = v.%(2)
-    val `v₃`: Boolean = `v₂`.==(0)
-    if (`v₃`) {
-      acc = acc.+(v)
+    val x: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+    val v: Int = x.%(2)
+    val keep: Boolean = v.==(0)
+    if (keep) {
+      acc = acc.+(x)
       c = c.+(1)
-      val kk: Int = v
-      if (seen.unary_!.||(kk.>(best))) {
-        best = kk
+      val key: Int = x
+      if (seen.unary_!.||(key.>(best))) {
+        best = key
         seen = true
       } else ()
       ()

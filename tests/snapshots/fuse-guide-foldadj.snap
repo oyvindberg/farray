@@ -10,7 +10,8 @@
   var started: Boolean = false
   val seed0: Double = 0.0
   val cap: Int = n0
-  val out: Array[Object] = new Array[Object](cap)
+  var out: Array[Object] = null
+  var single: Object = null
   var o: Int = 0
   val s: FBase = src0
   val a: Array[Object] = s match {
@@ -22,26 +23,40 @@
   val len: Int = s.length
   var i: Int = 0
   while (i.<(len)) {
-    val v: Trade = if (a.ne(null)) a.apply(i).asInstanceOf[Trade] else FArrayOps.refAt(s, i).asInstanceOf[Trade]
-    val `v₂`: Int = v.day
+    val elem: Trade = if (a.ne(null)) a.apply(i).asInstanceOf[Trade] else FArrayOps.refAt(s, i).asInstanceOf[Trade]
+    val day: Int = elem.day
     if (started.unary_!) {
-      curKey = `v₂`
-      acc0 = seed0.+(v.amount)
+      curKey = day
+      acc0 = seed0.+(elem.amount)
       started = true
-    } else if (`v₂`.==(curKey)) acc0 = {
+    } else if (day.==(curKey)) acc0 = {
       val acc: Double = acc0
-      acc.+(v.amount)
+      acc.+(elem.amount)
     } else {
-      out.update(o, new Tuple2$mcID$sp(curKey, acc0).asInstanceOf[Tuple2[Int, Double]].asInstanceOf[Object])
+      val _v: Object = new Tuple2$mcID$sp(curKey, acc0).asInstanceOf[Tuple2[Int, Double]].asInstanceOf[Object]
+      if (o.==(0)) single = _v else {
+        if (out.==(null)) {
+          out = new Array[Object](cap)
+          out.update(0, single)
+        } else ()
+        out.update(o, _v)
+      }
       o = o.+(1)
-      curKey = `v₂`
-      acc0 = seed0.+(v.amount)
+      curKey = day
+      acc0 = seed0.+(elem.amount)
     }
     i = i.+(1)
   }
   if (started) {
-    out.update(o, new Tuple2$mcID$sp(curKey, acc0).asInstanceOf[Tuple2[Int, Double]].asInstanceOf[Object])
+    val `_v₂`: Object = new Tuple2$mcID$sp(curKey, acc0).asInstanceOf[Tuple2[Int, Double]].asInstanceOf[Object]
+    if (o.==(0)) single = `_v₂` else {
+      if (out.==(null)) {
+        out = new Array[Object](cap)
+        out.update(0, single)
+      } else ()
+      out.update(o, `_v₂`)
+    }
     o = o.+(1)
   } else ()
-  if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new RefOne(out.apply(0)) else if (o.==(cap)) new RefArr(out, o) else new RefArr(java.util.Arrays.copyOf[Object](out, o), o)
+  if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new RefOne(single) else if (o.==(cap)) new RefArr(out, o) else new RefArr(java.util.Arrays.copyOf[Object](out, o), o)
 }.asInstanceOf[FArray[Tuple2[Int, Double]]]: FArray[Tuple2[Int, Double]]): FArray[Tuple2[Int, Double]])

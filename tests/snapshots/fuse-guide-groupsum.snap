@@ -16,11 +16,11 @@
   val len: Int = s.length
   var i: Int = 0
   while (i.<(len)) {
-    val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
-    val slot: Int = m.probe(v.%(3))
-    if (m.wasNew()) m.setValuePrim(slot, v.toLong) else m.setValuePrim(slot, {
-      val x: Int = m.getValuePrim(slot).toInt
-      IntIsIntegral.plus(x, v)
+    val x: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+    val slot: Int = m.probe(x.%(3))
+    if (m.wasNew()) m.setValuePrim(slot, x.toLong) else m.setValuePrim(slot, {
+      val `x₂`: Int = m.getValuePrim(slot).toInt
+      IntIsIntegral.plus(`x₂`, x)
     }.toLong)
     i = i.+(1)
   }

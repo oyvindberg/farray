@@ -18,13 +18,13 @@
   val len: Int = s.length
   var i: Int = 0
   while (i.<(len)) {
-    val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
-    val `v₂`: Int = v.+(1)
-    `v₂` match {
+    val elem: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+    val mapped: Int = elem.+(1)
+    mapped match {
       case x if x.%(2).==(0) =>
+        val kept: Int = x.*(2)
         {
-          val `v₃`: Int = x.*(2)
-          out.update(o, `v₃`)
+          out.update(o, kept)
           o = o.+(1)
         }
       case _ =>

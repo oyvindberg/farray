@@ -29,23 +29,23 @@
   val len: Int = s.length
   var i: Int = 0
   while (i.<(len).&&(done.unary_!)) {
-    val v: Trade = if (a.ne(null)) a.apply(i).asInstanceOf[Trade] else FArrayOps.refAt(s, i).asInstanceOf[Trade]
-    val `v₂`: Int = v.day
+    val elem: Trade = if (a.ne(null)) a.apply(i).asInstanceOf[Trade] else FArrayOps.refAt(s, i).asInstanceOf[Trade]
+    val day: Int = elem.day
     if (started.unary_!) {
-      curKey = `v₂`
+      curKey = day
       bn = 0
       if (bn.>=(buf.length)) buf = java.util.Arrays.copyOf[Object](buf, buf.length.*(2)) else ()
-      buf.update(bn, v.asInstanceOf[Object])
+      buf.update(bn, elem.asInstanceOf[Object])
       bn = bn.+(1)
       started = true
-    } else if (`v₂`.==(curKey)) {
+    } else if (day.==(curKey)) {
       if (bn.>=(buf.length)) buf = java.util.Arrays.copyOf[Object](buf, buf.length.*(2)) else ()
-      buf.update(bn, v.asInstanceOf[Object])
+      buf.update(bn, elem.asInstanceOf[Object])
       bn = bn.+(1)
     } else {
       val cv: Int = c
       if (cv.>=(lim)) done = true else {
-        val `v₃`: Int = FArray.length[Trade]({
+        val mapped: Int = FArray.length[Trade]({
           val $proxy: FArray$package {
             type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
           } = FArray$package.$asInstanceOf$[FArray$package {
@@ -60,15 +60,15 @@
             if (_l.==(0)) Empty.INSTANCE else if (_l.==(1)) new RefOne(as$proxy.apply(0)) else new RefArr(as$proxy, _l)
           }: FBase): FArray[Trade])
         }.$asInstanceOf$[FArray[Trade]])
-        out.update(o, `v₃`)
+        out.update(o, mapped)
         o = o.+(1)
         c = c.+(1)
         if (cv.+(1).>=(lim)) done = true else ()
       }
-      curKey = `v₂`
+      curKey = day
       bn = 0
       if (bn.>=(buf.length)) buf = java.util.Arrays.copyOf[Object](buf, buf.length.*(2)) else ()
-      buf.update(bn, v.asInstanceOf[Object])
+      buf.update(bn, elem.asInstanceOf[Object])
       bn = bn.+(1)
     }
     i = i.+(1)
@@ -76,7 +76,7 @@
   if (done.unary_!) if (started) {
     val `cv₂`: Int = c
     if (`cv₂`.>=(lim)) done = true else {
-      val `v₄`: Int = FArray.length[Trade]({
+      val `mapped₂`: Int = FArray.length[Trade]({
         val $proxy: FArray$package {
           type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
         } = FArray$package.$asInstanceOf$[FArray$package {
@@ -91,7 +91,7 @@
           if (`_l₂`.==(0)) Empty.INSTANCE else if (`_l₂`.==(1)) new RefOne(as$proxy.apply(0)) else new RefArr(as$proxy, `_l₂`)
         }: FBase): FArray[Trade])
       }.$asInstanceOf$[FArray[Trade]])
-      out.update(o, `v₄`)
+      out.update(o, `mapped₂`)
       o = o.+(1)
       c = c.+(1)
       if (`cv₂`.+(1).>=(lim)) done = true else ()

@@ -17,10 +17,10 @@
   val len: Int = s.length
   var i: Int = 0
   while (i.<(len).&&(done.unary_!)) {
-    val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
-    val `v₂`: Int = v.*(3)
-    if (`v₂`.>(100)) {
-      res = Some.apply[Any](`v₂`)
+    val elem: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+    val mapped: Int = elem.*(3)
+    if (mapped.>(100)) {
+      res = Some.apply[Any](mapped)
       done = true
     } else ()
     i = i.+(1)

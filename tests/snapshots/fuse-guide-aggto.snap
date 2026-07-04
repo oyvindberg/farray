@@ -19,14 +19,14 @@
   val len: Int = s.length
   var i: Int = 0
   while (i.<(len)) {
-    val v: Trade = if (a.ne(null)) a.apply(i).asInstanceOf[Trade] else FArrayOps.refAt(s, i).asInstanceOf[Trade]
-    val `v₂`: Double = v.amount
-    acc = acc.+(`v₂`)
+    val elem: Trade = if (a.ne(null)) a.apply(i).asInstanceOf[Trade] else FArrayOps.refAt(s, i).asInstanceOf[Trade]
+    val amount: Double = elem.amount
+    acc = acc.+(amount)
     c = c.+(1)
-    val `v₃`: Double = v.amount
-    val kk: Double = `v₃`
-    if (seen.unary_!.||(kk.>(best))) {
-      best = kk
+    val `amount₂`: Double = elem.amount
+    val `amount₃`: Double = `amount₂`
+    if (seen.unary_!.||(`amount₃`.>(best))) {
+      best = `amount₃`
       seen = true
     } else ()
     i = i.+(1)

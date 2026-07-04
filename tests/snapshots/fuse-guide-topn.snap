@@ -16,9 +16,9 @@
   val len: Int = s.length
   var i: Int = 0
   while (i.<(len)) {
-    val v: Trade = if (a.ne(null)) a.apply(i).asInstanceOf[Trade] else FArrayOps.refAt(s, i).asInstanceOf[Trade]
-    val `v₂`: Double = v.amount
-    heap.offer(v.asInstanceOf[Object], `v₂`)
+    val elem: Trade = if (a.ne(null)) a.apply(i).asInstanceOf[Trade] else FArrayOps.refAt(s, i).asInstanceOf[Trade]
+    val amount: Double = elem.amount
+    heap.offer(elem.asInstanceOf[Object], amount)
     i = i.+(1)
   }
 

@@ -396,17 +396,17 @@ function buildSnippets() {
   }
   // the "you write" pipeline for each demo (verbatim from the snapshot tests / JsonDemo).
   const FUSE_OPT_SRC = {
-    "fuse-src-oneloop": "xs.fuse.map(_ + 1).filter(_ % 2 == 0).map(_ * 2).run",
-    "fuse-src-dce": "xs.fuse.map(x => (x % 3, x * 7, x * 13)).filter(_._1 == 0).map(_._2).run",
-    "fuse-src-sink": "xs.fuse.map(x => (x % 2, expensive(x))).filter(_._1 == 0).map(_._2).sum",
+    "fuse-src-oneloop": "xs.fuse.map(x => x + 1).filter(y => y % 2 == 0).map(z => z * 2).run",
+    "fuse-src-dce": "xs.fuse.map(x => (x % 3, x * 7, x * 13)).filter(t => t._1 == 0).map(t => t._2).run",
+    "fuse-src-sink": "xs.fuse.map(x => (x % 2, expensive(x))).filter(t => t._1 == 0).map(t => t._2).sum",
     "fuse-src-cse": "xs.fuse.map(x => (x*x + 1, x*x + 2)).map(t => t._1 + t._2).run",
     "fuse-src-fold": "xs.fuse.map(x => Stat(x, x * 100, x * 1000)).foldLeft(0)((acc, s) => acc + s.score)",
-    "fuse-src-jsum": "Json.ndjson[Event](src).stream.filter(_.amount > 150).map(_.amount).foldLeft(0.0)(_ + _)",
-    "fuse-src-jcat": "Json.ndjson[Event](src).stream.filter(_.amount > 150).map(_.category).toList",
-    "fuse-src-jcount": 'Json.ndjson[Event](src).stream.filter(_.status == "active").map(_.category).count',
-    "fuse-src-jwide": "Json.ndjson[Wide](src).stream.filter(_.key > 90).map(_.payload).count",
+    "fuse-src-jsum": "Json.ndjson[Event](src).stream.filter(e => e.amount > 150).map(e => e.amount).foldLeft(0.0)((acc, amount) => acc + amount)",
+    "fuse-src-jcat": "Json.ndjson[Event](src).stream.filter(e => e.amount > 150).map(e => e.category).toList",
+    "fuse-src-jcount": 'Json.ndjson[Event](src).stream.filter(e => e.status == "active").map(e => e.category).count',
+    "fuse-src-jwide": "Json.ndjson[Wide](src).stream.filter(w => w.key > 90).map(w => w.payload).count",
     "fuse-src-jagg":
-      'Json.ndjson[Event](src).stream.filter(_.status == "active")\n  .aggTo(Stats.apply)(Agg.sum(_.amount), Agg.count, Agg.max1(_.score))',
+      'Json.ndjson[Event](src).stream.filter(e => e.status == "active")\n  .aggTo(Stats.apply)(Agg.sum(e => e.amount), Agg.count, Agg.max1(e => e.score))',
     "fuse-src-jentry":
       `// three ways in — all end at .stream, which hands you a Fuse[Event]:
 Json.ndjson[Event](bytes).stream                   // an in-memory NDJSON byte buffer
@@ -416,7 +416,7 @@ Json.ndjsonStream[Event](inputStream).stream       // any InputStream — consta
 // from here it's the pipeline you already know:
 Json.ndjson[Event](bytes).stream.filter(_.amount > 150).map(_.category).toList`,
     "fuse-src-guide-collect": "xs.fuse.map(_ + 1).collect { case x if x % 2 == 0 => x * 2 }.run",
-    "fuse-src-guide-zipcollect": "xs.fuse.zip(ys).collect { case (a, b) if (a + b) % 2 == 0 => a * b }.map(_ + 1).run",
+    "fuse-src-guide-zipcollect": "xs.fuse.zip(ys).collect { case (a, b) if (a + b) % 2 == 0 => a * b }.map(r => r + 1).run",
     "fuse-src-guide-find": "xs.fuse.map(_ * 3).find(_ > 100)",
     "fuse-src-guide-agg": "xs.fuse.filter(_ % 2 == 0).agg(Agg.sum(x => x), Agg.count, Agg.max1(x => x))",
     "fuse-src-guide-groupsum": "xs.fuse.groupSum(_ % 3)(x => x)",
