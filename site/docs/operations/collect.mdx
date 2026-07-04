@@ -62,7 +62,7 @@ The fine print, stated plainly:
 <BenchPair
   int="CollectIntBenchmark"
   str="CollectStrBenchmark"
-  caption="collect { case x if x % 2 == 0 => x * 2 } on Int, and the string equivalent. On Int the pick-apart flips the result: the PF-object version measured 0.65× of the field's best; the split version wins against everyone at every size — 1.2–1.9× over the chunk libraries and IArray, ~2.8× over List. On String there was never boxing to remove, and the honest ledger shows it: ~0.9× of fs2.Chunk's collect — a storage-path gap on the output buffer, on the improvement list, stated rather than hidden."
+  caption="collect { case x if x % 2 == 0 => x * 2 } on Int, and the string equivalent. On Int the pick-apart flips the result: the PF-object version measured 0.65× of the field's best; the split version ties the field at the trivial sizes (n ≤ 1 short-circuits to Empty/One with no buffer) and wins 1.2–2.4× over the chunk libraries and IArray from 10 elements up, ~2.8× over List. On String there was never boxing to remove, and the honest ledger shows it: ~0.9× of fs2.Chunk's collect — a storage-path gap on the output buffer, on the improvement list, stated rather than hidden."
 />
 
 The same idea one level up: in a *fused* chain, `collect`'s cases splice straight into the pipeline

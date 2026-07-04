@@ -2597,7 +2597,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       )}
        |  inline def partitionImpl[A](xs: FBase)(inline p: A => Boolean): scala.Tuple2[FBase, FBase] = if (xs.length == 0) emptyPair else $partition
        |  inline def collectImpl[A, B](xs: FBase)(pf: PartialFunction[A, B]): FBase = $collect
-       |  inline def collectPickImpl[A, B](xs: FBase)(inline p: A => Boolean, inline f: A => B): FBase = $collectPick
+       |  inline def collectPickImpl[A, B](xs: FBase)(inline p: A => Boolean, inline f: A => B): FBase = { val n = xs.length; if (n == 0) Empty.INSTANCE else if (n == 1) { val a = applyAtImpl[A](xs, 0); if (p(a)) fromValues1[B](f(a)) else Empty.INSTANCE } else $collectPick }
        |  inline def partitionMapImpl[A, A1, A2](xs: FBase)(inline f: A => Either[A1, A2]): scala.Tuple2[FBase, FBase] = $partitionMap
        |  inline def containsImpl[A](xs: FBase, elem: A): Boolean = { val length = xs.length; $contains }
        |  inline def mapConserveImpl[A](xs: FBase)(inline f: A => A): FBase = { val n = xs.length; if (n == 0) xs else if (n == 1) { val e = applyAtImpl[A](xs, 0); val r = f(e); if (r.asInstanceOf[AnyRef] eq e.asInstanceOf[AnyRef]) xs else fromValues1[A](r) } else $mapConserve }
