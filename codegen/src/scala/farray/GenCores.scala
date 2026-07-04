@@ -1341,6 +1341,59 @@ object GenCores extends BleepCodegenScript("GenCores") {
       }
       ee.result
     }
+    // SHARED LEAF METHODS for COLLECT (the picked-apart PartialFunction), one per Build (I, O) pair —
+    // filterLeaf's guarded-append shape with mapLeaf's transform on the KEPT write: allocate ONE
+    // max-size `out` of length n, `if (p) { out(o) = f(e); o += 1 }`, canonicalise via trimLeaf${O}
+    // (slack unless kept < n/4 — same memory cap as filter). The keep is BRANCHY by necessity for
+    // every kind: `f` derives from a case body that is UNDEFINED off the pattern (running it on a
+    // rejected element is wrong, not just wasted), so filter's branchless prim trick does not apply.
+    // A genuine TREE routes through the ${O}Group growable fallback (trees are the rare input here —
+    // elementwise ops hand collect flat leaves). NO identity reuse on o == n (elements transformed).
+    val collectLeafMethods = {
+      val ee = new Emit("  ")
+      def emit(ki: Kind, ko: Kind): Unit = {
+        val KI = ki.name
+        val KO = ko.name
+        val tpClause = if !ko.isPrim then "[RO <: AnyRef]" else ""
+        val fnScala = "Traversers." + buildFnType(ki, ko, "RO").replace('<', '[').replace('>', ']')
+        def keepWrite = if ko.isPrim then "out(o) = f.apply(e)" else "out(o) = f.apply(e).asInstanceOf[Object]"
+        val oneArg = if ko.isPrim then "f.apply(one.elem)" else "f.apply(one.elem).asInstanceOf[Object]"
+        def loopBody(read: String => String): Unit = {
+          ee.line(s"val out = new Array[${ko.arr}](n)")
+          ee.line("var i = 0")
+          ee.line("var o = 0")
+          ee.open("while (i < n)")
+          ee.line(s"val e = ${read("i")}")
+          ee.line(s"if (p.apply(e)) { $keepWrite; o += 1 }")
+          ee.line("i += 1")
+          ee.close()
+          ee.line(s"trimLeaf${KO}(out, o, n)")
+        }
+        ee.open(s"def collectLeaf${KI}${KO}$tpClause(xs: FBase, p: Traversers.${KI}Pred, f: $fnScala): FBase =")
+        ee.open("xs match")
+        ee.line("case e: Empty => Empty.INSTANCE")
+        ee.line(s"case one: ${KI}One => if (p.apply(one.elem)) new ${KO}One($oneArg) else Empty.INSTANCE")
+        ee.open(s"case leaf: ${KI}Arr =>")
+        ee.line("val a = leaf.arr")
+        ee.line("val n = leaf.length")
+        loopBody(i => s"a($i)")
+        ee.closeOpen(s"case s: SliceNode if s.base.isInstanceOf[${KI}Arr] =>")
+        ee.line(s"val a = s.base.asInstanceOf[${KI}Arr].arr")
+        ee.line("val so = s.offset")
+        ee.line("val n = s.length")
+        loopBody(i => s"a(so + $i)")
+        ee.closeOpen("case _ =>")
+        val add = if ko.isPrim then "buf.add(f.apply(v))" else "buf.add(f.apply(v).asInstanceOf[Object])"
+        ee.line(s"val buf = new ${KO}Group()")
+        ee.line(s"foreachLeaf${KI}(xs, (v) => if (p.apply(v)) $add)")
+        ee.line("buf.toLeaf")
+        ee.close()
+        ee.close() // xs match
+        ee.close() // def
+      }
+      buildPairs.foreach { case (ki, ko) => emit(ki, ko) }
+      ee.result
+    }
 
     // SHARED LEAF METHODS for DISTINCT, one per kind — the unboxed "seen" structure replaces the old
     // boxed mutable.HashSet[Any] (which boxed every element, grew/rehashed ~log n times, and always
@@ -2115,12 +2168,24 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // as INLINE lambdas, so this is filter+map fused in one pass with NO PartialFunction object and no
     // A/B boxing: p and f inline into the per-element lambda like every other elementwise op. Output
     // goes through the growable unboxed ${O}Group buffer (count unknown), canonicalised by toLeaf.
+    // Covered (I, O) pairs realize the predicate + transform SAMs and CALL the shared
+    // collectLeaf${I}${O} (filter-shaped: one max-size out, slack via trimLeaf — no growable buffer,
+    // no toLeaf copy). Uncovered cross-prim pairs keep the ${O}Group fallback (cold path).
+    def collectLeafCall(ka: Kind, kb: Kind): String = {
+      val toA = wrapV(ka)
+      val fBody = if kb.isPrim then s"rb.unwrap(f($toA))" else s"f($toA).asInstanceOf[B & AnyRef]"
+      val tpClause = if !kb.isPrim then "[B & AnyRef]" else ""
+      s"collectLeaf${ka.name}${kb.name}$tpClause(xs, (v) => p($toA), (v) => $fBody)"
+    }
+    def collectGroupFallback(ka: Kind, kb: Kind): String =
+      s"{ val buf = new ${kb.name}Group(); foreachLeaf${ka.name}(xs, (v) => { val a = ${wrapV(ka)}; if (p(a)) buf.add(${wr(kb, "rb.unwrap(f(a))")}) }); buf.toLeaf }"
     val collectPick = withErr(
       "summonFrom {\n" + opKinds
         .map { ka =>
           val inner = "summonFrom {\n" + opKinds
             .map { kb =>
-              s"          case rb: ${kb.name}Repr[B] => { val buf = new ${kb.name}Group(); foreachLeaf${ka.name}(xs, (v) => { val a = ${wrapV(ka)}; if (p(a)) buf.add(${wr(kb, "rb.unwrap(f(a))")}) }); buf.toLeaf }"
+              val body = if buildCovered((ka.name, kb.name)) then collectLeafCall(ka, kb) else collectGroupFallback(ka, kb)
+              s"          case rb: ${kb.name}Repr[B] => $body"
             }
             .mkString("\n") + "\n        }"
           s"      case r: ${ka.name}Repr[A] => $inner"
@@ -2551,6 +2616,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |$mapLeafMethods
        |$trimLeafMethods
        |$filterLeafMethods
+       |$collectLeafMethods
        |$distinctLeafMethods
        |$partitionLeafMethods
        |$foreachLeafMethods
