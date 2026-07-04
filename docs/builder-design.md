@@ -31,7 +31,6 @@ b += 2
 b ++= FArray(3, 4, 5)            // bulk: whole leaves arraycopy'd, trees materialized once
 b.sizeHint(1024)                  // pre-grow the backing array
 val fa: FArray[Int] = b.result()  // hands the buffer to a leaf, house slack rules, no defensive copy
-b.clear()                         // reset to empty, KEEP the array (cheap reuse)
 ```
 
 | member | note |
@@ -41,7 +40,6 @@ b.clear()                         // reset to empty, KEEP the array (cheap reuse
 | `+= (elem: A)` / `addOne` | **inline, unboxed** append; returns the builder for chaining |
 | `++= (xs: FArray[A])` / `addAll` | bulk append; leaves `System.arraycopy`, trees materialize once |
 | `sizeHint(n)` | grow backing array so `n` elements fit |
-| `clear()` | logical reset (`size = 0`), backing array retained |
 | `length` / `knownSize` / `isEmpty` / `nonEmpty` | accumulated count |
 | `result(): FArray[A]` | slack-wrap the buffer into a leaf (no copy unless <¼ full) |
 | `asScala` | **second-class** `mutable.Builder[A, FArray[A]]` — the boxing interop path |
@@ -55,7 +53,7 @@ opaque type FBuilder[A] <: FBuilderBase = FBuilderBase
 `FBuilderBase` is a generated `sealed abstract class`; its concrete subclasses are the per-kind
 `${K}Group` buffers (the very same growable primitive buffers already used by `groupBy`/`collect`,
 now given this shared root). Because the opaque type's upper bound is `FBuilderBase`, every structural
-method (`addNode`, `sizeHint`, `clear`, `knownSize`, `result`, `addBoxed`) is reachable as a plain
+method (`addNode`, `sizeHint`, `knownSize`, `result`, `addBoxed`, plus an internal `clear` used only by the `asScala` adapter) is reachable as a plain
 virtual call — none of them touch a primitive element type, so none can box.
 
 The **only** kind-sensitive method is the unboxed append. It is generated as
@@ -82,7 +80,7 @@ The entry `FArray.newBuilder[A]` is likewise `inline` and dispatches once to `ne
 Each `${K}Group` starts with a length-16 primitive array and **doubles** on overflow
 (`Arrays.copyOf(arr, size << 1)`) — the same amortized-O(1) append as `ArrayBuffer`/`ArrayBuilder`.
 `sizeHint(n)` grows the array to `n` up front (only ever grows, never shrinks), so a builder with a
-known target size pays a single allocation and zero regrows. `clear()` keeps the (now warm) array, so a
+known target size pays a single allocation and zero regrows. A
 builder reused across many `result()` cycles amortizes its allocation to nothing.
 
 `++=` avoids the per-element path entirely: an `${K}Arr` leaf is `System.arraycopy`-ed in one shot; an
@@ -99,10 +97,17 @@ capacity, the array is wrapped verbatim as an `${K}Arr` of logical length `size`
 pays one `Arrays.copyOf` to reclaim the waste. Sizes 0 and 1 canonicalize to `Empty` / `${K}One`,
 upholding FArray's size-0/1 leaf invariant.
 
-Note the buffer is *shared* after `result()` — the builder still points at the same array. Continuing to
-`+=` after `result()` and before `clear()` would mutate an array a returned FArray may be viewing; the
-documented contract is `result()` then `clear()` before reuse (matching how one normally drives a
-builder). This is the deliberate price of "no defensive copy".
+The buffer is *shared* after `result()` — the returned FArray points at the builder's array — and yet
+this is completely safe with no contract, because appends are **monotonic**: `add` only ever writes at
+index `size` (the current end), never below, and a regrow reallocates a fresh array via `Arrays.copyOf`.
+So a committed prefix `[0, S)` is never overwritten: continuing to `+=` writes only above `S`, and a
+regrow leaves the prior FArray holding the old (now frozen) array. `result()` is therefore repeatable
+and append-after-`result()` is safe — every snapshot stays valid forever. The single operation that
+would violate this is `clear()` (it resets `size = 0`, after which the next append clobbers a shared
+prefix), so **there is no public `clear()`** — start over with a fresh `FArray.newBuilder`. A returned
+FArray pins at most 4× its own length (the slack bound), and only the array-generation live at its
+`result()` — a later regrow detaches, so snapshots never pin a grown buffer. This is what "no defensive
+copy" buys, made safe rather than contractual.
 
 ## Interop (second-class, boxing)
 
