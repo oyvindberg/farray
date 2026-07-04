@@ -518,8 +518,17 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // trims slack (leaf.length may be < arr.length).
     val mat = opKinds
       .map(k =>
+        // Ref leaves may carry a NARROWER runtime array (a String[] from tabulate/fill's opportunistic
+        // ClassTag, or from fromArray of a typed array) behind the static Object[]. `Arrays.copyOf(arr, n)`
+        // PRESERVES that runtime type, so a plain 2-arg copy would leak a secret String[] out through
+        // toArray[Object] — a caller storing a non-String into their "Object[]" then hits ArrayStoreException.
+        // Force a genuine Object[] with the 3-arg copyOf (still a widening bulk memcpy, same speed). Prim
+        // leaves are exact (Int[] IS Int[]), so they keep the cheap 2-arg form.
+        val leafCopy =
+          if k.name == "Ref" then "java.util.Arrays.copyOf(leaf.arr, leaf.length, classOf[Array[Object]])"
+          else s"java.util.Arrays.copyOf(leaf.arr, leaf.length)"
         s"""  def materialize${k.name}(node: FBase): Array[${k.arr}] = node match {
-         |    case leaf: ${k.name}Arr => java.util.Arrays.copyOf(leaf.arr, leaf.length)
+         |    case leaf: ${k.name}Arr => $leafCopy
          |    case u: ${k.name}Updated => { val out = materialize${k.name}(u.base); out(u.index) = u.elem; out }
          |    case _ => { val out = new Array[${k.arr}](node.length); var o = 0; dfsC${k.name}(node, new ${k.name}Dfs { def onRunF(a: Array[${k.arr}], start: Int, count: Int): Unit = { System.arraycopy(a, start, out, o, count); o += count }; def onRunB(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val e = start - count; while (i > e) { out(o) = a(i); o += 1; i -= 1 } }; def onOne(v: ${k.arr}): Unit = { out(o) = v; o += 1 } }); out }
          |  }""".stripMargin
@@ -2650,15 +2659,15 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def minImpl[A, Z >: A](xs: FBase)(using ord: Ordering[Z]): A = $minV
        |  inline def foreachImpl[A](xs: FBase)(inline f: A => Unit): Unit = $foreach
        |  inline def foreachWhileImpl[A](xs: FBase)(inline f: A => Boolean): Unit = $foreachWhileV
-       |  inline def existsImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = { val length = xs.length; $existsV }
-       |  inline def forallImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = { val length = xs.length; $forallV }
-       |  inline def findImpl[A](xs: FBase)(inline p: A => Boolean): Option[A] = { val length = xs.length; $findV }
+       |  inline def existsImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = { val length = xs.length; if (length == 0) false else $existsV }
+       |  inline def forallImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = { val length = xs.length; if (length == 0) true else $forallV }
+       |  inline def findImpl[A](xs: FBase)(inline p: A => Boolean): Option[A] = { val length = xs.length; if (length == 0) None else $findV }
        |  inline def indexWhereImpl[A](xs: FBase, from: Int)(inline p: A => Boolean): Int = { val length = xs.length; if (length == 0) -1 else $indexWhereV }
        |  inline def indexOfImpl[A, B](xs: FBase, elem: B, from: Int): Int = { val length = xs.length; if (length == 0) -1 else $indexOfV }
-       |  inline def segmentLengthImpl[A](xs: FBase, from: Int)(inline p: A => Boolean): Int = { val length = xs.length; $segmentLenV }
+       |  inline def segmentLengthImpl[A](xs: FBase, from: Int)(inline p: A => Boolean): Int = { val length = xs.length; if (length == 0) 0 else $segmentLenV }
        |  inline def lastIndexWhereImpl[A](xs: FBase, end: Int)(inline p: A => Boolean): Int = { val length = xs.length; if (length == 0) -1 else $lastIndexWhereV }
        |  inline def lastIndexOfImpl[A, B](xs: FBase, elem: B, end: Int): Int = { val length = xs.length; if (length == 0) -1 else $lastIndexOfV }
-       |  inline def collectFirstImpl[A, B](xs: FBase)(pf: PartialFunction[A, B]): Option[B] = { val length = xs.length; $collectFirstV }
+       |  inline def collectFirstImpl[A, B](xs: FBase)(pf: PartialFunction[A, B]): Option[B] = { val length = xs.length; if (length == 0) None else $collectFirstV }
        |  inline def prefixLengthImpl[A](xs: FBase)(inline p: A => Boolean): Int = $prefixLenV
        |  inline def mapImpl[A, B](xs: FBase)(inline f: A => B): FBase = { val n = xs.length; $mapM }
        |  inline def filterImpl[A](xs: FBase)(inline p: A => Boolean): FBase = $filter
@@ -2671,7 +2680,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def collectImpl[A, B](xs: FBase)(pf: PartialFunction[A, B]): FBase = $collect
        |  inline def collectPickImpl[A, B](xs: FBase)(inline p: A => Boolean, inline f: A => B): FBase = { val n = xs.length; if (n == 0) Empty.INSTANCE else if (n == 1) { val a = applyAtImpl[A](xs, 0); if (p(a)) fromValues1[B](f(a)) else Empty.INSTANCE } else $collectPick }
        |  inline def partitionMapImpl[A, A1, A2](xs: FBase)(inline f: A => Either[A1, A2]): scala.Tuple2[FBase, FBase] = $partitionMap
-       |  inline def containsImpl[A](xs: FBase, elem: A): Boolean = { val length = xs.length; $contains }
+       |  inline def containsImpl[A](xs: FBase, elem: A): Boolean = { val length = xs.length; if (length == 0) false else $contains }
        |  inline def mapConserveImpl[A](xs: FBase)(inline f: A => A): FBase = { val n = xs.length; if (n == 0) xs else if (n == 1) { val e = applyAtImpl[A](xs, 0); val r = f(e); if (r.asInstanceOf[AnyRef] eq e.asInstanceOf[AnyRef]) xs else fromValues1[A](r) } else $mapConserve }
        |  inline def unzipImpl[A, A1, A2](xs: FBase)(ev: A <:< (A1, A2)): (FBase, FBase) = { val n = xs.length; if (n == 0) emptyPair else if (n == 1) { val t = ev(applyAtImpl[A](xs, 0)); new scala.Tuple2(fromValues1[A1](t._1), fromValues1[A2](t._2)) } else $unzipV }
        |  inline def unzip3Impl[A, A1, A2, A3](xs: FBase)(ev: A <:< (A1, A2, A3)): (FBase, FBase, FBase) = { val n = xs.length; if (n == 0) emptyTriple else if (n == 1) { val t = ev(applyAtImpl[A](xs, 0)); new scala.Tuple3(fromValues1[A1](t._1), fromValues1[A2](t._2), fromValues1[A3](t._3)) } else $unzip3V }

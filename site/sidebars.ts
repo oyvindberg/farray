@@ -32,6 +32,7 @@ const sidebars: SidebarsConfig = {
             "operations/folds",
             "operations/indexed",
             "operations/searching",
+            "operations/getting-out",
             "operations/list-parity",
           ],
         },

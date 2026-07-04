@@ -54,6 +54,11 @@ summary a reviewer should leave with: against a *bare array*, a lone read costs 
 at par or ahead. And no loop-shaped op on any other page pays this per element — traversals resolve
 the node shape once and read the backing array directly.
 
+`isDefinedAt(i)` belongs to this family, not to conversions: it's the bounds check that guards a
+read — `i >= 0 && i < length` — with `length` read straight off the node. It runs ~1.2× over a bare
+`IArray.isDefinedAt` (which routes through `ArraySeq`), the mirror of the small tax `apply` pays: a
+comparison against a directly-available length beats a wrapped one.
+
 ## The honest floor
 
 One cell in the suite goes against us and is worth naming: at **size 1**, ops that *read before
