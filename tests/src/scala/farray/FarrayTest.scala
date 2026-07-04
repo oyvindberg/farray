@@ -1706,19 +1706,19 @@ class FListTest:
       FuseDebug.show(
         ints.fuse
           .flatMap(x => FArray(x, x + 1))
-          .filter(_ % 3 != 0)
-          .map(_ * 2)
-          .flatMap(x => FArray(x, x ^ 5))
-          .filter(_ % 2 == 0)
-          .map(_ - 7)
+          .filter(n => n % 3 != 0)
+          .map(n => n * 2)
+          .flatMap(m => FArray(m, m ^ 5))
+          .filter(p => p % 2 == 0)
+          .map(p => p - 7)
           .zip(zipSrc)
           .map((a, b) => a + b)
           .zipWithIndex
           .filter((v, i) => (v + i) % 4 != 0)
           .map((v, i) => v - i)
-          .flatMap(x => FArray(x, x + 3))
-          .filter(_ > 0)
-          .foldLeft(0)(_ + _)
+          .flatMap(d => FArray(d, d + 3))
+          .filter(r => r > 0)
+          .foldLeft(0)((acc, r) => acc + r)
       )
     )
 
@@ -1733,7 +1733,7 @@ class FListTest:
         ints.fuse
           .zip(ys)
           .collect { case (a, b) if (a + b) % 2 == 0 => a * b }
-          .map(_ + 1)
+          .map(r => r + 1)
           .run
       )
     )
@@ -1751,11 +1751,11 @@ class FListTest:
     val ints = FArray(3, 14, 15, 92, 65, 35, 89, 79)
     def expensive(x: Int): Int = { var s = x; var k = 0; while (k < 24) { s = s * 1103515245 + 12345; k += 1 }; s }
     // 1 · one loop, no closures
-    Snapshots.check("fuse-opt-oneloop.snap", FuseDebug.show(ints.fuse.map(_ + 1).filter(_ % 2 == 0).map(_ * 2).run))
+    Snapshots.check("fuse-opt-oneloop.snap", FuseDebug.show(ints.fuse.map(x => x + 1).filter(y => y % 2 == 0).map(z => z * 2).run))
     // 2 · dead-column elimination — column 2 (x*13) is read by nobody and never built
-    Snapshots.check("fuse-opt-dce.snap", FuseDebug.show(ints.fuse.map(x => (x % 3, x * 7, x * 13)).filter(_._1 == 0).map(_._2).run))
+    Snapshots.check("fuse-opt-dce.snap", FuseDebug.show(ints.fuse.map(x => (x % 3, x * 7, x * 13)).filter(t => t._1 == 0).map(t => t._2).run))
     // 3 · compute-for-survivors — expensive(x) lands inside the filter's `if`
-    Snapshots.check("fuse-opt-sink.snap", FuseDebug.show(ints.fuse.map(x => (x % 2, expensive(x))).filter(_._1 == 0).map(_._2).sum))
+    Snapshots.check("fuse-opt-sink.snap", FuseDebug.show(ints.fuse.map(x => (x % 2, expensive(x))).filter(t => t._1 == 0).map(t => t._2).sum))
     // 4 · common-subexpression elimination — x*x bound once, reused
     Snapshots.check("fuse-opt-cse.snap", FuseDebug.show(ints.fuse.map(x => (x * x + 1, x * x + 2)).map(t => t._1 + t._2).run))
     // 5 · decomposition reaches the fold's lambda — Stat never built; loop is acc + x*100
@@ -1804,18 +1804,24 @@ class FListTest:
     import farray.json.{Json, JsonDemo}
     val src = JsonDemo.sample
     val wsrc = JsonDemo.wideSample
-    Snapshots.check("fuse-json-sum.snap", FuseDebug.show(Json.ndjson[JsonDemo.Event](src).stream.filter(_.amount > 150).map(_.amount).foldLeft(0.0)(_ + _)))
-    Snapshots.check("fuse-json-cat.snap", FuseDebug.show(Json.ndjson[JsonDemo.Event](src).stream.filter(_.amount > 150).map(_.category).toList))
-    Snapshots.check("fuse-json-count.snap", FuseDebug.show(Json.ndjson[JsonDemo.Event](src).stream.filter(_.status == "active").map(_.category).count))
-    Snapshots.check("fuse-json-wide.snap", FuseDebug.show(Json.ndjson[JsonDemo.Wide](wsrc).stream.filter(_.key > 90).map(_.payload).count))
+    Snapshots.check(
+      "fuse-json-sum.snap",
+      FuseDebug.show(Json.ndjson[JsonDemo.Event](src).stream.filter(e => e.amount > 150).map(e => e.amount).foldLeft(0.0)((acc, amount) => acc + amount))
+    )
+    Snapshots.check("fuse-json-cat.snap", FuseDebug.show(Json.ndjson[JsonDemo.Event](src).stream.filter(e => e.amount > 150).map(e => e.category).toList))
+    Snapshots.check(
+      "fuse-json-count.snap",
+      FuseDebug.show(Json.ndjson[JsonDemo.Event](src).stream.filter(e => e.status == "active").map(e => e.category).count)
+    )
+    Snapshots.check("fuse-json-wide.snap", FuseDebug.show(Json.ndjson[JsonDemo.Wide](wsrc).stream.filter(w => w.key > 90).map(w => w.payload).count))
     Snapshots.check(
       "fuse-json-agg.snap",
       FuseDebug.show(
         Json
           .ndjson[JsonDemo.Event](src)
           .stream
-          .filter(_.status == "active")
-          .aggTo(JsonDemo.Stats.apply)(farray.Agg.sum(_.amount), farray.Agg.count, farray.Agg.max1(_.score))
+          .filter(e => e.status == "active")
+          .aggTo(JsonDemo.Stats.apply)(farray.Agg.sum(e => e.amount), farray.Agg.count, farray.Agg.max1(e => e.score))
       )
     )
 

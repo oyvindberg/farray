@@ -65,57 +65,69 @@ private[farray] object JsonDecode extends farray.RecordDecoder:
       rem match
         case Nil                        => k(acc.reverse)
         case ((name, tpe), idx) :: rest =>
+          // the slot's value var carries the FIELD'S OWN NAME (`var amount: Double = 0.0`) — the goldens/docs show
+          // this generated scanner, and a quoted `'{ var v = … }` can only ever print as `v`. Reflection-level: a
+          // FRESH Mutable symbol per field (a reused field name can never capture); `fill` assigns via `Assign`.
+          def namedVar(varTpe: TypeRepr, zero: Term)(body: (Term, Term => Expr[Unit]) => Term): Term =
+            val sym = Symbol.newVal(Symbol.spliceOwner, name, varTpe, Flags.Mutable, Symbol.noSymbol)
+            Block(List(ValDef(sym, Some(zero))), body(Ref(sym), rhs => Assign(Ref(sym), rhs).asExprOf[Unit]))
           jkindOf(tpe) match
             // numeric fills decode the value into the slot var + the new position into `pNext` — NO tuple returned
             // (a `(Double,Int)` return boxed, costing the macro path its alloc edge).
             case JKind.JInt =>
-              '{
-                var v: Int = 0; var pNext: Int = 0; var seen: Boolean = false
-                ${
-                  val s = JSlot(
-                    idx,
-                    name,
-                    JKind.JInt,
-                    kk => kk('{ v }.asTerm),
-                    '{ seen },
-                    (p, end) => '{ v = JsonScanner.readIntAt($buf, $p, $end); pNext = JsonScanner.numEnd; seen = true; pNext },
-                    '{ v }.asTerm
-                  )
-                  withSlots(buf, rest, s :: acc)(k).asExpr
-                }
-              }.asTerm
+              namedVar(TypeRepr.of[Int], '{ 0 }.asTerm) { (vRef, setV) =>
+                '{
+                  var pNext: Int = 0; var seen: Boolean = false
+                  ${
+                    val s = JSlot(
+                      idx,
+                      name,
+                      JKind.JInt,
+                      kk => kk(vRef),
+                      '{ seen },
+                      (p, end) => '{ ${ setV('{ JsonScanner.readIntAt($buf, $p, $end) }.asTerm) }; pNext = JsonScanner.numEnd; seen = true; pNext },
+                      vRef
+                    )
+                    withSlots(buf, rest, s :: acc)(k).asExpr
+                  }
+                }.asTerm
+              }
             case JKind.JLong =>
-              '{
-                var v: Long = 0L; var pNext: Int = 0; var seen: Boolean = false
-                ${
-                  val s = JSlot(
-                    idx,
-                    name,
-                    JKind.JLong,
-                    kk => kk('{ v }.asTerm),
-                    '{ seen },
-                    (p, end) => '{ v = JsonScanner.readLongAt($buf, $p, $end); pNext = JsonScanner.numEnd; seen = true; pNext },
-                    '{ v }.asTerm
-                  )
-                  withSlots(buf, rest, s :: acc)(k).asExpr
-                }
-              }.asTerm
+              namedVar(TypeRepr.of[Long], '{ 0L }.asTerm) { (vRef, setV) =>
+                '{
+                  var pNext: Int = 0; var seen: Boolean = false
+                  ${
+                    val s = JSlot(
+                      idx,
+                      name,
+                      JKind.JLong,
+                      kk => kk(vRef),
+                      '{ seen },
+                      (p, end) => '{ ${ setV('{ JsonScanner.readLongAt($buf, $p, $end) }.asTerm) }; pNext = JsonScanner.numEnd; seen = true; pNext },
+                      vRef
+                    )
+                    withSlots(buf, rest, s :: acc)(k).asExpr
+                  }
+                }.asTerm
+              }
             case JKind.JDouble =>
-              '{
-                var v: Double = 0.0; var pNext: Int = 0; var seen: Boolean = false
-                ${
-                  val s = JSlot(
-                    idx,
-                    name,
-                    JKind.JDouble,
-                    kk => kk('{ v }.asTerm),
-                    '{ seen },
-                    (p, end) => '{ v = JsonScanner.readDoubleAt($buf, $p, $end); pNext = JsonScanner.numEnd; seen = true; pNext },
-                    '{ v }.asTerm
-                  )
-                  withSlots(buf, rest, s :: acc)(k).asExpr
-                }
-              }.asTerm
+              namedVar(TypeRepr.of[Double], '{ 0.0 }.asTerm) { (vRef, setV) =>
+                '{
+                  var pNext: Int = 0; var seen: Boolean = false
+                  ${
+                    val s = JSlot(
+                      idx,
+                      name,
+                      JKind.JDouble,
+                      kk => kk(vRef),
+                      '{ seen },
+                      (p, end) => '{ ${ setV('{ JsonScanner.readDoubleAt($buf, $p, $end) }.asTerm) }; pNext = JsonScanner.numEnd; seen = true; pNext },
+                      vRef
+                    )
+                    withSlots(buf, rest, s :: acc)(k).asExpr
+                  }
+                }.asTerm
+              }
             case JKind.JString =>
               // lazy slice: slots are (start, len); the column decodes to String ON READ (the engine memoizes it),
               // so the sink defers the `new String` past the filter — compute-for-survivors, for free.

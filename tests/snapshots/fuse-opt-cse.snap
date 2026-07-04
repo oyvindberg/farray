@@ -1,31 +1,37 @@
-(({
-  val src0: FBase = {
-    val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
+{
+  val $proxy: FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  } = FArray$package.$asInstanceOf$[FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  }]
+  val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
+  val Fuse_this: Fuse[Int] = (new Fuse[Int](xs$proxy): Fuse[Int]).map[Tuple2[Int, Int]](((x: Int) => Tuple2.apply[Int, Int](x.*(x).+(1), x.*(x).+(2)))).map[Int](((t: Tuple2[Int, Int]) => t._1.+(t._2)))
 
-    (xs$proxy: ints)
-  }.asInstanceOf[FBase]
-  val n0: Int = src0.length
-  val cap: Int = n0
-  val out: Array[Int] = new Array[Int](cap)
-  var o: Int = 0
-  val s: FBase = src0
-  val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
-    case t =>
-      if (t.length.>=(64)) FArrayOps.materializeInt(t) else null
-  }
-  val len: Int = s.length
-  var i: Int = 0
-  while (i.<(len)) {
-    val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
-    val `v₂`: Int = v.*(v)
-    val `v₃`: Int = `v₂`.+(1)
-    val `v₄`: Int = `v₂`.+(2)
-    val `v₅`: Int = `v₃`.+(`v₄`)
-    out.update(o, `v₅`)
-    o = o.+(1)
-    i = i.+(1)
-  }
-  if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(out.apply(0)) else if (o.==(cap)) new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o)
-}.asInstanceOf[FArray[Int]]: FArray[Int]): FArray[Int])
+  ({
+    val src0: FBase = inline$base$i1[Int](Fuse_this).asInstanceOf[FBase]
+    val n0: Int = src0.length
+    val cap: Int = n0
+    val out: Array[Int] = new Array[Int](cap)
+    var o: Int = 0
+    val s: FBase = src0
+    val a: Array[Int] = s match {
+      case l: IntArr =>
+        (l.arr: Array[Int])
+      case t =>
+        if (`t₂`.length.>=(64)) FArrayOps.materializeInt(`t₂`) else null
+    }
+    val len: Int = s.length
+    var i: Int = 0
+    while (i.<(len)) {
+      val `x₂`: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+      val v: Int = `x₂`.*(`x₂`)
+      val `v₂`: Int = v.+(1)
+      val `v₃`: Int = v.+(2)
+      val mapped: Int = `v₂`.+(`v₃`)
+      out.update(o, mapped)
+      o = o.+(1)
+      i = i.+(1)
+    }
+    if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(out.apply(0)) else if (o.==(cap)) new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o)
+  }.asInstanceOf[FArray[Int]]: FArray[Int])
+}

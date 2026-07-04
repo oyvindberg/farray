@@ -374,18 +374,19 @@ object FuseMacro:
         if max then '{ (k1: b, k2: b) => $ord.gt(k1, k2) }.asTerm
         else '{ (k1: b, k2: b) => $ord.lt(k1, k2) }.asTerm
 
-    /** `{ val v = value; cont(v) }` — binds `value` to a fresh val (no recompute; owners handled by the quote). */
-    def letBind(value: Term)(cont: Term => Term): Term =
-      value.tpe.widen.asType match
-        case '[t] => '{ val v: t = ${ value.asExprOf[t] }; ${ cont('v.asTerm).asExprOf[Unit] } }.asTerm
-
-    /** like `letBind` but the body produces a VALUE (not a statement): the result type is whatever the continuation builds (e.g. a fold accumulator value), not
-      * Unit. Used by the shape-aware fold/reduce path for a whole-product use.
+    /** `{ val <name> = value; cont(<ref>) }` — binds `value` to a fresh val (no recompute). Reflection-level (not a quote) so the val can carry a MEANINGFUL
+      * display name — the goldens/docs show this generated code, and a quoted `'{ val v = … }` can only ever print as `v`. NAME ONLY: every call still mints a
+      * brand-new symbol via `Symbol.newVal`, so reusing a name can never capture/shadow another binding (references are by symbol; the printer disambiguates
+      * with subscripts).
       */
-    def letBindV(value: Term)(cont: Term => Term): Term =
-      value.tpe.widen.asType match
-        case '[t] =>
-          '{ val v: t = ${ value.asExprOf[t] }; ${ resultExpr(cont('v.asTerm)) } }.asTerm
+    def letBind(value: Term, name: String = "v")(cont: Term => Term): Term =
+      val sym = Symbol.newVal(Symbol.spliceOwner, name, value.tpe.widen, Flags.EmptyFlags, Symbol.noSymbol)
+      Block(List(ValDef(sym, Some(value.changeOwner(sym)))), cont(Ref(sym)))
+
+    /** like `letBind` but documents a VALUE-producing continuation (e.g. a fold accumulator value), not a Unit statement. Same emission — a Block takes the
+      * continuation's type either way. Used by the shape-aware fold/reduce path for a whole-product use.
+      */
+    def letBindV(value: Term, name: String = "v")(cont: Term => Term): Term = letBind(value, name)(cont)
 
     /** wrap a Term as an Expr of its own widened type (so a quote can splice it without forcing Unit). */
     def resultExpr(t: Term): Expr[Any] = t.tpe.widen.asType match { case '[r] => t.asExprOf[r] }
@@ -519,6 +520,66 @@ object FuseMacro:
         case other =>
           report.errorAndAbort(s"fuse: unsupported agg — use Agg.sum/count/min/max/avg/fold/reduce/minBy/maxBy/topNBy/bottomNBy/largest/smallest. Got:\n${other
               .show(using Printer.TreeStructure)}")
+
+    // --- generated-name selection: every val the macro binds should carry the most human name available ---
+    // The user's own lambda-parameter names are the best names for the values flowing through the fused loop:
+    // `map(price => …)` names its input `price`, `filter(t => …)` names the element `t`. A synthetic parameter
+    // (`_` desugars to `_$N`, an untupled pair param to `x$N`) yields None, and the caller falls back to a
+    // stage-derived name (`elem`/`mapped`/`kept`/…). Names only — freshness is letBind's job.
+    def userName(sym: Symbol): Option[String] =
+      Some(sym.name).filter(n => n.nonEmpty && n != "_" && !n.contains('$'))
+    def paramNameOf(f: Term): Option[String] = Ast.decomposeLambda(f).flatMap((p, _) => userName(p))
+    def elemParamNameOf(op: Term): Option[String] = Ast.decomposeLambda2(op).flatMap((_, e, _) => userName(e))
+
+    /** a usable display name from a product-field label: case-class fields qualify, tuple `_N` labels don't. */
+    def fieldDisplayName(label: String): Option[String] =
+      Some(label).filter(n => n.nonEmpty && !n.startsWith("_") && !n.contains('$'))
+
+    /** the field a key lambda projects (`maxBy(_.price)` → `price`) — names the bound key value. */
+    def keyFieldName(f: Term): Option[String] = Ast.decomposeLambda(f).flatMap { (p, body) =>
+      Ast.projPath(unwrap(body)) match
+        case Some((s, path)) if s == p && path.nonEmpty => fieldDisplayName(path.last._2)
+        case _                                          => None
+    }
+
+    /** the name of the value ENTERING the stage list `ss`: the first downstream lambda's parameter name. A stage that passes the element through unchanged
+      * (filter/take/drop/…) doesn't rename it, so an unnamed one defers to the next stage; a stage that TRANSFORMS the element (map/flatMap/zip/…) ends the
+      * walk. An exhausted list defers to `ifExhausted` (typically the terminal's element name — valid exactly when the element reaches the terminal unchanged).
+      */
+    def elemNameFor(ss: List[Stage], ifExhausted: => Option[String]): Option[String] = ss match
+      case Nil       => ifExhausted
+      case s :: rest =>
+        s match
+          case MapS(f)                                 => paramNameOf(f)
+          case FlatMapS(f, _)                          => paramNameOf(f)
+          case FilterS(p, _)                           => paramNameOf(p).orElse(elemNameFor(rest, ifExhausted))
+          case TakeWhileS(p)                           => paramNameOf(p).orElse(elemNameFor(rest, ifExhausted))
+          case DropWhileS(p)                           => paramNameOf(p).orElse(elemNameFor(rest, ifExhausted))
+          case TapEachS(f)                             => paramNameOf(f).orElse(elemNameFor(rest, ifExhausted))
+          case DistinctS(kf)                           => kf.flatMap(paramNameOf).orElse(elemNameFor(rest, ifExhausted))
+          case TakeS(_) | DropS(_)                     => elemNameFor(rest, ifExhausted)
+          case ScanLeftS(_, op, _)                     => elemParamNameOf(op)
+          case FoldAdjacentByS(key, _, _, _, _)        => paramNameOf(key)
+          case GroupAdjacentByS(key, _, _)             => paramNameOf(key)
+          case GroupReduceAdjacentByS(key, _, _, _, _) => paramNameOf(key)
+          case _                                       => None // collect/zip/zipWithIndex/grouped/takeRight: no single element param
+    /** the terminal's element name, when its lambda names the element (`find(order => …)`, a fold op's 2nd param). */
+    lazy val terminalElemName: Option[String] = tag match
+      case TTag.Find | TTag.Exists | TTag.Forall | TTag.IndexWhere => paramNameOf(args(0))
+      case TTag.GroupReduce                                        => paramNameOf(args(0)).orElse(paramNameOf(args(1)))
+      case TTag.Agg                                                =>
+        parseAggList(args(0)).flatMap {
+          case AggSpec.Sum(f, _)                  => paramNameOf(f)
+          case AggSpec.Avg(f)                     => paramNameOf(f)
+          case AggSpec.Foreach(f)                 => paramNameOf(f)
+          case AggSpec.Extremum(f, _, _, _)       => paramNameOf(f)
+          case AggSpec.ExtremumByElem(f, _, _, _) => paramNameOf(f)
+          case AggSpec.TopN(kf, _, _, _, _, _)    => paramNameOf(kf)
+          case AggSpec.Fold(_, op, _)             => elemParamNameOf(op)
+          case AggSpec.Reduce(op, _, _)           => elemParamNameOf(op)
+          case AggSpec.Count                      => None
+        }.headOption
+      case _ => None
 
     // --- unboxed primitive ops for Agg.sum / Agg.min/max (else fall back to Numeric/Ordering, which box). ---
     def isPrim(t: TypeRepr, p: TypeRepr): Boolean = t =:= p
@@ -703,13 +764,13 @@ object FuseMacro:
 
     // ===== Layer B: pure map/filter segment optimizer (compute-for-survivors via memoized lazy columns) =====
 
-    /** a column that binds to a val on first read (memoized), then yields the ref. */
-    def memoScalar(compute: (Term => Term) => Term): Shape =
+    /** a column that binds to a val on first read (memoized), then yields the ref. `name` is the bound val's display name. */
+    def memoScalar(compute: (Term => Term) => Term, name: String = "v"): Shape =
       var bound: Option[Term] = None
       Sc(k =>
         bound match
           case Some(r) => k(r)
-          case None    => compute(v => letBind(v)(r => { bound = Some(r); k(r) }))
+          case None    => compute(v => letBind(v, name)(r => { bound = Some(r); k(r) }))
       )
 
     def srcShape(cur: Term): Shape = Sc(k => k(cur)) // already bound by the loop / an upstream stage
@@ -869,7 +930,7 @@ object FuseMacro:
           case Tup(ps, _) if j >= 0 && j < ps.length => navigate(ps(j), rest)
           case other                                 => navigate(projField(other, name), rest)
     def projField(sc: Shape, name: String): Shape =
-      memoScalar(k => readShape(sc)(t => k(Select.unique(t, name))))
+      memoScalar(k => readShape(sc)(t => k(Select.unique(t, name))), fieldDisplayName(name).getOrElse("v"))
 
     // --- deep CSE: hash-cons identical sub-expressions into memoized columns (shared across one map's tuple
     //     components / one predicate), so e.g. `(f(x)+1, f(x)+2)` computes f(x) ONCE. Keyed structurally; the
@@ -907,13 +968,13 @@ object FuseMacro:
       (new TreeMap:
         override def transformTerm(x: Term)(owner: Symbol): Term = repl.getOrElse(x, super.transformTerm(x)(owner))
       ).transformTerm(t)(Symbol.spliceOwner)
-    def cse(t: Term, cseT: CseT): Shape =
+    def cse(t: Term, cseT: CseT, nameHint: String = "v"): Shape =
       if trivial(t) then Sc(k => k(t))
-      else cseT.getOrElseUpdate(t.show(using Printer.TreeStructure), decomposeCse(t, cseT))
-    def decomposeCse(t: Term, cseT: CseT): Shape =
+      else cseT.getOrElseUpdate(t.show(using Printer.TreeStructure), decomposeCse(t, cseT, nameHint))
+    def decomposeCse(t: Term, cseT: CseT, nameHint: String): Shape =
       val children = cseChildren(t)
-      if children.isEmpty then memoScalar(k => k(t)) // opaque non-trivial → memoize whole
-      else memoScalar(k => readAll(children.map(c => cse(c, cseT)), Nil)(refs => k(replaceChildren(t, children.zip(refs).toMap))))
+      if children.isEmpty then memoScalar(k => k(t), nameHint) // opaque non-trivial → memoize whole
+      else memoScalar(k => readAll(children.map(c => cse(c, cseT)), Nil)(refs => k(replaceChildren(t, children.zip(refs).toMap))), nameHint)
 
     /** inline a `{ val a = …; val b = …; expr }` block (e.g. the desugaring of an untupled `(a, b) => …` lambda) into `expr`, so the result expression's
       * tuple/projection structure becomes visible to `interp`. Inlining may duplicate a binding's rhs, but CSE re-shares it. Last-binding-first so earlier vals
@@ -932,11 +993,17 @@ object FuseMacro:
       case other => other
 
     // --- interpret a map lambda body symbolically into a Shape (decomposing tuples, resolving projections) ---
-    def interp(body0: Term, param: Symbol, cur: Shape, cseT: CseT): Shape =
+    // `nameHint` names the bound val when the whole body memoizes as one scalar; a decomposed product instead
+    // names each column after its case-class field (tuple `_N` labels stay generic).
+    def interp(body0: Term, param: Symbol, cur: Shape, cseT: CseT, nameHint: String = "v"): Shape =
       val body = flattenBlock(body0)
       isProductCtor(body) match
-        case Some((rt, parts)) => Tup(parts.map(interp(_, param, cur, cseT)), vs => mkProduct(rt, vs)) // decompose; CSE shared
-        case None              =>
+        case Some((rt, parts)) => // decompose; CSE shared
+          val labels: List[String] = productFields(rt) match
+            case Some(fs) if fs.length == parts.length => fs.map((label, _) => fieldDisplayName(label).getOrElse("v"))
+            case _                                     => parts.map(_ => "v")
+          Tup(parts.zip(labels).map((part, label) => interp(part, param, cur, cseT, label)), vs => mkProduct(rt, vs))
+        case None =>
           isFieldSelect(body) match
             case Some((inner, idx, name)) =>
               interp(inner, param, cur, cseT) match
@@ -945,7 +1012,7 @@ object FuseMacro:
             case None =>
               body match
                 case id: Ident if id.symbol == param => cur
-                case _                               => Sc(k => substColumns(body, param, cur)(subst => readShape(cse(subst, cseT))(k)))
+                case _                               => Sc(k => substColumns(body, param, cur)(subst => readShape(cse(subst, cseT, nameHint))(k)))
 
     /** substitute param-uses in an atomic body with the columns it reads (binding only those columns). A bare param use (Nil path) forces materializing the
       * whole product; otherwise each path resolves to a leaf column.
@@ -956,7 +1023,7 @@ object FuseMacro:
       // bind it to ONE val first so it isn't rebuilt per occurrence; a Sc is already a bound ref.
       if paths.contains(Nil) then
         cur match
-          case Tup(_, _) => readShape(cur)(ct => letBind(ct)(r => k(substParam(body, param, r))))
+          case Tup(_, _) => readShape(cur)(ct => letBind(ct, userName(param).getOrElse("v"))(r => k(substParam(body, param, r))))
           case _         => readShape(cur)(ct => k(substParam(body, param, ct)))
       else readPaths(cur, paths, Map.empty)(refs => k(substPaths(body, param, refs)))
     def readPaths(cur: Shape, paths: List[Path], acc: Map[Path, Term])(k: Map[Path, Term] => Term): Term =
@@ -981,15 +1048,15 @@ object FuseMacro:
           case _ => super.traverseTree(x)(o)
       ).traverseTree(t)(Symbol.spliceOwner)
 
-    def applyMap(f: Term, cur: Shape): Shape = decomposeLambda(f) match
-      case Some((param, body)) => checkNoLocalCaseClass(body); interp(body, param, cur, scala.collection.mutable.Map.empty)
-      case None                => memoScalar(k => readShape(cur)(ct => k(applyLambda(f, ct))))
+    def applyMap(f: Term, cur: Shape, nameHint: String = "v"): Shape = decomposeLambda(f) match
+      case Some((param, body)) => checkNoLocalCaseClass(body); interp(body, param, cur, scala.collection.mutable.Map.empty, nameHint)
+      case None                => memoScalar(k => readShape(cur)(ct => k(applyLambda(f, ct))), nameHint)
 
     /** read a filter predicate (binding only the columns it touches), then hand the Boolean term to `k`. */
     def predShape(p: Term, neg: Boolean, cur: Shape)(k: Term => Term): Term =
       def fin(b: Term): Term = k(if neg then '{ ! ${ b.asExprOf[Boolean] } }.asTerm else b)
       decomposeLambda(p) match
-        case Some((param, body)) => checkNoLocalCaseClass(body); readShape(interp(body, param, cur, scala.collection.mutable.Map.empty))(fin)
+        case Some((param, body)) => checkNoLocalCaseClass(body); readShape(interp(body, param, cur, scala.collection.mutable.Map.empty, "keep"))(fin)
         case None                => readShape(cur)(ct => fin(applyLambda(p, ct)))
 
     /** apply a fold/reduce `op: (Z, A) => Z` to the running accumulator `accT` and the element SHAPE, decomposing the element param so `op`'s body reads only
@@ -1015,7 +1082,7 @@ object FuseMacro:
         // element used whole, like `acc + a`) needs no fresh val; bind only a non-trivial product rebuild.
         readShape(cur)(ct =>
           if trivial(ct) then k(substParam(body, param, ct))
-          else letBindV(ct)(r => k(substParam(body, param, r)))
+          else letBindV(ct, userName(param).getOrElse("v"))(r => k(substParam(body, param, r)))
         )
       else readPaths(cur, paths, Map.empty)(refs => k(substPaths(body, param, refs)))
 
@@ -1024,11 +1091,13 @@ object FuseMacro:
       case Some((param, body)) => checkNoLocalCaseClass(body); fnOnShape2(body, param, cur)(k)
       case None                => readShape(cur)(ct => k(applyLambda(f, ct)))
 
-    /** lower a contiguous map/filter run; columns sink past filters automatically (lazy memoized reads). */
-    def buildSegment(ss: List[Stage], cur: Shape)(k: Shape => Term): Term = ss match
+    /** lower a contiguous map/filter run; columns sink past filters automatically (lazy memoized reads). `tailName` is the element name of whatever consumes
+      * the value AFTER this segment (the post-segment stage's / terminal's lambda param) — it names a map output that memoizes as one scalar.
+      */
+    def buildSegment(ss: List[Stage], cur: Shape, tailName: Option[String] = None)(k: Shape => Term): Term = ss match
       case Nil                     => k(cur)
-      case MapS(f) :: rest         => buildSegment(rest, applyMap(f, cur))(k)
-      case FilterS(p, neg) :: rest => predShape(p, neg, cur)(b => If(b, buildSegment(rest, cur)(k), unit))
+      case MapS(f) :: rest         => buildSegment(rest, applyMap(f, cur, elemNameFor(rest, tailName).getOrElse("mapped")), tailName)(k)
+      case FilterS(p, neg) :: rest => predShape(p, neg, cur)(b => If(b, buildSegment(rest, cur, tailName)(k), unit))
       case _                       => k(cur) // segment is map/filter only
 
     /** continue downstream from a decomposed Shape: run the leading map/filter run column-aware (so independent columns sink/DCE), then materialize and hand
@@ -1036,15 +1105,16 @@ object FuseMacro:
       */
     def continueShape(shape: Shape, rest: List[(Stage, Int)], ctx: Ctx): Term =
       val (seg, tail) = rest.span { case (MapS(_), _) => true; case (FilterS(_, _), _) => true; case _ => false }
+      val tailName = elemNameFor(tail.map(_._1), terminalElemName)
       // DCE to the terminal: if this is the last segment and the terminal discards the element (count), don't
       // materialize the final shape — its value is dead (e.g. `map(_.category).count` must not decode the string).
-      if tail.isEmpty && discardsElem then buildSegment(seg.map(_._1), shape)(_ => ctx.consume(unit))
+      if tail.isEmpty && discardsElem then buildSegment(seg.map(_._1), shape, tailName)(_ => ctx.consume(unit))
       else if tail.isEmpty && ctx.consumeShape.isDefined then
         // shape-aware terminal (fold/reduce/agg): hand the decomposed shape so the terminal's lambdas project
         // only the fields they read — NEVER materialize the whole product (which would read dead placeholder
         // columns: the `{ null; …; 0.0 }` rebuild bug on a decomposed record fed to agg with no leading filter).
-        buildSegment(seg.map(_._1), shape)(fs => ctx.consumeShape.get(fs))
-      else buildSegment(seg.map(_._1), shape)(fs => readShape(fs)(t => buildBody(tail, t, ctx)))
+        buildSegment(seg.map(_._1), shape, tailName)(fs => ctx.consumeShape.get(fs))
+      else buildSegment(seg.map(_._1), shape, tailName)(fs => readShape(fs)(t => buildBody(tail, t, ctx)))
 
     /** lower `collect(pf)` by inlining the PartialFunction literal's match into the loop. Scala 3 encodes a `{ case … }` literal as `new PartialFunction { def
       * applyOrElse(x, default) = x match { <cases>; case _ => default(x) } … }`; we splice that match with scrutinee = `cur`, each real case continuing
@@ -1072,8 +1142,13 @@ object FuseMacro:
         case Some((xSym, cases)) =>
           // each case body goes through interp (param = the scrutinee x$1, bound to the element) so a tuple/product
           // case result decomposes into columns — the same DCE/sink/CSE a `map` body gets. Guards stay literal.
+          val keptName = elemNameFor(rest.map(_._1), terminalElemName).getOrElse("kept")
           val mapped = cases.map(cd =>
-            CaseDef(cd.pattern, cd.guard.map(subX(xSym)), continueShape(interp(cd.rhs, xSym, srcShape(cur), scala.collection.mutable.Map.empty), rest, ctx))
+            CaseDef(
+              cd.pattern,
+              cd.guard.map(subX(xSym)),
+              continueShape(interp(cd.rhs, xSym, srcShape(cur), scala.collection.mutable.Map.empty, keptName), rest, ctx)
+            )
           )
           // append a skip default unless the user's match is already total (avoids an unreachable-case warning)
           val newCases = if cases.exists(isCatchAll) then mapped else mapped :+ CaseDef(Wildcard(), None, unit)
@@ -1094,16 +1169,17 @@ object FuseMacro:
           case None     => ctx.consume(cur)
       case (MapS(_) | FilterS(_, _), _) :: _ =>
         val (seg, rest) = ss.span { case (MapS(_), _) => true; case (FilterS(_, _), _) => true; case _ => false }
+        val tailName = elemNameFor(rest.map(_._1), terminalElemName)
         // when this is the last segment AND the terminal discards the element (count), DON'T materialize the
         // final shape — the value is dead, so its columns (e.g. a lazy string decode, an expensive map) never
         // fire. The filters in `seg` still run (predShape emits the guarding `If`s); only the trailing map's
         // value isn't forced. DCE/compute-for-survivors extended to the terminal.
-        if rest.isEmpty && discardsElem then buildSegment(seg.map(_._1), srcShape(cur))(_ => ctx.consume(unit))
+        if rest.isEmpty && discardsElem then buildSegment(seg.map(_._1), srcShape(cur), tailName)(_ => ctx.consume(unit))
         else if rest.isEmpty && ctx.consumeShape.isDefined then
           // shape-aware terminal (fold/reduce/extremumBy): hand the decomposed shape to the terminal's lambda
           // so it reads only the fields it projects — no whole-product rebuild for `(acc, r) => acc + r.field`.
-          buildSegment(seg.map(_._1), srcShape(cur))(finalShape => ctx.consumeShape.get(finalShape))
-        else buildSegment(seg.map(_._1), srcShape(cur))(finalShape => readShape(finalShape)(t => buildBody(rest, t, ctx)))
+          buildSegment(seg.map(_._1), srcShape(cur), tailName)(finalShape => ctx.consumeShape.get(finalShape))
+        else buildSegment(seg.map(_._1), srcShape(cur), tailName)(finalShape => readShape(finalShape)(t => buildBody(rest, t, ctx)))
       case (FlatMapS(f, bTpe), _) :: rest =>
         val innerBody = applyLambda(f, cur)
         // FAST PATH: a literal `FArray(e0, e1, …)` flatMap body would otherwise allocate a fresh `${K}Arr` (a
@@ -1146,13 +1222,13 @@ object FuseMacro:
         val (accRead, setAcc) = ctx.counters(i).acc.get
         '{
           ${ setAcc(applyN(op, List(accRead, cur))).asExprOf[Unit] }
-          ${ letBind(accRead)(a => buildBody(rest, a, ctx)).asExprOf[Unit] }
+          ${ letBind(accRead, elemNameFor(rest.map(_._1), terminalElemName).getOrElse("acc"))(a => buildBody(rest, a, ctx)).asExprOf[Unit] }
         }.asTerm
       case (FoldAdjacentByS(key, _, combine, kTpe, _), i) :: rest =>
         // input is clustered by key. Per element: start a run / accumulate it / on key-change EMIT the run and
         // start a new one. The FINAL run is emitted by the epilogue (withEpilogue), via the SAME emit path.
         val st = ctx.counters(i).foldAdj.get
-        letBind(applyLambda(key, cur)) { kv =>
+        letBind(applyLambda(key, cur), keyFieldName(key).getOrElse("key")) { kv =>
           '{
             if ! ${ st.started } then {
               ${ st.setCurKey(kv).asExprOf[Unit] }
@@ -1170,7 +1246,7 @@ object FuseMacro:
         // buffer each run's rows; on key-change EMIT the run's rows as an FArray[A], then start a new run. The
         // final run is emitted by the epilogue. O(largest run) memory.
         val st = ctx.counters(i).groupAdj.get
-        letBind(applyLambda(key, cur)) { kv =>
+        letBind(applyLambda(key, cur), keyFieldName(key).getOrElse("key")) { kv =>
           '{
             if ! ${ st.started } then {
               ${ st.setCurKey(kv).asExprOf[Unit] }
@@ -1191,7 +1267,7 @@ object FuseMacro:
         // step the inner pipeline / on key-change EMIT (k, innerFinish) and start a new run. The rows are NEVER
         // materialized — the inner fold runs inline. The FINAL run is flushed by the epilogue, via the SAME emit path.
         val st = ctx.counters(i).groupReduceAdj.get
-        letBind(applyLambda(key, cur)) { kv =>
+        letBind(applyLambda(key, cur), keyFieldName(key).getOrElse("key")) { kv =>
           '{
             if ! ${ st.started } then {
               ${ st.setCurKey(kv).asExprOf[Unit] }
@@ -1237,7 +1313,7 @@ object FuseMacro:
         // capture the index, advance it, then hand a DECOMPOSED (value, index) pair downstream — so a filter on
         // the index or a map keeping only the value never builds the tuple. The pair is rebuilt only if read whole.
         val sl = ctx.counters(i)
-        letBind(sl.read.asTerm) { pos =>
+        letBind(sl.read.asTerm, "idx") { pos =>
           '{
             ${ sl.inc }
             ${ continueShape(Tup(List(srcShape(cur), srcShape(pos)), ts => tupleWithIndex(ts(0), ts(1).asExprOf[Int])), rest, ctx).asExprOf[Unit] }
@@ -1253,7 +1329,7 @@ object FuseMacro:
             val pos: Int = ${ sl.read }
             ${ sl.inc }
             ${
-              val lazyB = memoScalar(kk => kk(readAtKind(bTpe, zthat, '{ pos })))
+              val lazyB = memoScalar(kk => kk(readAtKind(bTpe, zthat, '{ pos })), combine.flatMap(elemParamNameOf).getOrElse("zipped"))
               val continue: Term = combine match
                 // map2 forces the value (f uses it); zip hands a Tup([cur, lazyB]) to the downstream segment so
                 // projections resolve to typed columns, no pair is allocated, and a discarded side is never read.
@@ -1273,7 +1349,7 @@ object FuseMacro:
         case Some(d) => '{ $i < $len && ! ${ d.read } }
         case None    => '{ $i < $len }
       def perElem(read: Term): Expr[Unit] =
-        letBind(read)(x => buildBody(ss, x, ctx)).asExprOf[Unit]
+        letBind(read, elemNameFor(ss.map(_._1), terminalElemName).getOrElse("elem"))(x => buildBody(ss, x, ctx)).asExprOf[Unit]
       // ONE loop, emitted once — the fused body is NOT duplicated per source shape (a long fused body twice per
       // loop was real bytecode bloat, and the old peeled leaf arm looped to `a.length`, reading slack slots —
       // `${K}Arr` leaves carry slack: groupBy values wrap the growable buffer, arr.length > length).
@@ -1453,7 +1529,12 @@ object FuseMacro:
       val (readers, whole) = terminalRecordReadersOfPipeline
       val notDone: Expr[Boolean] = c.done match { case Some(d) => '{ ! ${ d.read } }; case None => '{ true } }
       val continue: RecordColumns[quotes.type] => Expr[Unit] = cols =>
-        val parts: List[Shape] = cols.columns.map(col => if col.isString then memoScalar(k => col.read(k)) else Sc(k => col.read(k)))
+        // columns come back in record-field declaration order — name each memoized column after its field.
+        val labels: List[String] = productFields(srcElem) match
+          case Some(fs) if fs.length == cols.columns.length => fs.map((label, _) => fieldDisplayName(label).getOrElse("v"))
+          case _                                            => cols.columns.map(_ => "v")
+        val parts: List[Shape] =
+          cols.columns.zip(labels).map((col, label) => if col.isString then memoScalar(k => col.read(k), label) else Sc(k => col.read(k)))
         continueShape(Tup(parts, vs => mkProduct(srcElem, vs)), indexed, c).asExprOf[Unit]
       DecodeRequest[quotes.type](srcElem, src, notDone, stageLambdasOfPipeline, readers, whole, terminalDisplayName, continue)
 
@@ -1525,10 +1606,11 @@ object FuseMacro:
                   '{ seen = false },
                   (sh: Shape) =>
                     fnOnShape(f, sh)(fv =>
-                      '{
-                        val kk: bb = ${ fv.asExprOf[bb] }
-                        if !seen || ${ ordWins(bTpe, '{ kk }.asTerm, '{ best }.asTerm, isMax) } then { best = kk; seen = true }
-                      }.asTerm
+                      letBind(fv, keyFieldName(f).getOrElse("key")) { kk =>
+                        '{
+                          if !seen || ${ ordWins(bTpe, kk, '{ best }.asTerm, isMax) } then { best = ${ kk.asExprOf[bb] }; seen = true }
+                        }.asTerm
+                      }
                     ),
                   if bare then '{ if seen then best else throw new java.util.NoSuchElementException("min1/max1 of empty group") }.asTerm
                   else '{ if seen then Some(best) else None }.asTerm
@@ -1547,12 +1629,13 @@ object FuseMacro:
                   (sh: Shape) =>
                     readShape(sh)(elem =>
                       fnOnShape(f, sh)(fv =>
-                        '{
-                          val kk: bb = ${ fv.asExprOf[bb] }
-                          if !seen || ${ applyN(better, List('{ kk }.asTerm, '{ bestK }.asTerm)).asExprOf[Boolean] } then {
-                            bestK = kk; bestE = ${ elem.asExpr }; seen = true
-                          }
-                        }.asTerm
+                        letBind(fv, keyFieldName(f).getOrElse("key")) { kk =>
+                          '{
+                            if !seen || ${ applyN(better, List(kk, '{ bestK }.asTerm)).asExprOf[Boolean] } then {
+                              bestK = ${ kk.asExprOf[bb] }; bestE = ${ elem.asExpr }; seen = true
+                            }
+                          }.asTerm
+                        }
                       )
                     ),
                   if bare then '{ if seen then bestE else throw new java.util.NoSuchElementException("minBy1/maxBy1 of empty group") }.asTerm
@@ -1920,11 +2003,12 @@ object FuseMacro:
                         AState(
                           (sh, next) =>
                             fnOnShape(f, sh)(fv =>
-                              '{
-                                val kk: bb = ${ fv.asExprOf[bb] }
-                                if !seen || ${ ordWins(bTpe, '{ kk }.asTerm, '{ best }.asTerm, isMax) } then { best = kk; seen = true }
-                                ${ next().asExprOf[Unit] }
-                              }.asTerm
+                              letBind(fv, keyFieldName(f).getOrElse("key")) { kk =>
+                                '{
+                                  if !seen || ${ ordWins(bTpe, kk, '{ best }.asTerm, isMax) } then { best = ${ kk.asExprOf[bb] }; seen = true }
+                                  ${ next().asExprOf[Unit] }
+                                }.asTerm
+                              }
                             ),
                           if bare then '{ if seen then best else throw new java.util.NoSuchElementException("min1/max1 of empty fused pipeline") }.asTerm
                           else '{ if seen then Some(best) else None }.asTerm
@@ -2036,13 +2120,14 @@ object FuseMacro:
                           (sh, next) =>
                             readShape(sh)(elem =>
                               fnOnShape(f, sh)(fv =>
-                                '{
-                                  val kk: bb = ${ fv.asExprOf[bb] }
-                                  if !seeded || ${ applyN(better, List('{ kk }.asTerm, '{ bestK }.asTerm)).asExprOf[Boolean] } then {
-                                    best = ${ elem.asExpr }; bestK = kk; seeded = true
-                                  }
-                                  ${ next().asExprOf[Unit] }
-                                }.asTerm
+                                letBind(fv, keyFieldName(f).getOrElse("key")) { kk =>
+                                  '{
+                                    if !seeded || ${ applyN(better, List(kk, '{ bestK }.asTerm)).asExprOf[Boolean] } then {
+                                      best = ${ elem.asExpr }; bestK = ${ kk.asExprOf[bb] }; seeded = true
+                                    }
+                                    ${ next().asExprOf[Unit] }
+                                  }.asTerm
+                                }
                               )
                             ),
                           (if bare then '{ if seeded then best else throw new java.util.NoSuchElementException("minBy1/maxBy1 of empty fused pipeline") }

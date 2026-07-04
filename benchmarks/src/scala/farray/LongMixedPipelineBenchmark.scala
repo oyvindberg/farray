@@ -95,19 +95,19 @@ class LongMixedPipelineIntBenchmark extends IntInputs {
     val zipSrc = farrayInput.map(_ + 100)
     farrayInput.fuse
       .flatMap(x => FArray(x, x + 1))
-      .filter(_ % 3 != 0)
-      .map(_ * 2)
-      .flatMap(x => FArray(x, x ^ 5))
-      .filter(_ % 2 == 0)
-      .map(_ - 7)
+      .filter(n => n % 3 != 0)
+      .map(n => n * 2)
+      .flatMap(m => FArray(m, m ^ 5))
+      .filter(p => p % 2 == 0)
+      .map(p => p - 7)
       .zip(zipSrc)
       .map((a, b) => a + b)
       .zipWithIndex
       .filter((v, i) => (v + i) % 4 != 0)
       .map((v, i) => v - i)
-      .flatMap(x => FArray(x, x + 3))
-      .filter(_ > 0)
-      .foldLeft(0)(_ + _)
+      .flatMap(d => FArray(d, d + 3))
+      .filter(r => r > 0)
+      .foldLeft(0)((acc, r) => acc + r)
   }
   // stop:fuse-pipeline
 

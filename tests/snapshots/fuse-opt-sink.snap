@@ -1,37 +1,48 @@
-({
-  val z$proxy: Int = IntIsIntegral.zero
+{
+  val $proxy: FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  } = FArray$package.$asInstanceOf$[FArray$package {
+    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+  }]
+  val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
+  val Fuse_this: Fuse[Int] = (new Fuse[Int](xs$proxy): Fuse[Int]).map[Tuple2[Int, Int]](((x: Int) => Tuple2.apply[Int, Int](x.%(2), expensive(x)))).filter(((t: Tuple2[Int, Int]) => t._1.==(0))).map[Int](((`t₂`: Tuple2[Int, Int]) => `t₂`._2))
 
-  ((({
-    val src0: FBase = {
-      val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
-
-      (xs$proxy: ints)
-    }.asInstanceOf[FBase]
-    val n0: Int = src0.length
-    var acc: Int = z$proxy
+  ({
+    val `Fuse_this₂`: Fuse_this.type = Fuse_this
+    val z$proxy: Int = IntIsIntegral.zero
 
     ({
-      val s: FBase = src0
-      val a: Array[Int] = s match {
-        case l: IntArr =>
-          (l.arr: Array[Int])
-        case t =>
-          if (t.length.>=(64)) FArrayOps.materializeInt(t) else null
-      }
-      val len: Int = s.length
-      var i: Int = 0
-      while (i.<(len)) {
-        val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
-        val `v₂`: Int = v.%(2)
-        val `v₃`: Boolean = `v₂`.==(0)
-        if (`v₃`) {
-          val `v₄`: Int = expensive(v)
-          acc = IntIsIntegral.plus(acc, `v₄`)
-          ()
-        } else ()
-        i = i.+(1)
-      }
-      acc
+      val `Fuse_this₃`: Fuse_this.type = `Fuse_this₂`
+
+      ({
+        val src0: FBase = inline$base$i1[Int](`Fuse_this₃`).asInstanceOf[FBase]
+        val n0: Int = src0.length
+        var acc: Int = z$proxy
+
+        ({
+          val s: FBase = src0
+          val a: Array[Int] = s match {
+            case l: IntArr =>
+              (l.arr: Array[Int])
+            case t =>
+              if (`t₃`.length.>=(64)) FArrayOps.materializeInt(`t₃`) else null
+          }
+          val len: Int = s.length
+          var i: Int = 0
+          while (i.<(len)) {
+            val `x₂`: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+            val v: Int = `x₂`.%(2)
+            val keep: Boolean = v.==(0)
+            if (keep) {
+              val `v₂`: Int = expensive(`x₂`)
+              acc = IntIsIntegral.plus(acc, `v₂`)
+              ()
+            } else ()
+            i = i.+(1)
+          }
+          acc
+        }: Int)
+      }.asInstanceOf[Int]: Int)
     }: Int)
-  }.asInstanceOf[Int]: Int): Int): Int)
-}: Int)
+  }: Int)
+}
