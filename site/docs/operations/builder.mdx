@@ -73,15 +73,22 @@ FArray, not the path you reach for when you care about speed.
 ## Beating the specialized int[] builder
 
 Every builder here grows from nothing — none is told the size up front, which is the whole reason you
-reach for a builder. So this is a fair fight, and it isolates the one thing that differs: how the
-append crosses the type boundary. Note two rivals in particular — scala's `ArrayBuilder`, held at its
-trait type (the way generic code holds it), boxes every `int` through `addOne(Object)`; zio's
-`ChunkBuilder.Int`, held at its *concrete* type, is genuinely unboxed. FBuilder beats both.
+reach for a builder. Two things differ across the field, and both are real. **The append:** scala's
+`ArrayBuilder` held at its trait type boxes every `int` through `addOne(Object)`; zio's
+`ChunkBuilder.Int` held concretely is genuinely unboxed; FBuilder's inline `+=` is unboxed by
+construction. **The finish:** `result()` on the array builders *trim-copies* — `ArrayBuilder.ofInt`
+allocates a right-sized array and copies whenever the buffer isn't exactly full (the normal case,
+since it doubles), and zio's builder delegates to it. They have no choice: a raw `int[]` can't carry
+slack, its length *is* its count. FBuilder's `result()` is an O(1) slack-wrap — a leaf stores a
+logical length distinct from the array length, so no trim is needed. So part of the win over the
+array builders is a cheaper finish, not just a cheaper append — a property of FArray's representation,
+stated plainly. (ArrayBuffer is the exception: the benchmark returns the mutable buffer itself, no
+finish at all — the most generous treatment here — and FBuilder still leads it ~4×.)
 
 <BenchPair
   int="BuilderIntBenchmark"
   str="BuilderStrBenchmark"
-  caption="Accumulate N elements via += then result(), everyone unsized. On Int FBuilder leads at every size — 1.33–1.36× over both zio's concrete UNBOXED ChunkBuilder and scala's ArrayBuilder, 4–5× over ArrayBuffer and Vector — because its inline += is unboxed by construction where the field either boxes or, at best, ties the unboxing. On String there's no boxing to dodge, so it comes down to loop tightness and the no-defensive-copy result(): 1.18–1.24× at 1k+ with one honest loss — size 10, 0.82× vs a warm ArrayBuffer. (FArray.tabulate — known-N construction, not a builder — is the ceiling this approaches; off-chart because it isn't the same operation.)"
+  caption="Accumulate N elements via += then result(), everyone unsized. On Int FBuilder leads at every size — 1.33–1.36× over both zio's concrete UNBOXED ChunkBuilder and scala's ArrayBuilder, 4–5× over ArrayBuffer and Vector — because its inline += is unboxed and its result() is an O(1) slack-wrap where the array builders must trim-copy. On String there's no boxing to dodge, so it comes down to loop tightness and the no-defensive-copy result(): 1.18–1.24× at 1k+ with one honest loss — size 10, 0.82× vs a warm ArrayBuffer. (FArray.tabulate — known-N construction, not a builder — is the ceiling this approaches; off-chart because it isn't the same operation.)"
 />
 
 ## Use sizeHint when you can
