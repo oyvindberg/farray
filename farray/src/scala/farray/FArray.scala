@@ -180,7 +180,11 @@ object FArray:
     // was the whole cost of partition on an empty/cheap input (the impl's cached emptyPair never survived).
     inline def partition(inline p: A => Boolean): (FArray[A], FArray[A]) =
       FArrayOps.partitionImpl[A](xs)(p).asInstanceOf[(FArray[A], FArray[A])]
-    inline def collect[B](pf: PartialFunction[A, B]): FArray[B] = FArrayOps.collectImpl[A, B](xs)(pf).asInstanceOf[FArray[B]]
+    // a LITERAL pattern match is picked apart at compile time (CollectMacro): pattern+guard become
+    // the predicate, the case body the transform, both fed inline to the fused one-pass impl — no
+    // PartialFunction object, no boxing. A stored PF falls back to the runtime impl.
+    inline def collect[B](inline pf: PartialFunction[A, B]): FArray[B] =
+      ${ CollectMacro.impl[A, B]('xs, 'pf) }
     // unboxed per-kind seen-tables (domain/offset bitmaps, position-index probes, F14 ctrl bytes for refs),
     // Scala `==` semantics preserved exactly (NaN never collapses, ±0.0 does), identity return when nothing
     // was duplicated. Replaces the boxed mutable.HashSet[Any] + filter pass.

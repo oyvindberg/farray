@@ -52,6 +52,9 @@ re-run the competitors — edit `GenCores.scala`, run the sweep, read the refres
 caffeinate -i bash scripts/bench-run.sh [warmup-iters] [measure-iters] [forks] [max-shards]
 #   typical:  caffeinate -i bash scripts/bench-run.sh 3 5 1 6
 ```
+- **NEVER `bleep compile`/`bleep test` while a JMH run is live.** Recompilation swaps class files
+  under the running forks' classpath and JMH silently truncates the run (exits 0 with a partial
+  matrix — diagnosed 2026-07-04, two runs lost). Queue compiles behind the lock, or wait.
 - **One JMH consumer per box — `scripts/bench-lock.sh`.** Multiple agents/sessions may work here
   concurrently; two JMH runs contend and both measure garbage (and invite pkill collateral). The sweep
   runners (`bench-run.sh` / `setbench-run.sh`) take the mutex automatically; **wrap ad-hoc runs
