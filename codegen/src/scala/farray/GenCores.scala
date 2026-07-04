@@ -375,8 +375,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // Also the FBuilder backing buffer (see FBuilderBase). `add` is the unboxed hot path; `addNode` bulk-copies
     // whole leaves (arraycopy) — trees materialize ONCE then arraycopy, never element-by-element. `addBoxed` is
     // the second-class boxing entry used only by the `asScala` mutable.Builder adapter (abstract A there).
-    s"""final class ${K}Group extends FBuilderBase {
-       |  var arr: Array[$arrT] = new Array[$arrT](16)
+    s"""final class ${K}Group(initialCap: Int = 16) extends FBuilderBase {
+       |  var arr: Array[$arrT] = new Array[$arrT](if (initialCap < 1) 16 else initialCap)
        |  var size: Int = 0
        |  private def ensureCap(need: Int): Unit = { if (need > arr.length) { var ns = arr.length; while (ns < need) ns = ns << 1; arr = java.util.Arrays.copyOf(arr, ns) } }
        |  def add(v: $arrT): Unit = { if (size == arr.length) arr = java.util.Arrays.copyOf(arr, size << 1); arr(size) = v; size += 1 }
@@ -2584,7 +2584,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // the CONCRETE call site (summonFrom, zero runtime cost); the hot `add` casts the opaque handle to that
     // ${K}Group and appends an UNWRAPPED Prim (no boxing on the += path). Everything else (addNode/sizeHint/
     // clear/knownSize/result) is a plain virtual method on the sealed FBuilderBase — off the hot path.
-    val newBuilder = dispatchA(k => s"new ${k.name}Group()")
+    val newBuilder = dispatchA(k => s"new ${k.name}Group(cap)")
     val builderAdd = dispatchA(k => s"b.asInstanceOf[${k.name}Group].add(${wr(k, "r.unwrap(elem)")})")
     // mkString: a hybrid Reduce into a StringBuilder (Z = StringBuilder, a Ref acc) over the shared leaf
     // method (reduceLeafFwd${K}Ref) — the SAME machinery as foldLeft; the leaf method peels Empty/One/leaf and
@@ -2679,7 +2679,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def fromValues1[A](a: A): FBase = $fromValues1
        |  inline def fromValues2[A](a: A, b: A): FBase = $fromValues2
        |  inline def fromValues3[A](a: A, b: A, c: A): FBase = $fromValues3
-       |  inline def newBuilderImpl[A]: FBuilderBase = $newBuilder
+       |  inline def newBuilderImpl[A](cap: Int): FBuilderBase = $newBuilder
        |  inline def builderAddImpl[A](b: FBuilderBase, elem: A): Unit = $builderAdd
        |  inline def tabulateImpl[A](n: Int)(inline f: Int => A): FBase = $tabulate
        |  inline def fromArrayImpl[A](as: Array[A]): FBase = $fromArr

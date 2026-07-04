@@ -427165,5 +427165,2453 @@
    ]
   },
   "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedIntBenchmark.arraybuffer",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "10"
+  },
+  "primaryMetric": {
+   "score": 88509859.11384079,
+   "scoreError": 15205514.32166398,
+   "scoreConfidence": [
+    73304344.79217681,
+    103715373.43550476
+   ],
+   "scorePercentiles": {
+    "0.0": 77238994.2036911,
+    "50.0": 88444127.40755856,
+    "90.0": 100226375.68158479,
+    "95.0": 100422648.59276518,
+    "99.0": 100422648.59276518,
+    "99.9": 100422648.59276518,
+    "99.99": 100422648.59276518,
+    "99.999": 100422648.59276518,
+    "99.9999": 100422648.59276518,
+    "100.0": 100422648.59276518
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     96137562.09318575,
+     100422648.59276518,
+     98459919.48096132,
+     97411086.3366863,
+     97307053.9065767
+    ],
+    [
+     79179173.81881687,
+     80750692.72193135,
+     77849155.01128656,
+     80342304.9725068,
+     77238994.2036911
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedIntBenchmark.arraybuffer",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "1000"
+  },
+  "primaryMetric": {
+   "score": 513078.5054189252,
+   "scoreError": 7638.342878062883,
+   "scoreConfidence": [
+    505440.16254086234,
+    520716.84829698806
+   ],
+   "scorePercentiles": {
+    "0.0": 506187.31947826257,
+    "50.0": 512908.3827511003,
+    "90.0": 518725.4888293349,
+    "95.0": 518779.51758299675,
+    "99.0": 518779.51758299675,
+    "99.9": 518779.51758299675,
+    "99.99": 518779.51758299675,
+    "99.999": 518779.51758299675,
+    "99.9999": 518779.51758299675,
+    "100.0": 518779.51758299675
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     517933.62529973185,
+     517906.7707462017,
+     518239.23004637816,
+     515530.1683690032,
+     509207.3066312251
+    ],
+    [
+     510286.59713319736,
+     509551.303147624,
+     506187.31947826257,
+     507163.2157546308,
+     518779.51758299675
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedIntBenchmark.arraybuffer",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "100000"
+  },
+  "primaryMetric": {
+   "score": 4961.037704087756,
+   "scoreError": 34.3309481620776,
+   "scoreConfidence": [
+    4926.706755925678,
+    4995.368652249833
+   ],
+   "scorePercentiles": {
+    "0.0": 4917.868378923492,
+    "50.0": 4967.565451202905,
+    "90.0": 4983.6692174488035,
+    "95.0": 4984.002298635802,
+    "99.0": 4984.002298635802,
+    "99.9": 4984.002298635802,
+    "99.99": 4984.002298635802,
+    "99.999": 4984.002298635802,
+    "99.9999": 4984.002298635802,
+    "100.0": 4984.002298635802
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     4980.671486765816,
+     4931.183821983701,
+     4959.758505854441,
+     4976.263605959839,
+     4970.827557935107
+    ],
+    [
+     4917.868378923492,
+     4980.458706821598,
+     4984.002298635802,
+     4945.039333527063,
+     4964.303344470703
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedIntBenchmark.arraybuilder",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "10"
+  },
+  "primaryMetric": {
+   "score": 164969069.16282853,
+   "scoreError": 3291547.3632931467,
+   "scoreConfidence": [
+    161677521.7995354,
+    168260616.52612168
+   ],
+   "scorePercentiles": {
+    "0.0": 159782558.4558722,
+    "50.0": 165610081.4110726,
+    "90.0": 167287884.27117917,
+    "95.0": 167345595.4702507,
+    "99.0": 167345595.4702507,
+    "99.9": 167345595.4702507,
+    "99.99": 167345595.4702507,
+    "99.999": 167345595.4702507,
+    "99.9999": 167345595.4702507,
+    "100.0": 167345595.4702507
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     165696665.04469383,
+     164469132.58677188,
+     167345595.4702507,
+     165793074.7785973,
+     166476352.46155703
+    ],
+    [
+     163358266.9003624,
+     159782558.4558722,
+     164477064.673193,
+     165523497.77745143,
+     166768483.47953546
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedIntBenchmark.arraybuilder",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "1000"
+  },
+  "primaryMetric": {
+   "score": 1717518.9704144273,
+   "scoreError": 68859.53170737393,
+   "scoreConfidence": [
+    1648659.4387070534,
+    1786378.5021218013
+   ],
+   "scorePercentiles": {
+    "0.0": 1614958.3174722854,
+    "50.0": 1730915.7865765109,
+    "90.0": 1763169.1431428355,
+    "95.0": 1764300.426775189,
+    "99.0": 1764300.426775189,
+    "99.9": 1764300.426775189,
+    "99.99": 1764300.426775189,
+    "99.999": 1764300.426775189,
+    "99.9999": 1764300.426775189,
+    "100.0": 1764300.426775189
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     1684183.3316656323,
+     1741353.198976174,
+     1682492.0479402768,
+     1720617.3562851825,
+     1614958.3174722854
+    ],
+    [
+     1720694.9162024553,
+     1764300.426775189,
+     1741136.6569505667,
+     1752987.5904516536,
+     1752465.8614248568
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedIntBenchmark.arraybuilder",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "100000"
+  },
+  "primaryMetric": {
+   "score": 18224.563474154198,
+   "scoreError": 244.0623989505453,
+   "scoreConfidence": [
+    17980.501075203654,
+    18468.625873104742
+   ],
+   "scorePercentiles": {
+    "0.0": 17935.674361238303,
+    "50.0": 18220.741891311744,
+    "90.0": 18444.34992437399,
+    "95.0": 18448.937985907593,
+    "99.0": 18448.937985907593,
+    "99.9": 18448.937985907593,
+    "99.99": 18448.937985907593,
+    "99.999": 18448.937985907593,
+    "99.9999": 18448.937985907593,
+    "100.0": 18448.937985907593
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     18089.095045689286,
+     18092.998009770217,
+     17935.674361238303,
+     18160.75289802544,
+     18179.158636155997
+    ],
+    [
+     18262.32514646749,
+     18403.05737057156,
+     18351.978247857496,
+     18321.65703985857,
+     18448.937985907593
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedIntBenchmark.farray",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "10"
+  },
+  "primaryMetric": {
+   "score": 167692181.35387495,
+   "scoreError": 1524558.2169268231,
+   "scoreConfidence": [
+    166167623.13694814,
+    169216739.57080176
+   ],
+   "scorePercentiles": {
+    "0.0": 166386270.60970196,
+    "50.0": 167613811.4170975,
+    "90.0": 169155894.45253912,
+    "95.0": 169178672.46791372,
+    "99.0": 169178672.46791372,
+    "99.9": 169178672.46791372,
+    "99.99": 169178672.46791372,
+    "99.999": 169178672.46791372,
+    "99.9999": 169178672.46791372,
+    "100.0": 169178672.46791372
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     166905333.6008868,
+     167708223.20176703,
+     166400322.8837304,
+     167185715.65267646,
+     166386270.60970196
+    ],
+    [
+     168682152.67547306,
+     168950892.31416762,
+     169178672.46791372,
+     168004830.5000045,
+     167519399.63242802
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedIntBenchmark.farray",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "1000"
+  },
+  "primaryMetric": {
+   "score": 2662773.3148759576,
+   "scoreError": 56251.81103737739,
+   "scoreConfidence": [
+    2606521.50383858,
+    2719025.125913335
+   ],
+   "scorePercentiles": {
+    "0.0": 2593715.3407330154,
+    "50.0": 2663881.045971385,
+    "90.0": 2700694.5241476065,
+    "95.0": 2701117.2326935055,
+    "99.0": 2701117.2326935055,
+    "99.9": 2701117.2326935055,
+    "99.99": 2701117.2326935055,
+    "99.999": 2701117.2326935055,
+    "99.9999": 2701117.2326935055,
+    "100.0": 2701117.2326935055
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     2654988.2816744014,
+     2701117.2326935055,
+     2696890.1472345144,
+     2695087.1652994878,
+     2693661.920689843
+    ],
+    [
+     2670576.709127906,
+     2655085.2712936713,
+     2657185.382814864,
+     2609425.6971983663,
+     2593715.3407330154
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedIntBenchmark.farray",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "100000"
+  },
+  "primaryMetric": {
+   "score": 30023.955106199533,
+   "scoreError": 332.55801364981187,
+   "scoreConfidence": [
+    29691.397092549723,
+    30356.513119849344
+   ],
+   "scorePercentiles": {
+    "0.0": 29715.978561512424,
+    "50.0": 29966.620258336712,
+    "90.0": 30319.7577680673,
+    "95.0": 30325.142788473026,
+    "99.0": 30325.142788473026,
+    "99.9": 30325.142788473026,
+    "99.99": 30325.142788473026,
+    "99.999": 30325.142788473026,
+    "99.9999": 30325.142788473026,
+    "100.0": 30325.142788473026
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     29900.832923266655,
+     30020.674612731316,
+     30325.142788473026,
+     30271.292584415754,
+     30172.00464839275
+    ],
+    [
+     29912.565903942108,
+     30257.204911350498,
+     29715.978561512424,
+     29757.505879668883,
+     29906.348248241946
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedIntBenchmark.list",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "10"
+  },
+  "primaryMetric": {
+   "score": 27114232.309089504,
+   "scoreError": 412438.67745999736,
+   "scoreConfidence": [
+    26701793.631629508,
+    27526670.9865495
+   ],
+   "scorePercentiles": {
+    "0.0": 26673860.763932202,
+    "50.0": 27105153.424885213,
+    "90.0": 27547176.734120984,
+    "95.0": 27551624.983881734,
+    "99.0": 27551624.983881734,
+    "99.9": 27551624.983881734,
+    "99.99": 27551624.983881734,
+    "99.999": 27551624.983881734,
+    "99.9999": 27551624.983881734,
+    "100.0": 27551624.983881734
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     27220415.326335784,
+     26830168.703994796,
+     27152693.048237514,
+     27057613.80153291,
+     26673860.763932202
+    ],
+    [
+     26989082.778662995,
+     27167885.10071795,
+     27507142.486274213,
+     26991836.09732493,
+     27551624.983881734
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedIntBenchmark.list",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "1000"
+  },
+  "primaryMetric": {
+   "score": 186651.37643706382,
+   "scoreError": 4071.0065121092657,
+   "scoreConfidence": [
+    182580.36992495455,
+    190722.3829491731
+   ],
+   "scorePercentiles": {
+    "0.0": 179660.59014582133,
+    "50.0": 187269.15505226038,
+    "90.0": 188964.73803067039,
+    "95.0": 188987.02458630013,
+    "99.0": 188987.02458630013,
+    "99.9": 188987.02458630013,
+    "99.99": 188987.02458630013,
+    "99.999": 188987.02458630013,
+    "99.9999": 188987.02458630013,
+    "100.0": 188987.02458630013
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     179660.59014582133,
+     185897.3448967789,
+     188987.02458630013,
+     188299.4459114223,
+     186876.9911382982
+    ],
+    [
+     186943.1247608187,
+     187595.18534370206,
+     188764.15903000254,
+     187778.73118996798,
+     185711.1673675258
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedIntBenchmark.list",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "100000"
+  },
+  "primaryMetric": {
+   "score": 1718.1150437176943,
+   "scoreError": 92.45237727733523,
+   "scoreConfidence": [
+    1625.662666440359,
+    1810.5674209950296
+   ],
+   "scorePercentiles": {
+    "0.0": 1617.2253830995212,
+    "50.0": 1727.908584105889,
+    "90.0": 1783.855413943391,
+    "95.0": 1784.8930268431222,
+    "99.0": 1784.8930268431222,
+    "99.9": 1784.8930268431222,
+    "99.99": 1784.8930268431222,
+    "99.999": 1784.8930268431222,
+    "99.9999": 1784.8930268431222,
+    "100.0": 1784.8930268431222
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     1770.250931608789,
+     1685.6113219260606,
+     1688.436556046816,
+     1630.1529525620579,
+     1720.7998189540576
+    ],
+    [
+     1617.2253830995212,
+     1735.0173492577203,
+     1774.2461990329882,
+     1774.5168978458098,
+     1784.8930268431222
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedIntBenchmark.vector",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "10"
+  },
+  "primaryMetric": {
+   "score": 45120279.23584122,
+   "scoreError": 1581657.1296831812,
+   "scoreConfidence": [
+    43538622.10615804,
+    46701936.365524404
+   ],
+   "scorePercentiles": {
+    "0.0": 42874545.565264106,
+    "50.0": 45544229.29976538,
+    "90.0": 46147905.14336227,
+    "95.0": 46196815.64704971,
+    "99.0": 46196815.64704971,
+    "99.9": 46196815.64704971,
+    "99.99": 46196815.64704971,
+    "99.999": 46196815.64704971,
+    "99.9999": 46196815.64704971,
+    "100.0": 46196815.64704971
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     45174966.00235744,
+     45576518.17497128,
+     45649798.27060941,
+     45707710.61017533,
+     46196815.64704971
+    ],
+    [
+     42874545.565264106,
+     43575767.27147116,
+     45341869.67434078,
+     45592860.71761351,
+     45511940.42455947
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedIntBenchmark.vector",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "1000"
+  },
+  "primaryMetric": {
+   "score": 350839.7244346168,
+   "scoreError": 2990.119631664311,
+   "scoreConfidence": [
+    347849.6048029525,
+    353829.8440662811
+   ],
+   "scorePercentiles": {
+    "0.0": 347614.7534044401,
+    "50.0": 350810.2759058726,
+    "90.0": 354125.2441811526,
+    "95.0": 354293.17903067876,
+    "99.0": 354293.17903067876,
+    "99.9": 354293.17903067876,
+    "99.99": 354293.17903067876,
+    "99.999": 354293.17903067876,
+    "99.9999": 354293.17903067876,
+    "100.0": 354293.17903067876
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     350724.4523486887,
+     350896.0994630565,
+     352398.026427059,
+     354293.17903067876,
+     352613.8305354171
+    ],
+    [
+     348836.2631286378,
+     351565.0945641474,
+     350096.95123635244,
+     349358.5942076901,
+     347614.7534044401
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedIntBenchmark.vector",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "100000"
+  },
+  "primaryMetric": {
+   "score": 3120.878709508523,
+   "scoreError": 62.40197516883782,
+   "scoreConfidence": [
+    3058.476734339685,
+    3183.280684677361
+   ],
+   "scorePercentiles": {
+    "0.0": 3043.477407367265,
+    "50.0": 3132.4945959822016,
+    "90.0": 3165.536888628409,
+    "95.0": 3166.4515207013915,
+    "99.0": 3166.4515207013915,
+    "99.9": 3166.4515207013915,
+    "99.99": 3166.4515207013915,
+    "99.999": 3166.4515207013915,
+    "99.9999": 3166.4515207013915,
+    "100.0": 3166.4515207013915
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     3134.350446803024,
+     3166.4515207013915,
+     3157.305199971566,
+     3130.638745161379,
+     3154.610522365578
+    ],
+    [
+     3090.917312037021,
+     3076.534975397745,
+     3043.477407367265,
+     3155.3405014057303,
+     3099.1604638745284
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedIntBenchmark.ziochunk",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "10"
+  },
+  "primaryMetric": {
+   "score": 121127748.46505971,
+   "scoreError": 6065179.04780408,
+   "scoreConfidence": [
+    115062569.41725564,
+    127192927.51286379
+   ],
+   "scorePercentiles": {
+    "0.0": 116770203.0705811,
+    "50.0": 121007002.2275353,
+    "90.0": 125468629.78768243,
+    "95.0": 125493146.66709283,
+    "99.0": 125493146.66709283,
+    "99.9": 125493146.66709283,
+    "99.99": 125493146.66709283,
+    "99.999": 125493146.66709283,
+    "99.9999": 125493146.66709283,
+    "100.0": 125493146.66709283
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     117649094.55291471,
+     116770203.0705811,
+     116822251.25943708,
+     117517054.85718036,
+     118030457.848898
+    ],
+    [
+     124554637.51134938,
+     125493146.66709283,
+     123983546.60617264,
+     125247977.87298876,
+     125209114.40398228
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedIntBenchmark.ziochunk",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "1000"
+  },
+  "primaryMetric": {
+   "score": 1709995.7826656916,
+   "scoreError": 26701.386301046943,
+   "scoreConfidence": [
+    1683294.3963646446,
+    1736697.1689667385
+   ],
+   "scorePercentiles": {
+    "0.0": 1678228.6575064708,
+    "50.0": 1715921.6276775221,
+    "90.0": 1729866.9628985813,
+    "95.0": 1730284.2456108285,
+    "99.0": 1730284.2456108285,
+    "99.9": 1730284.2456108285,
+    "99.99": 1730284.2456108285,
+    "99.999": 1730284.2456108285,
+    "99.9999": 1730284.2456108285,
+    "100.0": 1730284.2456108285
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     1714957.3134852122,
+     1703190.0944490954,
+     1678228.6575064708,
+     1685106.1650517846,
+     1716885.941869832
+    ],
+    [
+     1700653.6568399959,
+     1721873.6211421008,
+     1726111.4184883558,
+     1722666.7122132413,
+     1730284.2456108285
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedIntBenchmark.ziochunk",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "100000"
+  },
+  "primaryMetric": {
+   "score": 18043.140063851046,
+   "scoreError": 288.1470960045941,
+   "scoreConfidence": [
+    17754.99296784645,
+    18331.28715985564
+   ],
+   "scorePercentiles": {
+    "0.0": 17700.09074269645,
+    "50.0": 18116.565054976985,
+    "90.0": 18242.429755807836,
+    "95.0": 18247.66745624117,
+    "99.0": 18247.66745624117,
+    "99.9": 18247.66745624117,
+    "99.99": 18247.66745624117,
+    "99.999": 18247.66745624117,
+    "99.9999": 18247.66745624117,
+    "100.0": 18247.66745624117
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     18195.290451907815,
+     18149.911383232287,
+     18190.390454289103,
+     18247.66745624117,
+     18085.524884720824
+    ],
+    [
+     17700.09074269645,
+     18147.605225233143,
+     18056.685468388183,
+     17771.347447256918,
+     17886.887124544555
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedStrBenchmark.arraybuffer",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "10"
+  },
+  "primaryMetric": {
+   "score": 105560395.95370464,
+   "scoreError": 9943905.493397564,
+   "scoreConfidence": [
+    95616490.46030708,
+    115504301.4471022
+   ],
+   "scorePercentiles": {
+    "0.0": 96899839.67951958,
+    "50.0": 105486107.60439488,
+    "90.0": 112504852.9396334,
+    "95.0": 112517807.89190121,
+    "99.0": 112517807.89190121,
+    "99.9": 112517807.89190121,
+    "99.99": 112517807.89190121,
+    "99.999": 112517807.89190121,
+    "99.9999": 112517807.89190121,
+    "100.0": 112517807.89190121
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     100306569.8730709,
+     100396319.85180612,
+     96899839.67951958,
+     100685547.24708359,
+     98854836.8762078
+    ],
+    [
+     111318344.23584239,
+     110286667.96170619,
+     112388258.36922312,
+     112517807.89190121,
+     111949767.55068554
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedStrBenchmark.arraybuffer",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "1000"
+  },
+  "primaryMetric": {
+   "score": 1576133.371974523,
+   "scoreError": 117763.8772778532,
+   "scoreConfidence": [
+    1458369.4946966697,
+    1693897.2492523761
+   ],
+   "scorePercentiles": {
+    "0.0": 1478747.460024411,
+    "50.0": 1577076.606458897,
+    "90.0": 1655367.7506259386,
+    "95.0": 1655572.4296246753,
+    "99.0": 1655572.4296246753,
+    "99.9": 1655572.4296246753,
+    "99.99": 1655572.4296246753,
+    "99.999": 1655572.4296246753,
+    "99.9999": 1655572.4296246753,
+    "100.0": 1655572.4296246753
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     1478747.460024411,
+     1514322.84473753,
+     1503513.7553071456,
+     1514308.2552905206,
+     1503689.865230163
+    ],
+    [
+     1639830.368180264,
+     1647006.128256345,
+     1653525.6396373094,
+     1655572.4296246753,
+     1650816.9734568656
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedStrBenchmark.arraybuffer",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "100000"
+  },
+  "primaryMetric": {
+   "score": 15273.679178536418,
+   "scoreError": 131.68207124900664,
+   "scoreConfidence": [
+    15141.997107287412,
+    15405.361249785425
+   ],
+   "scorePercentiles": {
+    "0.0": 15080.19774189124,
+    "50.0": 15289.193248022722,
+    "90.0": 15395.177986996892,
+    "95.0": 15400.913986786429,
+    "99.0": 15400.913986786429,
+    "99.9": 15400.913986786429,
+    "99.99": 15400.913986786429,
+    "99.999": 15400.913986786429,
+    "99.9999": 15400.913986786429,
+    "100.0": 15400.913986786429
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     15248.551274213047,
+     15211.462852684374,
+     15328.175579095372,
+     15343.553988891064,
+     15300.644725601811
+    ],
+    [
+     15080.19774189124,
+     15277.745259271922,
+     15400.913986786429,
+     15244.905140155424,
+     15300.641236773523
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedStrBenchmark.arraybuilder",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "10"
+  },
+  "primaryMetric": {
+   "score": 84267711.74914774,
+   "scoreError": 1518928.469864681,
+   "scoreConfidence": [
+    82748783.27928306,
+    85786640.21901242
+   ],
+   "scorePercentiles": {
+    "0.0": 81921008.49885409,
+    "50.0": 84479705.10500064,
+    "90.0": 85149659.86053142,
+    "95.0": 85156879.24446116,
+    "99.0": 85156879.24446116,
+    "99.9": 85156879.24446116,
+    "99.99": 85156879.24446116,
+    "99.999": 85156879.24446116,
+    "99.9999": 85156879.24446116,
+    "100.0": 85156879.24446116
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     84229482.30092336,
+     85156879.24446116,
+     84408440.39246868,
+     84780612.90571596,
+     83173731.73346338
+    ],
+    [
+     81921008.49885409,
+     84550969.8175326,
+     85084685.40516372,
+     85008602.9617854,
+     84362704.23110905
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedStrBenchmark.arraybuilder",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "1000"
+  },
+  "primaryMetric": {
+   "score": 1237032.7519009712,
+   "scoreError": 10607.001459750712,
+   "scoreConfidence": [
+    1226425.7504412204,
+    1247639.753360722
+   ],
+   "scorePercentiles": {
+    "0.0": 1225128.612164506,
+    "50.0": 1234572.075332071,
+    "90.0": 1245511.5383529163,
+    "95.0": 1245551.945569796,
+    "99.0": 1245551.945569796,
+    "99.9": 1245551.945569796,
+    "99.99": 1245551.945569796,
+    "99.999": 1245551.945569796,
+    "99.9999": 1245551.945569796,
+    "100.0": 1245551.945569796
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     1234370.6023482806,
+     1245147.8734009978,
+     1243254.9013621784,
+     1244255.9576795374,
+     1245551.945569796
+    ],
+    [
+     1233119.2356217485,
+     1233011.1159846296,
+     1225128.612164506,
+     1234773.5483158613,
+     1231713.7265621747
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedStrBenchmark.arraybuilder",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "100000"
+  },
+  "primaryMetric": {
+   "score": 9583.251793861193,
+   "scoreError": 471.91346693742355,
+   "scoreConfidence": [
+    9111.33832692377,
+    10055.165260798616
+   ],
+   "scorePercentiles": {
+    "0.0": 9046.566501358735,
+    "50.0": 9678.905484866555,
+    "90.0": 9931.537266635749,
+    "95.0": 9933.422907482138,
+    "99.0": 9933.422907482138,
+    "99.9": 9933.422907482138,
+    "99.99": 9933.422907482138,
+    "99.999": 9933.422907482138,
+    "99.9999": 9933.422907482138,
+    "100.0": 9933.422907482138
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     9354.111867943699,
+     9519.35495340852,
+     9734.68253694336,
+     9140.285622222573,
+     9046.566501358735
+    ],
+    [
+     9660.213917148845,
+     9697.597052584266,
+     9914.566499018249,
+     9933.422907482138,
+     9831.716080501543
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedStrBenchmark.farray",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "10"
+  },
+  "primaryMetric": {
+   "score": 98431883.03941199,
+   "scoreError": 1832781.2895915366,
+   "scoreConfidence": [
+    96599101.74982046,
+    100264664.32900353
+   ],
+   "scorePercentiles": {
+    "0.0": 95880451.67521058,
+    "50.0": 98831167.96274304,
+    "90.0": 99757813.25822638,
+    "95.0": 99769311.97435568,
+    "99.0": 99769311.97435568,
+    "99.9": 99769311.97435568,
+    "99.99": 99769311.97435568,
+    "99.999": 99769311.97435568,
+    "99.9999": 99769311.97435568,
+    "100.0": 99769311.97435568
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     98760959.70485492,
+     99769311.97435568,
+     99654324.81306262,
+     98901376.22063117,
+     98209292.34973858
+    ],
+    [
+     97911220.1995996,
+     99088093.96954416,
+     97048573.34846254,
+     95880451.67521058,
+     99095226.13866009
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedStrBenchmark.farray",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "1000"
+  },
+  "primaryMetric": {
+   "score": 1239974.0415734474,
+   "scoreError": 56940.91128390412,
+   "scoreConfidence": [
+    1183033.1302895432,
+    1296914.9528573516
+   ],
+   "scorePercentiles": {
+    "0.0": 1175515.0611390308,
+    "50.0": 1244594.3994440937,
+    "90.0": 1279543.9042376948,
+    "95.0": 1279758.545475997,
+    "99.0": 1279758.545475997,
+    "99.9": 1279758.545475997,
+    "99.99": 1279758.545475997,
+    "99.999": 1279758.545475997,
+    "99.9999": 1279758.545475997,
+    "100.0": 1279758.545475997
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     1209393.151628192,
+     1221978.715752,
+     1212190.8083929254,
+     1212011.7720331152,
+     1175515.0611390308
+    ],
+    [
+     1267210.0831361874,
+     1272930.7082309185,
+     1277612.133092975,
+     1279758.545475997,
+     1271139.4368531313
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedStrBenchmark.farray",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "100000"
+  },
+  "primaryMetric": {
+   "score": 13687.738899252634,
+   "scoreError": 171.01155030234028,
+   "scoreConfidence": [
+    13516.727348950293,
+    13858.750449554975
+   ],
+   "scorePercentiles": {
+    "0.0": 13472.526887079057,
+    "50.0": 13675.590953764868,
+    "90.0": 13877.014525450437,
+    "95.0": 13881.59827922106,
+    "99.0": 13881.59827922106,
+    "99.9": 13881.59827922106,
+    "99.99": 13881.59827922106,
+    "99.999": 13881.59827922106,
+    "99.9999": 13881.59827922106,
+    "100.0": 13881.59827922106
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     13684.497509507573,
+     13472.526887079057,
+     13705.157153077917,
+     13835.76074151483,
+     13881.59827922106
+    ],
+    [
+     13624.004717798205,
+     13717.17188557752,
+     13646.425990418125,
+     13666.684398022162,
+     13643.561430309877
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedStrBenchmark.list",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "10"
+  },
+  "primaryMetric": {
+   "score": 28393171.067251574,
+   "scoreError": 551630.4483625839,
+   "scoreConfidence": [
+    27841540.61888899,
+    28944801.51561416
+   ],
+   "scorePercentiles": {
+    "0.0": 27820051.236255664,
+    "50.0": 28425107.733305603,
+    "90.0": 28887276.822839655,
+    "95.0": 28888401.159538094,
+    "99.0": 28888401.159538094,
+    "99.9": 28888401.159538094,
+    "99.99": 28888401.159538094,
+    "99.999": 28888401.159538094,
+    "99.9999": 28888401.159538094,
+    "100.0": 28888401.159538094
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     27973198.16168224,
+     28567197.360048868,
+     28117867.45270956,
+     27820051.236255664,
+     28539422.295189563
+    ],
+    [
+     28616623.891978804,
+     28310793.171421647,
+     28877157.7925537,
+     28220998.15113763,
+     28888401.159538094
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedStrBenchmark.list",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "1000"
+  },
+  "primaryMetric": {
+   "score": 282059.82434064493,
+   "scoreError": 5955.972796831378,
+   "scoreConfidence": [
+    276103.85154381354,
+    288015.79713747633
+   ],
+   "scorePercentiles": {
+    "0.0": 273222.9727439412,
+    "50.0": 283360.74249950174,
+    "90.0": 285904.9702643862,
+    "95.0": 286021.5625655161,
+    "99.0": 286021.5625655161,
+    "99.9": 286021.5625655161,
+    "99.99": 286021.5625655161,
+    "99.999": 286021.5625655161,
+    "99.9999": 286021.5625655161,
+    "100.0": 286021.5625655161
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     284855.639554217,
+     284368.55093903455,
+     286021.5625655161,
+     273222.9727439412,
+     277668.2016268577
+    ],
+    [
+     282825.76425579743,
+     284795.3768587086,
+     283895.72074320604,
+     282287.0950908218,
+     280657.35902834847
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedStrBenchmark.list",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "100000"
+  },
+  "primaryMetric": {
+   "score": 2841.9532097944552,
+   "scoreError": 77.97922235988025,
+   "scoreConfidence": [
+    2763.973987434575,
+    2919.9324321543354
+   ],
+   "scorePercentiles": {
+    "0.0": 2728.052245359296,
+    "50.0": 2841.2478142780074,
+    "90.0": 2904.1156167288595,
+    "95.0": 2905.39298898507,
+    "99.0": 2905.39298898507,
+    "99.9": 2905.39298898507,
+    "99.99": 2905.39298898507,
+    "99.999": 2905.39298898507,
+    "99.9999": 2905.39298898507,
+    "100.0": 2905.39298898507
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     2837.63229522108,
+     2802.85301910086,
+     2860.7144869073927,
+     2834.0920737996485,
+     2825.225155004093
+    ],
+    [
+     2728.052245359296,
+     2905.39298898507,
+     2844.8633333349344,
+     2892.6192664229643,
+     2888.087233809211
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedStrBenchmark.vector",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "10"
+  },
+  "primaryMetric": {
+   "score": 48034164.83403818,
+   "scoreError": 1624398.4750431327,
+   "scoreConfidence": [
+    46409766.35899505,
+    49658563.309081316
+   ],
+   "scorePercentiles": {
+    "0.0": 46350398.03313143,
+    "50.0": 48112237.67526373,
+    "90.0": 49235913.34980468,
+    "95.0": 49255363.85667689,
+    "99.0": 49255363.85667689,
+    "99.9": 49255363.85667689,
+    "99.99": 49255363.85667689,
+    "99.999": 49255363.85667689,
+    "99.9999": 49255363.85667689,
+    "100.0": 49255363.85667689
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     48287330.115553536,
+     49255363.85667689,
+     49034992.265231565,
+     48991972.8129225,
+     49060858.78795471
+    ],
+    [
+     46350398.03313143,
+     46798372.47412595,
+     46839191.921876125,
+     47786022.83793523,
+     47937145.23497393
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedStrBenchmark.vector",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "1000"
+  },
+  "primaryMetric": {
+   "score": 598146.2488454451,
+   "scoreError": 24276.117401435575,
+   "scoreConfidence": [
+    573870.1314440095,
+    622422.3662468807
+   ],
+   "scorePercentiles": {
+    "0.0": 578609.8200010106,
+    "50.0": 598487.9568780515,
+    "90.0": 615616.8697108815,
+    "95.0": 615824.5285642034,
+    "99.0": 615824.5285642034,
+    "99.9": 615824.5285642034,
+    "99.99": 615824.5285642034,
+    "99.999": 615824.5285642034,
+    "99.9999": 615824.5285642034,
+    "100.0": 615824.5285642034
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     582021.2288903958,
+     583353.9687559607,
+     578609.8200010106,
+     585771.8033569438,
+     585576.5642742821
+    ],
+    [
+     611204.1103991593,
+     612976.0806348816,
+     612376.4435466282,
+     613747.9400309843,
+     615824.5285642034
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedStrBenchmark.vector",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "100000"
+  },
+  "primaryMetric": {
+   "score": 5730.440985394728,
+   "scoreError": 194.50190975236532,
+   "scoreConfidence": [
+    5535.939075642363,
+    5924.942895147094
+   ],
+   "scorePercentiles": {
+    "0.0": 5496.323695362461,
+    "50.0": 5731.909763938036,
+    "90.0": 5894.931770191825,
+    "95.0": 5896.121752371937,
+    "99.0": 5896.121752371937,
+    "99.9": 5896.121752371937,
+    "99.99": 5896.121752371937,
+    "99.999": 5896.121752371937,
+    "99.9999": 5896.121752371937,
+    "100.0": 5896.121752371937
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     5784.222741195678,
+     5595.283356878052,
+     5847.749064514921,
+     5884.221930570821,
+     5896.121752371937
+    ],
+    [
+     5738.397806619553,
+     5496.323695362461,
+     5655.572318146368,
+     5681.095467030976,
+     5725.421721256518
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedStrBenchmark.ziochunk",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "10"
+  },
+  "primaryMetric": {
+   "score": 31957141.562704407,
+   "scoreError": 480789.3289583374,
+   "scoreConfidence": [
+    31476352.23374607,
+    32437930.891662743
+   ],
+   "scorePercentiles": {
+    "0.0": 31348432.59100664,
+    "50.0": 32074304.69289144,
+    "90.0": 32268394.721617084,
+    "95.0": 32273477.28860251,
+    "99.0": 32273477.28860251,
+    "99.9": 32273477.28860251,
+    "99.99": 32273477.28860251,
+    "99.999": 32273477.28860251,
+    "99.9999": 32273477.28860251,
+    "100.0": 32273477.28860251
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     31419944.64283262,
+     31348432.59100664,
+     31905492.73782614,
+     32101351.645555187,
+     32097787.596392903
+    ],
+    [
+     32222651.618748263,
+     32053668.120296933,
+     32058515.979101237,
+     32273477.28860251,
+     32090093.40668165
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedStrBenchmark.ziochunk",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "1000"
+  },
+  "primaryMetric": {
+   "score": 693515.5638585223,
+   "scoreError": 47422.588644358795,
+   "scoreConfidence": [
+    646092.9752141635,
+    740938.1525028811
+   ],
+   "scorePercentiles": {
+    "0.0": 659710.6796594412,
+    "50.0": 689704.2064319703,
+    "90.0": 729472.6451787037,
+    "95.0": 730041.673265812,
+    "99.0": 730041.673265812,
+    "99.9": 730041.673265812,
+    "99.99": 730041.673265812,
+    "99.999": 730041.673265812,
+    "99.9999": 730041.673265812,
+    "100.0": 730041.673265812
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     711674.0659483745,
+     724351.3923947297,
+     724298.8044535359,
+     730041.673265812,
+     724040.3082213722
+    ],
+    [
+     667657.5625140071,
+     667734.3469155662,
+     663478.7401239332,
+     662168.0650884515,
+     659710.6796594412
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
+ },
+ {
+  "jmhVersion": "1.36",
+  "benchmark": "farray.BuilderSizedStrBenchmark.ziochunk",
+  "mode": "thrpt",
+  "threads": 1,
+  "forks": 2,
+  "jvm": "/Users/oyvind/Library/Caches/Coursier/arc/https/github.com/graalvm/graalvm-ce-builds/releases/download/jdk-25.0.1/graalvm-community-jdk-25.0.1_macos-aarch64_bin.tar.gz/graalvm-community-openjdk-25.0.1+8.1/Contents/Home/bin/java",
+  "jvmArgs": [
+   "-XX:ThreadPriorityPolicy=1",
+   "-XX:+UnlockExperimentalVMOptions",
+   "-XX:+EnableJVMCIProduct",
+   "-XX:+EnableJVMCI",
+   "-XX:-UnlockExperimentalVMOptions",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+   "-Duser.dir=/Users/oyvind/pr/farray/worktrees/restructure-docs"
+  ],
+  "jdkVersion": "25.0.1",
+  "vmName": "OpenJDK 64-Bit Server VM",
+  "vmVersion": "25.0.1+8-jvmci-b01",
+  "warmupIterations": 3,
+  "warmupTime": "400 ms",
+  "warmupBatchSize": 1,
+  "measurementIterations": 5,
+  "measurementTime": "400 ms",
+  "measurementBatchSize": 1,
+  "params": {
+   "size": "100000"
+  },
+  "primaryMetric": {
+   "score": 6481.9144835250545,
+   "scoreError": 1221.7257761362644,
+   "scoreConfidence": [
+    5260.18870738879,
+    7703.640259661319
+   ],
+   "scorePercentiles": {
+    "0.0": 5472.397512816864,
+    "50.0": 6280.553499276581,
+    "90.0": 7606.952374261602,
+    "95.0": 7607.528043720157,
+    "99.0": 7607.528043720157,
+    "99.9": 7607.528043720157,
+    "99.99": 7607.528043720157,
+    "99.999": 7607.528043720157,
+    "99.9999": 7607.528043720157,
+    "100.0": 7607.528043720157
+   },
+   "scoreUnit": "ops/s",
+   "rawData": [
+    [
+     7607.528043720157,
+     7601.771349134601,
+     7524.50869628598,
+     5976.739639537779,
+     6345.852053845847
+    ],
+    [
+     5472.397512816864,
+     5629.765839123732,
+     6073.402399841308,
+     6371.924356236965,
+     6215.254944707313
+    ]
+   ]
+  },
+  "secondaryMetrics": {}
  }
 ]

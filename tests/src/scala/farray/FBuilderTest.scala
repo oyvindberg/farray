@@ -74,16 +74,15 @@ class FBuilderTest:
     check(b.result(), lb.result())
 
   // ---- sizeHint must not change contents ----
-  @Test def sizeHint_preserves: Unit =
-    val b = FArray.newBuilder[Int]
-    b.sizeHint(1000)
+  @Test def initialCapacity_preserves: Unit =
+    val b = FArray.newBuilder[Int](1000)
     val lb = List.newBuilder[Int]
     var i = 0
     while i < 500 do { b += i; lb += i; i += 1 }
     assert(b.length == 500)
     check(b.result(), lb.result())
 
-  @Test def sizeHint_apply_ctor: Unit =
+  @Test def initialCapacity_apply_ctor: Unit =
     val b = FBuilder[Int](256)
     var i = 0
     while i < 300 do { b += i; i += 1 } // forces a regrow past the hint too

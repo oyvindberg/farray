@@ -15,12 +15,11 @@ opaque type FBuilder[A] <: FBuilderBase = FBuilderBase
 
 object FBuilder:
 
-  /** a fresh empty builder for element kind `A` (Int/Long/Double/… or a reference type). */
-  inline def apply[A](): FBuilder[A] = FArrayOps.newBuilderImpl[A]
-
-  /** a fresh empty builder pre-sized to hold at least `n` elements without a regrow. */
-  inline def apply[A](sizeHint: Int): FBuilder[A] =
-    val b = FArrayOps.newBuilderImpl[A]; b.sizeHint(sizeHint); b
+  /** a fresh empty builder for element kind `A` (Int/Long/Double/… or a reference type). `initialCapacity` sizes the backing array in ONE allocation — pass
+    * your expected element count when you know it (there is no separate `sizeHint`, which would allocate the default array and then throw it away on the
+    * resize).
+    */
+  inline def apply[A](initialCapacity: Int = 16): FBuilder[A] = FArrayOps.newBuilderImpl[A](initialCapacity)
 
   extension [A](b: FBuilder[A])
     /** append one element — UNBOXED for primitives (the whole point). */
@@ -32,13 +31,10 @@ object FBuilder:
     /** bulk-append every element of `xs`. Whole leaves are `System.arraycopy`-ed; genuine trees are materialized ONCE then arraycopy-ed — never
       * element-by-element, never boxed.
       */
-    inline def addAll(xs: FArray[A]): FBuilder[A] = { b.addNode(xs.asInstanceOf[FBase]); b }
+    inline def addAll(xs: FArray[A]): FBuilder[A] = { b.addNode(xs.asFBase); b }
 
     /** `b ++= xs` — alias for [[addAll]]. */
-    inline def ++=(xs: FArray[A]): FBuilder[A] = { b.addNode(xs.asInstanceOf[FBase]); b }
-
-    /** grow the backing array so at least `n` elements fit without a further regrow. */
-    inline def sizeHint(n: Int): Unit = b.sizeHint(n)
+    inline def ++=(xs: FArray[A]): FBuilder[A] = { b.addNode(xs.asFBase); b }
 
     /** number of elements accumulated so far. */
     inline def length: Int = b.knownSize
