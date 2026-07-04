@@ -25,6 +25,7 @@ const sidebars: SidebarsConfig = {
           collapsed: false,
           items: [
             "operations/building",
+            "operations/builder",
             "operations/map",
             "operations/flatmap",
             "operations/filter",

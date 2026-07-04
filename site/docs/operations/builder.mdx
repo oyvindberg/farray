@@ -1,0 +1,143 @@
+---
+title: The unboxed builder
+sidebar_label: the builder
+description: "FBuilder[A] — accumulate elements one at a time with zero boxing, because the standard-library Builder interface structurally can't. Beats even ArrayBuilder.ofInt."
+---
+
+import Link from "@docusaurus/Link";
+import Related from "@site/src/components/Related";
+
+export function BTable({ caption, cols, rows, note }) {
+  return (
+    <div className="btab-wrap">
+      <p className="fuse-cap">measured — JMH, GraalVM CE 25, ops/s (higher is better)</p>
+      <div style={{ overflowX: "auto" }}>
+        <table className="btab">
+          <thead>
+            <tr><th>size</th>{cols.map((c) => <th key={c}>{c}</th>)}</tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r[0]}>
+                <td className="btab__num">{r[0]}</td>
+                {r.slice(1).map((v, i) => (
+                  <td key={i} className={"btab__num" + (i === 0 ? " btab__win" : "")}>{v}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="btab__head">{caption}</p>
+      {note && <p className="figure__note">{note}</p>}
+    </div>
+  );
+}
+
+<p className="lede">
+  Sometimes you don't have the elements up front — you push them one at a time and want an{" "}
+  <code>FArray</code> at the end. That's what a <em>builder</em> is for, and it's the one place the
+  standard-library abstraction actively works against a primitive-first library: reusing{" "}
+  <code>scala.collection.mutable.Builder</code> would box every primitive at the interface. So FArray
+  has its own — <code>FBuilder[A]</code> — and it turns out to beat even the specialized unboxed
+  <code>int[]</code> builder from the standard library.
+</p>
+
+## Why the standard builder boxes
+
+`Builder[A, To]` has one append entry point: `def addOne(elem: A): this.type`. `A` is an ordinary
+erased type parameter, so at the bytecode level the descriptor is `addOne(Object)`. There is no
+`addOne(int)` — there can't be, the trait is generic. So when you write `b += anInt`, the compiler
+must box the `int` to an `Integer` **before the call**, because the callee only accepts a reference:
+
+```
+b += 42
+  ⇓  Integer.valueOf(42)      // allocation, at the call boundary
+  ⇓  b.addOne(theInteger)     // box already made — the builder can't undo it
+```
+
+Specialized builders like `ArrayBuilder.ofInt` store a real `int[]` internally — but they still
+inherit `addOne(Object)` from the trait, so held at the trait's static type (which is how any generic
+code holds them), every append still round-trips through a box and an unbox. The only escape is to
+hold the *concrete* `ArrayBuilder.ofInt` type so the overloaded `addOne(Int)` is picked statically —
+brittle, and impossible through a generic signature.
+
+## The design: the map trick, for appends
+
+FArray already solved unboxed element handling for `map`/`foldLeft`: the surface op is `inline`, the
+element kind is resolved at the concrete call site via `summonFrom` on `${K}Repr[A]`, and the
+primitive flows through a per-kind array. `FBuilder` reuses it verbatim. `FBuilder[A]` is an opaque
+type over a generated `FBuilderBase`, whose concrete subclasses are the same per-kind `${K}Group`
+growable buffers already backing `groupBy`/`collect`. Only the hot append is kind-dispatched:
+
+```scala
+inline def += (elem: A): FBuilder[A] = { builderAddImpl[A](b, elem); b }
+//                                        summonFrom[${K}Repr[A]] → IntGroup → store an int
+```
+
+Every other method (`++=`, `sizeHint`, `clear`, `result`) is a plain virtual call on the base — none
+of them touch a primitive element type, so none can box. `result()` hands the internal buffer to a
+leaf under the house slack rules — no defensive copy — and `clear()` keeps the array for cheap reuse.
+
+## The API
+
+```scala
+val b = FArray.newBuilder[Int]   // element kind resolved HERE, at this call site
+b += 1                     // inline, UNBOXED: an int straight into an int[]
+b += 2
+b ++= FArray(3, 4, 5)      // bulk: leaves arraycopy'd, trees materialized once
+b.sizeHint(1024)           // pre-grow the backing array
+val fa = b.result()        // slack-wrap into a leaf, no defensive copy
+b.clear()                  // reset to empty, keep the array
+```
+
+Plus `addOne`/`addAll` aliases, `length`/`knownSize`/`isEmpty`/`nonEmpty`, and — for stdlib interop —
+`b.asScala`, a real `mutable.Builder[A, FArray[A]]` for `Factory`/`to(...)`. That adapter is
+deliberately **second-class**: it's the boxing path, there so generic collection code *can* target
+FArray, not the path you reach for when you care about speed.
+
+## The money shot: beating the specialized int[] builder
+
+<BTable
+  caption="Int builder throughput. farray_sized = with sizeHint. The comparison that matters is ArrayBuilder — scala's specialized unboxed int[] builder: FBuilder beats it at every size (1.3× unsized, and sizeHint pushes past 2.5×), because that builder still boxes through the erased addOne(Object) while FBuilder's += is unboxed by construction. The boxing ArrayBuffer trails 2–4×."
+  cols={["FBuilder", "+ sizeHint", "ArrayBuilder.ofInt", "ArrayBuffer", "zio ChunkBuilder", "Vector", "List"]}
+  rows={[
+    ["10", "153.9M", "153.3M", "51.0M", "73.6M", "43.4M", "44.7M", "27.2M"],
+    ["1,000", "1.37M", "2.58M", "1.04M", "348k", "964k", "343k", "186k"],
+    ["100,000", "15.3k", "29.7k", "11.5k", "3.68k", "11.2k", "3.17k", "1.72k"],
+  ]}
+  note="ratios at 100k: 1.3× ArrayBuilder unsized (2.6× sized), 4.2× ArrayBuffer, 1.4× zio.Chunk.Int, 4.8× Vector, 8.9× List."
+/>
+
+On references there's no boxing to dodge, so this becomes a pure structural-overhead contest — and
+the field tightens accordingly, FBuilder leading modestly with one honest loss:
+
+<BTable
+  caption="String builder throughput. No primitive boxing exists here, so the win shrinks to loop tightness and the no-defensive-copy result(): ties-to-1.3× over the field, except one cell — size 10 vs ArrayBuffer (0.92×), where ArrayBuffer's warm-array append edges FBuilder's dispatch on a ten-element build."
+  cols={["FBuilder", "+ sizeHint", "ArrayBuffer", "ArrayBuilder", "Vector", "zio.Chunk", "List"]}
+  rows={[
+    ["10", "106.3M", "104.5M", "115.2M", "31.2M", "48.5M", "18.2M", "27.8M"],
+    ["1,000", "677k", "1.21M", "526k", "524k", "603k", "504k", "282k"],
+    ["100,000", "6.80k", "13.6k", "5.91k", "6.16k", "5.68k", "5.97k", "2.81k"],
+  ]}
+/>
+
+## Use sizeHint when you can
+
+The one number that moves most: `sizeHint(n)` roughly **doubles** throughput at scale (2.6× the
+unsized builder at 100k Int), because it pre-allocates the backing array once instead of growing it
+through a chain of doublings from the initial 16. When you know the count — even approximately —
+hint it; it lands you within a hair of the `tabulate` known-*n* ceiling. When you don't, the doubling
+strategy is the standard amortized-O(1) append, still ahead of every rival.
+
+Two honest edges to know: `result()` hands back the *shared* buffer (the contract is result-then-stop,
+or `clear()` and rebuild — don't keep appending after `result()`), and tiny reference builds (≈10
+elements) are the one spot a warm `ArrayBuffer` can edge you.
+
+<Related
+  links={[
+    { to: "/operations/building", label: "Building FArrays", desc: "The known-size constructors — literals, tabulate, range." },
+    { to: "/operations/getting-out", label: "Getting things out", desc: "The other direction: FArray back to array/Seq." },
+    { to: "/", label: "The FArray story", desc: "Why unboxing lives in signatures, not the JIT's mood." },
+  ]}
+/>

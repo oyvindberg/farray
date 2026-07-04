@@ -93,11 +93,13 @@ something forces it. A pipeline that maps over a range never pays for the range:
 
 For the imperative case — pushing elements one at a time when you don't know the count up front —
 `scala.collection.mutable.Builder` is the wrong tool: its `addOne(elem: A)` is generic, so every
-primitive boxes at the interface, undoing the whole point. FArray has a dedicated unboxed builder;
-it has its own page.
+primitive boxes at the interface, undoing the whole point. FArray has a dedicated
+<Link to="/operations/builder">unboxed builder</Link> that dodges that — and beats even the
+standard library's specialized `int[]` builder.
 
 <Related
   links={[
+    { to: "/operations/builder", label: "The unboxed builder", desc: "Accumulate element-by-element without boxing." },
     { to: "/operations/getting-out", label: "Getting things out", desc: "toArray, mkString, and the zero-copy Seq wrapper." },
     { to: "/design/java-core", label: "The node zoo", desc: "What that leaf-plus-node representation buys." },
     { to: "/operations/map", label: "map", desc: "The first thing you'll do with what you built." },
