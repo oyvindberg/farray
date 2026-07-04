@@ -14,13 +14,10 @@ import scala.compiletime.summonFrom
   * `case h :: t` goes through a name-based extractor over a `value class` view, so it allocates nothing, and on a cons-built chain `tail` is the O(1) `Prepend`
   * base — head/tail recursion is as cheap as `List`.
   *
-  * The extractor is `transparent inline` and dispatches on the element kind (the same `${K}Repr`
-  * machinery as every other op), so on `FArray[Int]` the head binds as a raw `Int` — no
-  * `Integer.valueOf` box per element. (The boxed-`Cons` path measured 0.48x of `List` on head/tail
-  * recursion @1000: ~16 B/element of surviving box allocations; `List[Int]` reads its cells'
-  * pre-boxed values with zero allocation.) Each specialized view also needs only its own
-  * `${K}Prepend` arm — one instanceof + two field reads per element, the same shape as `List`'s
-  * own `::` match.
+  * The extractor is `transparent inline` and dispatches on the element kind (the same `${K}Repr` machinery as every other op), so on `FArray[Int]` the head
+  * binds as a raw `Int` — no `Integer.valueOf` box per element. (The boxed-`Cons` path measured 0.48x of `List` on head/tail recursion @1000: ~16 B/element of
+  * surviving box allocations; `List[Int]` reads its cells' pre-boxed values with zero allocation.) Each specialized view also needs only its own `${K}Prepend`
+  * arm — one instanceof + two field reads per element, the same shape as `List`'s own `::` match.
   *
   * Keep FArray and `List` pattern matches in separate scopes: importing this shadows `scala.::`.
   */

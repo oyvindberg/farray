@@ -21,6 +21,11 @@ object FArray:
   // (`FArray(xs*)`) falls back to the runtime applyImpl.
   inline def apply[A](inline as: A*): FArray[A] = ${ FArrayMacros.applyMacro[A]('as) }
   inline def tabulate[A](n: Int)(inline f: Int => A): FArray[A] = FArrayOps.tabulateImpl[A](n)(f)
+
+  /** an unboxed imperative builder: accumulate with `+=`/`++=`, then `result()`. The element kind is resolved at THIS call site so primitive elements are
+    * written without boxing — see [[FBuilder]].
+    */
+  inline def newBuilder[A]: FBuilder[A] = FBuilder[A]()
   inline def fromArray[A](as: Array[A]): FArray[A] = FArrayOps.fromArrayImpl[A](as)
   inline def fromIterable[A](it: Iterable[A]): FArray[A] = FArrayOps.applyImpl[A](it.toSeq)
 

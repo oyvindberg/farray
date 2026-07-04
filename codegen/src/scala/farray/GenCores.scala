@@ -370,12 +370,28 @@ object GenCores extends BleepCodegenScript("GenCores") {
   // heuristic as trimLeaf). This is what kills the old double-build: elements land unboxed in their final array
   // on the first (only) pass; finalisation is O(#groups), not O(n).
   private def groupBufClass(k: Kind): String = {
+    val K = k.name
     val arrT = if k.name == "Ref" then "Object" else k.arr
-    s"""final class ${k.name}Group {
+    // Also the FBuilder backing buffer (see FBuilderBase). `add` is the unboxed hot path; `addNode` bulk-copies
+    // whole leaves (arraycopy) — trees materialize ONCE then arraycopy, never element-by-element. `addBoxed` is
+    // the second-class boxing entry used only by the `asScala` mutable.Builder adapter (abstract A there).
+    s"""final class ${K}Group extends FBuilderBase {
        |  var arr: Array[$arrT] = new Array[$arrT](16)
        |  var size: Int = 0
-       |  def add(v: $arrT): Unit = { if (size == arr.length) arr = java.util.Arrays.copyOf(arr, size * 2); arr(size) = v; size += 1 }
-       |  def toLeaf: FBase = if (size == 0) Empty.INSTANCE else if (size == 1) new ${k.name}One(arr(0)) else if (size < (arr.length >>> 2)) new ${k.name}Arr(java.util.Arrays.copyOf(arr, size), size) else new ${k.name}Arr(arr, size)
+       |  private def ensureCap(need: Int): Unit = { if (need > arr.length) { var ns = arr.length; while (ns < need) ns = ns << 1; arr = java.util.Arrays.copyOf(arr, ns) } }
+       |  def add(v: $arrT): Unit = { if (size == arr.length) arr = java.util.Arrays.copyOf(arr, size << 1); arr(size) = v; size += 1 }
+       |  def addBoxed(elem: Any): Unit = add(${k.unbox("elem")})
+       |  def addNode(node: FBase): Unit = node match {
+       |    case e: Empty => ()
+       |    case o: ${K}One => add(o.elem)
+       |    case leaf: ${K}Arr => { val ll = leaf.length; ensureCap(size + ll); System.arraycopy(leaf.arr, 0, arr, size, ll); size += ll }
+       |    case _ => { val m = FArrayOps.materialize${K}(node); val ml = m.length; ensureCap(size + ml); System.arraycopy(m, 0, arr, size, ml); size += ml }
+       |  }
+       |  def sizeHint(n: Int): Unit = if (n > arr.length) arr = java.util.Arrays.copyOf(arr, n)
+       |  def clear(): Unit = size = 0
+       |  def knownSize: Int = size
+       |  def result: FBase = toLeaf
+       |  def toLeaf: FBase = if (size == 0) Empty.INSTANCE else if (size == 1) new ${K}One(arr(0)) else if (size < (arr.length >>> 2)) new ${K}Arr(java.util.Arrays.copyOf(arr, size), size) else new ${K}Arr(arr, size)
        |}""".stripMargin
   }
 
@@ -508,6 +524,18 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val dfsConsumers = opKinds.map(dfsConsumer).mkString("\n")
     val cursors = opKinds.map(cursorClass).mkString("\n")
     val groupBufs = opKinds.map(groupBufClass).mkString("\n")
+    // Sealed root of the FBuilder backing buffers (one concrete ${K}Group per element kind). The opaque
+    // `FBuilder[A] <: FBuilderBase` (FBuilder.scala) exposes these virtuals directly; only the unboxed
+    // `add` lives on the concrete ${K}Group and is reached via kind dispatch.
+    val builderBase =
+      """sealed abstract class FBuilderBase {
+        |  def addBoxed(elem: Any): Unit
+        |  def addNode(node: FBase): Unit
+        |  def sizeHint(n: Int): Unit
+        |  def clear(): Unit
+        |  def knownSize: Int
+        |  def result: FBase
+        |}""".stripMargin
     val combPerm = opKinds.map(combPermClasses).mkString("\n")
     val dfsC = opKinds.map(dfsCDef).mkString("\n")
     val ats = opKinds.map(atDef).mkString("\n")
@@ -2454,6 +2482,12 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val fromValues3 = dispatchA(k =>
       s"{ val out = ${allocN(k, 3)}; out(0) = ${wr(k, "r.unwrap(a)")}; out(1) = ${wr(k, "r.unwrap(b)")}; out(2) = ${wr(k, "r.unwrap(c)")}; new ${k.name}Arr(out, 3) }"
     )
+    // ---- FBuilder: the unboxed imperative accumulator. newBuilder picks the concrete per-kind ${K}Group at
+    // the CONCRETE call site (summonFrom, zero runtime cost); the hot `add` casts the opaque handle to that
+    // ${K}Group and appends an UNWRAPPED Prim (no boxing on the += path). Everything else (addNode/sizeHint/
+    // clear/knownSize/result) is a plain virtual method on the sealed FBuilderBase — off the hot path.
+    val newBuilder = dispatchA(k => s"new ${k.name}Group()")
+    val builderAdd = dispatchA(k => s"b.asInstanceOf[${k.name}Group].add(${wr(k, "r.unwrap(elem)")})")
     // mkString: a hybrid Reduce into a StringBuilder (Z = StringBuilder, a Ref acc) over the shared leaf
     // method (reduceLeafFwd${K}Ref) — the SAME machinery as foldLeft; the leaf method peels Empty/One/leaf and
     // routes genuine TREES through Traversers. The surface realizes ONE RefToRefFold<StringBuilder> SAM (no
@@ -2510,6 +2544,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |// Per-kind leaf-run consumers for the non-inline dfsC traversals.
        |$dfsConsumers
        |$cursors
+       |// Sealed root for the FBuilder backing buffers.
+       |$builderBase
        |// Per-group unboxed accumulators for groupBy/groupMap (one backing array per group, doubling on demand).
        |$groupBufs
        |// Per-kind unboxed combinations/permutations iterators (mirror SeqOps.{CombinationsItr,PermutationsItr}).
@@ -2544,6 +2580,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def fromValues1[A](a: A): FBase = $fromValues1
        |  inline def fromValues2[A](a: A, b: A): FBase = $fromValues2
        |  inline def fromValues3[A](a: A, b: A, c: A): FBase = $fromValues3
+       |  inline def newBuilderImpl[A]: FBuilderBase = $newBuilder
+       |  inline def builderAddImpl[A](b: FBuilderBase, elem: A): Unit = $builderAdd
        |  inline def tabulateImpl[A](n: Int)(inline f: Int => A): FBase = $tabulate
        |  inline def fromArrayImpl[A](as: Array[A]): FBase = $fromArr
        |  inline def fromBoxedArrayImpl[A](as: Array[Object]): FBase = $fromBoxedArr
