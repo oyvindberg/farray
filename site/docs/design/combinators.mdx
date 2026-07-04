@@ -48,6 +48,13 @@ compute.
 It even leads to a result absurd enough to get [a page of its own](../operations/list-parity.mdx): driven as a
 literal cons-list, FArray keeps pace with `List` at `List`'s own game.
 
+Two more ops belong to the O(1) family and rarely get counted: `updated(i, x)` is an `Updated`
+node — a view of the original with one slot overridden, no copy of the other n−1 elements — and
+`padTo(n, x)` is a `Pad` node that answers reads past the end with the pad element. Both
+materialize only when a downstream op forces flat data. The set-like trio (`diff`, `intersect`,
+plus `transpose`/`permutations` for the combinatorics) are eager and measured in the full suite —
+ordinary wins, no tricks worth a section.
+
 ## Sorting — the one you'd bet against
 
 One last pair, because it's where a raw array should win outright. FArray sorts directly on the

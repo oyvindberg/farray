@@ -116,6 +116,11 @@ eight maps are just eight tight `int[]` loops, indifferent to how many of them y
   caption="eight distinct lambdas through map in one method. On Int (left) IArray's shared map site goes megamorphic and re-boxes: the same IArray that tied FArray one chart ago falls ~7.6× behind at 10k. FArray has no shared site to poison, so it simply doesn't take the hit. (At 100k the workload turns memory-bound and the gaps compress — zio.Chunk's unboxed chunks even take that last column.) On String (right) there's no boxing to re-pay, so megamorphic dispatch costs almost nothing and nobody pulls away. Same mechanism; only the boxing tax moves the needle."
 />
 
+One sibling deserves a name here: `mapConserve` — the identity-preserving map used by compilers and
+transformers everywhere (`if (f(x) eq x)` for every element, return `this`). FArray's version keeps
+the reference-reuse semantics and the specialized loop, and returns the *original* array untouched
+when nothing changed — no allocation at all on the no-op pass.
+
 ## No warmup lap
 
 And because all of that specialization happened at *compile* time, there's nothing for the JIT to

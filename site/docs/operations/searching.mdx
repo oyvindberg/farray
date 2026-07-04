@@ -1,0 +1,83 @@
+---
+title: "Searching: needles, prefixes, slices"
+sidebar_label: searching
+description: "The short-circuit engine and its loop-shape lesson, the backward scans, and the slice-search family that beats the textbook algorithm by not being one."
+---
+
+import Link from "@docusaurus/Link";
+import BenchChart from "@site/src/components/BenchChart";
+import BenchPair from "@site/src/components/BenchPair";
+import Related from "@site/src/components/Related";
+
+<p className="lede">
+  Everything on this page answers a question and stops: is this element here, where does this run
+  end, does this sequence contain that one. Half the family is about <em>stopping well</em> — the
+  short-circuit engine — and the other half is about <em>looking less</em>: the slice-search ops win
+  2–3× not by a cleverer algorithm but by refusing to examine bytes the answer doesn't need.
+</p>
+
+## The short-circuit engine
+
+`find`, `exists`, `forall`, `indexWhere`, `indexOf`, `contains` share one engine: a forward scan
+that must be able to stop at any element. It carries this library's founding loop-shape lesson.
+The first implementations ran at 0.2–0.4× of a raw array, and every intuitive suspect — virtual
+dispatch, the tree, the consumer object — was individually ruled out by measurement. The real cost
+was the *shape* of the loop body: writing result/stop flags mid-loop kept the JIT from treating the
+scan as a simple counted loop. The fix was structural — an empty-bodied loop with the predicate in
+the loop *condition* — and it took the whole family to raw-array parity:
+
+<BenchPair
+  int="ShortCircuitIntBenchmark"
+  str="ShortCircuitStrBenchmark"
+  caption="exists / find / indexWhere with the match near the start — the case where stopping matters. Read the reds honestly: they are against the RAW ARRAY, within ~±15% — a stopped-at-element-5 scan is a nano-op, and the bare array's loop with no wrapper is the floor. Against the actual competition the family leads (List and Vector pay per-element machinery even for a five-element scan; the chunk libraries trail on the predicate crossing). The interesting fact is the journey: this family started at 0.2–0.4× of the array until the loop SHAPE — not dispatch, not the tree — was fixed."
+/>
+
+`contains` deserves its own honest sentence: on references it's an `equals` walk for everyone, and
+FArray's edge is modest (~1.08× over the best rival on a full miss-scan of 100k Strings). On
+primitives the scan compares unboxed values against unboxed values, which is where the boxing
+collections drop off.
+
+<BenchChart
+  cls="ContainsStrBenchmark"
+  caption="contains on a missing String — the worst case, a full scan with an equals call per element. Nothing to short-circuit, nothing to unbox; the field is close and FArray takes it on loop tightness."
+/>
+
+## Backward scans
+
+`lastIndexOf`, `lastIndexWhere`, and friends run the same engine mirrored — the traversal drivers
+are forward/backward twins that flip at each `ReverseNode`, so a backward search over a reversed
+tree is a *forward* scan over its child, never a materialization. On flat data the win is plain
+loop quality: `lastIndexOf` runs ~2.3× past the best rival at 100k.
+
+## Slice search: winning by not being clever
+
+`indexOfSlice`, `lastIndexOfSlice`, `containsSlice`, `startsWith`, `endsWith` — needle-in-haystack
+ops. The textbook answer is KMP, and the standard library dutifully implements it. Measured on real
+JVMs, that's the wrong call: KMP's per-element state machine defeats the very loop optimizations
+that make scans fast, to guard against pathological inputs that collection code essentially never
+sees.
+
+FArray's slice search is a **candidate scan**: use the short-circuit engine's `indexOf` — the
+fastest thing on this page — to find occurrences of the needle's *first element*, and verify the
+rest of the needle only at those candidate positions. The common case does a raw unboxed scan for
+one value and a handful of short verifications:
+
+<BenchChart
+  cls="SearchSliceIntBenchmark"
+  caption="The slice-search family at 100k Int, 3-element needle. The candidate scan takes indexOfSlice to ~2.2×, containsSlice to ~2.4×, lastIndexOfSlice to ~2.8× over the best rival — where the previous KMP-shaped implementation measured 0.76×, a loss. startsWith/endsWith (~1.3×) are bounded compares; segmentLength and sameElements tie the field, as memory-bound compares should."
+/>
+
+The honest boundary: a pathological input (long needle of one repeated value over a haystack of the
+same value) degrades toward O(n·m), which KMP's guarantee avoids. Collection workloads don't look
+like that, and the 0.76× → 2.2× swing is what the guarantee was costing on everything else.
+
+`segmentLength`, `sameElements` and `corresponds` round out the family — bounded elementwise
+compares sharing the same drivers, at parity with the best of the field.
+
+<Related
+  links={[
+    { to: "/operations/indexed", label: "Indexed access", desc: "The other read-only family, and the honest wrapper tax." },
+    { to: "/fusion/terminals", label: "Fused search terminals", desc: "find/exists that stop a whole pipeline, not just a scan." },
+    { to: "/operations/folds", label: "Folds & reduces", desc: "The scans that don't stop." },
+  ]}
+/>

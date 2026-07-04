@@ -84,6 +84,11 @@ tree: just where a loop-carried value lives.
   caption="scanLeft / scanRight / scan on Int, post-fix: the accumulator lives in a register, the output array is write-only, and FArray sits at-or-above the raw array through the mid and large sizes (small-n cells jitter). The 4× loop-shape lesson is documented in the repo's memory so nobody re-learns it."
 />
 
+For completeness, the family's remaining members are all the same machinery pointed differently:
+`foldRight` and `reduceRight` run the backward driver (no reverse-then-fold copy — the ~3.4× in the
+chart above is exactly that saved pass), and `reduceOption`/`reduceLeftOption`/`reduceRightOption`
+are the empty-safe spellings, one branch in front of the same loop.
+
 One more gear exists above all of this: when the fold ends a *chain*,{" "}
 <Link to="/fusion/farray">fusing the chain</Link> folds without materializing any stage at all — and
 `agg` runs several folds in one pass.
