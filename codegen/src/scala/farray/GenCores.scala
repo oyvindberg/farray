@@ -1358,6 +1358,12 @@ object GenCores extends BleepCodegenScript("GenCores") {
         val fnScala = "Traversers." + buildFnType(ki, ko, "RO").replace('<', '[').replace('>', ']')
         def keepWrite = if ko.isPrim then "out(o) = f.apply(e)" else "out(o) = f.apply(e).asInstanceOf[Object]"
         val oneArg = if ko.isPrim then "f.apply(one.elem)" else "f.apply(one.elem).asInstanceOf[Object]"
+        // Loop shape: ONE branchy pass. A KEEP-PREFIX adaptive variant (pred-scan the kept prefix,
+        // transform it with the pure map loop, branchy from the first reject) was built and
+        // MEASURED-REJECTED 2026-07-04: it cost Int ~20% (alternating keep/reject makes the prefix
+        // one element, the scan pure overhead) AND Str ~15% at small/mid (all-keep reads the data
+        // twice — pred pass + map pass — vs once branchy). The collect gap vs our own map on
+        // all-keep (~0.82x, the cursor's bounds-check) is real but cheaper than every cure tried.
         def loopBody(read: String => String): Unit = {
           ee.line(s"val out = new Array[${ko.arr}](n)")
           ee.line("var i = 0")
