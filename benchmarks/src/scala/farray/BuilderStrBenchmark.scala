@@ -19,20 +19,13 @@ class BuilderStrBenchmark:
   @Setup def setup(): Unit =
     src = Array.tabulate(size)(i => s"e$i")
 
-  @Benchmark def farray_builder(): FArray[String] =
+  @Benchmark def farray(): FArray[String] =
     val b = FArray.newBuilder[String]
     var i = 0; val n = size
     while i < n do { b += src(i); i += 1 }
     b.result()
 
-  @Benchmark def farray_builder_sized(): FArray[String] =
-    val b = FBuilder[String](size)
-    var i = 0; val n = size
-    while i < n do { b += src(i); i += 1 }
-    b.result()
 
-  @Benchmark def farray_tabulate(): FArray[String] =
-    FArray.tabulate(size)(i => src(i))
 
   @Benchmark def arraybuffer(): scala.collection.mutable.ArrayBuffer[String] =
     val b = new scala.collection.mutable.ArrayBuffer[String]
@@ -46,19 +39,19 @@ class BuilderStrBenchmark:
     while i < n do { b += src(i); i += 1 }
     b.result()
 
-  @Benchmark def vector_builder(): Vector[String] =
+  @Benchmark def vector(): Vector[String] =
     val b = Vector.newBuilder[String]
     var i = 0; val n = size
     while i < n do { b += src(i); i += 1 }
     b.result()
 
-  @Benchmark def list_builder(): List[String] =
+  @Benchmark def list(): List[String] =
     val b = List.newBuilder[String]
     var i = 0; val n = size
     while i < n do { b += src(i); i += 1 }
     b.result()
 
-  @Benchmark def ziochunk_builder(): zio.Chunk[String] =
+  @Benchmark def ziochunk(): zio.Chunk[String] =
     val b = zio.ChunkBuilder.make[String]()
     var i = 0; val n = size
     while i < n do { b += src(i); i += 1 }

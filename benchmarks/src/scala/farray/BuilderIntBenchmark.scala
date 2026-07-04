@@ -21,20 +21,13 @@ class BuilderIntBenchmark:
     src = Array.tabulate(size)(i => i * 2 + 1)
 
   // ---- FArray: unboxed inline += ----
-  @Benchmark def farray_builder(): FArray[Int] =
+  @Benchmark def farray(): FArray[Int] =
     val b = FArray.newBuilder[Int]
     var i = 0; val n = size
     while i < n do { b += src(i); i += 1 }
     b.result()
 
-  @Benchmark def farray_builder_sized(): FArray[Int] =
-    val b = FBuilder[Int](size)
-    var i = 0; val n = size
-    while i < n do { b += src(i); i += 1 }
-    b.result()
 
-  @Benchmark def farray_tabulate(): FArray[Int] =
-    FArray.tabulate(size)(i => src(i))
 
   // ---- rivals ----
   @Benchmark def arraybuffer(): scala.collection.mutable.ArrayBuffer[Int] =
@@ -49,20 +42,20 @@ class BuilderIntBenchmark:
     while i < n do { b += src(i); i += 1 }
     b.result()
 
-  @Benchmark def vector_builder(): Vector[Int] =
+  @Benchmark def vector(): Vector[Int] =
     val b = Vector.newBuilder[Int]
     var i = 0; val n = size
     while i < n do { b += src(i); i += 1 }
     b.result()
 
-  @Benchmark def list_builder(): List[Int] =
+  @Benchmark def list(): List[Int] =
     val b = List.newBuilder[Int]
     var i = 0; val n = size
     while i < n do { b += src(i); i += 1 }
     b.result()
 
   // zio's specialized primitive builder (int[]-backed, held at the concrete type so += is unboxed).
-  @Benchmark def ziochunk_builder(): zio.Chunk[Int] =
+  @Benchmark def ziochunk(): zio.Chunk[Int] =
     val b = new zio.ChunkBuilder.Int
     var i = 0; val n = size
     while i < n do { b += src(i); i += 1 }

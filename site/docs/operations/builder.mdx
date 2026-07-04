@@ -5,34 +5,8 @@ description: "FBuilder[A] — accumulate elements one at a time with zero boxing
 ---
 
 import Link from "@docusaurus/Link";
+import BenchPair from "@site/src/components/BenchPair";
 import Related from "@site/src/components/Related";
-
-export function BTable({ caption, cols, rows, note }) {
-  return (
-    <div className="btab-wrap">
-      <p className="fuse-cap">measured — JMH, GraalVM CE 25, ops/s (higher is better)</p>
-      <div style={{ overflowX: "auto" }}>
-        <table className="btab">
-          <thead>
-            <tr><th>size</th>{cols.map((c) => <th key={c}>{c}</th>)}</tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r[0]}>
-                <td className="btab__num">{r[0]}</td>
-                {r.slice(1).map((v, i) => (
-                  <td key={i} className={"btab__num" + (i === 0 ? " btab__win" : "")}>{v}</td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <p className="btab__head">{caption}</p>
-      {note && <p className="figure__note">{note}</p>}
-    </div>
-  );
-}
 
 <p className="lede">
   Sometimes you don't have the elements up front — you push them one at a time and want an{" "}
@@ -96,43 +70,32 @@ Plus `addOne`/`addAll` aliases, `length`/`knownSize`/`isEmpty`/`nonEmpty`, and �
 deliberately **second-class**: it's the boxing path, there so generic collection code *can* target
 FArray, not the path you reach for when you care about speed.
 
-## The money shot: beating the specialized int[] builder
+## Beating the specialized int[] builder
 
-<BTable
-  caption="Int builder throughput. farray_sized = with sizeHint. The comparison that matters is ArrayBuilder — scala's specialized unboxed int[] builder: FBuilder beats it at every size (1.3× unsized, and sizeHint pushes past 2.5×), because that builder still boxes through the erased addOne(Object) while FBuilder's += is unboxed by construction. The boxing ArrayBuffer trails 2–4×."
-  cols={["FBuilder", "+ sizeHint", "ArrayBuilder.ofInt", "ArrayBuffer", "zio ChunkBuilder", "Vector", "List"]}
-  rows={[
-    ["10", "153.9M", "153.3M", "51.0M", "73.6M", "43.4M", "44.7M", "27.2M"],
-    ["1,000", "1.37M", "2.58M", "1.04M", "348k", "964k", "343k", "186k"],
-    ["100,000", "15.3k", "29.7k", "11.5k", "3.68k", "11.2k", "3.17k", "1.72k"],
-  ]}
-  note="ratios at 100k: 1.3× ArrayBuilder unsized (2.6× sized), 4.2× ArrayBuffer, 1.4× zio.Chunk.Int, 4.8× Vector, 8.9× List."
-/>
+Every builder here grows from nothing — none is told the size up front, which is the whole reason you
+reach for a builder. So this is a fair fight, and it isolates the one thing that differs: how the
+append crosses the type boundary. Note two rivals in particular — scala's `ArrayBuilder`, held at its
+trait type (the way generic code holds it), boxes every `int` through `addOne(Object)`; zio's
+`ChunkBuilder.Int`, held at its *concrete* type, is genuinely unboxed. FBuilder beats both.
 
-On references there's no boxing to dodge, so this becomes a pure structural-overhead contest — and
-the field tightens accordingly, FBuilder leading modestly with one honest loss:
-
-<BTable
-  caption="String builder throughput. No primitive boxing exists here, so the win shrinks to loop tightness and the no-defensive-copy result(): ties-to-1.3× over the field, except one cell — size 10 vs ArrayBuffer (0.92×), where ArrayBuffer's warm-array append edges FBuilder's dispatch on a ten-element build."
-  cols={["FBuilder", "+ sizeHint", "ArrayBuffer", "ArrayBuilder", "Vector", "zio.Chunk", "List"]}
-  rows={[
-    ["10", "106.3M", "104.5M", "115.2M", "31.2M", "48.5M", "18.2M", "27.8M"],
-    ["1,000", "677k", "1.21M", "526k", "524k", "603k", "504k", "282k"],
-    ["100,000", "6.80k", "13.6k", "5.91k", "6.16k", "5.68k", "5.97k", "2.81k"],
-  ]}
+<BenchPair
+  int="BuilderIntBenchmark"
+  str="BuilderStrBenchmark"
+  caption="Accumulate N elements via += then result(), everyone unsized. On Int FBuilder leads at every size — 1.33–1.36× over both zio's concrete UNBOXED ChunkBuilder and scala's ArrayBuilder, 4–5× over ArrayBuffer and Vector — because its inline += is unboxed by construction where the field either boxes or, at best, ties the unboxing. On String there's no boxing to dodge, so it comes down to loop tightness and the no-defensive-copy result(): 1.18–1.24× at 1k+ with one honest loss — size 10, 0.82× vs a warm ArrayBuffer. (FArray.tabulate — known-N construction, not a builder — is the ceiling this approaches; off-chart because it isn't the same operation.)"
 />
 
 ## Use sizeHint when you can
 
-The one number that moves most: `sizeHint(n)` roughly **doubles** throughput at scale (2.6× the
-unsized builder at 100k Int), because it pre-allocates the backing array once instead of growing it
-through a chain of doublings from the initial 16. When you know the count — even approximately —
-hint it; it lands you within a hair of the `tabulate` known-*n* ceiling. When you don't, the doubling
-strategy is the standard amortized-O(1) append, still ahead of every rival.
+If you do know the count — even roughly — `sizeHint(n)` pre-allocates the backing array once instead
+of growing it through doublings from 16, and it measures at **≈2× the builder's own unsized
+throughput** at scale. That's a self-relative number, not a fresh win over the field: every rival
+builder has `sizeHint` too and speeds up the same way, which is exactly why the chart above keeps
+everyone unsized. Hinting just lands FArray closer to the `tabulate` known-N ceiling; reach for it
+when you can, and when you can't, the doubling growth is the standard amortized-O(1) append.
 
-Two honest edges to know: `result()` hands back the *shared* buffer (the contract is result-then-stop,
-or `clear()` and rebuild — don't keep appending after `result()`), and tiny reference builds (≈10
-elements) are the one spot a warm `ArrayBuffer` can edge you.
+Two honest edges: `result()` hands back the *shared* buffer — the contract is result-then-stop (or
+`clear()` and rebuild), not keep-appending — and tiny reference builds (≈10 elements) are the one
+spot a warm `ArrayBuffer` edges you.
 
 <Related
   links={[
