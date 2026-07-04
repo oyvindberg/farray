@@ -25,11 +25,11 @@ class BuilderStrBenchmark:
     while i < n do { b += src(i); i += 1 }
     b.result()
 
-  @Benchmark def arraybuffer(): scala.collection.mutable.ArrayBuffer[String] =
+  @Benchmark def arraybuffer(): Array[String] =
     val b = new scala.collection.mutable.ArrayBuffer[String]
     var i = 0; val n = size
     while i < n do { b += src(i); i += 1 }
-    b
+    b.toArray
 
   @Benchmark def arraybuilder(): Array[String] =
     val b = scala.collection.mutable.ArrayBuilder.make[String]

@@ -28,11 +28,11 @@ class BuilderIntBenchmark:
     b.result()
 
   // ---- rivals ----
-  @Benchmark def arraybuffer(): scala.collection.mutable.ArrayBuffer[Int] =
+  @Benchmark def arraybuffer(): Array[Int] =
     val b = new scala.collection.mutable.ArrayBuffer[Int]
     var i = 0; val n = size
     while i < n do { b += src(i); i += 1 }
-    b
+    b.toArray
 
   @Benchmark def arraybuilder(): Array[Int] =
     val b = scala.collection.mutable.ArrayBuilder.make[Int]

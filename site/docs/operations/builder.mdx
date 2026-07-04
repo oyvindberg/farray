@@ -82,13 +82,14 @@ since it doubles), and zio's builder delegates to it. They have no choice: a raw
 slack, its length *is* its count. FBuilder's `result()` is an O(1) slack-wrap — a leaf stores a
 logical length distinct from the array length, so no trim is needed. So part of the win over the
 array builders is a cheaper finish, not just a cheaper append — a property of FArray's representation,
-stated plainly. (ArrayBuffer is the exception: the benchmark returns the mutable buffer itself, no
-finish at all — the most generous treatment here — and FBuilder still leads it ~4×.)
+stated plainly. Every builder here finalizes to an immutable — `ArrayBuffer` via `toArray`, like the
+rest — so the comparison is honest end to end; the O(1)-slack-wrap-vs-O(n)-trim-copy gap is the whole
+story on refs, where nobody boxes.
 
 <BenchPair
   int="BuilderIntBenchmark"
   str="BuilderStrBenchmark"
-  caption="Accumulate N elements via += then result(), everyone unsized. On Int FBuilder leads at every size — 1.33–1.36× over both zio's concrete UNBOXED ChunkBuilder and scala's ArrayBuilder, 4–5× over ArrayBuffer and Vector — because its inline += is unboxed and its result() is an O(1) slack-wrap where the array builders must trim-copy. On String there's no boxing to dodge, so it comes down to loop tightness and the no-defensive-copy result(): 1.18–1.24× at 1k+ with one honest loss — size 10, 0.82× vs a warm ArrayBuffer. (FArray.tabulate — known-N construction, not a builder — is the ceiling this approaches; off-chart because it isn't the same operation.)"
+  caption="Accumulate N via += then finalize to an immutable, everyone unsized. FBuilder leads at every size on both kinds: Int 1.33–2.56× over the best rival (past zio's concrete UNBOXED ChunkBuilder), and String 1.23–2.18× — where nobody boxes, so the win is purely the O(1) slack-wrap result() against the O(n) trim/copy every array builder pays. (FArray.tabulate — known-N construction, not a builder — is the ceiling this approaches; off-chart because it isn't the same operation.)"
 />
 
 ## Pre-size when you know the count
@@ -105,13 +106,16 @@ means (FArray via the ctor, the rest via `sizeHint`):
 <BenchPair
   int="BuilderSizedIntBenchmark"
   str="BuilderSizedStrBenchmark"
-  caption="Everyone pre-sized, each idiomatically (FArray via the ctor, the rest via sizeHint). On Int FBuilder still wins — 1.55–1.65× over a sized ArrayBuilder at scale (unboxed append plus a one-allocation ctor where sizeHint-after-construct pays two), 6× ArrayBuffer, 14–17× List. On String, with no boxing left to remove, a sized ArrayBuffer takes it (0.79–0.93×) — its tight append-and-return-the-buffer is hard to beat on refs — while FBuilder still leads every other sized builder (ArrayBuilder, Vector, zio, List)."
+  caption="Everyone pre-sized (FArray via the ctor, the rest via sizeHint) AND finalizing to an immutable. FBuilder wins across the board — Int 1.55–1.65× over a sized ArrayBuilder at scale (unboxed append plus a one-allocation ctor where sizeHint-after-construct pays two), String 1.17–1.43× (a 1.00× tie at 1k). An earlier draft showed ArrayBuffer taking String here — that was a benchmark bug: it returned its mutable buffer without finalizing, doing less work than everyone else. Forced to toArray like the rest, it falls 1.5–2× behind."
 />
 
 Two builders can't meaningfully pre-size — `Vector.newBuilder` and `List.newBuilder` have `sizeHint`
 but it's a no-op for their structures — so they look the same as unsized; that's honest, not a
-handicap. One honest edge remains from the unsized chart: tiny reference builds, where a warm
-`ArrayBuffer` edges you.
+handicap. One honest caveat lives *under* the win: FBuilder's per-element `+=` (an opaque cast to the
+concrete kind buffer, leaning on the JIT to hoist it) is a hair behind a tuned `ArrayBuffer.addOne`
+on refs — measured ~10–15% on the fill loop alone. It's more than repaid by the O(1) `result()`
+(ArrayBuffer pays O(n) to finalize), so the end-to-end number is a win, but the append itself isn't
+the fastest thing on the JVM — stated so the chart isn't read as more than it is.
 
 And the safety property that makes the shared buffer sound: `result()` hands back the buffer with no
 copy, yet you can call it repeatedly and keep appending — appends only ever write past the current
