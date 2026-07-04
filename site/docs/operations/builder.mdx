@@ -111,11 +111,12 @@ means (FArray via the ctor, the rest via `sizeHint`):
 
 Two builders can't meaningfully pre-size — `Vector.newBuilder` and `List.newBuilder` have `sizeHint`
 but it's a no-op for their structures — so they look the same as unsized; that's honest, not a
-handicap. One honest caveat lives *under* the win: FBuilder's per-element `+=` (an opaque cast to the
-concrete kind buffer, leaning on the JIT to hoist it) is a hair behind a tuned `ArrayBuffer.addOne`
-on refs — measured ~10–15% on the fill loop alone. It's more than repaid by the O(1) `result()`
-(ArrayBuffer pays O(n) to finalize), so the end-to-end number is a win, but the append itself isn't
-the fastest thing on the JVM — stated so the chart isn't read as more than it is.
+handicap. One honest caveat lives *under* the win: FBuilder's per-element `+=` is ~18% behind a
+tuned `ArrayBuffer.addOne` on the fill loop alone (reference elements). It's not the cast or an
+allocation — both were ruled out by measurement (the store is into a bare `Object[]`, and routing
+around the cast changed nothing); HotSpot simply optimizes stdlib's much-profiled `addOne` better
+than our `RefGroup.add`. It's more than repaid by the O(1) `result()` (ArrayBuffer pays O(n) to
+finalize), so the end-to-end number is a win — stated so the chart isn't read as more than it is.
 
 And the safety property that makes the shared buffer sound: `result()` hands back the buffer with no
 copy, yet you can call it repeatedly and keep appending — appends only ever write past the current
