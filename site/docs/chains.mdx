@@ -91,7 +91,7 @@ method, the profile any nontrivial method builds up:
 <BenchPair
   int="MapMegaIntBenchmark"
   str="MapMegaStrBenchmark"
-  caption="Eight distinct lambdas through map in one method. IArray's one shared Array.map site sees eight Function1 classes, goes megamorphic, and re-boxes on Int — the same IArray that ties FArray on a lone map falls ~7.6× behind at 10k. FArray has no shared site to poison. On String there's no re-boxing to pay, and the field stays close: the mechanism is megamorphic boxing, precisely."
+  caption="Eight distinct lambdas through map in one method. IArray's one shared Array.map site sees eight Function1 classes, goes megamorphic, and re-boxes on Int: at 10k its boxed intermediates are still cache-resident and it even leads (our one 0.85× cell), but at 100k the re-boxing becomes memory traffic and it falls 4.2× behind — List 12×, Vector 7×. FArray has no shared site to poison. On String there's no re-boxing to pay and the field stays close: the mechanism is megamorphic boxing, precisely."
 />
 
 ## The grand finale: a long interleaved structural chain
