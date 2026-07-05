@@ -23,9 +23,7 @@ The inner collections `f` returns are already backed by arrays — FArray arrays
 big buffer discards perfectly good, already-materialized storage. So `flatMap` looks at the *first*
 inner it produces and makes a bet. If inners are **wide**, it doesn't copy at all: it keeps each
 inner's backing array as a *segment* and wraps them in a dedicated node — an array of arrays plus a
-prefix-sum index, one more citizen of the lazy core:
-
-<Snippet name="node-tree" hideFull />
+prefix-sum index, one more citizen of [the lazy core](../design/java-core.mdx).
 
 Traversal walks the segments back to back; indexed access binary-searches the offsets. If inners are
 **narrow**, the bet flips: a two-element segment costs more in pointer-chasing than it saves in

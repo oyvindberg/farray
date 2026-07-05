@@ -36,13 +36,13 @@ code holds them), every append still round-trips through a box and an unbox. The
 hold the *concrete* `ArrayBuilder.ofInt` type so the overloaded `addOne(Int)` is picked statically —
 brittle, and impossible through a generic signature.
 
-## The design: the map trick, for appends
+## The design: the same dispatch, for appends
 
-FArray already solved unboxed element handling for `map`/`foldLeft`: the surface op is `inline`, the
-element kind is resolved at the concrete call site via `summonFrom` on `${K}Repr[A]`, and the
-primitive flows through a per-kind array. `FBuilder` reuses it verbatim. `FBuilder[A]` is an opaque
-type over a generated `FBuilderBase`, whose concrete subclasses are the same per-kind `${K}Group`
-growable buffers already backing `groupBy`/`collect`. Only the hot append is kind-dispatched:
+There's no new machinery here — it's exactly the inline, compile-time kind dispatch from [map](/operations/map), pointed at an
+append instead of a transform. `FBuilder[A]`
+is an opaque type over a generated `FBuilderBase` whose concrete subclasses are the per-kind
+`${K}Group` growable buffers that already back `groupBy` and `collect`. Only the hot append is
+kind-dispatched; everything else is a plain call on the base:
 
 ```scala
 inline def += (elem: A): FBuilder[A] = { builderAddImpl[A](b, elem); b }
