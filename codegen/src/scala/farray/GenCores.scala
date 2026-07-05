@@ -370,12 +370,28 @@ object GenCores extends BleepCodegenScript("GenCores") {
   // heuristic as trimLeaf). This is what kills the old double-build: elements land unboxed in their final array
   // on the first (only) pass; finalisation is O(#groups), not O(n).
   private def groupBufClass(k: Kind): String = {
+    val K = k.name
     val arrT = if k.name == "Ref" then "Object" else k.arr
-    s"""final class ${k.name}Group {
-       |  var arr: Array[$arrT] = new Array[$arrT](16)
+    // Also the FBuilder backing buffer (see FBuilderBase). `add` is the unboxed hot path; `addNode` bulk-copies
+    // whole leaves (arraycopy) — trees materialize ONCE then arraycopy, never element-by-element. `addBoxed` is
+    // the second-class boxing entry used only by the `asScala` mutable.Builder adapter (abstract A there).
+    s"""final class ${K}Group(initialCap: Int = 16) extends FBuilderBase {
+       |  var arr: Array[$arrT] = new Array[$arrT](if (initialCap < 1) 16 else initialCap)
        |  var size: Int = 0
-       |  def add(v: $arrT): Unit = { if (size == arr.length) arr = java.util.Arrays.copyOf(arr, size * 2); arr(size) = v; size += 1 }
-       |  def toLeaf: FBase = if (size == 0) Empty.INSTANCE else if (size == 1) new ${k.name}One(arr(0)) else if (size < (arr.length >>> 2)) new ${k.name}Arr(java.util.Arrays.copyOf(arr, size), size) else new ${k.name}Arr(arr, size)
+       |  private def ensureCap(need: Int): Unit = { if (need > arr.length) { var ns = arr.length; while (ns < need) ns = ns << 1; arr = java.util.Arrays.copyOf(arr, ns) } }
+       |  def add(v: $arrT): Unit = { if (size == arr.length) arr = java.util.Arrays.copyOf(arr, size << 1); arr(size) = v; size += 1 }
+       |  def addBoxed(elem: Any): Unit = add(${k.unbox("elem")})
+       |  def addNode(node: FBase): Unit = node match {
+       |    case e: Empty => ()
+       |    case o: ${K}One => add(o.elem)
+       |    case leaf: ${K}Arr => { val ll = leaf.length; ensureCap(size + ll); System.arraycopy(leaf.arr, 0, arr, size, ll); size += ll }
+       |    case _ => { val m = FArrayOps.materialize${K}(node); val ml = m.length; ensureCap(size + ml); System.arraycopy(m, 0, arr, size, ml); size += ml }
+       |  }
+       |  def sizeHint(n: Int): Unit = if (n > arr.length) arr = java.util.Arrays.copyOf(arr, n)
+       |  def clear(): Unit = size = 0
+       |  def knownSize: Int = size
+       |  def result: FBase = toLeaf
+       |  def toLeaf: FBase = if (size == 0) Empty.INSTANCE else if (size == 1) new ${K}One(arr(0)) else if (size < (arr.length >>> 2)) new ${K}Arr(java.util.Arrays.copyOf(arr, size), size) else new ${K}Arr(arr, size)
        |}""".stripMargin
   }
 
@@ -508,6 +524,18 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val dfsConsumers = opKinds.map(dfsConsumer).mkString("\n")
     val cursors = opKinds.map(cursorClass).mkString("\n")
     val groupBufs = opKinds.map(groupBufClass).mkString("\n")
+    // Sealed root of the FBuilder backing buffers (one concrete ${K}Group per element kind). The opaque
+    // `FBuilder[A] <: FBuilderBase` (FBuilder.scala) exposes these virtuals directly; only the unboxed
+    // `add` lives on the concrete ${K}Group and is reached via kind dispatch.
+    val builderBase =
+      """sealed abstract class FBuilderBase {
+        |  def addBoxed(elem: Any): Unit
+        |  def addNode(node: FBase): Unit
+        |  def sizeHint(n: Int): Unit
+        |  def clear(): Unit
+        |  def knownSize: Int
+        |  def result: FBase
+        |}""".stripMargin
     val combPerm = opKinds.map(combPermClasses).mkString("\n")
     val dfsC = opKinds.map(dfsCDef).mkString("\n")
     val ats = opKinds.map(atDef).mkString("\n")
@@ -518,8 +546,17 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // trims slack (leaf.length may be < arr.length).
     val mat = opKinds
       .map(k =>
+        // Ref leaves may carry a NARROWER runtime array (a String[] from tabulate/fill's opportunistic
+        // ClassTag, or from fromArray of a typed array) behind the static Object[]. `Arrays.copyOf(arr, n)`
+        // PRESERVES that runtime type, so a plain 2-arg copy would leak a secret String[] out through
+        // toArray[Object] — a caller storing a non-String into their "Object[]" then hits ArrayStoreException.
+        // Force a genuine Object[] with the 3-arg copyOf (still a widening bulk memcpy, same speed). Prim
+        // leaves are exact (Int[] IS Int[]), so they keep the cheap 2-arg form.
+        val leafCopy =
+          if k.name == "Ref" then "java.util.Arrays.copyOf(leaf.arr, leaf.length, classOf[Array[Object]])"
+          else s"java.util.Arrays.copyOf(leaf.arr, leaf.length)"
         s"""  def materialize${k.name}(node: FBase): Array[${k.arr}] = node match {
-         |    case leaf: ${k.name}Arr => java.util.Arrays.copyOf(leaf.arr, leaf.length)
+         |    case leaf: ${k.name}Arr => $leafCopy
          |    case u: ${k.name}Updated => { val out = materialize${k.name}(u.base); out(u.index) = u.elem; out }
          |    case _ => { val out = new Array[${k.arr}](node.length); var o = 0; dfsC${k.name}(node, new ${k.name}Dfs { def onRunF(a: Array[${k.arr}], start: Int, count: Int): Unit = { System.arraycopy(a, start, out, o, count); o += count }; def onRunB(a: Array[${k.arr}], start: Int, count: Int): Unit = { var i = start; val e = start - count; while (i > e) { out(o) = a(i); o += 1; i -= 1 } }; def onOne(v: ${k.arr}): Unit = { out(o) = v; o += 1 } }); out }
          |  }""".stripMargin
@@ -1341,6 +1378,65 @@ object GenCores extends BleepCodegenScript("GenCores") {
       }
       ee.result
     }
+    // SHARED LEAF METHODS for COLLECT (the picked-apart PartialFunction), one per Build (I, O) pair —
+    // filterLeaf's guarded-append shape with mapLeaf's transform on the KEPT write: allocate ONE
+    // max-size `out` of length n, `if (p) { out(o) = f(e); o += 1 }`, canonicalise via trimLeaf${O}
+    // (slack unless kept < n/4 — same memory cap as filter). The keep is BRANCHY by necessity for
+    // every kind: `f` derives from a case body that is UNDEFINED off the pattern (running it on a
+    // rejected element is wrong, not just wasted), so filter's branchless prim trick does not apply.
+    // A genuine TREE routes through the ${O}Group growable fallback (trees are the rare input here —
+    // elementwise ops hand collect flat leaves). NO identity reuse on o == n (elements transformed).
+    val collectLeafMethods = {
+      val ee = new Emit("  ")
+      def emit(ki: Kind, ko: Kind): Unit = {
+        val KI = ki.name
+        val KO = ko.name
+        val tpClause = if !ko.isPrim then "[RO <: AnyRef]" else ""
+        val fnScala = "Traversers." + buildFnType(ki, ko, "RO").replace('<', '[').replace('>', ']')
+        def keepWrite = if ko.isPrim then "out(o) = f.apply(e)" else "out(o) = f.apply(e).asInstanceOf[Object]"
+        val oneArg = if ko.isPrim then "f.apply(one.elem)" else "f.apply(one.elem).asInstanceOf[Object]"
+        // Loop shape: ONE branchy pass. A KEEP-PREFIX adaptive variant (pred-scan the kept prefix,
+        // transform it with the pure map loop, branchy from the first reject) was built and
+        // MEASURED-REJECTED 2026-07-04: it cost Int ~20% (alternating keep/reject makes the prefix
+        // one element, the scan pure overhead) AND Str ~15% at small/mid (all-keep reads the data
+        // twice — pred pass + map pass — vs once branchy). The collect gap vs our own map on
+        // all-keep (~0.82x, the cursor's bounds-check) is real but cheaper than every cure tried.
+        def loopBody(read: String => String): Unit = {
+          ee.line(s"val out = new Array[${ko.arr}](n)")
+          ee.line("var i = 0")
+          ee.line("var o = 0")
+          ee.open("while (i < n)")
+          ee.line(s"val e = ${read("i")}")
+          ee.line(s"if (p.apply(e)) { $keepWrite; o += 1 }")
+          ee.line("i += 1")
+          ee.close()
+          ee.line(s"trimLeaf${KO}(out, o, n)")
+        }
+        ee.open(s"def collectLeaf${KI}${KO}$tpClause(xs: FBase, p: Traversers.${KI}Pred, f: $fnScala): FBase =")
+        ee.open("xs match")
+        ee.line("case e: Empty => Empty.INSTANCE")
+        ee.line(s"case one: ${KI}One => if (p.apply(one.elem)) new ${KO}One($oneArg) else Empty.INSTANCE")
+        ee.open(s"case leaf: ${KI}Arr =>")
+        ee.line("val a = leaf.arr")
+        ee.line("val n = leaf.length")
+        loopBody(i => s"a($i)")
+        ee.closeOpen(s"case s: SliceNode if s.base.isInstanceOf[${KI}Arr] =>")
+        ee.line(s"val a = s.base.asInstanceOf[${KI}Arr].arr")
+        ee.line("val so = s.offset")
+        ee.line("val n = s.length")
+        loopBody(i => s"a(so + $i)")
+        ee.closeOpen("case _ =>")
+        val add = if ko.isPrim then "buf.add(f.apply(v))" else "buf.add(f.apply(v).asInstanceOf[Object])"
+        ee.line(s"val buf = new ${KO}Group()")
+        ee.line(s"foreachLeaf${KI}(xs, (v) => if (p.apply(v)) $add)")
+        ee.line("buf.toLeaf")
+        ee.close()
+        ee.close() // xs match
+        ee.close() // def
+      }
+      buildPairs.foreach { case (ki, ko) => emit(ki, ko) }
+      ee.result
+    }
 
     // SHARED LEAF METHODS for DISTINCT, one per kind — the unboxed "seen" structure replaces the old
     // boxed mutable.HashSet[Any] (which boxed every element, grew/rehashed ~log n times, and always
@@ -2110,6 +2206,36 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // not viable here: a primitive B forces applyOrElse's B result to UNBOX the AnyRef sentinel -> CCE). Each kept B
     // unwraps into a growable, unboxed ${O}Group buffer (dispatch on O), so the OUTPUT stays unboxed even though the
     // per-element A/B handoff boxes. buf.toLeaf canonicalises (Empty/One/Arr).
+    // collectPick: the PICKED-APART collect — the surface macro (CollectMacro) splits a literal
+    // PartialFunction into predicate p (pattern+guard) and transform f (case body) and feeds them here
+    // as INLINE lambdas, so this is filter+map fused in one pass with NO PartialFunction object and no
+    // A/B boxing: p and f inline into the per-element lambda like every other elementwise op. Output
+    // goes through the growable unboxed ${O}Group buffer (count unknown), canonicalised by toLeaf.
+    // Covered (I, O) pairs realize the predicate + transform SAMs and CALL the shared
+    // collectLeaf${I}${O} (filter-shaped: one max-size out, slack via trimLeaf — no growable buffer,
+    // no toLeaf copy). Uncovered cross-prim pairs keep the ${O}Group fallback (cold path).
+    def collectLeafCall(ka: Kind, kb: Kind): String = {
+      val toA = wrapV(ka)
+      val fBody = if kb.isPrim then s"rb.unwrap(f($toA))" else s"f($toA).asInstanceOf[B & AnyRef]"
+      val tpClause = if !kb.isPrim then "[B & AnyRef]" else ""
+      s"collectLeaf${ka.name}${kb.name}$tpClause(xs, (v) => p($toA), (v) => $fBody)"
+    }
+    def collectGroupFallback(ka: Kind, kb: Kind): String =
+      s"{ val buf = new ${kb.name}Group(); foreachLeaf${ka.name}(xs, (v) => { val a = ${wrapV(ka)}; if (p(a)) buf.add(${wr(kb, "rb.unwrap(f(a))")}) }); buf.toLeaf }"
+    val collectPick = withErr(
+      "summonFrom {\n" + opKinds
+        .map { ka =>
+          val inner = "summonFrom {\n" + opKinds
+            .map { kb =>
+              val body = if buildCovered((ka.name, kb.name)) then collectLeafCall(ka, kb) else collectGroupFallback(ka, kb)
+              s"          case rb: ${kb.name}Repr[B] => $body"
+            }
+            .mkString("\n") + "\n        }"
+          s"      case r: ${ka.name}Repr[A] => $inner"
+        }
+        .mkString("\n") + "\n    }",
+      "A"
+    )
     val collect = withErr(
       "summonFrom {\n" + opKinds
         .map { ka =>
@@ -2454,6 +2580,12 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val fromValues3 = dispatchA(k =>
       s"{ val out = ${allocN(k, 3)}; out(0) = ${wr(k, "r.unwrap(a)")}; out(1) = ${wr(k, "r.unwrap(b)")}; out(2) = ${wr(k, "r.unwrap(c)")}; new ${k.name}Arr(out, 3) }"
     )
+    // ---- FBuilder: the unboxed imperative accumulator. newBuilder picks the concrete per-kind ${K}Group at
+    // the CONCRETE call site (summonFrom, zero runtime cost); the hot `add` casts the opaque handle to that
+    // ${K}Group and appends an UNWRAPPED Prim (no boxing on the += path). Everything else (addNode/sizeHint/
+    // clear/knownSize/result) is a plain virtual method on the sealed FBuilderBase — off the hot path.
+    val newBuilder = dispatchA(k => s"new ${k.name}Group(cap)")
+    val builderAdd = dispatchA(k => s"b.asInstanceOf[${k.name}Group].add(${wr(k, "r.unwrap(elem)")})")
     // mkString: a hybrid Reduce into a StringBuilder (Z = StringBuilder, a Ref acc) over the shared leaf
     // method (reduceLeafFwd${K}Ref) — the SAME machinery as foldLeft; the leaf method peels Empty/One/leaf and
     // routes genuine TREES through Traversers. The surface realizes ONE RefToRefFold<StringBuilder> SAM (no
@@ -2510,6 +2642,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |// Per-kind leaf-run consumers for the non-inline dfsC traversals.
        |$dfsConsumers
        |$cursors
+       |// Sealed root for the FBuilder backing buffers.
+       |$builderBase
        |// Per-group unboxed accumulators for groupBy/groupMap (one backing array per group, doubling on demand).
        |$groupBufs
        |// Per-kind unboxed combinations/permutations iterators (mirror SeqOps.{CombinationsItr,PermutationsItr}).
@@ -2533,6 +2667,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |$mapLeafMethods
        |$trimLeafMethods
        |$filterLeafMethods
+       |$collectLeafMethods
        |$distinctLeafMethods
        |$partitionLeafMethods
        |$foreachLeafMethods
@@ -2544,6 +2679,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def fromValues1[A](a: A): FBase = $fromValues1
        |  inline def fromValues2[A](a: A, b: A): FBase = $fromValues2
        |  inline def fromValues3[A](a: A, b: A, c: A): FBase = $fromValues3
+       |  inline def newBuilderImpl[A](cap: Int): FBuilderBase = $newBuilder
+       |  inline def builderAddImpl[A](b: FBuilderBase, elem: A): Unit = $builderAdd
        |  inline def tabulateImpl[A](n: Int)(inline f: Int => A): FBase = $tabulate
        |  inline def fromArrayImpl[A](as: Array[A]): FBase = $fromArr
        |  inline def fromBoxedArrayImpl[A](as: Array[Object]): FBase = $fromBoxedArr
@@ -2560,15 +2697,15 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def minImpl[A, Z >: A](xs: FBase)(using ord: Ordering[Z]): A = $minV
        |  inline def foreachImpl[A](xs: FBase)(inline f: A => Unit): Unit = $foreach
        |  inline def foreachWhileImpl[A](xs: FBase)(inline f: A => Boolean): Unit = $foreachWhileV
-       |  inline def existsImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = { val length = xs.length; $existsV }
-       |  inline def forallImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = { val length = xs.length; $forallV }
-       |  inline def findImpl[A](xs: FBase)(inline p: A => Boolean): Option[A] = { val length = xs.length; $findV }
+       |  inline def existsImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = { val length = xs.length; if (length == 0) false else $existsV }
+       |  inline def forallImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = { val length = xs.length; if (length == 0) true else $forallV }
+       |  inline def findImpl[A](xs: FBase)(inline p: A => Boolean): Option[A] = { val length = xs.length; if (length == 0) None else $findV }
        |  inline def indexWhereImpl[A](xs: FBase, from: Int)(inline p: A => Boolean): Int = { val length = xs.length; if (length == 0) -1 else $indexWhereV }
        |  inline def indexOfImpl[A, B](xs: FBase, elem: B, from: Int): Int = { val length = xs.length; if (length == 0) -1 else $indexOfV }
-       |  inline def segmentLengthImpl[A](xs: FBase, from: Int)(inline p: A => Boolean): Int = { val length = xs.length; $segmentLenV }
+       |  inline def segmentLengthImpl[A](xs: FBase, from: Int)(inline p: A => Boolean): Int = { val length = xs.length; if (length == 0) 0 else $segmentLenV }
        |  inline def lastIndexWhereImpl[A](xs: FBase, end: Int)(inline p: A => Boolean): Int = { val length = xs.length; if (length == 0) -1 else $lastIndexWhereV }
        |  inline def lastIndexOfImpl[A, B](xs: FBase, elem: B, end: Int): Int = { val length = xs.length; if (length == 0) -1 else $lastIndexOfV }
-       |  inline def collectFirstImpl[A, B](xs: FBase)(pf: PartialFunction[A, B]): Option[B] = { val length = xs.length; $collectFirstV }
+       |  inline def collectFirstImpl[A, B](xs: FBase)(pf: PartialFunction[A, B]): Option[B] = { val length = xs.length; if (length == 0) None else $collectFirstV }
        |  inline def prefixLengthImpl[A](xs: FBase)(inline p: A => Boolean): Int = $prefixLenV
        |  inline def mapImpl[A, B](xs: FBase)(inline f: A => B): FBase = { val n = xs.length; $mapM }
        |  inline def filterImpl[A](xs: FBase)(inline p: A => Boolean): FBase = $filter
@@ -2579,8 +2716,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
       )}
        |  inline def partitionImpl[A](xs: FBase)(inline p: A => Boolean): scala.Tuple2[FBase, FBase] = if (xs.length == 0) emptyPair else $partition
        |  inline def collectImpl[A, B](xs: FBase)(pf: PartialFunction[A, B]): FBase = $collect
+       |  inline def collectPickImpl[A, B](xs: FBase)(inline p: A => Boolean, inline f: A => B): FBase = { val n = xs.length; if (n == 0) Empty.INSTANCE else if (n == 1) { val a = applyAtImpl[A](xs, 0); if (p(a)) fromValues1[B](f(a)) else Empty.INSTANCE } else $collectPick }
        |  inline def partitionMapImpl[A, A1, A2](xs: FBase)(inline f: A => Either[A1, A2]): scala.Tuple2[FBase, FBase] = $partitionMap
-       |  inline def containsImpl[A](xs: FBase, elem: A): Boolean = { val length = xs.length; $contains }
+       |  inline def containsImpl[A](xs: FBase, elem: A): Boolean = { val length = xs.length; if (length == 0) false else $contains }
        |  inline def mapConserveImpl[A](xs: FBase)(inline f: A => A): FBase = { val n = xs.length; if (n == 0) xs else if (n == 1) { val e = applyAtImpl[A](xs, 0); val r = f(e); if (r.asInstanceOf[AnyRef] eq e.asInstanceOf[AnyRef]) xs else fromValues1[A](r) } else $mapConserve }
        |  inline def unzipImpl[A, A1, A2](xs: FBase)(ev: A <:< (A1, A2)): (FBase, FBase) = { val n = xs.length; if (n == 0) emptyPair else if (n == 1) { val t = ev(applyAtImpl[A](xs, 0)); new scala.Tuple2(fromValues1[A1](t._1), fromValues1[A2](t._2)) } else $unzipV }
        |  inline def unzip3Impl[A, A1, A2, A3](xs: FBase)(ev: A <:< (A1, A2, A3)): (FBase, FBase, FBase) = { val n = xs.length; if (n == 0) emptyTriple else if (n == 1) { val t = ev(applyAtImpl[A](xs, 0)); new scala.Tuple3(fromValues1[A1](t._1), fromValues1[A2](t._2), fromValues1[A3](t._3)) } else $unzip3V }

@@ -7,12 +7,12 @@ import scala.quoted.*
   * byte mechanics. One `Quotes` is threaded through (`q.type`) so every Expr/Term/callback lives at the same staging level.
   *
   * Direction of flow:
-  *   - engine → decoder: everything in [[DecomposedInput]] (the record type, the runtime [[ByteRecordSource]], the pipeline's field-reading lambdas as plain
+  *   - engine → decoder: everything in [[DecodeRequest]] (the record type, the runtime [[ByteRecordSource]], the pipeline's field-reading lambdas as plain
   *     Terms, and a `continue` callback the engine owns).
   *   - decoder → engine: per record, a [[RecordColumns]] handed back THROUGH `continue` — the decomposed column reads, which the engine assembles into its own
   *     `Shape` and rejoins to the shared optimizer.
   */
-private[farray] final class DecomposedInput[Q <: Quotes & Singleton](using val q: Q)(
+private[farray] final class DecodeRequest[Q <: Quotes & Singleton](using val q: Q)(
     /** the record case-class type whose fields are scanned. */
     val srcElem: q.reflect.TypeRepr,
     /** the runtime byte source (already `self.base.asInstanceOf[ByteRecordSource]`). */
@@ -56,3 +56,10 @@ private[farray] final class Column[Q <: Quotes & Singleton](using val q: Q)(
     val read: (q.reflect.Term => q.reflect.Term) => q.reflect.Term,
     val isString: Boolean
 )
+
+/** The engine-side interface a record decoder implements. Decoders live in DOWNSTREAM modules (the NDJSON one in `example-json-decoder`) and are discovered by
+  * [[RecordDecoder]] reflectively at macro-expansion time — the engine itself ships none.
+  */
+private[farray] trait RecordDecoder:
+  def lower(using q: Quotes)(in: DecodeRequest[q.type]): Expr[Unit]
+  def planString(using q: Quotes)(in: DecodeRequest[q.type]): String

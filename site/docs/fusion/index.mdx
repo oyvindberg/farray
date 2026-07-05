@@ -1,0 +1,150 @@
+---
+title: Fusion, from first principles
+sidebar_label: From first principles
+description: "Why JVM pipelines are slow, what compiling them at compile time buys, and the five concepts the whole machine is built from."
+---
+
+import Link from "@docusaurus/Link";
+import Snippet from "@site/src/components/Snippet";
+import Related from "@site/src/components/Related";
+
+export function FuseEx({ src, gen }) {
+  return (
+    <div className="fuseex">
+      <p className="fuse-cap">you write</p>
+      <Snippet name={src} hideFull />
+      <p className="fuse-cap">the macro emits</p>
+      <Snippet name={gen} />
+    </div>
+  );
+}
+
+<p className="page__eyebrow">the fusion engine</p>
+
+<p className="lede">
+  The front page made a claim that should bother you: a fourteen-stage collection pipeline running
+  ~36× past the fastest rival, on the same JVM, from the same source-code shape. This section is the
+  full account — what the problem actually is, what compiling a pipeline buys, and every moving part
+  of the machine, built up one concept at a time. Everything is verifiable as you read: each emitted
+  block is a golden test checked into the repo, and each number is a JMH measurement.
+</p>
+
+## The problem, stated the way a profiler states it
+
+Every JVM collections pipeline — Scala collections, Java Streams, the wrapper libraries — pays some
+mix of three taxes:
+
+<ul className="points">
+  <li>
+    <strong>Intermediates.</strong> Eager stages each allocate a collection whose only purpose is to
+    be consumed and thrown away by the next stage. Three stages over 100k elements is two garbage
+    arrays — and on primitives, often two garbage arrays <em>of boxes</em>.
+  </li>
+  <li>
+    <strong>The lambda tax.</strong> Lazy views and streams fix the intermediates by threading
+    elements through stored <code>Function1</code>s — an interface call per element per stage. One
+    call site serving ≥3 lambda classes goes megamorphic and stops devirtualizing; on primitives,
+    every crossing boxes. The fix for allocation reintroduces dispatch.
+  </li>
+  <li>
+    <strong>The JIT gamble.</strong> Escape analysis and inlining can sometimes claw both back — until
+    the enclosing method grows past an inlining budget, a call site gets polluted, or one trailing
+    virtual call silently turns escape analysis off. We measured that cliff at{" "}
+    <Link to="/operations/flatmap">35× on this very library</Link> before designing around it. Speed
+    that depends on the JIT's mood is not speed you can ship.
+  </li>
+</ul>
+
+The frustrating part: you know exactly what the fast code looks like. It's a `while` loop over the
+backing array with the logic written inline. You could write it by hand — and then you'd have traded
+away every abstraction you use collections for.
+
+## The move: compile the pipeline
+
+Fusion makes the *compiler* write that loop. The stages you chain are inert markers; the **terminal**
+call at the end is a macro that reads the entire chain off the typed syntax tree and emits the
+hand-written loop — your lambdas spliced into the body, element types resolved, nothing boxed,
+nothing allocated between stages:
+
+<FuseEx src="fuse-src-oneloop" gen="fuse-opt-oneloop" />
+
+Read the output like a reviewer. There is no `Function1` — `_ + 1` became the add instruction in the
+loop body. The filter is an `if` wrapping everything downstream. There is one output array, sized
+once. And there is no trace of the pipeline objects themselves: the source lands in `src0` as a bare
+reference, and the loop is everything.
+
+Because this happens at *compile* time, none of it is a JIT bet. The specialization is in the
+bytecode: monomorphic, unboxed, allocation-free before the VM has compiled a single method — which is
+why a fused pipeline leads even measured stone-cold, and why the lead doesn't evaporate when your
+method gets big or your call sites get shared. The taxes aren't optimized away; they're never
+incurred.
+
+## The machine, in five concepts
+
+Everything in this section builds from five ideas, each with its own page, each depending only on
+the ones before it:
+
+<ul className="points">
+  <li>
+    <strong><Link to="/fusion/sources">Sources</Link></strong> — where elements come from. An
+    in-memory <code>FArray</code>, a chunked stream pulled in constant memory, or raw bytes framed
+    into records. A pipeline's source shape is part of its type.
+  </li>
+  <li>
+    <strong><Link to="/fusion/stages">Stages</Link></strong> — the pipeline vocabulary:{" "}
+    <code>map</code>, <code>filter</code>, <code>collect</code>, <code>zip</code>, the clustered-data
+    family. Markers that cost nothing and compile to nothing but their spliced bodies.
+  </li>
+  <li>
+    <strong><Link to="/fusion/terminals">Terminals & lowerings</Link></strong> — the call that ends
+    the chain <em>is</em> the compiler invocation. Which terminals a pipeline has is decided per
+    source shape by a typeclass — which is what makes the engine extensible.
+  </li>
+  <li>
+    <strong><Link to="/fusion/optimizer">The optimizer</Link></strong> — the shared brain: products
+    decomposed into columns, dead columns never computed, expensive columns computed only for
+    survivors.
+  </li>
+  <li>
+    <strong><Link to="/fusion/json">The integration surface</Link></strong> — the proof the engine
+    isn't collection-shaped: a JSON decoder plugged in as a typeclass instance that beats the JVM's
+    best hand-tuned parser. <Link to="/fusion/farray">Using it with FArray</Link> and{" "}
+    <Link to="/fusion/benchmarks">the benchmarks</Link> close the section.
+  </li>
+</ul>
+
+## The contract
+
+Four rules, and they are the entire fine print:
+
+<ul className="points">
+  <li>
+    <strong>Stage lambdas are assumed pure.</strong> A fused pipeline is lazy and short-circuiting:
+    under <code>take</code>, <code>find</code>, <code>exists</code> a stage function may run{" "}
+    <em>fewer</em> times than in the strict <code>List</code> version, and a column read only after a
+    filter is computed only for elements that pass. Pure functions can't tell the difference;
+    side-effecting ones can.
+  </li>
+  <li>
+    <strong>Element kinds are checked at compile time.</strong> <code>Int</code>/<code>Long</code>/
+    <code>Double</code> or a reference type; a primitive pipeline widened to <code>Any</code> is a
+    compile error, never a silent deoptimization.
+  </li>
+  <li>
+    <strong>The chain must be written out at the call site.</strong> It's read off the syntax tree,
+    not built at runtime — a pipeline you assemble dynamically is a different tool.
+  </li>
+  <li>
+    <strong>Unsupported means "does not compile".</strong> A terminal a source shape doesn't support
+    is not a member of the pipeline's type; a stage the record path can't fuse is an error naming the
+    stage. There is no fallback path that silently runs slow.
+  </li>
+</ul>
+
+<Related
+  links={[
+    { to: "/fusion/sources", label: "Start: Sources", desc: "Where pipelines begin — arrays, chunk streams, raw bytes." },
+    { to: "/fusion/benchmarks", label: "The receipts", desc: "Warm, cold, streaming, and against the field." },
+    { to: "/", label: "The FArray story", desc: "The collection library the engine grew out of." },
+  ]}
+/>

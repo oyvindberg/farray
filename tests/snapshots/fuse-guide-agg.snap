@@ -1,0 +1,38 @@
+(({
+  val src0: FBase = {
+    val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
+
+    (xs$proxy: ints)
+  }.asInstanceOf[FBase]
+  val n0: Int = src0.length
+  var acc: Int = 0
+  var c: Int = 0
+  var best: Int = null.asInstanceOf[Int]
+  var seen: Boolean = false
+  val s: FBase = src0
+  val a: Array[Int] = s match {
+    case l: IntArr =>
+      (l.arr: Array[Int])
+    case t =>
+      if (t.length.>=(64)) FArrayOps.materializeInt(t) else null
+  }
+  val len: Int = s.length
+  var i: Int = 0
+  while (i.<(len)) {
+    val x: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+    val v: Int = x.%(2)
+    val keep: Boolean = v.==(0)
+    if (keep) {
+      acc = acc.+(x)
+      c = c.+(1)
+      val key: Int = x
+      if (seen.unary_!.||(key.>(best))) {
+        best = key
+        seen = true
+      } else ()
+      ()
+    } else ()
+    i = i.+(1)
+  }
+  scala.Tuple3.apply[Any, Any, Any](acc, c, if (seen) best else throw new NoSuchElementException("min1/max1 of empty fused pipeline"))
+}.asInstanceOf[Tuple3[Int, Int, Int]]: Tuple3[Int, Int, Int]): Tuple3[Int, Int, Int])

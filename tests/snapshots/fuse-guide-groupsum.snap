@@ -1,0 +1,33 @@
+((({
+  val src0: FBase = {
+    val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
+
+    (xs$proxy: ints)
+  }.asInstanceOf[FBase]
+  val n0: Int = src0.length
+  val m: IntKeyMap = new IntKeyMap(16, true)
+  val s: FBase = src0
+  val a: Array[Int] = s match {
+    case l: IntArr =>
+      (l.arr: Array[Int])
+    case t =>
+      if (t.length.>=(64)) FArrayOps.materializeInt(t) else null
+  }
+  val len: Int = s.length
+  var i: Int = 0
+  while (i.<(len)) {
+    val x: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+    val slot: Int = m.probe(x.%(3))
+    if (m.wasNew()) m.setValuePrim(slot, x.toLong) else m.setValuePrim(slot, {
+      val `x₂`: Int = m.getValuePrim(slot).toInt
+      IntIsIntegral.plus(`x₂`, x)
+    }.toLong)
+    i = i.+(1)
+  }
+  val b: Builder[Tuple2[Int, Int], Map[Int, Int]] = Map.newBuilder[Int, Int]
+  m.foreachEntryPrim(((k: Integer, `l₂`: Long) => {
+    b.+=(Tuple2.apply[Int, Int](k.asInstanceOf[Int], `l₂`.toInt))
+    ()
+  }))
+  b.result()
+}.asInstanceOf[Map[Int, Int]]: Map[Int, Int]): Map[Int, Int]): Map[Int, Int])

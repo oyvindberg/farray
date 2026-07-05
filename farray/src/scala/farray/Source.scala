@@ -14,6 +14,7 @@ package farray
   * This is a SEPARATE source shape alongside the in-memory `FBase` and the byte-sourced `NdjsonSource`; the downstream optimizer (stages, DCE/sink/CSE,
   * terminals, `done`) is identical across all three — only the source read differs.
   */
+// start:source-trait
 trait Source[+A]:
   /** The next chunk of elements, or [[Source.End]] once exhausted. After end is returned, `pullChunk` must keep returning end (idempotent). The returned chunk
     * is valid only until the next `pullChunk` call.
@@ -25,6 +26,7 @@ trait Source[+A]:
     * on exception — the three exit paths a resource must survive. Idempotent: `close()` may be called more than once.
     */
   def close(): Unit = ()
+// stop:source-trait
 
 object Source:
   /** The end-of-stream sentinel. A union member (`FArray[A] | End`) so no `Option`/boxing on the hot pull. */
@@ -171,4 +173,4 @@ object Source:
   /** Enter the fused pipeline over a streaming source: `src.fuse.filter(_ > 0).map(_ * 2).sum` runs in constant memory (one chunk live at a time). Identical
     * surface to `FArray#fuse` — the macro wraps the element loop in an outer chunk-pull loop.
     */
-  extension [A](src: Source[A]) inline def fuse: Fuse[A] = new Fuse[A](src)
+  extension [A](src: Source[A]) inline def fuse: Fuse[A, Chunks] = new Fuse[A, Chunks](src)

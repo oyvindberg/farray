@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import useBaseUrl from "@docusaurus/useBaseUrl";
 import { buildCharts, buildScorecard, type Chart, type Scorecard, type Slim } from "./bench";
 
 export interface SnippetData {
@@ -26,9 +27,9 @@ interface Store {
 }
 
 const Ctx = createContext<Store | null>(null);
-const BASE = import.meta.env.BASE_URL; // "./" in build, "/" in dev — keeps fetch paths correct under base
 
 export function DataProvider({ children }: { children: ReactNode }) {
+  const BASE = useBaseUrl("/"); // the site's baseUrl — keeps fetch paths correct under /farray/
   const [bench, setBench] = useState<Slim[] | null>(null);
   const [setBenchData, setSetBenchData] = useState<Slim[] | null>(null);
   const [snippets, setSnippets] = useState<Record<string, SnippetData> | null>(null);
@@ -51,7 +52,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         setBenchSources({ ...bs, ...sbs });
       })
       .catch((e) => setError(String(e)));
-  }, []);
+  }, [BASE]);
 
   const value = useMemo<Store>(() => {
     const charts = bench ? buildCharts(bench) : [];
