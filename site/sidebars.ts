@@ -47,6 +47,7 @@ const sidebars: SidebarsConfig = {
       label: "Fusion",
       collapsed: false,
       items: [
+        "fusion/benchmarks",
         "fusion/index",
         "fusion/sources",
         "fusion/stages",
@@ -55,7 +56,6 @@ const sidebars: SidebarsConfig = {
         "fusion/farray",
         "fusion/integrating",
         "fusion/json",
-        "fusion/benchmarks",
       ],
     },
     {
