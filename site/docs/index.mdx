@@ -17,8 +17,8 @@ import { FusionDiagram } from "@site/src/components/Diagrams";
 <header className="hero--farray">
   <h1 className="wordmark">FArray</h1>
   <p className="hero__lede">
-    An immutable, unboxed Scala 3 sequence with the whole <code>IndexedSeq</code> API — and a
-    decade-old grudge against the heap, finally settled.
+    An immutable, unboxed Scala 3 sequence with the whole <code>IndexedSeq</code> API. Faster than
+    List, Vector and the Chunks, usually by a lot.
   </p>
   <p className="hero__sub">
     Every number here is a JMH measurement you can hover; every snippet is extracted from source that
@@ -29,21 +29,22 @@ import { FusionDiagram } from "@site/src/components/Diagrams";
 ## Ten years of waiting for the JVM
 
 <p className="lede">
-  Scala collections are a joy to write — and box every primitive. The <code>while</code> loop that
-  doesn't box is a joy to nobody. I spent a decade waiting for the something in between:
-  specialization, miniboxing, Valhalla's <code>List&lt;int&gt;</code>. It never shipped. The verdict,
-  every release: if it has to be fast, write it in Java.
+  Scala collections are pleasant to write and box every primitive. The <code>while</code> loop that
+  avoids the boxing is not pleasant to write. I spent about a decade waiting for something in
+  between: specialization, miniboxing, Valhalla's <code>List&lt;int&gt;</code>. None of it shipped.
+  So the conclusion, every release, was the same: if it has to be fast, write it in Java.
 </p>
 
-In 2023 spite produced a prototype: the whole `IndexedSeq` API as `inline` `while` loops over one
-flat `Array[AnyRef]`. It beat the collection library — but it boxed, and unboxing wasn't a bolt-on.
-It wanted per-kind storage, a core the inliner couldn't defeat, machinery to keep a user's lambda
-unboxed across a library boundary: years of evenings I didn't have. The repo slept for three years.
+In 2023 I wrote a prototype out of spite: the whole `IndexedSeq` API as `inline` `while` loops over
+one flat `Array[AnyRef]`. It beat the collection library, but it boxed, and unboxing turned out not
+to be something you bolt on. It needed per-kind storage, a core the inliner can't defeat, and a way
+to keep a user's lambda unboxed across the library boundary. That was years of evenings I didn't
+have, and the repo sat untouched for three years.
 
-## And then — boom
+## And then, all at once
 
-June 2026, with Claude doing the heavy lifting: twelve days, three hundred commits, and a decade of
-roadmap stopped being sequential —
+I picked it up again in June 2026, with Claude doing the heavy lifting. Twelve days and about three
+hundred commits later, all of it existed:
 
 <ul className="points">
   <li>
@@ -57,13 +58,13 @@ roadmap stopped being sequential —
     pass, allocating nothing between stages.
   </li>
   <li>
-    <strong>And a working Claude.</strong> The reason the other two exist — with the benchmark suite
-    as referee on every commit.
+    <strong>And a working Claude,</strong> which is the reason the other two exist. The benchmark
+    suite refereed every commit.
   </li>
 </ul>
 
-They stack, so the demo stacks them: fourteen everyday stages, identical code on every collection,
-and the FArray version differs by one word — `.fuse`. Pick the speedup you'd refuse to believe.
+The three build on each other, so one benchmark can show all of them at once. Fourteen ordinary
+stages, identical code on every collection; the FArray version differs by one word, `.fuse`:
 
 <SideBySide
   snippet="fuse-pipeline"
@@ -77,51 +78,56 @@ and the FArray version differs by one word — `.fuse`. Pick the speedup you'd r
   }
 />
 
-At 100k elements: **36× the fastest competitor**, **83× List** — and **15× the same pipeline run
+At 100k elements: **36× the fastest competitor**, **83× List**, and **15× the same pipeline run
 eagerly on FArray itself**.
 
-Why it runs away: eager stages each allocate a collection whose only purpose is to be thrown away by
-the next. `.fuse` builds none of them:
+The reason is simple. Run those stages eagerly and each one allocates a collection whose only
+purpose is to be consumed by the next. `.fuse` builds none of them:
 
 <FusionDiagram />
 
-It's a macro. At compile time the whole chain becomes one `while` loop — the intermediates, the
-`Function1`s, the boxing: gone. Not a claim to take on faith: the lowering is a golden test in the
-repo, and this is what those fourteen stages compiled to.
+It's a macro. At compile time the whole chain becomes one `while` loop, with no intermediate
+collections, no `Function1`, and no boxing. The lowering is checked into the repo as a golden test,
+so you can read exactly what those fourteen stages compiled to:
 
 <GeneratedCode name="fuse-generated" summary="The loop .fuse emitted — 14 stages, one pass" />
 
-How the macro pulls that off gets [its own section](./fusion/index.mdx).
+How the macro works gets [its own section](./fusion/index.mdx).
 
 ## Three speeds
 
-One number proves too little, so calibrate it. Fast JVM code was never the hard part — anyone can
-mutate an `int[]` in a `while` loop. The hard part is that speed from **immutable,
-expression-oriented code**, where erasure boxes, inlining gives out, and every stage materializes a
-collection that lives for one line. The chart is really three speeds:
+A single benchmark number doesn't mean much on its own, so here is the context for it. Fast JVM
+code was never the hard part; anyone can write a `while` loop over an `int[]`, and nothing on this
+site beats that. The hard part is getting that speed from immutable, expression-oriented code, where
+erasure boxes your primitives and every pipeline stage materializes a collection that lives for one
+line. The chart above is really three speeds:
 
 <Ladder />
 
-**Today's speed.** `List` and `Vector` pay a box, an allocation and a dispatch — per element, per
-stage. The Chunks put arrays under the boxes; `IArray` drops the boxes but still copies at all
-thirteen seams. The intermediates are real; escape analysis will not save you.
+**Today's speed.** `List` and `Vector` pay a box, an allocation and a virtual call per element, per
+stage. The Chunks keep arrays underneath but box at the stage boundaries. `IArray` doesn't box at
+all, but it copies the whole array at each of the thirteen seams, and the copies are what you end up
+paying for. They are all really allocated; escape analysis doesn't remove intermediates at this
+depth.
 
-**The type swap.** Same code, `FArray` under it. Storage is a genuine `int[]`, structural steps are
-O(1) nodes instead of copies, and every lambda-taking op is `inline` — the unboxing lives in the
-method signature, so it can't collapse back to boxing as the surrounding method grows, which is
-exactly where the rivals' single-op ties give out. No fusion yet, and it already clears the field:
-[the next page](./chains.mdx) scores every chained benchmark in the suite, live.
+**The type swap.** The same code with `FArray` under it. Storage is a real `int[]`, structural steps
+like `take` and `reverse` are O(1) nodes instead of copies, and every lambda-taking op is `inline`,
+which puts the unboxing in the method signature. That last part matters: the rivals that tie us on a
+single op lose that tie as the surrounding method grows, because their unboxing depends on the JIT's
+inlining budget and ours doesn't. No fusion involved, and it already beats the field.
+[The next page](./chains.mdx) scores every chained benchmark in the suite.
 
-**The word.** Views, iterators and LazyList promised chain-collapsing and delivered interpreter
-overhead; `.fuse` deletes the thirteen intermediates at compile time. The ceiling is the
-hand-written loop — because that's what `.fuse` emits.
+**The word.** Views, iterators and LazyList attempt this at runtime and mostly add interpreter
+overhead. `.fuse` does it at compile time, and what it emits is the `while` loop you would have
+written by hand. You just don't have to write it, or maintain it.
 
-Live on the type swap; spend the word where it matters. The rest of the site is the climb.
+In practice you swap the type everywhere and add `.fuse` on the paths that matter. The rest of the
+site explains each layer.
 
 <Related
   links={[
     { to: "/chains", label: "Chains: where it runs away", desc: "The type swap, measured: every chained pipeline in the suite, eagerly." },
-    { to: "/fusion", label: "The fusion engine", desc: "From first principles: sources, stages, terminals, the optimizer — and the receipts." },
-    { to: "/benchmarks/farray", label: "FArray benchmarks", desc: "The complete scorecard — every op, every size, every rival." },
+    { to: "/fusion", label: "The fusion engine", desc: "Sources, stages, terminals, the optimizer, and the receipts." },
+    { to: "/benchmarks/farray", label: "FArray benchmarks", desc: "The complete scorecard: every op, every size, every rival." },
   ]}
 />

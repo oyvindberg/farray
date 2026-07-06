@@ -15,15 +15,15 @@ type Tier = { caption: string; rungs: Rung[] };
 // top tier first — the chart reads best-down like a leaderboard.
 const TIERS: Tier[] = [
   {
-    caption: "one compiled loop — zero intermediates",
+    caption: "one compiled loop, no intermediates",
     rungs: [{ v: "farrayFused", note: "FArray + .fuse: the whole chain rewritten at compile time" }],
   },
   {
-    caption: "unboxed elements, O(1) structure — same immutable code",
+    caption: "unboxed elements, O(1) structure, same immutable code",
     rungs: [{ v: "farrayEager", note: "FArray, eager: a type swap away from the code above" }],
   },
   {
-    caption: "raw arrays — no boxes, but a full copy per stage",
+    caption: "raw arrays: no boxes, but a full copy per stage",
     rungs: [{ v: "iarray", note: "IArray: 13 intermediate copies for 14 stages" }],
   },
   {

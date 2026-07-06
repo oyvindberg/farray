@@ -28,8 +28,7 @@ export default function ChainScore() {
       <span className="chainscore__num chainscore__num--t">{t} ties</span>
       <span className="chainscore__num chainscore__num--l">{l} losses</span>
       <span className="chainscore__note">
-        — every size of every chained-operation benchmark in the suite ({classes} classes), eager FArray, no{" "}
-        <code>.fuse</code>. Computed live from the checked-in scorecard.
+        across {classes} benchmark classes, computed from the checked-in scorecard.
       </span>
     </div>
   );
