@@ -4,8 +4,6 @@ sidebar_label: Use it
 description: "Coordinates, license, requirements, and a straight answer on maturity and Java/Kotlin interop."
 ---
 
-import Link from "@docusaurus/Link";
-
 <p className="lede">
   FArray is published as an experiment. The design is serious and the benchmarks are real, but a
   collection library earns trust over years, not milestones. This page states exactly where it
@@ -15,19 +13,35 @@ import Link from "@docusaurus/Link";
 ## Coordinates
 
 MIT licensed. Source at [github.com/oyvindberg/farray](https://github.com/oyvindberg/farray).
+Requires Scala 3.8 or later. Built and benchmarked on JDK 25; the Java core uses sealed classes, so
+JDK 17 is the floor.
 
 ```scala
 // sbt
 libraryDependencies += "com.olvind.farray" %% "farray" % "1.0.0-M1"
 ```
 
-```scala
-// scala-cli
-//> using dep com.olvind.farray::farray:1.0.0-M1
+```yaml
+# bleep (bleep.build) — in bleep.yaml, under your project
+dependencies: com.olvind.farray::farray:1.0.0-M1
 ```
 
-Requires Scala 3.8 or later. Built and benchmarked on JDK 25; the Java core uses sealed classes, so
-JDK 17 is the floor.
+## Try it in thirty seconds
+
+Paste into `farray.sc`, run with `scala-cli farray.sc`:
+
+```scala
+//> using dep com.olvind.farray::farray:1.0.0-M1
+import farray.FArray
+
+val xs = FArray.tabulate(1_000_000)(identity) // an int[] underneath
+val eager = xs.map(_ * 2).filter(_ % 3 != 0).foldLeft(0L)(_ + _)
+val fused = xs.fuse.map(_ * 2).filter(_ % 3 != 0).foldLeft(0L)(_ + _) // same result, one loop
+println(s"$eager == $fused")
+```
+
+Swap the type where the profile says collections cost you; add `.fuse` where the chain is hot.
+[When to fuse (and when not to)](./fusion/farray.mdx) covers the judgment calls.
 
 ## What M1 means
 
@@ -53,14 +67,3 @@ This is a milestone release of an experiment.
 
 No. The machinery lives in the Scala 3 compiler; the code that touches FArray is Scala 3.
 
-## The two-line start
-
-```scala
-import farray.FArray
-
-val xs = FArray.tabulate(1_000_000)(identity) // an int[] underneath
-val hot = xs.fuse.map(_ * 2).filter(_ % 3 != 0).foldLeft(0L)(_ + _)
-```
-
-Swap the type where the profile says collections cost you; add `.fuse` where the chain is hot.
-<Link to="/fusion/farray">When to fuse (and when not to)</Link> covers the judgment calls.
