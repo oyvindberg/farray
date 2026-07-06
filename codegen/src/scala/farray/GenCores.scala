@@ -981,10 +981,26 @@ object GenCores extends BleepCodegenScript("GenCores") {
       //     unboxed primitive `${P}`. Realize the `RefTo${P}Fold` SAM (the element `v` is Object) and CALL the
       //     shared unboxed leaf method. A COMMON reference workload, so it gets the unboxed acc (the leaf path
       //     never boxes; only a genuine tree boxes, inside the leaf method's cold arm). NO inlined leaf loop. ---
+      //     PEELED (2026-07-06, mirrors scFwdPeel): forward Ref-input+prim-acc folds peel the flat RefArr and
+      //     leaf-backed SliceNode arms INLINE at the surface — the user's op inlines monomorphically into the
+      //     hot loop, killing the per-element SAM interface call that made small-n Ref->prim folds lose to
+      //     IArray (FoldRefPollutedBenchmark @1000). Empty/One/genuine trees still fall back to the shared
+      //     leaf method, so the many-folds-in-one-method behavior (the shared-leaf design guard) is preserved.
       def zPrimAccOverRefArm(p: Kind): Unit =
-        ee.line(
-          s"rz.wrap(reduceLeaf${dir}Ref${p.name}(xs, rz.unwrap(z), (acc, v) => rz.unwrap(${comb("rz.wrap(acc)", wrapV(k))})))"
-        )
+        if backward then
+          ee.line(
+            s"rz.wrap(reduceLeaf${dir}Ref${p.name}(xs, rz.unwrap(z), (acc, v) => rz.unwrap(${comb("rz.wrap(acc)", wrapV(k))})))"
+          )
+        else {
+          def loop(el: String): String =
+            s"var acc = rz.unwrap(z); var j = 0; while (j < n) { acc = rz.unwrap(${comb("rz.wrap(acc)", s"r.wrap($el.asInstanceOf[A])")}); j += 1 }; rz.wrap(acc)"
+          ee.line(
+            s"xs match { " +
+              s"case leaf: RefArr => { val a = leaf.arr; val n = leaf.length; ${loop("a(j)")} }; " +
+              s"case sl: SliceNode if sl.base.isInstanceOf[RefArr] => { val a = sl.base.asInstanceOf[RefArr].arr; val so = sl.offset; val n = sl.length; ${loop("a(so + j)")} }; " +
+              s"case _ => rz.wrap(reduceLeaf${dir}Ref${p.name}(xs, rz.unwrap(z), (acc, v) => rz.unwrap(${comb("rz.wrap(acc)", wrapV(k))}))) }"
+          )
+        }
       ee.open("summonFrom")
       if k.isPrim then {
         ee.open(s"case rz: ${K}Repr[Z] =>")
@@ -1397,42 +1413,42 @@ object GenCores extends BleepCodegenScript("GenCores") {
     }
     // SHARED LEAF METHODS for COLLECT (the picked-apart PartialFunction), one per Build (I, O) pair —
     // filterLeaf's guarded-append shape with mapLeaf's transform on the KEPT write: allocate ONE
-    // max-size `out` of length n, `if (p) { out(o) = f(e); o += 1 }`, canonicalise via trimLeaf${O}
-    // (slack unless kept < n/4 — same memory cap as filter). The keep is BRANCHY by necessity for
-    // every kind: `f` derives from a case body that is UNDEFINED off the pattern (running it on a
+    // max-size `out` of length n, canonicalise via trimLeaf${O} (slack unless kept < n/4 — same memory
+    // cap as filter). The whole per-element step (pattern test + transform + guarded write) is ONE
+    // ${I}To${O}CollectStep SAM call — `o = step.apply(e, out, o)` — NOT a (${I}Pred, ${I}To${O}Fn)
+    // pair: with N distinct collect literals in one method the shared call sites go megamorphic, and
+    // the old TWO uninlined interface calls per element (each re-casting a Ref element) measured 0.74x
+    // of iarray's ONE applyOrElse call on CollectMegaStr. The step lambda evaluates the transform only
+    // on a keep — `f` derives from a case body that is UNDEFINED off the pattern (running it on a
     // rejected element is wrong, not just wasted), so filter's branchless prim trick does not apply.
-    // A genuine TREE routes through the ${O}Group growable fallback (trees are the rare input here —
-    // elementwise ops hand collect flat leaves). NO identity reuse on o == n (elements transformed).
+    // A genuine TREE materializes to a flat array first (trees are the rare input here — elementwise
+    // ops hand collect flat leaves). NO identity reuse on o == n (elements transformed).
+    // Loop shape: ONE branchy pass. A KEEP-PREFIX adaptive variant (pred-scan the kept prefix,
+    // transform it with the pure map loop, branchy from the first reject) was built and
+    // MEASURED-REJECTED 2026-07-04: it cost Int ~20% (alternating keep/reject makes the prefix
+    // one element, the scan pure overhead) AND Str ~15% at small/mid (all-keep reads the data
+    // twice — pred pass + map pass — vs once branchy).
     val collectLeafMethods = {
       val ee = new Emit("  ")
       def emit(ki: Kind, ko: Kind): Unit = {
         val KI = ki.name
         val KO = ko.name
-        val tpClause = if !ko.isPrim then "[RO <: AnyRef]" else ""
-        val fnScala = "Traversers." + buildFnType(ki, ko, "RO").replace('<', '[').replace('>', ']')
-        def keepWrite = if ko.isPrim then "out(o) = f.apply(e)" else "out(o) = f.apply(e).asInstanceOf[Object]"
-        val oneArg = if ko.isPrim then "f.apply(one.elem)" else "f.apply(one.elem).asInstanceOf[Object]"
-        // Loop shape: ONE branchy pass. A KEEP-PREFIX adaptive variant (pred-scan the kept prefix,
-        // transform it with the pure map loop, branchy from the first reject) was built and
-        // MEASURED-REJECTED 2026-07-04: it cost Int ~20% (alternating keep/reject makes the prefix
-        // one element, the scan pure overhead) AND Str ~15% at small/mid (all-keep reads the data
-        // twice — pred pass + map pass — vs once branchy). The collect gap vs our own map on
-        // all-keep (~0.82x, the cursor's bounds-check) is real but cheaper than every cure tried.
         def loopBody(read: String => String): Unit = {
           ee.line(s"val out = new Array[${ko.arr}](n)")
           ee.line("var i = 0")
           ee.line("var o = 0")
           ee.open("while (i < n)")
-          ee.line(s"val e = ${read("i")}")
-          ee.line(s"if (p.apply(e)) { $keepWrite; o += 1 }")
+          ee.line(s"o = step.apply(${read("i")}, out, o)")
           ee.line("i += 1")
           ee.close()
           ee.line(s"trimLeaf${KO}(out, o, n)")
         }
-        ee.open(s"def collectLeaf${KI}${KO}$tpClause(xs: FBase, p: Traversers.${KI}Pred, f: $fnScala): FBase =")
+        ee.open(s"def collectLeaf${KI}${KO}(xs: FBase, step: Traversers.${KI}To${KO}CollectStep): FBase =")
         ee.open("xs match")
         ee.line("case e: Empty => Empty.INSTANCE")
-        ee.line(s"case one: ${KI}One => if (p.apply(one.elem)) new ${KO}One($oneArg) else Empty.INSTANCE")
+        ee.line(
+          s"case one: ${KI}One => { val out = new Array[${ko.arr}](1); if (step.apply(one.elem, out, 0) == 1) new ${KO}One(out(0)) else Empty.INSTANCE }"
+        )
         ee.open(s"case leaf: ${KI}Arr =>")
         ee.line("val a = leaf.arr")
         ee.line("val n = leaf.length")
@@ -1443,10 +1459,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line("val n = s.length")
         loopBody(i => s"a(so + $i)")
         ee.closeOpen("case _ =>")
-        val add = if ko.isPrim then "buf.add(f.apply(v))" else "buf.add(f.apply(v).asInstanceOf[Object])"
-        ee.line(s"val buf = new ${KO}Group()")
-        ee.line(s"foreachLeaf${KI}(xs, (v) => if (p.apply(v)) $add)")
-        ee.line("buf.toLeaf")
+        ee.line(s"val a = materialize${KI}(xs)")
+        ee.line("val n = xs.length")
+        loopBody(i => s"a($i)")
         ee.close()
         ee.close() // xs match
         ee.close() // def
@@ -2259,16 +2274,16 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // collectPick: the PICKED-APART collect — the surface macro (CollectMacro) splits a literal
     // PartialFunction into predicate p (pattern+guard) and transform f (case body) and feeds them here
     // as INLINE lambdas, so this is filter+map fused in one pass with NO PartialFunction object and no
-    // A/B boxing: p and f inline into the per-element lambda like every other elementwise op. Output
-    // goes through the growable unboxed ${O}Group buffer (count unknown), canonicalised by toLeaf.
-    // Covered (I, O) pairs realize the predicate + transform SAMs and CALL the shared
-    // collectLeaf${I}${O} (filter-shaped: one max-size out, slack via trimLeaf — no growable buffer,
-    // no toLeaf copy). Uncovered cross-prim pairs keep the ${O}Group fallback (cold path).
+    // A/B boxing: p and f inline into the per-element lambda like every other elementwise op.
+    // Covered (I, O) pairs realize p and f into ONE ${I}To${O}CollectStep SAM (test + transform +
+    // guarded write per call — one interface call per element, not a Pred + Fn pair; see the
+    // collectLeaf comment) and CALL the shared collectLeaf${I}${O} (filter-shaped: one max-size out,
+    // slack via trimLeaf — no growable buffer, no toLeaf copy). Uncovered cross-prim pairs keep the
+    // ${O}Group fallback (cold path).
     def collectLeafCall(ka: Kind, kb: Kind): String = {
       val toA = wrapV(ka)
-      val fBody = if kb.isPrim then s"rb.unwrap(f($toA))" else s"f($toA).asInstanceOf[B & AnyRef]"
-      val tpClause = if !kb.isPrim then "[B & AnyRef]" else ""
-      s"collectLeaf${ka.name}${kb.name}$tpClause(xs, (v) => p($toA), (v) => $fBody)"
+      val fBody = if kb.isPrim then s"rb.unwrap(f($toA))" else s"f($toA).asInstanceOf[Object]"
+      s"collectLeaf${ka.name}${kb.name}(xs, (v, out, o) => if (p($toA)) { out(o) = $fBody; o + 1 } else o)"
     }
     def collectGroupFallback(ka: Kind, kb: Kind): String =
       s"{ val buf = new ${kb.name}Group(); foreachLeaf${ka.name}(xs, (v) => { val a = ${wrapV(ka)}; if (p(a)) buf.add(${wr(kb, "rb.unwrap(f(a))")}) }); buf.toLeaf }"
@@ -2935,6 +2950,20 @@ object GenCores extends BleepCodegenScript("GenCores") {
           e.line("RO apply(Object v);")
           e.close()
       }
+    }
+    e.blank()
+    // --- collect step function types: one per COVERED (I, O) pair. ONE call per element does the WHOLE
+    //     collect step — pattern test, transform, guarded write — `int apply(I v, O[] out, int o)` returns
+    //     the advanced write cursor (o+1 on keep, o on skip). This halves the per-element megamorphic
+    //     dispatch of the old (${I}Pred, ${I}To${O}Fn) pair at the shared collectLeaf site: with N distinct
+    //     collect literals in one method both SAM call sites go megamorphic, and TWO uninlined interface
+    //     calls per element (each re-casting the Ref element) is exactly the applyOrElse+1 cost that made
+    //     CollectMegaStr trail iarray/chunk. No type params: the Scala lambda casts/unwraps itself. ---
+    e.line("// --- collect step function types: int apply(I v, O[] out, int o) — test+transform+write in ONE call ---")
+    buildPairs.foreach { case (ki, ko) =>
+      e.open(s"public interface ${ki.name}To${ko.name}CollectStep")
+      e.line(s"int apply(${jelem(ki)} v, ${jelem(ko)}[] out, int o);")
+      e.close()
     }
     e.blank()
     // --- consumer (foreach) function types (§3): one per INPUT kind. Prim input takes the unboxed prim; a Ref
