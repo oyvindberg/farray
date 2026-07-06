@@ -31,7 +31,7 @@ class IntLongPipelineBench extends IntInputs:
       .map(_ * 2)
       .sum
 
-  @Benchmark def farrayEager(): Int =
+  @Benchmark def farray(): Int =
     farrayInput
       .map(_ + 1)
       .filter(_ % 2 == 0)
@@ -115,7 +115,7 @@ class StrLongPipelineBench extends Inputs:
       .map(_.length)
       .sum
 
-  @Benchmark def farrayEager(): Int =
+  @Benchmark def farray(): Int =
     farrayInput
       .filter(_.length <= 4)
       .map(_.reverse)
@@ -204,7 +204,7 @@ class IntDceBench extends IntInputs:
   // map -> Rec, filter on key, project score : fused never builds Rec, never computes gauss/tag
   @Benchmark def farrayFused(): Int =
     farrayInput.fuse.map(mkRec).filter(_.key % 5 == 0).map(_.score).sum
-  @Benchmark def farrayEager(): Int =
+  @Benchmark def farray(): Int =
     farrayInput.map(mkRec).filter(_.key % 5 == 0).map(_.score).sum
   @Benchmark def list(): Int =
     listInput.map(mkRec).filter(_.key % 5 == 0).map(_.score).sum
@@ -244,7 +244,7 @@ class StrDceBench extends Inputs:
   // map -> SRec, filter on len, project head : fused never builds SRec, never computes the dead digest/loud Strings
   @Benchmark def farrayFused(): Int =
     farrayInput.fuse.map(mkRec).filter(_.len <= 4).map(_.head).map(_.length).sum
-  @Benchmark def farrayEager(): Int =
+  @Benchmark def farray(): Int =
     farrayInput.map(mkRec).filter(_.len <= 4).map(_.head).map(_.length).sum
   @Benchmark def list(): Int =
     listInput.map(mkRec).filter(_.len <= 4).map(_.head).map(_.length).sum

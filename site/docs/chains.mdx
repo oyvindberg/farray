@@ -11,9 +11,8 @@ import ChainScore from "@site/src/components/ChainScore";
 import Related from "@site/src/components/Related";
 
 {/* This page is eager-only by construction. The fused/lazy pipelines belong with the fused
-    comparison, not here: java.util.stream (a lazy fused pipeline) and FArray's own .fuse. Every
-    chart drops them. (No chains benchmark has a farrayEager bar; the eager FArray method is just
-    `farray`.) */}
+    comparison, not here: java.util.stream (a lazy fused pipeline) and FArray's own .fuse (the
+    `farrayFused` bar, e.g. on the cold-pipeline chart). Every chart drops them via ignore={fused}. */}
 export const fused = ["javastream", "farrayFused"];
 
 <p className="lede">
@@ -106,43 +105,11 @@ flat leaf, so the following stage reads a tight array rather than a fragment cha
 
 ## The method-size effect: eight distinct maps
 
-This chain exposes the shared-call-site problem: eight *different* lambdas through `map` in one
-method, the profile any nontrivial method builds up.
-
-💣 **A landmine hides in the primitive case.** Watch IArray on `Int` (left chart below): dead even
-with FArray through 1k, then it drops to a *third* of FArray's speed at 10k and never recovers. The
-same code, one input-size step, a 3× loss from nowhere.
-
-<details>
-<summary>Why it detonates, and only at scale</summary>
-
-**What:** the same eight-map method, run at one size larger, loses 3× against the identical FArray
-code, with no source change of any kind.
-
-**How:** first, what it is *not*. The allocation profiler shows FArray and IArray allocating
-byte-for-byte the same here, eight `int[]` per call (~32 bytes per element), with **no boxing on
-either side** — an `Int => Int` lambda is specialized (`apply$mcII$sp`), so nothing boxes even when
-the map isn't inlined. The gap is pure compute. IArray runs all eight lambdas through its one shared
-`Array.map`; once that call site has seen three or more `Function1` (Scala's lambda interface)
-classes it is megamorphic and the JIT can no longer inline it. Instead of eight tight, inlined
-`int[]` loops, the elements then run through one generic, unspecialized loop with a virtual call per
-element. On trivial `Int` work (`_ + 1`) that per-element overhead is the entire cost, so it shows as
-a multiple; on `String`, where each element already does real allocating work, the same overhead is
-a rounding error, which is why the field stays close there. It ties at 1k because small inputs stay
-near the fixed per-call costs; the per-element penalty only takes over once there are enough elements
-to feel it.
-
-FArray has no shared site to poison: each lambda is its own monomorphic compiled loop, so eight maps
-are eight tight `int[]` loops however many you write.
-
-</details>
-
-<BenchPair
-  int="MapMegaIntBenchmark"
-  str="MapMegaStrBenchmark"
-  ignore={fused}
-  caption="The full field, Int beside String. On Int (left) FArray and IArray run dead even through 1k (IArray's last stand, 0.97×), then FArray opens to ~3.4× ahead at 10k and holds there; List trails 11×, Vector 5.6×. On String (right) the same megamorphic call site exists, but the per-element string work is heavy enough to swamp its overhead, so nobody pulls away — which is the tell that the cost is per-element dispatch, not allocation."
-/>
+💣 **A landmine hides in the primitive case.** Write eight distinct `map` lambdas in one method and
+IArray falls off a cliff at scale: it ties FArray through 1k, then drops to a third of its speed at
+10k and never recovers, from a one-size step with no source change. It is the most surprising eager
+result in the suite. The mechanism — it is dispatch, not boxing — and the measured chart are on{" "}
+<Link to="/operations/map#where-it-stops-being-a-tie">the map page</Link>.
 
 ## A long interleaved structural chain
 

@@ -79,10 +79,12 @@ not twice.
 
 The version that splices your lambda straight into the `while` loop, with no SAM at all, is `.fuse`,
 which is why [fusion](../fusion/index.mdx) is a separate gear. What the inline layer buys on
-its own is narrower but still decisive. A generic `map[B](f: A => B)` erases `A` and `B`
-to `Object`, takes a boxed `Function1`, and round-trips every element through `Integer`. FArray never
-writes that method down. The specialization lives in the call site instead of the signature, which is
-why it holds even as the surrounding method grows and the JIT's inlining budget runs out.
+its own is narrower but still decisive. A generic `map[B](f: A => B)` compiles once, generically, and
+leans on the JIT to inline and specialize it afresh at each call site. That holds until several
+distinct lambdas make the site megamorphic, at which point the JIT gives up and the loop turns
+generic and virtual-dispatched (and, for element types it can't specialize, boxing on top). FArray
+never writes that method down: the specialization is in the call site from compile time, so it holds
+however large the surrounding method grows.
 
 The machinery, measured: `map` over a hundred thousand elements, Int beside
 String. On its own, `map` is no rout:

@@ -20,7 +20,7 @@ const TIERS: Tier[] = [
   },
   {
     caption: "unboxed elements, O(1) structure, same immutable code",
-    rungs: [{ v: "farrayEager", note: "FArray, eager: a type swap away from the code above" }],
+    rungs: [{ v: "farray", note: "FArray, eager: a type swap away from the code above" }],
   },
   {
     caption: "raw arrays: no boxes, but a full copy per stage",

@@ -10,7 +10,7 @@ export const SECTIONS: Section[] = ["Primitive", "String", "ListLike", "Diagnost
 // desaturated so the eye reads "is green tallest?" at a glance and the chart stays calm.
 export const KNOWN: Record<string, [string, string]> = {
   farray: ["FArray", "#16a34a"],
-  farrayFused: ["FArray fused", "#16a34a"], farrayEager: ["FArray eager", "#9bb6a6"],
+  farrayFused: ["FArray fused", "#4ade80"],
   farraySource: ["FArray fused", "#16a34a"], farrayLines: ["FArray fused", "#16a34a"],
   array: ["Array", "#a0a6ac"],
   arraybuffer: ["ArrayBuffer", "#8aa2b8"], arraybuilder: ["ArrayBuilder", "#c29a63"],
@@ -37,7 +37,7 @@ const XPRIORITY = ["size", "numChunks", "chunkCount", "numLeaves", "n", "innerSi
 // diagnostic / non-structure variants excluded from the leaderboard (decompositions, and the
 // fused/eager pipeline probes which are FArray-vs-itself, not a competing collection)
 const SUBV = new Set([
-  "farrayTree", "farrayMat", "ziochunkTree", "ziochunkMat", "farrayFused", "farrayEager",
+  "farrayTree", "farrayMat", "ziochunkTree", "ziochunkMat", "farrayFused",
   // mutable builders and generators, not immutable-collection competitors — excluded from the
   // leaderboard summary (they still appear as bars on their individual benchmark charts).
   "arraybuffer", "arraybuilder", "scalaRange",

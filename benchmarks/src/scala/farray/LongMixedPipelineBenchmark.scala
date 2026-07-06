@@ -69,7 +69,7 @@ class LongMixedPipelineIntBenchmark extends IntInputs {
       .foldLeft(0)(_ + _)
   }
 
-  @Benchmark def farrayEager(): Int = {
+  @Benchmark def farray(): Int = {
     farrayInput
       .flatMap(x => FArray(x, x + 1))
       .filter(_ % 3 != 0)
