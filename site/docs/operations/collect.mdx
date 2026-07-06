@@ -70,13 +70,14 @@ The fine print:
 
 ## Eight pattern matches in one method
 
-A lone collect is the friendliest case a rival will ever see: one call site, one `PartialFunction`
-class, and the JIT devirtualizes and inlines the whole consultation. Real methods aren't like that.
-With eight distinct pattern matches through `collect` in one method (a parser, a router, any
-dispatch-heavy code), every rival funnels eight PF classes through its one shared collect loop:
-the `applyOrElse` site goes megamorphic, stops inlining, and on primitives re-boxes every element.
-FArray's collect has no shared site to poison; the macro gave each call site its own loop at
-compile time:
+This is the [method-size effect](/operations/map#where-it-stops-being-a-tie) again, in collect's
+clothing. A lone collect is the friendliest case a rival sees — one call site, one `PartialFunction`
+class, fully inlined — but pack eight distinct pattern matches into one method (a parser, a router,
+any dispatch-heavy code) and every rival funnels eight PF classes through its one shared collect
+loop. Collect's twist over `map`: the shared site is a `PartialFunction.applyOrElse`, which is
+generic, so once it goes megamorphic it not only loses inlining but *re-boxes* every primitive —
+where `map`'s specialized lambda did not. FArray's collect has no shared site to poison; the macro
+gave each call site its own loop at compile time:
 
 <BenchPair
   int="CollectMegaIntBenchmark"
@@ -92,6 +93,6 @@ the eager op so a lone `collect` gets it too.
   links={[
     { to: "/fusion/stages", label: "Fused collect", desc: "The same pick-apart, inside a whole-pipeline loop." },
     { to: "/operations/map", label: "map", desc: "The megamorphic experiment this page borrows." },
-    { to: "/chains", label: "Fast without fusion", desc: "Where per-op wins compound." },
+    { to: "/chains", label: "Motivation", desc: "Where per-op wins compound." },
   ]}
 />

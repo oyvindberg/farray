@@ -45,8 +45,7 @@ export function FinitenessTable() {
 
 <p className="lede">
   An immutable, unboxed set on the FArray playbook (a generated Java core, per-kind specialization,{" "}
-  <code>inline</code> dispatch, where Scala's <code>inline</code> is a compiler guarantee rather
-  than a JIT hint), plus one contrarian bet. Every immutable set on the JVM pays
+  <code>inline</code> dispatch), plus one contrarian bet. Every immutable set on the JVM pays
   the persistent-trie tax to make single-element updates cheap. FSet refuses to pay it, and builds an
   immutable set the way you actually use one: frozen flat leaves, queried hard, combined
   lazily. Everything on this page is a consequence of that one bet. And as everywhere on this site:

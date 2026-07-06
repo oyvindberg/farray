@@ -31,6 +31,18 @@ large FArray long-term, break the tie by materializing: any elementwise operatio
 (`slice.map(identity)`) or `FArray.from(slice)` copies the two elements into fresh storage and
 drops the reference.
 
+## Safe to share across threads
+
+An FArray (and an FSet) is immutable, and you can publish one and read it from many threads at once
+without synchronizing. The only shared mutable state is the cache a lazy node uses so it doesn't
+re-materialize itself: the first traversal that needs a flat leaf computes it and stores it in a
+plain field, with no lock and no `volatile`. That store is a benign data race — the
+`String.hashCode` idiom — safe because the two things that make that idiom safe both hold here: the
+cached value is an immutable leaf whose fields are `final` (so any thread that reads the reference
+sees a fully constructed value), and every thread computes the *same* leaf, so a lost race only
+costs a little redundant work. The result is always correct. Put an FArray in a shared cache and
+read it concurrently; nothing tears.
+
 ## Reference identity differs where copying was avoided
 
 A `filter` that keeps everything returns the same object, not a copy. `map` on an empty FArray

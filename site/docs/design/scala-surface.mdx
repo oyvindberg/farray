@@ -26,7 +26,7 @@ The **structural** ones (`reverse`, `++`) just call the matching `FBase` method.
 already *is* its core, that's a direct call into the lazy O(1) node-builders from
 [the Java core](./java-core.mdx), with no specialization involved.
 
-The **elementwise** ones are marked `inline` (a Scala 3 compiler guarantee, not a JIT hint), and
+The **elementwise** ones are marked `inline`, and
 they take their lambda `inline` too:
 `inline def map[B](inline f: A => B)`. At every concrete call site the method body is spliced in, your
 lambda with it, and the whole thing forwards to a generated `…Impl`. That forward is where the

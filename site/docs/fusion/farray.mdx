@@ -6,7 +6,6 @@ description: "The practical guide: when to reach for .fuse, the recipes that rep
 
 import Link from "@docusaurus/Link";
 import Snippet from "@site/src/components/Snippet";
-import BenchChart from "@site/src/components/BenchChart";
 import Related from "@site/src/components/Related";
 
 <p className="page__eyebrow">putting it to work</p>
@@ -35,18 +34,14 @@ import Related from "@site/src/components/Related";
   <li>
     <strong>Cold and warm alike.</strong> The specialization is in the bytecode, so fused pipelines
     lead from the first uncompiled invocation (CLI tools, lambdas, startup paths), and the lead
-    widens as the JIT warms the loop.
+    widens as the JIT warms the loop — measured cold on the{" "}
+    <Link to="/fusion/benchmarks">Motivation page</Link>, ~3.8× ahead before anything compiles.
   </li>
   <li>
     <strong>Not worth it:</strong> a single <code>map</code> or <code>filter</code>. The eager op is
     already one specialized loop; there is nothing for fusion to remove.
   </li>
 </ul>
-
-<BenchChart
-  cls="ColdPipelineIntBenchmark"
-  caption="The 14-stage pipeline measured COLD: SingleShotTime, zero warmup, one uncompiled invocation at 100k elements. Fused FArray is ~3.8× past List and IArray before the JIT has compiled anything: the speed is in the bytecode, not in the warmup. Warm, the same pipeline's lead opens to ~36× (see the benchmarks page)."
-/>
 
 ## The recipes
 
@@ -117,7 +112,7 @@ callers see only the resulting `FArray`.
 
 <Related
   links={[
-    { to: "/fusion/benchmarks", label: "Next: The receipts", desc: "Warm, cold, streaming, and the chain that used to collapse." },
+    { to: "/fusion/benchmarks", label: "Fusion, measured", desc: "Warm, cold, streaming, against java.util.stream, and a second long pipeline." },
     { to: "/fusion/json", label: "The JSON integration", desc: "The same engine pointed at raw bytes." },
     { to: "/benchmarks/farray", label: "The FArray scoreboard", desc: "Where the eager ops already stand." },
   ]}

@@ -121,12 +121,6 @@ compiles stdlib's ubiquitous `addOne` almost to a bare loop, and our leaner `Ref
 get the same field-hoisting. It's more than repaid by the O(1) `result()` (ArrayBuffer pays O(n) to
 finalize), so the end-to-end number is a win.
 
-And the safety property that makes the shared buffer sound: `result()` hands back the buffer with no
-copy, yet repeated `result()` calls and further appends coexist; appends only ever write past the
-current end, and a regrow reallocates a fresh array, so every snapshot stays valid. There is no
-`clear()`: it is the one operation that could clobber a shared snapshot. Starting over means a fresh
-`FArray.newBuilder`.
-
 <Related
   links={[
     { to: "/operations/building", label: "Building FArrays", desc: "The known-size constructors: literals, tabulate, range." },
