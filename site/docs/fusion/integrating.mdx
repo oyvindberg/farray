@@ -114,40 +114,31 @@ The NDJSON plug-in, verbatim: the shape, the given, and the hook.
 every `Fuse[A, Ndjson]`. `StandardTerminals[Ndjson]` is where the terminal *methods* come from,
 and every one of them funnels into the single abstract `lower` you see in the file.
 
-The last four lines are the hook, and they are macro syntax, so here is what each piece means if
-you've never written one:
+The last four lines are the hook, and they exist to solve one problem: the engine and your format
+have never met. `FuseMacro` lives in farray and can compile any pipeline into a loop, but it has no
+idea how to read your bytes; your module owns the decoder, but has no loop compiler. The hook is
+the meeting point, and it has to happen inside the compiler, because that is where the loop gets
+generated.
 
 ```scala
 inline def lower[A, R](inline self: Fuse[A, Ndjson], inline t: Terminal[A, R]): R =
   ${ JsonLowering.impl[A, R]('self, 't) }
-```
 
-- `inline def lower(inline self, inline t)`: expanded at every call site, and the `inline`
-  parameters mean the *expressions* the caller wrote arrive intact, not evaluated values.
-- `${ ... }`: a splice. Everything inside the braces runs **inside the compiler**, during
-  compilation of the call site. The "body" of `lower` is whatever code that compile-time call
-  returns.
-- `'self` and `'t`: quotes, the inverse of the splice. They take the caller's expressions and hand
-  them to `impl` as *values of type `Expr[...]`*, i.e. as syntax trees the macro can inspect.
-
-```scala
 def impl[A: Type, R: Type](self: Expr[Fuse[A, Ndjson]], t: Expr[Terminal[A, R]])(using Quotes): Expr[R] =
   FuseMacro.lower(self, t, JsonDecode)
 ```
 
-- `impl` is an ordinary method, but it executes at compile time. `Expr[Fuse[A, Ndjson]]` is the
-  pipeline's syntax tree; `Expr[Terminal[A, R]]` is the terminal call, reified. `A: Type, R: Type`
-  carry the type information across the compile-time boundary (erasure hasn't happened here), and
-  `using Quotes` is the compiler's reflection context, the handle everything else operates
-  through.
-- The body hands the engine three things: the pipeline tree, the terminal tree, and `JsonDecode`,
-  the decoder, passed as a plain method argument between two pieces of compile-time code.
-- The return type is the contract: `impl` must produce an `Expr[R]`, a new tree, and **that tree
-  replaces the terminal call in your program**. This is where the emitted `while` loop enters the
-  world.
+What actually happens when a user writes `pipeline.sum`: the terminal method reifies the call and
+lands here, in `lower`, during compilation. Three things go across to the engine: the pipeline as
+the user wrote it, the terminal that ended it, and `JsonDecode`, your decoder. The engine builds
+the scanner loop out of them and returns it, and that loop is compiled into the user's program in
+place of the `.sum` call. By runtime, these four lines have no existence; only the loop they
+brokered remains.
 
-No runtime handshake anywhere: by the time your program runs, `lower` and `impl` have vanished and
-only the loop they returned remains.
+Why it takes two declarations and this exact punctuation: that is Scala 3's required ritual for
+crossing from ordinary code into compiler-executed code and back. It is not a place where your
+integration does anything. Copy the four lines verbatim; the only token that is yours is the
+decoder's name.
 
 ## The decoder contract
 
