@@ -1,7 +1,7 @@
 ---
 title: The JSON integration
 sidebar_label: The JSON integration
-description: "A JSON decoder plugged into the fusion engine as a typeclass instance, beating the JVM's best hand-tuned parser on projection queries, with the whole integration in one readable file."
+description: "A JSON decoder plugged into the fusion engine as a typeclass instance, beating jsoniter-scala's fastest idiom on projection queries, with the whole integration in one readable file."
 ---
 
 import Link from "@docusaurus/Link";
@@ -50,7 +50,7 @@ export function JsonEx({ src, gen, rival, rivalLabel, bench }) {
 }
 
 export const SUM_BENCH = {
-  headline: "fuse beats the JVM's best hand-tuned parser 1.6×, and laps the AST parsers 4–9×, at ~zero allocation",
+  headline: "fuse beats jsoniter-scala's fastest idiom 1.6×, and laps the AST parsers 4–9×, at ~zero allocation",
   rows: [
     { label: "fuse (generated scanner)", ops: "391 ops/s", bop: "1.0 B/op", win: true },
     { label: "jsoniter: hand-written reader, no object", ops: "241 ops/s", bop: "1.7 B/op" },
@@ -90,8 +90,8 @@ export const WIDE_BENCH = {
 <p className="fuse-cap">you write</p>
 <Snippet name="fuse-src-jsum" hideFull />
 
-And here is how that measures against the field, including jsoniter-scala driven by a hand-written,
-zero-object `JsonReader` loop, which is as fast as JSON gets on the JVM by conventional means:
+And here is how that measures against the field, including jsoniter-scala (the fastest JVM JSON
+library we know of) driven by its fastest idiom, a hand-written, zero-object `JsonReader` loop:
 
 <BenchTable bench={SUM_BENCH} />
 

@@ -10,11 +10,11 @@ import Related from "@site/src/components/Related";
 
 <p className="lede">
   Construction is the one place this library starts a step behind by definition: a raw{" "}
-  <code>IArray(1, 2, 3)</code> (IArray is Scala's immutable view of a raw array) is one array
+  <code>IArray(1, 2, 3)</code> (an immutable raw array) is one array
   allocation, and an FArray is that array <em>plus</em> its leaf node. That gap is accepted: the
   design principle says losing to a bare array on inherently-allocating ops is fine, losing to the
-  wrapper libraries (Scala's <code>List</code>, an immutable linked list, and <code>Vector</code>,
-  a persistent tree, plus the array-backed <code>Chunk</code> types from the fs2 and ZIO streaming
+  wrapper libraries (Scala's <code>List</code> and <code>Vector</code>, plus the array-backed{" "}
+  <code>Chunk</code> types from the fs2 and ZIO streaming
   libraries) is not. This page is how the
   entry points hold that line.
 </p>

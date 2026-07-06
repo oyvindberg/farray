@@ -93,8 +93,8 @@ If you're coming from Java: the pipeline reads like a Stream, but the comparison
 A Stream fuses at runtime, pushing every element through a chain of virtual `Sink` calls;
 `.fuse` rewrites the chain at compile time, so at runtime there is no chain.
 
-The reason for the gap is simple. Run those stages eagerly and each one allocates a collection whose only
-purpose is to be consumed by the next. `.fuse` builds none of them:
+The reason for the gap is simple. Run those stages eagerly and each one allocates a collection that
+lives for one line before the next stage throws it away. `.fuse` builds none of them:
 
 <FusionDiagram />
 

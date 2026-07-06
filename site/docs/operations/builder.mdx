@@ -40,9 +40,8 @@ boxes.
 
 ## The design: the same dispatch, for appends
 
-There's no new machinery here: it's exactly the inline, compile-time kind dispatch from [map](/operations/map)
-(Scala's `inline` is a compiler-guaranteed expansion at the call site, not a JIT hint), pointed at an
-append instead of a transform. `FBuilder[A]`
+There's no new machinery here: it's exactly the inline, compile-time kind dispatch from [map](/operations/map),
+pointed at an append instead of a transform. `FBuilder[A]`
 is an opaque type (a compile-time-only wrapper, erased at runtime) over a generated `FBuilderBase` whose concrete subclasses are the per-kind
 `${K}Group` growable buffers that already back `groupBy` and `collect`. Only the hot append is
 kind-dispatched; everything else is a plain call on the base:
@@ -86,7 +85,7 @@ slack, its length *is* its count. FBuilder's `result()` is an O(1) slack-wrap: a
 logical length distinct from the array length, so no trim is needed. So part of the win over the
 array builders is a cheaper finish, not just a cheaper append, a property of FArray's representation.
 Every builder here finalizes to an immutable (`ArrayBuffer`, Scala's ArrayList, via `toArray`, like the
-rest), so the comparison is honest end to end; the O(1)-slack-wrap-vs-O(n)-trim-copy gap is the whole
+rest), so the comparison is like-for-like end to end; the O(1)-slack-wrap-vs-O(n)-trim-copy gap is the whole
 story on refs, where nobody boxes.
 
 <BenchPair
@@ -112,10 +111,9 @@ means (FArray via the ctor, the rest via `sizeHint`):
   caption="Everyone pre-sized (FArray via the ctor, the rest via sizeHint) AND finalizing to an immutable. FBuilder wins across the board: Int 1.55–1.65× over a sized ArrayBuilder at scale (unboxed append plus a one-allocation ctor where sizeHint-after-construct pays two), String 1.17–1.43× (a 1.00× tie at 1k). An earlier draft showed ArrayBuffer taking String here; that was a benchmark bug: it returned its mutable buffer without finalizing, doing less work than everyone else. Forced to toArray like the rest, it falls 1.5–2× behind."
 />
 
-Two builders can't meaningfully pre-size (`Vector.newBuilder` and `List.newBuilder`, for Scala's
-persistent-tree Vector and immutable linked List, have `sizeHint`
-but it's a no-op for their structures), so they look the same as unsized; that's honest, not a
-handicap. One caveat lives under the win: on the fill loop alone (reference elements),
+Two builders can't meaningfully pre-size (`Vector.newBuilder` and `List.newBuilder` have `sizeHint`
+but it's a no-op for their structures), so they look the same as unsized; that's their structure,
+not a handicap. One caveat lives under the win: on the fill loop alone (reference elements),
 against a raw hand-written `Object[]` fill as the ceiling, `ArrayBuffer` reaches 0.95× while FBuilder
 reaches 0.84×. Both do the minimal work (one array, store-and-increment, plus a per-element capacity
 check), so the gap isn't the cast or an allocation (both ruled out by measurement); HotSpot

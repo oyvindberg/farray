@@ -39,7 +39,7 @@ dominates).
 
 ## toSeq: the interface without the collection
 
-The interesting exit is the one that copies nothing. `List` (Scala's immutable linked list) and `Vector` (its persistent-tree sequence) *are* `Seq`s, so their
+The interesting exit is the one that copies nothing. `List` and `Vector` *are* `Seq`s, so their
 `toSeq` returns `this` for free, and an FArray that had to materialize a fresh `Seq` would lose that
 comparison by a whole allocation on every call. FArray materializes nothing.
 
@@ -55,7 +55,7 @@ final class FArraySeq[A](under: FBase) extends immutable.IndexedSeq[A]:
 
 That's the whole thing: O(1) to construct, no elements copied, and now you have the full
 standard-library `Seq` API (pattern matching, Scala's `for`-comprehension loops, anything typed to `Seq[A]`)
-over your FArray's storage. The honest cost is in the signature: a `Seq[A]` hands back *boxed*
+over your FArray's storage. The cost is in the signature: a `Seq[A]` hands back *boxed*
 `A`, so reads through the wrapper go via `applyBoxed` and a primitive re-boxes on the way out. The
 wrapper is for handing an FArray to code that speaks `Seq`; unboxed reads stay on the FArray
 surface, which is the entire rest of this section.

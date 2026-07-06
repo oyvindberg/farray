@@ -10,8 +10,8 @@ import BenchChart from "@site/src/components/BenchChart";
 import { DispatchDiagram } from "@site/src/components/Diagrams";
 
 <p className="lede">
-  An elementwise combinator is one <code>inline</code> hop (Scala's guaranteed compile-time
-  inlining, not a JIT hint) to a generated <code>…Impl</code>, and the impl is where the element
+  An elementwise combinator is one <code>inline</code> hop (guaranteed compile-time
+  inlining) to a generated <code>…Impl</code>, and the impl is where the element
   kind gets resolved. <code>map</code>'s impl is one big{" "}
   <code>summonFrom</code>, a compile-time match on which <code>Repr</code> evidence exists for{" "}
   <code>A</code>, with an outer branch per input kind and, nested inside, one per result kind.
@@ -94,7 +94,7 @@ String. On its own, `map` is no rout:
   caption="map, swept to 100k. On Int (left) FArray runs within a few percent of a bare int[] and ~8–27× past the collections that box the element (List, Vector, fs2.Chunk). zio.Chunk keeps its Ints unboxed too, and correspondingly hangs much closer (~1.6× back at 100k); the boxing tax is the whole spread. On String (right) there's nothing to unbox, so the field compresses: FArray ties IArray exactly, with List and fs2.Chunk ~1.3–1.4× back. Against the raw array it's a wash."
 />
 
-## We're here for the crushes
+## Where it stops being a tie
 
 Measured against a bare array, those two charts are a wash: a few percent shy on
 `Int`, a dead tie on `String`. That's the texture of a *micro*-benchmark: one operation over one
@@ -104,8 +104,8 @@ opaque wrapper plus the specialized SAM are pure overhead it doesn't carry. FArr
 those by a percent. It's built for what happens once the benchmark stops being a micro-benchmark,
 and it doesn't take much.
 
-Write eight of that very same `map`, with eight *distinct* lambdas, in one method. IArray (Scala's
-immutable view of a raw array) funnels all of them into its one shared `Array.map`, and that call site now sees eight different
+Write eight of that very same `map`, with eight *distinct* lambdas, in one method. IArray
+funnels all of them into its one shared `Array.map`, and that call site now sees eight different
 `Function1` classes, well past the JIT's ≥3-type megamorphic threshold, so it stops devirtualising:
 every element pays a real virtual `apply`, and on `Int` it re-boxes through `Integer` on the way out.
 The bigger the method, the more distinct lambdas crowd that one site. The same story applies
@@ -138,7 +138,6 @@ List and IArray, before anything has been compiled at all:
   caption="The same 14-stage pipeline, measured COLD: SingleShotTime, zero warmup, one uncompiled invocation at 100k elements (invocations/sec; higher is faster). Fused FArray is ~3.8× past List and IArray, and ~2.7× past even the quickest rival, before the JIT compiles anything. Warm (the sweep on the introduction page) that lead opens to ~36×."
 />
 
-There's no lap where a boxing collection is briefly in front. Warmup changes the size of the lead,
-not its existence: the same pipeline widens to its ~36× steady state as the loop compiles. The boxing
-collections gain little from it, because their cost is *allocation*, and the JIT does not eliminate a
-million `Integer`s.
+There's no lap where a boxing collection is briefly in front: the same pipeline widens to its ~36×
+steady state as the loop compiles. The boxing collections gain little from warmup, because their
+cost is *allocation*, and the JIT does not eliminate a million `Integer`s.

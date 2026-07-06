@@ -65,10 +65,10 @@ The fine print:
 <BenchPair
   int="CollectIntBenchmark"
   str="CollectStrBenchmark"
-  caption="A lone collect { case x if … => … }, Int beside String, fully serialized measurement. On Int the pick-apart flips the op from a 0.65× loss to 1.6–2.4× wins at every size past trivial. On String there was never boxing to remove and the good rivals run the same one-array shape, so the honest result is ties-to-narrow-wins from 100 up (1.01–1.10× vs fs2.Chunk), with one cell we plainly lose: size 10, ~0.6× of zio.Chunk's tiny-collect at ~1ns/element, measured thrice and real. One lone nano-cell is the entire remaining deficit."
+  caption="A lone collect { case x if … => … }, Int beside String, fully serialized measurement. On Int the pick-apart flips the op from a 0.65× loss to 1.6–2.4× wins at every size past trivial. On String there was never boxing to remove and the good rivals run the same one-array shape, so the result is ties-to-narrow-wins from 100 up (1.01–1.10× vs fs2.Chunk), with one cell we plainly lose: size 10, ~0.6× of zio.Chunk's tiny-collect at ~1ns/element, measured thrice and real. One lone nano-cell is the entire remaining deficit."
 />
 
-## We're here for the crushes
+## Eight pattern matches in one method
 
 A lone collect is the friendliest case a rival will ever see: one call site, one `PartialFunction`
 class, and the JIT devirtualizes and inlines the whole consultation. Real methods aren't like that.

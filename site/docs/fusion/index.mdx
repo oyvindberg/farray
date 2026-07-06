@@ -36,8 +36,8 @@ mix of three taxes:
 
 <ul className="points">
   <li>
-    <strong>Intermediates.</strong> Eager stages each allocate a collection whose only purpose is to
-    be consumed and thrown away by the next stage. Three stages over 100k elements is two garbage
+    <strong>Intermediates.</strong> Eager stages each allocate a collection that the next stage
+    reads once and throws away. Three stages over 100k elements is two garbage
     arrays, and on primitives often two garbage arrays <em>of boxes</em>.
   </li>
   <li>
@@ -55,8 +55,7 @@ mix of three taxes:
     <strong>The JIT gamble.</strong> Escape analysis and inlining can sometimes claw both back, until
     the enclosing method grows past an inlining budget, a call site gets polluted, or one trailing
     virtual call silently turns escape analysis off. We measured that cliff at{" "}
-    <Link to="/operations/flatmap">35× on this very library</Link> before designing around it. Speed
-    that depends on JIT heuristics is not dependable.
+    <Link to="/operations/flatmap">35× on this very library</Link> before designing around it.
   </li>
 </ul>
 
@@ -113,7 +112,7 @@ the ones before it:
   </li>
   <li>
     <strong><Link to="/fusion/json">The integration surface</Link></strong>: a JSON decoder plugged
-    in as a typeclass instance that beats the JVM's best hand-tuned parser, showing the engine is
+    in as a typeclass instance that beats jsoniter-scala's fastest idiom, showing the engine is
     not collection-specific. <Link to="/fusion/farray">Using it with FArray</Link> and{" "}
     <Link to="/fusion/benchmarks">the benchmarks</Link> close the section.
   </li>

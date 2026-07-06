@@ -259,8 +259,9 @@ the full O(n) rebuild before answering a single query; FSet just answers:
   caption={
     <>
       The same workload on Strings, never materialized. Fastest at every size: ~3× the best mutable
-      table at 100k, 6–9× fastutil, Guava, HPPC and CHAMP. No other JVM set can
-      answer membership in a union it hasn't built.
+      table at 100k, 6–9× fastutil, Guava, HPPC and CHAMP. Lazy union views exist elsewhere
+      (Guava's Sets.union is one); none distributes membership over a full algebra with complement
+      and difference, and none makes laziness the representation, with a frozen fast path underneath.
     </>
   }
 />

@@ -1,5 +1,5 @@
 ---
-title: flatMap, the op that fights back
+title: "flatMap: segment nodes and the shared driver"
 sidebar_label: flatMap
 description: "Segment nodes versus flattening, and the 35× escape-analysis collapse that forced the shared-driver design."
 ---
@@ -35,7 +35,7 @@ so they move with a plain loop.
 
 <Snippet name="flatmap-flat" hideFull />
 
-## The chapter where the JIT writes the plot twist
+## The 35× escape-analysis collapse
 
 The first version of this op didn't look like that. It was *fully inline*: the whole node-or-flatten
 loop, both paths, spliced into your method at every `flatMap` call site, the way `.fuse` (the
@@ -74,7 +74,7 @@ does.
   caption="flatMap → filter → take, the chain that used to collapse. The trailing take is O(1) (a lazy SliceNode), so FArray does strictly less work than anyone that materializes the prefix, and with the shared driver it now leads the field at every size. This exact cell measured 0.055× of IArray before the rewrite."
 />
 
-And the op on its own, Int beside String, the honest baseline:
+And the op on its own, Int beside String:
 
 <BenchPair
   int="FlatMapIntBenchmark"
