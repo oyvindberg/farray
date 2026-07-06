@@ -1297,12 +1297,26 @@ class FListTest:
       )
       // Ref (String): collect + flatMap + distinct + map + take
       assert(
-        FArray.fromIterable(xs.map(_.toString)).fuse.collect { case s if s.length <= 2 => s }.flatMap(s => FArray(s, s + "!")).distinct.map(_.length).take(6).run.toList ==
+        FArray
+          .fromIterable(xs.map(_.toString))
+          .fuse
+          .collect { case s if s.length <= 2 => s }
+          .flatMap(s => FArray(s, s + "!"))
+          .distinct
+          .map(_.length)
+          .take(6)
+          .run
+          .toList ==
           xs.map(_.toString).collect { case s if s.length <= 2 => s }.flatMap(s => List(s, s + "!")).distinct.map(_.length).take(6)
       )
       // Ref grouping: flatMap + filter + groupReduce (String keys, min per key)
       assert(
-        FArray.fromIterable(xs.map(_.toString)).fuse.flatMap(s => FArray(s, s.reverse)).filter(_.nonEmpty).groupReduceBy(_.length)(s => s)((a, b) => if a <= b then a else b) ==
+        FArray
+          .fromIterable(xs.map(_.toString))
+          .fuse
+          .flatMap(s => FArray(s, s.reverse))
+          .filter(_.nonEmpty)
+          .groupReduceBy(_.length)(s => s)((a, b) => if a <= b then a else b) ==
           xs.map(_.toString).flatMap(s => List(s, s.reverse)).filter(_.nonEmpty).groupMapReduce(_.length)(s => s)((a, b) => if a <= b then a else b)
       )
       tk += 1
