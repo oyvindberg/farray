@@ -1,7 +1,7 @@
 ---
-title: "Chains: where it runs away"
-sidebar_label: Chained operations
-description: "Single ops win by percents; real code chains ops, and chaining is where FArray's model compounds. Every pairing is shown Int beside String, every bar hoverable."
+title: "Fast without fusion"
+sidebar_label: Without fusion
+description: "Eager FArray, no .fuse anywhere, already beats List, Vector, IArray and the Chunks. Single ops tie a raw array; chaining is where the model compounds, shown Int beside String."
 ---
 
 import Link from "@docusaurus/Link";
@@ -16,10 +16,12 @@ import Related from "@site/src/components/Related";
 export const fused = ["javastream", "farrayFused"];
 
 <p className="lede">
-  The introduction ended on a promise: the type swap beats the whole field with no fusion at all.
-  This page is that promise scored — every chained benchmark in the suite, eager <code>FArray</code>,
-  no <code>.fuse</code>. Each pipeline runs twice, Int on the left and String on the right, so you can
-  separate the wins that come from unboxing from the ones that come from structure.
+  The introduction promised the type swap beats the whole field with no fusion. This is where that is
+  made good: everything here is eager <code>FArray</code>, not a <code>.fuse</code> in sight, and the
+  field is already behind. A single operation mostly just ties a raw array — the real result is what
+  happens when you chain, because FArray's advantages multiply per stage while its costs don't. Each
+  pipeline runs twice, Int on the left and String on the right, so you can separate the wins that come
+  from unboxing from the ones that come from structure.
 </p>
 
 The rivals throughout: Scala's `List` (an immutable linked list, not `java.util.List`), `Vector`

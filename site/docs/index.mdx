@@ -131,7 +131,7 @@ Scala 3 is a guarantee performed by the compiler, not a hint to the JIT: the op'
 lambda land in your method, with the unboxing fixed in the signature. That last part matters: the rivals that tie us on a
 single op lose that tie as the surrounding method grows, because their unboxing depends on the JIT's
 inlining budget and ours doesn't. No fusion involved, and it already beats the field.
-[The next page](./chains.mdx) scores every chained benchmark in the suite.
+[Fast without fusion](./chains.mdx) is the whole eager argument, scored across the suite.
 
 **The word.** Java Streams, Scala views and iterators all fuse at runtime and pay for it per
 element, per stage. `.fuse` does it at compile time, and what it emits is the `while` loop you would have
@@ -150,7 +150,7 @@ has every chart behind it.
 
 <Related
   links={[
-    { to: "/chains", label: "Chains: where it runs away", desc: "The type swap, measured: every chained pipeline in the suite, eagerly." },
+    { to: "/chains", label: "Fast without fusion", desc: "Eager FArray, no .fuse: it already beats the field, and chaining is where it pulls away." },
     { to: "/fusion", label: "The fusion engine", desc: "Sources, stages, terminals, the optimizer, and the receipts." },
     { to: "/benchmarks/farray", label: "FArray benchmarks", desc: "The complete scorecard: every op, every size, every rival." },
   ]}
