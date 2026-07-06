@@ -1,6 +1,6 @@
 ---
-title: Motivation
-sidebar_label: Motivation
+title: Why fusion
+sidebar_label: Why fusion
 description: "What fusion buys, measured first: the fused pipeline warm, cold, streaming, against java.util.stream, and on a second long chain — every bar hoverable, every @Benchmark source one click away."
 hide_table_of_contents: true
 ---
@@ -66,13 +66,10 @@ ahead:
 
 ## Streaming: constant memory without the streaming tax
 
-The chunk-granular <Link to="/fusion/sources">source model</Link>, against the JVM's usual ways of
-processing data you don't want in memory:
-
-<BenchChart
-  cls="StreamPipelineBenchmark"
-  caption="filter → map → sum over a lazily GENERATED sequence (vs Iterator, LazyList (Scala's lazy linked list), fs2.Stream) and over an InputStream of lines (vs scala.io.Source and a hand-rolled BufferedReader loop). Chunks amortize the pull; the per-element cost is the fused loop."
-/>
+The same fused loop runs over data too big for the heap — a generated sequence, or a file's lines,
+folded without holding either in memory, at no per-element streaming tax. The chart, against
+`Iterator`, `LazyList`, `fs2.Stream` and a hand-rolled `BufferedReader`, lives with the{" "}
+<Link to="/fusion/sources#streaming-measured">source model</Link> that makes it work.
 
 ## A second pipeline, a different stage mix
 

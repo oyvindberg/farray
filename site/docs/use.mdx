@@ -14,7 +14,10 @@ description: "Coordinates, license, requirements, and a straight answer on matur
 
 MIT licensed. Source at [github.com/oyvindberg/farray](https://github.com/oyvindberg/farray).
 Requires Scala 3.8 or later. Built and benchmarked on JDK 25; the Java core uses sealed classes, so
-JDK 17 is the floor.
+JDK 17 is the floor. JVM only — there is no Scala.js or Scala Native cross-build. On memory: a
+materialized `FArray[Int]` is its `int[]` plus one small leaf node (a couple of object headers) and
+no per-element wrapper; lazy `take`/`++`/`reverse` nodes add O(depth) small objects until something
+forces them flat.
 
 ```scala
 // sbt

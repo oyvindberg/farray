@@ -66,9 +66,10 @@ commits later:
     nothing between stages.
   </li>
   <li>
-    <strong>Claude is why.</strong> The redesign was years of evenings I didn't have. Most of the
-    implementation was written by the model from a human design; every optimization was measured and
-    several were reverted. A note on how that worked is in the <a href="./use">M1 status</a>.
+    <strong>Claude is why.</strong> Most of the implementation was written by the model from a human
+    design, under review and a test gate: every operation parity-checked against <code>List</code>,
+    every optimization measured, several reverted. That is what made the redesign — years of evenings
+    I never had — tractable at all. How it worked is in the <a href="./use">M1 status</a>.
   </li>
 </ul>
 
@@ -151,7 +152,7 @@ has every chart behind it.
 
 <Related
   links={[
-    { to: "/chains", label: "Motivation", desc: "Eager FArray, no .fuse: it already beats the field, and chaining is where it pulls away." },
+    { to: "/chains", label: "Why FArray", desc: "Eager FArray, no .fuse: it already beats the field, and chaining is where it pulls away." },
     { to: "/fusion", label: "The fusion engine", desc: "Sources, stages, terminals, the optimizer, and the receipts." },
     { to: "/benchmarks/farray", label: "FArray benchmarks", desc: "The complete scorecard: every op, every size, every rival." },
   ]}
