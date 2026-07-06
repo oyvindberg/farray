@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { useStore } from "../data/store";
 import { Card } from "./BenchChart";
 import Scorecard from "./Scorecard";
-import { SECTIONS, type Section, type Chart } from "../data/bench";
+import { SECTIONS, ours, type Section, type Chart } from "../data/bench";
 
 type SectionInfo = Partial<Record<Section, { title: string; blurb: string }>>;
 
@@ -51,6 +51,9 @@ export default function BenchIndex({ suite = "farray" }: { suite?: "farray" | "f
   const grouped = useMemo(() => {
     const g = new Map<Section, Chart[]>();
     for (const c of charts) {
+      // self-races (every series is a farray/fset variant) aren't a competition; docs pages may
+      // still embed them directly, they just don't belong in the reference index.
+      if (!Object.keys(c.series).some((v) => !ours(v))) continue;
       const arr = g.get(c.section) ?? [];
       arr.push(c);
       g.set(c.section, arr);
