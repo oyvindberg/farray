@@ -185,6 +185,7 @@ export interface Scorecard { cols: string[]; rows: { v: string; label: string; c
 export function buildScorecard(charts: Chart[]): Scorecard {
   const sum = new Map<string, [number, number]>(); // `${v} ${col}` -> [sumLn, count]
   for (const ch of charts) {
+    if (ch.section === "Diagnostics") continue; // probes/pipeline shapes, not structure-vs-structure races
     for (const x of ch.xs) {
       const present: [string, number][] = [];
       for (const v of Object.keys(ch.series)) {
