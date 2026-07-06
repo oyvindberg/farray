@@ -6,6 +6,7 @@ description: "Eager FArray, no .fuse anywhere, already beats List, Vector, IArra
 
 import Link from "@docusaurus/Link";
 import BenchPair from "@site/src/components/BenchPair";
+import BenchChart from "@site/src/components/BenchChart";
 import ChainScore from "@site/src/components/ChainScore";
 import Related from "@site/src/components/Related";
 
@@ -154,6 +155,20 @@ traversal; for array-copying structures it's a full copy *per op*:
   str="StructuralShowcaseStrBenchmark"
   ignore={fused}
   caption="An interleaved prepend/append/concat/reverse chain, materialized once at the end. O(n) total for FArray versus O(n·chain-length) for the copiers: this is the thousands-× regime, identical on Int and String because structural ops never touch elements."
+/>
+
+## No warmup lap
+
+Every number above is steady-state, measured after the JIT has compiled the loop. FArray doesn't
+need that lap. Its unboxing and monomorphic reads are in the bytecode from compile time, not
+something the VM discovers at runtime, so it starts fast rather than warming up to fast. Measured
+cold — single-shot, zero warmup, the JVM still interpreting — eager FArray is already ahead of the
+whole field, before anything is compiled:
+
+<BenchChart
+  cls="ColdPipelineIntBenchmark"
+  ignore={fused}
+  caption="A long eager pipeline measured COLD: SingleShotTime, one uncompiled invocation at 100k elements (invocations/sec, higher is faster). Eager FArray leads before the JIT compiles anything: 1.7× past IArray, 3.4× past Vector, 4× past List, and 4–7× past the Chunks. The boxing collections gain little from warmup anyway — their cost is allocation, and the JIT does not eliminate a million Integers."
 />
 
 ---

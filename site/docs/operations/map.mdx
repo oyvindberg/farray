@@ -6,7 +6,6 @@ description: The inline dispatch that resolves element kinds at compile time, an
 
 import Snippet from "@site/src/components/Snippet";
 import BenchPair from "@site/src/components/BenchPair";
-import BenchChart from "@site/src/components/BenchChart";
 import { DispatchDiagram } from "@site/src/components/Diagrams";
 
 <p className="lede">
@@ -126,19 +125,3 @@ transformers (`if (f(x) eq x)` for every element, return `this`). FArray's versi
 the reference-reuse semantics and the specialized loop, and returns the *original* array untouched
 when nothing changed: no allocation at all on the no-op pass.
 
-## No warmup lap
-
-Because all of that specialization happened at *compile* time, there's nothing for the JIT to
-discover. FArray's speed is already in the bytecode (unboxed, monomorphic, allocation-free), so it
-never waits on the VM to devirtualize or escape-analyze its way there. Measured cold (single-shot,
-zero warmup, the JVM still interpreting), the fused pipeline is already three-to-four times ahead of
-List and IArray, before anything has been compiled at all:
-
-<BenchChart
-  cls="ColdPipelineIntBenchmark"
-  caption="The same 14-stage pipeline, measured COLD: SingleShotTime, zero warmup, one uncompiled invocation at 100k elements (invocations/sec; higher is faster). Fused FArray is ~3.8× past List and IArray, and ~2.7× past even the quickest rival, before the JIT compiles anything. Warm (the sweep on the introduction page) that lead opens to ~36×."
-/>
-
-There's no lap where a boxing collection is briefly in front: the same pipeline widens to its ~36×
-steady state as the loop compiles. The boxing collections gain little from warmup, because their
-cost is *allocation*, and the JIT does not eliminate a million `Integer`s.
