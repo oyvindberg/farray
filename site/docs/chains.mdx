@@ -51,11 +51,11 @@ Three effects compound down a chain:
     Pack several different lambdas into one method and the JIT can no longer keep that shared copy
     specialized, so it deoptimizes and slows down. FArray compiles each lambda into its own loop, so
     there is nothing shared to spoil. This is what turns a one-line benchmark tie into a loss in real
-    code, shown in full <Link to="#the-method-size-effect-eight-distinct-maps">further down</Link>.
+    code, detailed on <Link to="/operations/map#where-it-stops-being-a-tie">the map page</Link>.
   </li>
 </ul>
 
-## The showstopper: flatMap → filter → take
+## flatMap → filter → take
 
 `flatMap` doubles the sequence, `filter` thins it, and `take` throws a chunk of it away. FArray's
 `take` is an O(1) SliceNode, so it discards the tail for *free* — everyone else copies out what they
@@ -70,7 +70,7 @@ runs this shape up to **22× past List** and 6–10× past Vector and the Chunks
   caption="flatMap (doubles the sequence) → filter → take, Int beside String. The trailing take is a lazy SliceNode for FArray and a full copy for every rival. On Int: 22× List at 1k (13× at 100k), 6–10× Vector and the Chunks, and 1.6× IArray — which keeps its flatMap inners unboxed too, so only the take-copy separates them. String is the same shape: 11× List, 7× the Chunks."
 />
 
-## The classic: map → filter → fold
+## map → filter → fold
 
 Transform, select, aggregate: the shape of half the collection code ever written. One boxed
 crossing per stage for the field; `int[]` end to end for FArray:
@@ -82,7 +82,7 @@ crossing per stage for the field; `int[]` end to end for FArray:
   caption="map → filter → foldLeft, Int beside String. The boxing collections pay per stage (5.6× over Vector, 12× over List at 100k); IArray and zio.Chunk pay only the intermediate allocations. int[] end to end for FArray, and eager FArray beats eager IArray at every size — its filter is branchless and vectorizes. The lazy single-pass rivals (java.util.stream, and FArray's own .fuse, which both fuse the three stages into one loop with no intermediates) are compared on the fusion benchmarks page; here the field is eager."
 />
 
-## Structure in the middle: take → drop → map → fold
+## take → drop → map → fold
 
 Slice stages are FArray's freebie: a lazy window over the source, no copy. A `map` then transforms
 through the window, and the fold reads straight out of the result:
@@ -94,7 +94,7 @@ through the window, and the fold reads straight out of the result:
   caption="take(n-1) → drop(1) → map → foldLeft. FArray's take/drop are O(1) SliceNodes: the map runs over the window without either slice ever being copied, then the fold consumes its result. The array-backed rivals copy at each slice before they even reach the map, and the boxing collections box the map stage on top."
 />
 
-## Structure at the end: filter → map → reverse
+## filter → map → reverse
 
 The mirror case: the structural stage last. FArray's `reverse` is a node pointing at the result;
 everyone else allocates a third collection just to flip the second one:
@@ -106,7 +106,7 @@ everyone else allocates a third collection just to flip the second one:
   caption="filter → map → reverse. The first two stages are the usual per-element story; the reverse is where FArray stops doing work: an O(1) ReverseNode versus a full reversed copy. (fs2.Chunk has no reverse and sits out.)"
 />
 
-## Expansion: flatMap → flatMap → map → fold
+## flatMap → flatMap → map → fold
 
 Chained expansion stresses what a library hands its next stage. Each FArray `flatMap` produces one
 flat leaf, so the following stage reads a tight array rather than a fragment chain:
@@ -117,14 +117,6 @@ flat leaf, so the following stage reads a tight array rather than a fragment cha
   ignore={fused}
   caption="flatMap → flatMap → map → foldLeft with small inners. Every stage's output is a flat leaf, so the compounding is linear for FArray; the boxing collections pay both the per-element tax and the intermediate allocation, twice over."
 />
-
-## The method-size effect: eight distinct maps
-
-💣 **A landmine hides in the primitive case.** Write eight distinct `map` lambdas in one method and
-IArray falls off a cliff at scale: it ties FArray through 1k, then drops to a third of its speed at
-10k and never recovers, from a one-size step with no source change. It is the most surprising eager
-result in the suite. The mechanism — it is dispatch, not boxing — and the measured chart are on{" "}
-<Link to="/operations/map#where-it-stops-being-a-tie">the map page</Link>.
 
 ## A long interleaved structural chain
 

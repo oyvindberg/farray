@@ -81,7 +81,7 @@ once ran at 0.055× of IArray when a trailing structural call silently disabled 
 spliced loop (<Link to="/operations/flatmap">the full story</Link>). Compiling the chain to one loop
 removes any dependence on the caller's method size or call-site history, so that failure mode cannot
 recur. Eager FArray already runs the shape well ahead of the field — up to 22× past List — on the{" "}
-<Link to="/chains#the-showstopper-flatmap--filter--take">chains page</Link>; fusion is the same shape
+<Link to="/chains#flatmap--filter--take">chains page</Link>; fusion is the same shape
 with the intermediates gone.
 
 ## The other JIT: Temurin/C2
