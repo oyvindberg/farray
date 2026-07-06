@@ -10,7 +10,6 @@ import Snippet from "@site/src/components/Snippet";
 import SideBySide from "@site/src/components/SideBySide";
 import BenchChart from "@site/src/components/BenchChart";
 import BenchPair from "@site/src/components/BenchPair";
-import Related from "@site/src/components/Related";
 
 <p className="page__eyebrow">what fusion buys</p>
 
@@ -90,10 +89,3 @@ The byte-source numbers live with their scanners and rivals on{" "}
 <Link to="/fusion/json">the JSON integration page</Link>. The headline: 1.6× past jsoniter-scala's
 hand-written reader loop at ~1 B/op, 4–9× past the AST parsers, and 2.5× on selective queries where
 records are abandoned mid-scan.
-
-<Related
-  links={[
-    { to: "/benchmarks/farray", label: "The full FArray suite", desc: "Every op at every size, wins and losses alike." },
-    { to: "/fusion", label: "Back to first principles", desc: "Why these numbers don't depend on the call site." },
-  ]}
-/>

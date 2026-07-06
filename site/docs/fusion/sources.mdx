@@ -7,7 +7,6 @@ description: "Where pipelines begin: in-memory arrays, chunk streams in constant
 import Link from "@docusaurus/Link";
 import Snippet from "@site/src/components/Snippet";
 import BenchChart from "@site/src/components/BenchChart";
-import Related from "@site/src/components/Related";
 
 <p className="page__eyebrow">the source</p>
 
@@ -74,10 +73,3 @@ the machine: stages are shape-generic, but{" "}
 by a typeclass (an interface implementation the compiler selects by type, like a ServiceLoader
 resolved at compile time). It has no runtime cost; it exists so that an unsupported operation is a
 compile error rather than a runtime surprise.
-
-<Related
-  links={[
-    { to: "/fusion/stages", label: "Next: Stages", desc: "The vocabulary: markers that cost nothing." },
-    { to: "/fusion/json", label: "Byte sources in full", desc: "ByteRecordSource and the NDJSON integration, one file." },
-  ]}
-/>

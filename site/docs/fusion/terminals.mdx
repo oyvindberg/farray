@@ -6,7 +6,6 @@ description: "The call that ends the chain is the compiler invocation: the termi
 
 import Link from "@docusaurus/Link";
 import Snippet from "@site/src/components/Snippet";
-import Related from "@site/src/components/Related";
 
 export function FuseEx({ src, gen }) {
   return (
@@ -104,10 +103,3 @@ The ranking family exists because "top ten by score" should not cost a sort: `to
 a bounded size-*n* heap inside the pass (O(N log n) time, O(n) memory, best-first):
 
 <FuseEx src="fuse-src-guide-topn" gen="fuse-guide-topn" />
-
-<Related
-  links={[
-    { to: "/fusion/optimizer", label: "Next: The optimizer", desc: "Columns, DCE, compute-for-survivors: the shared brain." },
-    { to: "/fusion/integrating", label: "Integrating", desc: "Where terminals come from: shapes, lowerings, and the plug-in contract." },
-  ]}
-/>

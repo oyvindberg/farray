@@ -6,7 +6,6 @@ description: "The practical guide: when to reach for .fuse, the recipes that rep
 
 import Link from "@docusaurus/Link";
 import Snippet from "@site/src/components/Snippet";
-import Related from "@site/src/components/Related";
 
 <p className="page__eyebrow">putting it to work</p>
 
@@ -109,11 +108,3 @@ callers see only the resulting `FArray`.
     call it in the chain — it splices in and fuses just as if written in place.
   </li>
 </ul>
-
-<Related
-  links={[
-    { to: "/fusion/benchmarks", label: "Fusion, measured", desc: "Warm, cold, streaming, against java.util.stream, and a second long pipeline." },
-    { to: "/fusion/json", label: "The JSON integration", desc: "The same engine pointed at raw bytes." },
-    { to: "/benchmarks/farray", label: "The FArray scoreboard", desc: "Where the eager ops already stand." },
-  ]}
-/>

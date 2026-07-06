@@ -6,7 +6,6 @@ description: "filter + map through one pattern match: why the PartialFunction ob
 
 import Link from "@docusaurus/Link";
 import BenchPair from "@site/src/components/BenchPair";
-import Related from "@site/src/components/Related";
 
 <p className="lede">
   <code>collect</code> is filter and map in one pattern match (a Scala <code>match</code>: a switch
@@ -88,11 +87,3 @@ gave each call site its own loop at compile time:
 The same idea one level up: in a *fused* chain, `collect`'s cases splice straight into the pipeline
 loop (<Link to="/fusion/stages">stages page</Link>); this page's macro is that move, packaged for
 the eager op so a lone `collect` gets it too.
-
-<Related
-  links={[
-    { to: "/fusion/stages", label: "Fused collect", desc: "The same pick-apart, inside a whole-pipeline loop." },
-    { to: "/operations/map", label: "map", desc: "The megamorphic experiment this page borrows." },
-    { to: "/chains", label: "Why FArray", desc: "Where per-op wins compound." },
-  ]}
-/>

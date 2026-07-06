@@ -6,7 +6,6 @@ description: "The wrapper's price measured at the smallest possible op, one read
 
 import Link from "@docusaurus/Link";
 import BenchPair from "@site/src/components/BenchPair";
-import Related from "@site/src/components/Related";
 
 <p className="lede">
   A single read is the one place a wrapper can't hide: there's no loop to amortize into, no lambda to
@@ -74,11 +73,3 @@ hierarchy) was built and measured (17–20% *slower* for
 monomorphic reads; HotSpot folds the match better), and a dedicated single-element fast path
 measured as a no-op. The conclusion stands as measured: the size-1 read floor is the irreducible
 price of being a data structure rather than a pointer, and it's paid only where n=1.
-
-<Related
-  links={[
-    { to: "/design/combinators", label: "The cost model", desc: "What the wrapper buys for the hair it costs." },
-    { to: "/operations/list-parity", label: "List's own game", desc: "head/tail recursion at cons-list speed." },
-    { to: "/chains", label: "Why FArray", desc: "Where single-op percents become chain multiples." },
-  ]}
-/>

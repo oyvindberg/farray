@@ -7,7 +7,6 @@ description: "The accumulator ops: where the boxing tax is purest, where the JIT
 import Link from "@docusaurus/Link";
 import BenchChart from "@site/src/components/BenchChart";
 import BenchPair from "@site/src/components/BenchPair";
-import Related from "@site/src/components/Related";
 
 <p className="lede">
   A fold is the purest boxing benchmark there is: no output collection, no structural work, just one
@@ -94,11 +93,3 @@ are the empty-safe spellings, one branch in front of the same loop.
 When the fold ends a *chain*,{" "}
 <Link to="/fusion/farray">fusing the chain</Link> folds without materializing any stage at all, and
 `agg` runs several folds in one pass.
-
-<Related
-  links={[
-    { to: "/chains", label: "Why FArray", desc: "Where the per-stage wins compound." },
-    { to: "/operations/map", label: "How map stays unboxed", desc: "The signature-level machinery folds share." },
-    { to: "/fusion/terminals", label: "Fused folds & agg", desc: "Several accumulators, one pass, no chain materialization." },
-  ]}
-/>

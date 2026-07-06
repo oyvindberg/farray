@@ -6,7 +6,6 @@ description: "FBuilder[A]: accumulate elements one at a time with zero boxing, b
 
 import Link from "@docusaurus/Link";
 import BenchPair from "@site/src/components/BenchPair";
-import Related from "@site/src/components/Related";
 
 <p className="lede">
   Sometimes you don't have the elements up front: you push them one at a time and want an{" "}
@@ -120,11 +119,3 @@ check), so the gap isn't the cast or an allocation (both ruled out by measuremen
 compiles stdlib's ubiquitous `addOne` almost to a bare loop, and our leaner `RefGroup.add` doesn't
 get the same field-hoisting. It's more than repaid by the O(1) `result()` (ArrayBuffer pays O(n) to
 finalize), so the end-to-end number is a win.
-
-<Related
-  links={[
-    { to: "/operations/building", label: "Building FArrays", desc: "The known-size constructors: literals, tabulate, range." },
-    { to: "/operations/getting-out", label: "Getting things out", desc: "The other direction: FArray back to array/Seq." },
-    { to: "/", label: "The FArray story", desc: "Why unboxing lives in signatures, not the JIT's mood." },
-  ]}
-/>

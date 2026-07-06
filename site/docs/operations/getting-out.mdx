@@ -6,7 +6,6 @@ description: "The exits: toArray as an arraycopy, mkString, indices, and toSeq, 
 
 import Link from "@docusaurus/Link";
 import BenchChart from "@site/src/components/BenchChart";
-import Related from "@site/src/components/Related";
 
 <p className="lede">
   The exits are boring, as they should be: turning an FArray back into an
@@ -64,11 +63,3 @@ The trade: FArray pays one small wrapper allocation where `List`/`Vector` pay ze
 (they were already Seqs). That single allocation is the one un-winnable cell against a native Seq,
 and the benchmark suite omits it rather than dress it up: a loss of exactly one object,
 in exchange for having a real array underneath everywhere else.
-
-<Related
-  links={[
-    { to: "/operations/building", label: "Building FArrays", desc: "The other end, and the ClassTag trick that makes toArray fast." },
-    { to: "/operations/indexed", label: "Indexed access", desc: "Where isDefinedAt and apply actually live." },
-    { to: "/", label: "The FArray story", desc: "Why a real array underneath is the whole point." },
-  ]}
-/>

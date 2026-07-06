@@ -6,7 +6,6 @@ description: "The short-circuit engine and its loop-shape lesson, the backward s
 
 import Link from "@docusaurus/Link";
 import BenchPair from "@site/src/components/BenchPair";
-import Related from "@site/src/components/Related";
 
 <p className="lede">
   Everything on this page answers a question and stops: is this element here, where does this run
@@ -77,11 +76,3 @@ one value and a handful of short verifications:
 The boundary: a pathological input (long needle of one repeated value over a haystack of the
 same value) degrades toward O(n·m), which KMP's guarantee avoids. Collection workloads don't look
 like that, and the 0.76× → 2.2× swing is what the guarantee was costing on everything else.
-
-<Related
-  links={[
-    { to: "/operations/indexed", label: "Indexed access", desc: "The other read-only family, and the wrapper tax priced exactly." },
-    { to: "/fusion/terminals", label: "Fused search terminals", desc: "find/exists that stop a whole pipeline, not just a scan." },
-    { to: "/operations/folds", label: "Folds & reduces", desc: "The scans that don't stop." },
-  ]}
-/>

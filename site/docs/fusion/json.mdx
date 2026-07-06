@@ -6,7 +6,6 @@ description: "A JSON decoder plugged into the fusion engine as a typeclass insta
 
 import Link from "@docusaurus/Link";
 import Snippet from "@site/src/components/Snippet";
-import Related from "@site/src/components/Related";
 
 export function BenchTable({ bench }) {
   return (
@@ -238,11 +237,3 @@ call site, and an unsupported *terminal* is not a member. No silent fallback exi
 
 Scanners are the verbatim post-typer expansion, regenerated to current codegen and checked into
 `tests/snapshots/`. Numbers are JMH (`-prof gc`) from `benchmarks/JsonProjectionBenchmark`.
-
-<Related
-  links={[
-    { to: "/fusion/benchmarks", label: "Next: The receipts", desc: "The fusion benchmarks, end to end." },
-    { to: "/fusion/integrating", label: "Integrating with fusion", desc: "The plug-in contract this page is a worked example of." },
-    { to: "/fusion/optimizer", label: "The optimizer", desc: "The column analysis, over tuples instead of bytes." },
-  ]}
-/>

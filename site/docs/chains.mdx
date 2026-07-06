@@ -8,7 +8,6 @@ import Link from "@docusaurus/Link";
 import BenchPair from "@site/src/components/BenchPair";
 import BenchChart from "@site/src/components/BenchChart";
 import ChainScore from "@site/src/components/ChainScore";
-import Related from "@site/src/components/Related";
 
 {/* This page is eager-only by construction. The fused/lazy pipelines belong with the fused
     comparison, not here: java.util.stream (a lazy fused pipeline) and FArray's own .fuse (the
@@ -153,11 +152,3 @@ There is one speed above this: handing the whole chain to the compiler.{" "}
 <Link to="/fusion">Fusion</Link> takes these same pipelines and emits a single loop; the 14-stage
 version runs ~15× past even FArray's own eager chains. The eager ops above are already the
 strongest field; fusion is the ceiling.
-
-<Related
-  links={[
-    { to: "/fusion/benchmarks", label: "Why fusion", desc: "The same argument, one loop deeper." },
-    { to: "/benchmarks/farray", label: "The full scoreboard", desc: "Every op at every size, wins and losses, every chart behind the numbers here." },
-    { to: "/semantics", label: "Sharp edges", desc: "The contracts that differ from the standard library." },
-  ]}
-/>
