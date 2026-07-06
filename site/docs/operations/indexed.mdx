@@ -5,7 +5,7 @@ description: "The wrapper's price measured at the smallest possible op, one read
 ---
 
 import Link from "@docusaurus/Link";
-import BenchChart from "@site/src/components/BenchChart";
+import BenchPair from "@site/src/components/BenchPair";
 import Related from "@site/src/components/Related";
 
 <p className="lede">
@@ -33,24 +33,28 @@ the special cases the nodes answer directly: `last` of an `Append` is the append
 of a `Prepend` likewise, O(1) even on trees built by a million-element cons chain (one prepend at a
 time).
 
-<BenchChart
-  cls="ApplyStrBenchmark"
-  caption="apply(size/2): a random-access read at a non-constant index, isolated re-measure. FArray runs at ~0.72–0.75× of a raw IArray read; the type test is ~a quarter of a nano-op that is otherwise just bounds-check + load. That is the whole wrapper tax, visible only because nothing amortizes it. List is the designed outlier (O(n) walk); Vector pays its trie hops."
+<BenchPair
+  int="ApplyIntBenchmark"
+  str="ApplyStrBenchmark"
+  caption="apply(size/2): a random-access read at a non-constant index, Int beside String. FArray runs at ~0.77–0.80× of a raw IArray read; the type test is ~a quarter of a nano-op that is otherwise just bounds-check + load — the whole wrapper tax, visible only because nothing amortizes it, and the same on Int and String because a read boxes nothing on the way in. List is the designed outlier (an O(n) walk — 100,000× behind at 100k); Vector pays its trie hops."
 />
 
-<BenchChart
-  cls="HeadStrBenchmark"
-  caption="head. Same shape as apply: ~0.65× of a bare IArray read (arr(0) with no type test is unbeatable), while the other wrapped structures (fs2.Chunk and zio.Chunk, the array-backed collections of the fs2 and ZIO streaming libraries, plus Vector) land at or behind FArray. List's head is its one native O(1) op and is competitive here."
+<BenchPair
+  int="HeadIntBenchmark"
+  str="HeadStrBenchmark"
+  caption="head. Same shape as apply: ~0.74–0.88× of a bare IArray read (arr(0) with no type test is unbeatable), while the other wrapped structures (fs2.Chunk, zio.Chunk, Vector) land at or behind FArray. List's head is its one native O(1) op and is competitive. Int and String track each other."
 />
 
-<BenchChart
-  cls="LastStrBenchmark"
-  caption="last. The same wrapper tax against IArray, plus the page's largest gap: List walks all n nodes to reach the final slot, which at 100k is a ~200,000× gap. The lazy tree never pays that shape of cost: last of an Append node is O(1) by construction."
+<BenchPair
+  int="LastIntBenchmark"
+  str="LastStrBenchmark"
+  caption="last. The same wrapper tax against IArray, plus the page's largest gap: List walks all n nodes to reach the final slot — a ~230,000× gap at 100k. The lazy tree never pays that shape: last of an Append node is O(1) by construction, identical on Int and String."
 />
 
-These are String benchmarks, but a single read is the op where element kind matters least: no
-lambda crosses a boundary, so there is nothing to box on the way *in*. (On the way out, a
-`List[Int].head` still unboxes an `Integer`; an `FArray[Int]`'s read is a primitive load.) The
+Int and String land almost identically here, and that is the point: a single read is the op where
+element kind matters least — no lambda crosses a boundary, so there is nothing to box on the way
+*in*. (On the way *out*, a `List[Int].head` still unboxes an `Integer`; an `FArray[Int]`'s read is a
+primitive load.) The
 summary: against a *bare array*, a lone read costs the type test (~25–35%, stated above, nothing
 hidden). Against the other *wrapped* structures, FArray's reads are
 at par or ahead. And no loop-shaped op on any other page pays this per element; traversals resolve
