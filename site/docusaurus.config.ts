@@ -40,6 +40,10 @@ const config: Config = {
   ],
 
   themeConfig: {
+    // Prism's default bundle has no Scala: every ```scala fence rendered unhighlighted until this.
+    prism: {
+      additionalLanguages: ["scala", "java"],
+    },
     metadata: [
       {
         name: "description",

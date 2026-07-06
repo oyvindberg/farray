@@ -38,7 +38,6 @@ const sidebars: SidebarsConfig = {
             "operations/list-parity",
           ],
         },
-        "scoreboard",
         "benchmarks/farray",
       ],
     },

@@ -1,7 +1,7 @@
 ---
 title: How map stays unboxed
 sidebar_label: map
-description: The inline dispatch that resolves element kinds at compile time — and what it wins once benchmarks stop being micro.
+description: The inline dispatch that resolves element kinds at compile time, and what it wins once benchmarks stop being micro.
 ---
 
 import Snippet from "@site/src/components/Snippet";
@@ -11,26 +11,25 @@ import { DispatchDiagram } from "@site/src/components/Diagrams";
 
 <p className="lede">
   An elementwise combinator is one <code>inline</code> hop to a generated <code>…Impl</code>, and the
-  impl is where the element kind gets resolved. Take <code>map</code>. Its impl is the most over-built
-  method in the library: one big <code>summonFrom</code> — a compile-time match on which{" "}
-  <code>Repr</code> evidence exists for <code>A</code> — with an outer branch per input kind and, nested
-  inside, one per result kind.
+  impl is where the element kind gets resolved. <code>map</code>'s impl is one big{" "}
+  <code>summonFrom</code>, a compile-time match on which <code>Repr</code> evidence exists for{" "}
+  <code>A</code>, with an outer branch per input kind and, nested inside, one per result kind.
 </p>
 
-Here's the shape of it — when the kinds line up (the common case) the branch is a one-liner into a
-specialized leaf method; when they don't, it's a generic loop. Toggle *all 81 branches* if you want to
-see the full cross-product you'll never write:
+When the kinds line up (the common case) the branch is a one-liner into a
+specialized leaf method; when they don't, it's a generic loop. The *all 81 branches* toggle shows
+the full cross-product you'll never write:
 
 <Snippet name="map-dispatch-real" />
 
-That leaf method is where the loop actually lives:
+That leaf method is where the loop lives:
 
 <Snippet name="map-leaf" hideFull />
 
-A genuine `while` loop over `int[]`, and `f` is an `IntToIntFn` — a specialized SAM, not a boxed
+A genuine `while` loop over `int[]`, and `f` is an `IntToIntFn`, a specialized SAM rather than a boxed
 `Function1`. The `IntArr` case is the fast path; a tree input falls through the `case _` to the shared
-traverser — the one direction-aware walk every op reuses. Now watch what happens at a concrete
-`FArray[Int]` call site. The compiler knows `A = Int`, so `summonFrom` keeps the `IntRepr` branch and
+traverser, the one direction-aware walk every op reuses. At a concrete
+`FArray[Int]` call site the compiler knows `A = Int`, so `summonFrom` keeps the `IntRepr` branch and
 deletes the other eighty. So this:
 
 <p className="codeline"><code>xs.map(_ + 1)</code> <span className="codeline__where">where <code>xs: FArray[Int]</code></span></p>
@@ -39,102 +38,102 @@ resolves entirely in the compiler:
 
 <DispatchDiagram />
 
-And you don't have to take the diagram's word for it. Here's the actual lowering: your whole
-`xs.map(_ + 1)` — the dispatch, the kind resolution, all of it — became one line. (The dead bindings
-the expansion leaves behind are elided; toggle *raw expansion* for the verbatim tree.)
+Here's the actual lowering: the whole
+`xs.map(_ + 1)`, dispatch and kind resolution included, became one line. (The dead bindings
+the expansion leaves behind are elided; the *raw expansion* toggle shows the verbatim tree.)
 
 <Snippet name="map-generated" />
 
-Three things are worth pointing at in that one line, because together they are the entire pitch:
+Three things in that one line:
 
 <ul className="points">
   <li>
-    <code>mapLeafInt<strong>Int</strong></code> — the resolution is in the name. <code>summonFrom</code>{" "}
-    picked the <code>Int → Int</code> leaf <strong>at compile time</strong> and deleted the other eighty
+    <code>mapLeafInt<strong>Int</strong></code>: the resolution is in the name. <code>summonFrom</code>{" "}
+    picked the <code>Int → Int</code> leaf at compile time and deleted the other eighty
     branches; the dispatch is gone before the program runs.
   </li>
   <li>
-    It's a <strong>call</strong>, not the loop. The <code>while</code> loop lives <em>inside</em>{" "}
-    <code>mapLeafIntInt</code>, which is deliberately <em>not</em> <code>inline</code> — compiled once
-    and shared, never copied into your code. That's why the loop isn't in the line above. (Inline it at
-    every call site and you'd bloat straight into the JVM's method-size cliff — exactly the trade{" "}
-    <code>.fuse</code> opts into on purpose.)
+    It's a call, not the loop. The <code>while</code> loop lives <em>inside</em>{" "}
+    <code>mapLeafIntInt</code>, which is <em>not</em> <code>inline</code>: compiled once
+    and shared, never copied into your code. That's why the loop isn't in the line above. (Inlined at
+    every call site it would bloat straight into the JVM's method-size cliff, the trade{" "}
+    <code>.fuse</code> opts into.)
   </li>
   <li>
-    <code>{"(v: Int) => v + 1"}</code> — your lambda, materialized <strong>once</strong> as a
-    specialized <code>IntToIntFn</code> SAM and passed to that loop. Typed <code>Int</code> throughout:
-    no <code>Function1</code>, no <code>Integer</code> — the unboxing is in the type, not a JIT bet.
-    Note what it is <em>not</em>: it isn't spliced into the loop body. It's a function value the loop
+    <code>{"(v: Int) => v + 1"}</code>: your lambda, materialized once as a
+    specialized <code>IntToIntFn</code> SAM and passed to that loop. Typed <code>Int</code> throughout,
+    no <code>Function1</code>, no <code>Integer</code>; the unboxing is in the type, not a JIT bet.
+    It is <em>not</em> spliced into the loop body; it's a function value the loop
     calls.
   </li>
 </ul>
 
 That last point is a consequence of how `inline` works here. `mapImpl` is `inline`, so the dispatch
-and your lambda are resolved and lifted at the call site; `mapLeafIntInt` is deliberately not, so the
+and your lambda are resolved and lifted at the call site; `mapLeafIntInt` is not, so the
 one heavy loop is compiled a single time and shared. The price of crossing that hand-off is that the
-lambda has to become a function value — hence the SAM. But it's a *specialized* SAM, so nothing boxes,
+lambda has to become a function value, hence the SAM. But it's a *specialized* SAM, so nothing boxes,
 and it's one allocation per `map` call, not per element; the JIT inlines its `apply` into the shared
-loop at runtime. In the bytecode it's a single `anonfun` lifted by one `invokedynamic` — emitted once,
+loop at runtime. In the bytecode it's a single `anonfun` lifted by one `invokedynamic`, emitted once,
 not twice.
 
-The version that splices your lambda straight into the `while` loop, with no SAM at all, is `.fuse` —
-which is precisely why [fusion](../fusion/index.mdx) is a separate gear. What the inline layer buys on
-its own is narrower but still decisive. Compare a generic `map[B](f: A => B)`, where `A` and `B` erase
-to `Object`, `f` is a boxed `Function1`, and every element round-trips through `Integer`. FArray never
-writes that method down. The specialization lives in the call site instead of the signature — which is
+The version that splices your lambda straight into the `while` loop, with no SAM at all, is `.fuse`,
+which is why [fusion](../fusion/index.mdx) is a separate gear. What the inline layer buys on
+its own is narrower but still decisive. A generic `map[B](f: A => B)` erases `A` and `B`
+to `Object`, takes a boxed `Function1`, and round-trips every element through `Integer`. FArray never
+writes that method down. The specialization lives in the call site instead of the signature, which is
 why it holds even as the surrounding method grows and the JIT's inlining budget runs out.
 
-And the point of all that machinery, measured — `map` over a hundred thousand elements, Int beside
-String. This is also where to be honest, because on its own `map` is no rout:
+The machinery, measured: `map` over a hundred thousand elements, Int beside
+String. On its own, `map` is no rout:
 
 <BenchPair
   int="MapIntBenchmark"
   str="MapStrBenchmark"
-  caption="map, swept to 100k. On Int (left) FArray runs within a few percent of a bare int[] and ~8–27× past the collections that box the element — List, Vector, fs2.Chunk. zio.Chunk keeps its Ints unboxed too, and correspondingly hangs much closer (~1.6× back at 100k) — the boxing tax is the whole spread. On String (right) there's nothing to unbox, so the field compresses: FArray ties IArray exactly, with List and fs2.Chunk ~1.3–1.4× back. No fireworks against the raw array — that's the point being set up."
+  caption="map, swept to 100k. On Int (left) FArray runs within a few percent of a bare int[] and ~8–27× past the collections that box the element (List, Vector, fs2.Chunk). zio.Chunk keeps its Ints unboxed too, and correspondingly hangs much closer (~1.6× back at 100k); the boxing tax is the whole spread. On String (right) there's nothing to unbox, so the field compresses: FArray ties IArray exactly, with List and fs2.Chunk ~1.3–1.4× back. Against the raw array it's a wash."
 />
 
 ## We're here for the crushes
 
-Read those two charts honestly and, measured against a bare array, it's a wash — a few percent shy on
+Measured against a bare array, those two charts are a wash: a few percent shy on
 `Int`, a dead tie on `String`. That's the texture of a *micro*-benchmark: one operation over one
-array, in isolation, where a lone `Array.map` is a call the JIT already inlines to perfection and the
+array, in isolation, where a lone `Array.map` is a call the JIT already inlines fully and the
 opaque wrapper plus the specialized SAM are pure overhead it doesn't carry. FArray isn't built to win
-those by a percent. It's built for what happens the moment the benchmark stops being a micro-benchmark
-— and it doesn't take much.
+those by a percent. It's built for what happens once the benchmark stops being a micro-benchmark,
+and it doesn't take much.
 
-Take that very same `map` and write eight of them, eight *distinct* lambdas, in one method. IArray
+Write eight of that very same `map`, with eight *distinct* lambdas, in one method. IArray
 funnels all of them into its one shared `Array.map`, and that call site now sees eight different
-`Function1` classes — well past the JIT's ≥3-type megamorphic threshold, so it stops devirtualising:
+`Function1` classes, well past the JIT's ≥3-type megamorphic threshold, so it stops devirtualising:
 every element pays a real virtual `apply`, and on `Int` it re-boxes through `Integer` on the way out.
-The bigger the method, the more distinct lambdas crowd that one site, the worse it gets. FArray has no
-shared site to poison — each lambda was already bound to its own specialized loop at compile time, so
-eight maps are just eight tight `int[]` loops, indifferent to how many of them you wrote.
+The bigger the method, the more distinct lambdas crowd that one site. FArray has no
+shared site to poison: each lambda was already bound to its own specialized loop at compile time, so
+eight maps are eight tight `int[]` loops, however many of them you write.
 
 <BenchPair
   int="MapMegaIntBenchmark"
   str="MapMegaStrBenchmark"
-  caption="eight distinct lambdas through map in one method — re-measured fully serialized. On Int (left): the generic collections pay at every size (List 6.5×, fs2 3.5×, Vector 3.3× at 10k), while IArray hangs on at 10k (0.85× — our one loss in the chart, its boxed intermediates still cache-resident) until 100k, where the megamorphic re-boxing turns into memory traffic and the same IArray that ties FArray on a lone map falls 4.2× behind; List lands at 12×. FArray has no shared site to poison. On String (right) there's no boxing to re-pay and nobody pulls away — same mechanism, only the boxing tax moves the needle."
+  caption="eight distinct lambdas through map in one method, re-measured fully serialized. On Int (left): the generic collections pay at every size (List 6.5×, fs2 3.5×, Vector 3.3× at 10k), while IArray hangs on at 10k (0.85×, our one loss in the chart, its boxed intermediates still cache-resident) until 100k, where the megamorphic re-boxing turns into memory traffic and the same IArray that ties FArray on a lone map falls 4.2× behind; List lands at 12×. FArray has no shared site to poison. On String (right) there's no boxing to re-pay and nobody pulls away: same mechanism, only the boxing tax moves the needle."
 />
 
-One sibling deserves a name here: `mapConserve` — the identity-preserving map used by compilers and
-transformers everywhere (`if (f(x) eq x)` for every element, return `this`). FArray's version keeps
+One sibling deserves a name here: `mapConserve`, the identity-preserving map used by compilers and
+transformers (`if (f(x) eq x)` for every element, return `this`). FArray's version keeps
 the reference-reuse semantics and the specialized loop, and returns the *original* array untouched
-when nothing changed — no allocation at all on the no-op pass.
+when nothing changed: no allocation at all on the no-op pass.
 
 ## No warmup lap
 
-And because all of that specialization happened at *compile* time, there's nothing for the JIT to
-discover. FArray's speed is already in the bytecode — unboxed, monomorphic, allocation-free — so it
-never waits on the VM to devirtualize or escape-analyze its way there. Measured cold — single-shot,
-zero warmup, the JVM still interpreting — the fused pipeline is already three-to-four times ahead of
+Because all of that specialization happened at *compile* time, there's nothing for the JIT to
+discover. FArray's speed is already in the bytecode (unboxed, monomorphic, allocation-free), so it
+never waits on the VM to devirtualize or escape-analyze its way there. Measured cold (single-shot,
+zero warmup, the JVM still interpreting), the fused pipeline is already three-to-four times ahead of
 List and IArray, before anything has been compiled at all:
 
 <BenchChart
   cls="ColdPipelineIntBenchmark"
-  caption="The same 14-stage pipeline, measured COLD: SingleShotTime, zero warmup, one uncompiled invocation at 100k elements (invocations/sec — higher is faster). Fused FArray is ~3.8× past List and IArray, and ~2.7× past even the quickest rival, before the JIT compiles anything. Warm — the sweep on the introduction page — that lead opens to ~36×. Warmup sets the size of the gap, not whether there is one."
+  caption="The same 14-stage pipeline, measured COLD: SingleShotTime, zero warmup, one uncompiled invocation at 100k elements (invocations/sec; higher is faster). Fused FArray is ~3.8× past List and IArray, and ~2.7× past even the quickest rival, before the JIT compiles anything. Warm (the sweep on the introduction page) that lead opens to ~36×."
 />
 
-There's no lap where a boxing collection is briefly in front. What warmup buys isn't the lead but its
-size — the same pipeline widens to its ~36× steady state as the loop compiles. The boxing collections
-gain little from it, because their cost is *allocation*, and no amount of JIT will un-allocate a
+There's no lap where a boxing collection is briefly in front. Warmup changes the size of the lead,
+not its existence: the same pipeline widens to its ~36× steady state as the loop compiles. The boxing
+collections gain little from it, because their cost is *allocation*, and the JIT does not eliminate a
 million `Integer`s.

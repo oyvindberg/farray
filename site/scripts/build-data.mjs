@@ -706,3 +706,37 @@ const setSlim = buildBench("docs/set-bench-results.json", "setbench.json");
 buildSnippets();
 buildBenchSources("benchmarks/src/scala/farray", "bench-sources.json", classesOf(slim));
 buildBenchSources("setbenchmarks/src/scala/farray", "setbench-sources.json", classesOf(setSlim));
+
+// ---------------------------------------------------------------- referenced-benchmark safeguard
+// Every benchmark class a docs page references (BenchChart cls=, BenchPair int=/str=, SideBySide
+// cls=) must exist in the measured data, or the chart renders as an empty "no benchmark matched"
+// card. New pages may reference benchmarks that exist in source but haven't been measured yet; the
+// fix is to run them and patch the scorecard, so this FAILS the build with the list.
+{
+  const measured = new Set([...classesOf(slim), ...classesOf(setSlim)]);
+  const referenced = new Map(); // class -> first referencing file
+  const walkDocs = (dir) => {
+    for (const f of readdirSync(dir)) {
+      const p = join(dir, f);
+      if (statSync(p).isDirectory()) walkDocs(p);
+      else if (extname(p) === ".mdx" || extname(p) === ".md") {
+        const text = readFileSync(p, "utf8");
+        for (const m of text.matchAll(/\b(?:cls|int|str)=["']([A-Za-z0-9]+(?:Benchmark|Bench))["']/g)) {
+          if (!referenced.has(m[1])) referenced.set(m[1], relative(REPO, p));
+        }
+      }
+    }
+  };
+  walkDocs(resolve(REPO, "site/docs"));
+  const unmeasured = [...referenced].filter(([c]) => !measured.has(c));
+  if (unmeasured.length) {
+    console.error(`✗ ${unmeasured.length} referenced benchmark class(es) have NO measurements:`);
+    for (const [c, f] of unmeasured) console.error(`    ${c}  (referenced from ${f})`);
+    console.error("  Run them and patch docs/bench-results.json (scripts/bench-run.sh), or fix the reference.");
+    // hard failure only for the real build (prebuild); dev keeps running so pages can be written
+    // before their benchmarks have been measured.
+    if (process.env.npm_lifecycle_event !== "predev") process.exit(1);
+  } else {
+    console.log(`  ✓ all ${referenced.size} doc-referenced benchmark classes are measured`);
+  }
+}

@@ -18,7 +18,7 @@ export default function Snippet({ name, hideFull }: Props) {
   if (!data) {
     return (
       <div className="snippet snippet--error">
-        snippet <code>{name}</code> not found — known: {Object.keys(snippets).join(", ")}
+        snippet <code>{name}</code> not found; known: {Object.keys(snippets).join(", ")}
       </div>
     );
   }

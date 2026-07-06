@@ -9,21 +9,21 @@ type SectionInfo = Partial<Record<Section, { title: string; blurb: string }>>;
 const FARRAY_SECTIONS: SectionInfo = {
   Primitive: {
     title: "Primitive elements",
-    blurb: "Int and Long payloads — where unboxing is the whole game and the gaps open widest.",
+    blurb: "Int and Long payloads, where unboxing is the whole game and the gaps open widest.",
   },
   String: {
     title: "Reference elements",
     blurb:
-      "String payloads. Nothing to unbox, so these isolate structure and dispatch alone — the honest half of the suite.",
+      "String payloads. Nothing to unbox, so these isolate structure and dispatch alone.",
   },
   ListLike: {
     title: "Cons-list workloads",
     blurb:
-      "FArray driven like a List — built with ::, torn down by head/tail recursion — against the structure built for exactly that.",
+      "FArray driven like a List (built with ::, torn down by head/tail recursion) against the structure built for exactly that.",
   },
   Diagnostics: {
     title: "Diagnostics & internals",
-    blurb: "Decompositions and micro-probes — including FArray-vs-itself variants that aren't a competing collection.",
+    blurb: "Decompositions and micro-probes, including FArray-vs-itself variants that aren't a competing collection.",
   },
 };
 
@@ -31,14 +31,14 @@ const FSET_SECTIONS: SectionInfo = {
   Primitive: {
     title: "Int elements",
     blurb:
-      "Unboxed Int payloads — the dense-bitmap and frozen-hash territory, against fastutil, HPPC, " +
+      "Unboxed Int payloads: the dense-bitmap and frozen-hash territory, against fastutil, HPPC, " +
       "Eclipse, Roaring, both BitSets and both Scala sets.",
   },
   String: {
     title: "String elements",
     blurb:
       "Reference payloads. Nothing to unbox, so these isolate the F14 table, the cached-hash merge " +
-      "algebra and the lazy nodes — against every JVM hash set that matters.",
+      "algebra and the lazy nodes, against every JVM hash set that matters.",
   },
 };
 

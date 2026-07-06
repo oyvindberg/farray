@@ -1,20 +1,30 @@
 ---
 title: FArray benchmarks
 sidebar_label: FArray benchmarks
-description: The whole JMH suite, unabridged — every operation at every size, FArray against every competitor.
+description: "The whole JMH suite: every operation at every size, FArray against every competitor."
 hide_table_of_contents: true
 ---
 
 import Link from "@docusaurus/Link";
 import BenchIndex from "@site/src/components/BenchIndex";
+import Scorecard from "@site/src/components/Scorecard";
 
 <p className="page__eyebrow">the complete scorecard</p>
 
 <p className="lede">
-  The whole JMH suite, unabridged — every operation at every size, FArray against every competitor,
-  wins and losses alike. <Link to="/">The story</Link> pulls out the highlights and explains the
-  machinery; this page is the raw record. Every bar is a measurement you can hover, and every card
-  reveals the exact <code>@Benchmark</code> source it came from.
+  The entire benchmark suite, first boiled down to one number per structure, then unabridged: every
+  operation at every size, FArray against every competitor, wins and losses alike.{" "}
+  <Link to="/">The story</Link> pulls out the highlights and explains the machinery; this page is
+  the raw record. Every bar is a measurement you can hover, and every card reveals the exact{" "}
+  <code>@Benchmark</code> source it came from.
 </p>
+
+<Scorecard />
+
+Not every op is the fastest of its kind; the other pages cover the ties and the one or two places a
+bare array still edges it. Assembled (unboxed elementwise ops at raw array speed, structural ops in
+O(1), fusion when you ask for it, and a real immutable collection with value semantics on top) it
+adds up to the fastest of the field. [FSet](../fset.mdx), the immutable unboxed set built on the
+same core, has [a scorecard of its own](./fset.mdx). The full record, chart by chart:
 
 <BenchIndex suite="farray" />

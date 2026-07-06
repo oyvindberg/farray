@@ -10,60 +10,58 @@ import Complexity from "@site/src/components/Complexity";
 import Related from "@site/src/components/Related";
 
 <p className="lede">
-  That split between the flavours is worth naming, because the whole cost model hangs off it. The{" "}
-  <strong>structural combinators</strong> — <code>++</code>, <code>:+</code>, <code>take</code>,{" "}
-  <code>reverse</code>, <code>slice</code> — change the <em>shape</em>: each builds a lazy node in O(1)
-  and copies nothing. The <strong>elementwise combinators</strong> — <code>map</code>,{" "}
-  <code>filter</code>, <code>fold</code>, anything that takes a lambda — run it over every element,{" "}
+  The whole cost model hangs off the split between the flavours. The{" "}
+  <strong>structural combinators</strong> (<code>++</code>, <code>:+</code>, <code>take</code>,{" "}
+  <code>reverse</code>, <code>slice</code>) change the <em>shape</em>: each builds a lazy node in O(1)
+  and copies nothing. The <strong>elementwise combinators</strong> (<code>map</code>,{" "}
+  <code>filter</code>, <code>fold</code>, anything that takes a lambda) run it over every element,{" "}
   <em>eagerly</em>, and hand back a flat, array-backed <code>FArray</code> (or a single value, for a
-  fold). The first set defers; the second computes.
+  fold).
 </p>
 
-That laziness is the trade. A bare array would be a hair quicker at a single indexed read — one
-type-check that `int[]` doesn't carry. In exchange it can't even compare or print itself:
+That laziness is the trade. A bare array would be a hair quicker at a single indexed read (one
+type-check that `int[]` doesn't carry), but it can't compare or print itself:
 `IArray(1, 2, 3).toString` is `[I@5a07e868` and `==` is identity. FArray wraps the array in an object,
-so it gives that hair back and gets value `equals`, `hashCode` and `toString` — and a collection you
+so it gives that hair back and gets value `equals`, `hashCode` and `toString`, plus a collection you
 can assemble any way you please, in constant time, paying for a flat array only when you ask for one.
 Here's the cost of each:
 
 <Complexity />
 
-The reason that table is almost all `O(1)` is that the structural nodes are **lazy**: a `Concat` or a
+The reason that table is almost all `O(1)` is that the structural nodes are lazy: a `Concat` or a
 `SliceNode` records an intention, it doesn't do the work. Nothing is computed until you read. So if
 you `++` twenty arrays together and then call `take(2)`, the traversal walks two elements into the
-tree and stops — the other nineteen concatenations never become anything at all. That's a lot of
-collections you simply don't build. You pay for what you read, not for what you wrote.
+tree and stops; the other nineteen concatenations never materialize.
 
-And what you do pay **amortizes**. Cons a million elements on one at a time and you've built a
-million-deep tree of O(1) nodes; the first elementwise combinator — a `map`, a `sum`, a `foldLeft` —
+And what you do pay amortizes. Cons a million elements on one at a time and you've built a
+million-deep tree of O(1) nodes; the first elementwise combinator (a `map`, a `sum`, a `foldLeft`)
 flattens the whole thing into one contiguous primitive array in a single pass, and every read after
-that is array-speed. The flat array is the preferred shape, and it reasserts itself the moment you
-compute.
+that is array-speed. The flat array is the preferred shape, and computing restores it.
 
 <BenchChart
   cls="SlicingIntBenchmark"
-  caption="Structural ops — slice, span, splitAt, grouped, sliding. Lazy nodes mean FArray produces these without copying; against collections that must materialize each piece, the gap runs from a couple× to, for grouped, thousands×. (Shown on Int, but structural ops touch no elements — the String numbers are identical, because there's nothing to box.)"
+  caption="Structural ops: slice, span, splitAt, grouped, sliding. Lazy nodes mean FArray produces these without copying; against collections that must materialize each piece, the gap runs from a couple× to, for grouped, thousands×. (Shown on Int, but structural ops touch no elements; the String numbers are identical, because there's nothing to box.)"
 />
 
-It even leads to a result absurd enough to get [a page of its own](../operations/list-parity.mdx): driven as a
+One consequence gets [a page of its own](../operations/list-parity.mdx): driven as a
 literal cons-list, FArray keeps pace with `List` at `List`'s own game.
 
 Two more ops belong to the O(1) family and rarely get counted: `updated(i, x)` is an `Updated`
-node — a view of the original with one slot overridden, no copy of the other n−1 elements — and
+node (a view of the original with one slot overridden, no copy of the other n−1 elements) and
 `padTo(n, x)` is a `Pad` node that answers reads past the end with the pad element. Both
 materialize only when a downstream op forces flat data. The set-like trio (`diff`, `intersect`,
-plus `transpose`/`permutations` for the combinatorics) are eager and measured in the full suite —
-ordinary wins, no tricks worth a section.
+plus `transpose`/`permutations` for the combinatorics) are eager and measured in the full suite:
+ordinary wins, no special mechanism.
 
-## Sorting — the one you'd bet against
+## Sorting
 
-One last pair, because it's where a raw array should win outright. FArray sorts directly on the
-materialized array — a run-detecting mergesort, no boxed indices, no `Ordering` ceremony:
+Sorting is where a raw array should win outright. FArray sorts directly on the
+materialized array, with a run-detecting mergesort, no boxed indices, and no `Ordering` ceremony:
 
 <BenchPair
   int="SortIntBenchmark"
   str="SortStrBenchmark"
-  caption="sortBy / sortWith / sorted, Int beside String. On Int the unboxed mergesort runs ~2–2.3× past IArray on sortBy/sortWith and buries the boxing collections (sorted is a dead heat with IArray — both bottom out in the same array sort). On String there's no unboxing to win, so sortWith and sorted tie IArray — but sortBy still runs ~4–5× past the whole field, because FArray sorts cached keys instead of re-deriving them per comparison."
+  caption="sortBy / sortWith / sorted, Int beside String. On Int the unboxed mergesort runs ~2–2.3× past IArray on sortBy/sortWith and buries the boxing collections (sorted is a dead heat with IArray; both bottom out in the same array sort). On String there's no unboxing to win, so sortWith and sorted tie IArray, but sortBy still runs ~4–5× past the whole field, because FArray sorts cached keys instead of re-deriving them per comparison."
 />
 
 <Related

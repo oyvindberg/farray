@@ -1,7 +1,7 @@
 ---
 title: The unboxed builder
 sidebar_label: the builder
-description: "FBuilder[A] — accumulate elements one at a time with zero boxing, because the standard-library Builder interface structurally can't. Beats even ArrayBuilder.ofInt."
+description: "FBuilder[A]: accumulate elements one at a time with zero boxing, because the standard-library Builder interface structurally can't. Beats even ArrayBuilder.ofInt."
 ---
 
 import Link from "@docusaurus/Link";
@@ -9,11 +9,11 @@ import BenchPair from "@site/src/components/BenchPair";
 import Related from "@site/src/components/Related";
 
 <p className="lede">
-  Sometimes you don't have the elements up front — you push them one at a time and want an{" "}
+  Sometimes you don't have the elements up front: you push them one at a time and want an{" "}
   <code>FArray</code> at the end. That's what a <em>builder</em> is for, and it's the one place the
   standard-library abstraction actively works against a primitive-first library: reusing{" "}
   <code>scala.collection.mutable.Builder</code> would box every primitive at the interface. So FArray
-  has its own — <code>FBuilder[A]</code> — and it turns out to beat even the specialized unboxed
+  has its own, <code>FBuilder[A]</code>, and it beats even the specialized unboxed
   <code>int[]</code> builder from the standard library.
 </p>
 
@@ -21,24 +21,24 @@ import Related from "@site/src/components/Related";
 
 `Builder[A, To]` has one append entry point: `def addOne(elem: A): this.type`. `A` is an ordinary
 erased type parameter, so at the bytecode level the descriptor is `addOne(Object)`. There is no
-`addOne(int)` — there can't be, the trait is generic. So when you write `b += anInt`, the compiler
-must box the `int` to an `Integer` **before the call**, because the callee only accepts a reference:
+`addOne(int)`; there can't be, the trait is generic. So when you write `b += anInt`, the compiler
+must box the `int` to an `Integer` before the call, because the callee only accepts a reference:
 
-```
+```text
 b += 42
   ⇓  Integer.valueOf(42)      // allocation, at the call boundary
-  ⇓  b.addOne(theInteger)     // box already made — the builder can't undo it
+  ⇓  b.addOne(theInteger)     // box already made, and the builder can't undo it
 ```
 
-Specialized builders like `ArrayBuilder.ofInt` store a real `int[]` internally — but they still
+Specialized builders like `ArrayBuilder.ofInt` store a real `int[]` internally, but they still
 inherit `addOne(Object)` from the trait, so held at the trait's static type (which is how any generic
 code holds them), every append still round-trips through a box and an unbox. The only escape is to
-hold the *concrete* `ArrayBuilder.ofInt` type so the overloaded `addOne(Int)` is picked statically —
-brittle, and impossible through a generic signature.
+hold the *concrete* `ArrayBuilder.ofInt` type so the overloaded `addOne(Int)` is picked statically,
+which is brittle, and impossible through a generic signature.
 
 ## The design: the same dispatch, for appends
 
-There's no new machinery here — it's exactly the inline, compile-time kind dispatch from [map](/operations/map), pointed at an
+There's no new machinery here: it's exactly the inline, compile-time kind dispatch from [map](/operations/map), pointed at an
 append instead of a transform. `FBuilder[A]`
 is an opaque type over a generated `FBuilderBase` whose concrete subclasses are the per-kind
 `${K}Group` growable buffers that already back `groupBy` and `collect`. Only the hot append is
@@ -49,11 +49,11 @@ inline def += (elem: A): FBuilder[A] = { builderAddImpl[A](b, elem); b }
 //                                        summonFrom[${K}Repr[A]] → IntGroup → store an int
 ```
 
-Every other method (`++=`, `result`) is a plain virtual call on the base — none of them
+Every other method (`++=`, `result`) is a plain virtual call on the base; none of them
 touch a primitive element type, so none can box. `result()` hands the internal buffer to a leaf under
-the house slack rules — no defensive copy — and, because appends only ever write past the end, that
-shared buffer is safe: call `result()` as often as you like and keep filling after; every snapshot
-stays valid (there's no `clear()`, the one op that could break it).
+the house slack rules, with no defensive copy, and because appends only ever write past the end, that
+shared buffer is safe: `result()` can be called repeatedly while appending continues, and every
+snapshot stays valid (there's no `clear()`, the one op that could break it).
 
 ## The API
 
@@ -65,69 +65,69 @@ b ++= FArray(3, 4, 5)      // bulk: leaves arraycopy'd, trees materialized once
 val fa = b.result()        // slack-wrap into a leaf, no defensive copy
 ```
 
-Plus `addOne`/`addAll` aliases, `length`/`knownSize`/`isEmpty`/`nonEmpty`, and — for stdlib interop —
+Plus `addOne`/`addAll` aliases, `length`/`knownSize`/`isEmpty`/`nonEmpty`, and, for stdlib interop,
 `b.asScala`, a real `mutable.Builder[A, FArray[A]]` for `Factory`/`to(...)`. That adapter is
-deliberately **second-class**: it's the boxing path, there so generic collection code *can* target
-FArray, not the path you reach for when you care about speed.
+second-class by design: it's the boxing path, there so generic collection code *can* target
+FArray, not a fast path.
 
 ## Beating the specialized int[] builder
 
-Every builder here grows from nothing — none is told the size up front, which is the whole reason you
+Every builder here grows from nothing: none is told the size up front, which is the whole reason you
 reach for a builder. Two things differ across the field, and both are real. **The append:** scala's
 `ArrayBuilder` held at its trait type boxes every `int` through `addOne(Object)`; zio's
 `ChunkBuilder.Int` held concretely is genuinely unboxed; FBuilder's inline `+=` is unboxed by
-construction. **The finish:** `result()` on the array builders *trim-copies* — `ArrayBuilder.ofInt`
+construction. **The finish:** `result()` on the array builders *trim-copies*: `ArrayBuilder.ofInt`
 allocates a right-sized array and copies whenever the buffer isn't exactly full (the normal case,
 since it doubles), and zio's builder delegates to it. They have no choice: a raw `int[]` can't carry
-slack, its length *is* its count. FBuilder's `result()` is an O(1) slack-wrap — a leaf stores a
+slack, its length *is* its count. FBuilder's `result()` is an O(1) slack-wrap: a leaf stores a
 logical length distinct from the array length, so no trim is needed. So part of the win over the
-array builders is a cheaper finish, not just a cheaper append — a property of FArray's representation,
-stated plainly. Every builder here finalizes to an immutable — `ArrayBuffer` via `toArray`, like the
-rest — so the comparison is honest end to end; the O(1)-slack-wrap-vs-O(n)-trim-copy gap is the whole
+array builders is a cheaper finish, not just a cheaper append, a property of FArray's representation.
+Every builder here finalizes to an immutable (`ArrayBuffer` via `toArray`, like the
+rest), so the comparison is honest end to end; the O(1)-slack-wrap-vs-O(n)-trim-copy gap is the whole
 story on refs, where nobody boxes.
 
 <BenchPair
   int="BuilderIntBenchmark"
   str="BuilderStrBenchmark"
-  caption="Accumulate N via += then finalize to an immutable, everyone unsized. FBuilder leads at every size on both kinds: Int 1.33–2.56× over the best rival (past zio's concrete UNBOXED ChunkBuilder), and String 1.23–2.18× — where nobody boxes, so the win is purely the O(1) slack-wrap result() against the O(n) trim/copy every array builder pays. (FArray.tabulate — known-N construction, not a builder — is the ceiling this approaches; off-chart because it isn't the same operation.)"
+  caption="Accumulate N via += then finalize to an immutable, everyone unsized. FBuilder leads at every size on both kinds: Int 1.33–2.56× over the best rival (past zio's concrete UNBOXED ChunkBuilder), and String 1.23–2.18×, where nobody boxes, so the win is purely the O(1) slack-wrap result() against the O(n) trim/copy every array builder pays. (FArray.tabulate, known-N construction rather than a builder, is the ceiling this approaches; off-chart because it isn't the same operation.)"
 />
 
 ## Pre-size when you know the count
 
-There is no `sizeHint` method — pass the count to the constructor instead:
+There is no `sizeHint` method; pass the count to the constructor instead:
 `FArray.newBuilder[A](n)` (or `FBuilder[A](n)`). The reason is one allocation, not two: a `sizeHint`
 called after construction would allocate the default 16-element array and immediately throw it away
 on the resize, whereas the ctor sizes the backing array once. When you don't know the count, the
 default doubling growth is the standard amortized-O(1) append.
 
-And here's the fair version of the sizeHint question — *everyone* pre-sized, each by its own idiomatic
+The fair version of the sizeHint question is *everyone* pre-sized, each by its own idiomatic
 means (FArray via the ctor, the rest via `sizeHint`):
 
 <BenchPair
   int="BuilderSizedIntBenchmark"
   str="BuilderSizedStrBenchmark"
-  caption="Everyone pre-sized (FArray via the ctor, the rest via sizeHint) AND finalizing to an immutable. FBuilder wins across the board — Int 1.55–1.65× over a sized ArrayBuilder at scale (unboxed append plus a one-allocation ctor where sizeHint-after-construct pays two), String 1.17–1.43× (a 1.00× tie at 1k). An earlier draft showed ArrayBuffer taking String here — that was a benchmark bug: it returned its mutable buffer without finalizing, doing less work than everyone else. Forced to toArray like the rest, it falls 1.5–2× behind."
+  caption="Everyone pre-sized (FArray via the ctor, the rest via sizeHint) AND finalizing to an immutable. FBuilder wins across the board: Int 1.55–1.65× over a sized ArrayBuilder at scale (unboxed append plus a one-allocation ctor where sizeHint-after-construct pays two), String 1.17–1.43× (a 1.00× tie at 1k). An earlier draft showed ArrayBuffer taking String here; that was a benchmark bug: it returned its mutable buffer without finalizing, doing less work than everyone else. Forced to toArray like the rest, it falls 1.5–2× behind."
 />
 
-Two builders can't meaningfully pre-size — `Vector.newBuilder` and `List.newBuilder` have `sizeHint`
-but it's a no-op for their structures — so they look the same as unsized; that's honest, not a
-handicap. One honest caveat lives *under* the win: on the fill loop alone (reference elements),
+Two builders can't meaningfully pre-size (`Vector.newBuilder` and `List.newBuilder` have `sizeHint`
+but it's a no-op for their structures), so they look the same as unsized; that's honest, not a
+handicap. One caveat lives under the win: on the fill loop alone (reference elements),
 against a raw hand-written `Object[]` fill as the ceiling, `ArrayBuffer` reaches 0.95× while FBuilder
-reaches 0.84×. Both do the minimal work — one array, store-and-increment, plus a per-element capacity
-check — so the gap isn't the cast or an allocation (both ruled out by measurement); HotSpot simply
+reaches 0.84×. Both do the minimal work (one array, store-and-increment, plus a per-element capacity
+check), so the gap isn't the cast or an allocation (both ruled out by measurement); HotSpot
 compiles stdlib's ubiquitous `addOne` almost to a bare loop, and our leaner `RefGroup.add` doesn't
 get the same field-hoisting. It's more than repaid by the O(1) `result()` (ArrayBuffer pays O(n) to
-finalize), so the end-to-end number is a win — stated so the chart isn't read as more than it is.
+finalize), so the end-to-end number is a win.
 
 And the safety property that makes the shared buffer sound: `result()` hands back the buffer with no
-copy, yet you can call it repeatedly and keep appending — appends only ever write past the current
-end, and a regrow reallocates a fresh array, so every snapshot stays valid. There is deliberately no
-`clear()`: it is the one operation that could clobber a shared snapshot, so it doesn't exist. Start
-over with a fresh `FArray.newBuilder`.
+copy, yet repeated `result()` calls and further appends coexist; appends only ever write past the
+current end, and a regrow reallocates a fresh array, so every snapshot stays valid. There is no
+`clear()`: it is the one operation that could clobber a shared snapshot. Starting over means a fresh
+`FArray.newBuilder`.
 
 <Related
   links={[
-    { to: "/operations/building", label: "Building FArrays", desc: "The known-size constructors — literals, tabulate, range." },
+    { to: "/operations/building", label: "Building FArrays", desc: "The known-size constructors: literals, tabulate, range." },
     { to: "/operations/getting-out", label: "Getting things out", desc: "The other direction: FArray back to array/Seq." },
     { to: "/", label: "The FArray story", desc: "Why unboxing lives in signatures, not the JIT's mood." },
   ]}

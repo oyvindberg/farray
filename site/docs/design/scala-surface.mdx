@@ -1,32 +1,32 @@
 ---
 title: The Scala on top
 sidebar_label: The Scala on top
-description: The opaque type, extension methods and inline — the thin typed sheet over the untyped Java core.
+description: "The opaque type, extension methods and inline: the thin typed sheet over the untyped Java core."
 ---
 
 import Snippet from "@site/src/components/Snippet";
 
 <p className="lede">
-  The Java core is fast but almost <strong>untyped</strong>: to it, every value is just an{" "}
-  <code>FBase</code> — a primitive array under a few structural wrappers, with no notion of whether it
-  holds <code>Int</code>s or <code>String</code>s. All the typing arrives one layer up, in a sheet of
+  The Java core is fast but almost untyped: to it, every value is just an <code>FBase</code>, a
+  primitive array under a few structural wrappers, with no notion of whether it holds{" "}
+  <code>Int</code>s or <code>String</code>s. All the typing arrives one layer up, in a sheet of
   Scala 3 so thin that most of it isn't there at runtime. Three features carry it: the opaque type,
   extension methods, and <code>inline</code>.
 </p>
 
-An **opaque type** gives `FArray[A]` its own identity at compile time while *being* a plain `FBase` at
-runtime — no wrapper object, no allocation, nothing to escape-analyze away. The whole API then hangs
-off it as **extension methods**, and they come in two flavours. The difference between them is the
-whole story of the next pages:
+An opaque type gives `FArray[A]` its own identity at compile time while *being* a plain `FBase` at
+runtime; there is no wrapper object to allocate or escape-analyze. The whole API then hangs off it as
+extension methods, and they come in two flavours. The next pages are organized around the difference
+between them:
 
 <Snippet name="surface" />
 
-The **structural** ones — `reverse`, `++` — just call the matching `FBase` method. Because an `FArray`
+The **structural** ones (`reverse`, `++`) just call the matching `FBase` method. Because an `FArray`
 already *is* its core, that's a direct call into the lazy O(1) node-builders from
-[the Java core](./java-core.mdx); nothing clever, nothing specialized.
+[the Java core](./java-core.mdx), with no specialization involved.
 
-The interesting ones are marked `inline`, and they take their lambda `inline` too —
+The **elementwise** ones are marked `inline`, and they take their lambda `inline` too:
 `inline def map[B](inline f: A => B)`. At every concrete call site the method body is spliced in, your
 lambda with it, and the whole thing forwards to a generated `…Impl`. That forward is where the
-unboxing gets decided — but hold that thought. First, the split those two flavours create, because the
-entire cost model hangs off it.
+unboxing gets decided. The split those two flavours create comes first, because the cost model rests
+on it.

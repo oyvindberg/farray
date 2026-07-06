@@ -4,7 +4,7 @@ title: FArray
 sidebar_label: Introduction
 description: >-
   How an immutable, Array-backed Scala sequence ended up beating List, Vector, fs2.Chunk and
-  zio.Chunk — told through benchmarks and the source that produced them.
+  zio.Chunk, told through benchmarks and the source that produced them.
 hide_title: true
 ---
 
@@ -17,7 +17,7 @@ import { FusionDiagram } from "@site/src/components/Diagrams";
 <header className="hero--farray">
   <h1 className="wordmark">FArray</h1>
   <p className="hero__lede">
-    An immutable, unboxed Scala 3 sequence with the whole <code>IndexedSeq</code> API. Faster than
+    An immutable, unboxed Scala 3 sequence with the whole collections API. Faster than
     List, Vector and the Chunks, usually by a lot.
   </p>
   <p className="hero__sub">
@@ -29,13 +29,14 @@ import { FusionDiagram } from "@site/src/components/Diagrams";
 ## Ten years of waiting for the JVM
 
 <p className="lede">
-  Scala collections are pleasant to write and box every primitive. The <code>while</code> loop that
-  avoids the boxing is not pleasant to write. I spent about a decade waiting for something in
-  between: specialization, miniboxing, Valhalla's <code>List&lt;int&gt;</code>. None of it shipped.
+  Scala collections read the way code should read, and the price is a heap allocation for every
+  <code>Int</code> that passes through them. The <code>while</code> loop that avoids the boxing is
+  miserable to write and worse to maintain. I spent about a decade waiting for something in
+  between: specialization, miniboxing, the Dotty linker, Valhalla's <code>List&lt;int&gt;</code>. None of it shipped.
   So the conclusion, every release, was the same: if it has to be fast, write it in Java.
 </p>
 
-In 2023 I wrote a prototype out of spite: the whole `IndexedSeq` API as `inline` `while` loops over
+In 2023 I wrote a prototype out of spite: the whole collections API as `inline` `while` loops over
 one flat `Array[AnyRef]`. It beat the collection library, but it boxed, and unboxing turned out not
 to be something you bolt on. It needed per-kind storage, a core the inliner can't defeat, and a way
 to keep a user's lambda unboxed across the library boundary. That was years of evenings I didn't
@@ -43,13 +44,13 @@ have, and the repo sat untouched for three years.
 
 ## And then, all at once
 
-I picked it up again in June 2026, with Claude doing the heavy lifting. Twelve days and about three
+I picked it up again in June 2026, with Claude doing the heavy lifting. Seventeen days and nearly four
 hundred commits later, all of it existed:
 
 <ul className="points">
   <li>
     <strong>A working FArray.</strong> An <code>FArray[Int]</code> that <em>is</em> an{" "}
-    <code>int[]</code>, carrying the whole <code>IndexedSeq</code> API with no{" "}
+    <code>int[]</code>, carrying the whole collections API with no{" "}
     <code>java.lang.Integer</code> anywhere.
   </li>
   <li>
@@ -90,7 +91,7 @@ It's a macro. At compile time the whole chain becomes one `while` loop, with no 
 collections, no `Function1`, and no boxing. The lowering is checked into the repo as a golden test,
 so you can read exactly what those fourteen stages compiled to:
 
-<GeneratedCode name="fuse-generated" summary="The loop .fuse emitted — 14 stages, one pass" />
+<GeneratedCode name="fuse-generated" summary="The loop .fuse emitted: 14 stages, one pass" />
 
 How the macro works gets [its own section](./fusion/index.mdx).
 

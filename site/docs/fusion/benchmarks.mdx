@@ -1,7 +1,7 @@
 ---
 title: Fusion benchmarks
 sidebar_label: The receipts
-description: "The fused pipeline measured warm, cold, streaming, and on the chain that used to collapse — every bar hoverable, every @Benchmark source one click away."
+description: "The fused pipeline measured warm, cold, streaming, and on the chain that used to collapse, with every bar hoverable and every @Benchmark source one click away."
 hide_table_of_contents: true
 ---
 
@@ -14,14 +14,14 @@ import Related from "@site/src/components/Related";
 <p className="page__eyebrow">the receipts</p>
 
 <p className="lede">
-  Everything this section claimed, measured. Every bar is a JMH sweep you can hover; every card
+  Everything this section claimed is measured here. Every bar is a JMH sweep you can hover; every card
   reveals the exact <code>@Benchmark</code> methods behind it, so you can check that each rival runs
   its best idiom rather than a strawman.
 </p>
 
 ## The headline: fourteen stages, warm
 
-The pipeline from the introduction — `flatMap`, `filter`, `map`, `zip`, `zipWithIndex`, `foldLeft`,
+The pipeline from the introduction: `flatMap`, `filter`, `map`, `zip`, `zipWithIndex`, `foldLeft`,
 twice over. Every collection runs the identical code; the FArray entry differs by the one word:
 
 <SideBySide
@@ -30,10 +30,10 @@ twice over. Every collection runs the identical code; the FArray entry differs b
   title="14-stage pipeline"
   caption={
     <>
-      Swept from empty to 100k elements. At 100k: ~36× the quickest rival, ~83× List — and ~15× the
-      same pipeline run eagerly on FArray itself, which is the honest number: the gap between
-      compiled-once ops and a compiled pipeline. Hover any column for exact ratios; the fused
-      variant's allocation profile measures at inputs-only (4·N + 40 bytes per invocation — the
+      Swept from empty to 100k elements. At 100k: ~36× the quickest rival, ~83× List, and ~15× the
+      same pipeline run eagerly on FArray itself (the gap between compiled-once ops and a compiled
+      pipeline). Hover any column for exact ratios; the fused
+      variant's allocation profile measures at inputs-only (4·N + 40 bytes per invocation, the
       benchmark's own zip source), with the pipeline contributing zero.
     </>
   }
@@ -46,7 +46,7 @@ ahead:
 
 <BenchChart
   cls="ColdPipelineIntBenchmark"
-  caption="The same 14-stage pipeline measured COLD — SingleShotTime, zero warmup, one uncompiled invocation at 100k elements (invocations/sec). Fused FArray is ~3.8× past List and IArray, ~2.7× past the quickest rival, before the JIT compiles anything. Warmup sets the size of the lead, not its existence."
+  caption="The same 14-stage pipeline measured COLD: SingleShotTime, zero warmup, one uncompiled invocation at 100k elements (invocations/sec). Fused FArray is ~3.8× past List and IArray, ~2.7× past the quickest rival, before the JIT compiles anything. Warmup only changes the size of the lead."
 />
 
 ## Streaming: constant memory without the streaming tax
@@ -61,32 +61,32 @@ processing data you don't want in memory:
 
 ## The chain that used to collapse
 
-The reason "compile the pipeline" beats "hope the JIT saves you", preserved as a benchmark: this
+The case for compiling the pipeline instead of relying on the JIT, preserved as a benchmark: this
 exact shape once ran at 0.055× of IArray when a trailing structural call silently disabled escape
-analysis on a spliced loop — <Link to="/operations/flatmap">the full story</Link>. Fused, the
-question doesn't exist:
+analysis on a spliced loop (<Link to="/operations/flatmap">the full story</Link>). Fused, that
+failure mode cannot occur:
 
 <BenchChart
   cls="FlatMapFilterTakeStrBenchmark"
-  caption="flatMap → filter → take on String elements. The trailing take is O(1) for FArray (a lazy SliceNode), and the fused pipeline leads at every size — with no dependence on the caller's method size or call-site history."
+  caption="flatMap → filter → take on String elements. The trailing take is O(1) for FArray (a lazy SliceNode), and the fused pipeline leads at every size, with no dependence on the caller's method size or call-site history."
 />
 
 ## JSON projection queries
 
 The byte-source numbers live with their scanners and rivals on{" "}
-<Link to="/fusion/json">the JSON integration page</Link> — headline: 1.6× past jsoniter-scala's
+<Link to="/fusion/json">the JSON integration page</Link>. The headline: 1.6× past jsoniter-scala's
 hand-written reader loop at ~1 B/op, 4–9× past the AST parsers, and 2.5× on selective queries where
 records are abandoned mid-scan.
 
 ---
 
 Method: the checked-in `docs/bench-results.json`, produced by `scripts/bench-run.sh` (JMH, GraalVM
-CE 25, Apple Silicon; farray-only patch mode re-measures our methods against cached rival runs — see
+CE 25, Apple Silicon; farray-only patch mode re-measures our methods against cached rival runs; see
 the repo's benchmarking notes). Cold numbers are SingleShotTime; allocation numbers are `-prof gc`.
 
 <Related
   links={[
     { to: "/benchmarks/farray", label: "The full FArray suite", desc: "Every op at every size, wins and losses alike." },
-    { to: "/fusion", label: "Back to first principles", desc: "Why these numbers are structural, not situational." },
+    { to: "/fusion", label: "Back to first principles", desc: "Why these numbers don't depend on the call site." },
   ]}
 />
