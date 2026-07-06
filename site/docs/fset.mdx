@@ -53,6 +53,13 @@ export function FinitenessTable() {
   every bar is a JMH measurement you can hover, every snippet is extracted from source that compiles.
 </p>
 
+:::caution Earlier than FArray
+FSet is a step behind FArray in maturity. FArray is itself a milestone-stage experiment; FSet is
+younger still — the design is here and the benchmarks are real, but it has had less testing, fewer
+users, and more edges left to find. Read the numbers as a direction, and expect rougher corners than
+FArray's.
+:::
+
 ## The trie tax
 
 Persistent sets (Scala's `immutable.Set`, Clojure's, CHAMP, all of them) are built around one trade:
