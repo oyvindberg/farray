@@ -7,6 +7,7 @@ abstract class IntInputs extends CommonParams {
   @Param(Array("0", "1", "10", "100", "1000", "10000", "100000"))
   var size: Int = 1000
 
+  var arrInput: Array[Int] = _ // raw array for the java.util.stream competitor
   var listInput: List[Int] = _
   var vectorInput: Vector[Int] = _
   var iarrayInput: IArray[Int] = _
@@ -17,6 +18,7 @@ abstract class IntInputs extends CommonParams {
   @Setup
   def setup(): Unit = {
     val arr = Array.tabulate(size)(i => i)
+    arrInput = arr
     listInput = arr.toList
     vectorInput = arr.toVector
     iarrayInput = IArray.tabulate(size)(i => i)
