@@ -40,7 +40,10 @@ bleep compile benchmarks-runner >/tmp/bench-compile.log 2>&1 || { echo "compile 
 
 # bleep's on-disk bloop configs are stale, so grab the real java+classpath from a live run.
 echo "▶ Capturing runtime java + classpath…"
-bleep run benchmarks-runner -- "MapStrBenchmark.farray" -p size=10 -wi 5 -i 120 -f 0 -r 1s >/tmp/cp-cap.log 2>&1 &
+# </dev/null: a BACKGROUNDED bleep run from an interactive terminal hard-fails trying to attach its
+# input reader to the TTY ("IO error: Failed to initialize input reader") — killed a full-run at the
+# capture step on 2026-07-06. Non-interactive contexts were unaffected (stdin already null there).
+bleep run benchmarks-runner -- "MapStrBenchmark.farray" -p size=10 -wi 5 -i 120 -f 0 -r 1s </dev/null >/tmp/cp-cap.log 2>&1 &
 CAPPID=$!
 JAVA=""; CP=""
 for _ in $(seq 1 90); do
