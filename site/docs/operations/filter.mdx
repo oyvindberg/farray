@@ -8,24 +8,44 @@ import Snippet from "@site/src/components/Snippet";
 import BenchChart from "@site/src/components/BenchChart";
 
 <p className="lede">
-  <code>filter</code> is the simplest loop in the library (read, test, maybe keep), which makes it the
-  clearest place to see three small decisions compound. Here is the whole generated Int leaf, all
-  three visible at once:
+  <code>filter</code> reads an element, asks a question, and maybe keeps it. That makes it the
+  simplest loop in the library and also the most decision-rich: it is the one operation whose
+  output size is unknown until the loop finishes, so someone has to decide how big the output
+  buffer is, what to do when everything survives, and what the keep-or-skip step costs on data the
+  branch predictor can't learn. A lone <code>filter</code> over a flat array ties the raw-array
+  baseline here like everywhere else; this page is about the three decisions that make the tie
+  hold, and the one place FArray leaves the baseline behind entirely.
 </p>
+
+The three decisions, before the code:
+
+<ul className="points">
+  <li>
+    <strong>Keep-everything costs nothing.</strong> If every element survives, the result is the
+    input, the same object, no allocation. Validation passes and defensive cleanups hit this
+    constantly.
+  </li>
+  <li>
+    <strong>The buffer is sized once, up front.</strong> Full input size, handed over with its
+    logical length and no trim copy, unless the filter kept under a quarter of the input, in which
+    case it trims rather than pin four hundred kilobytes behind a two-element result.
+  </li>
+  <li>
+    <strong>For primitives, there is no keep-branch at all.</strong> Every element is stored
+    unconditionally and the predicate only decides whether the write cursor advances; a rejected
+    element is overwritten by the next one.
+  </li>
+</ul>
+
+All three are visible in the generated Int leaf:
 
 <Snippet name="filter-leaf-int" hideFull />
 
-First, the exit: `if (o == n) xs`. A filter that kept everything returns *the same object*: reference
-identity, zero allocation. Filters that keep everything are common (validation passes,
-defensive cleanups). Second, the output buffer is allocated once at full size
-and handed over with its logical length, with no trim copy, unless the filter kept under a quarter of the
-input, in which case it trims rather than pin four hundred kilobytes behind a two-element result.
-
-Third, the write. There is no
+The first two decisions read directly out of the code: the `if (o == n) xs` exit and the
+quarter-full trim. The third deserves a closer look, because it is extra work on paper. There is no
 `if (p(e)) { out(o) = e; o += 1 }` (Scala indexes arrays with parentheses; read it as
-`out[o] = e`). The element is stored *unconditionally*, and the predicate only
-decides whether the cursor moves; a rejected element is simply overwritten by the next one. That
-is extra work on paper. What it removes is the branch.
+`out[o] = e`). The store happens every iteration; only the cursor is conditional. What that buys is
+the removal of the branch.
 
 A predictable predicate (keep everything over some threshold in sorted data, keep the evens of
 `0, 1, 2, 3…`) costs a branchy loop nothing; the predictor learns the pattern and the branch is free.
