@@ -7,7 +7,6 @@ hide_table_of_contents: true
 
 import Link from "@docusaurus/Link";
 import BenchIndex from "@site/src/components/BenchIndex";
-import Scorecard from "@site/src/components/Scorecard";
 
 <p className="page__eyebrow">the complete scorecard</p>
 
@@ -19,12 +18,10 @@ import Scorecard from "@site/src/components/Scorecard";
   <code>@Benchmark</code> source it came from.
 </p>
 
-<Scorecard />
-
 Not every op is the fastest of its kind; the other pages cover the ties and the one or two places a
 bare array still edges it. Assembled (unboxed elementwise ops at raw array speed, structural ops in
 O(1), fusion when you ask for it, and a real immutable collection with value semantics on top) it
 adds up to the fastest of the field. [FSet](../fset.mdx), the immutable unboxed set built on the
-same core, has [a scorecard of its own](./fset.mdx). The full record, chart by chart:
+same core, has [a scorecard of its own](./fset.mdx).
 
 <BenchIndex suite="farray" />
