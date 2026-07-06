@@ -119,12 +119,28 @@ The queries on this page run against a 10 000-record, ~3.2 MB NDJSON buffer of t
 Throughput is ops/s over the whole buffer (÷10 000 ≈ per record); every rival runs that library's
 best idiom for the same query.
 
-## The integration behind it
+## How `Json.ndjson[Event](src).stream` is wired
 
-The plug-in itself (shape, lowering, source, decoder, and the contract at each seam) is dissected
-on <Link to="/fusion/integrating">Integrating with fusion</Link>; it is one readable file. What
-this page adds is the proof it works: real queries, the scanners the macro emitted for them, and
-the rivals.
+The one-liner looks like magic, so here is each token doing its job:
+
+- **`Json.ndjson[Event](bytes)`** builds an `NdjsonSource[Event]`: a small object holding the byte
+  array (or, for the file/stream variants, a `FramedByteSource` that reads blocks and frames
+  newline records in constant memory). Nothing is parsed; `Event` is just remembered in the type.
+- **`.stream`** is the shape stamp: it wraps the source as `Fuse[Event, Ndjson]`. From this point
+  the pipeline is typed by the format. That type is what makes everything downstream work: the
+  `given` in `Ndjson`'s companion rides the implicit scope of every `Fuse[_, Ndjson]`, so `.filter`,
+  `.map`, `.sum`, `.find` appear on the value with no imports, and `.run` doesn't exist on it at
+  all (materialization isn't in this shape's mixin).
+- **The terminal call** (`.sum`, `.toList`, …) is where all the deferred work lands, at compile
+  time: it reaches the hook, which hands the engine the pipeline as written, the terminal, and the
+  NDJSON decoder. The engine asks the decoder how to read `Event`'s fields, computes which fields
+  the pipeline actually uses, and emits the byte-scanning loop you see in the demos below, in place
+  of the call.
+
+So the case class is the schema, the shape type is the router, and the loop is generated per query.
+The four pieces behind this (shape, lowering, source, decoder) and the contract at each seam are
+dissected on <Link to="/fusion/integrating">Integrating with fusion</Link>; this page is the proof
+they work: real queries, the scanners the macro emitted for them, and the rivals.
 
 Three entry points, one per place your bytes live; the file and stream variants run in constant
 memory (one block + the largest record), with the source closed on every exit path:
