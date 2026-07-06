@@ -119,28 +119,51 @@ The queries on this page run against a 10 000-record, ~3.2 MB NDJSON buffer of t
 Throughput is ops/s over the whole buffer (÷10 000 ≈ per record); every rival runs that library's
 best idiom for the same query.
 
-## How `Json.ndjson[Event](src).stream` is wired
+## What `Json.ndjson[Event](src).stream` tells the compiler
 
-The one-liner looks like magic, so here is each token doing its job:
+The one-liner is doing three jobs at once, and naming them is the key to the whole page. The
+expression has type `Fuse[Event, Ndjson]`, and it delivers three different kinds of information to
+three different consumers:
 
-- **`Json.ndjson[Event](bytes)`** builds an `NdjsonSource[Event]`: a small object holding the byte
-  array (or, for the file/stream variants, a `FramedByteSource` that reads blocks and frames
-  newline records in constant memory). Nothing is parsed; `Event` is just remembered in the type.
-- **`.stream`** is the shape stamp: it wraps the source as `Fuse[Event, Ndjson]`. From this point
-  the pipeline is typed by the format. That type is what makes everything downstream work: the
-  `given` in `Ndjson`'s companion rides the implicit scope of every `Fuse[_, Ndjson]`, so `.filter`,
-  `.map`, `.sum`, `.find` appear on the value with no imports, and `.run` doesn't exist on it at
-  all (materialization isn't in this shape's mixin).
-- **The terminal call** (`.sum`, `.toList`, …) is where all the deferred work lands, at compile
-  time: it reaches the hook, which hands the engine the pipeline as written, the terminal, and the
-  NDJSON decoder. The engine asks the decoder how to read `Event`'s fields, computes which fields
-  the pipeline actually uses, and emits the byte-scanning loop you see in the demos below, in place
-  of the call.
+**1. A runtime value: the bytes.** `Json.ndjson[Event](src)` constructs `new NdjsonSource[Event](src, 0, src.length)`:
+a tiny object holding your byte array and implementing the chunk/record contract (for in-memory
+bytes, the trivial version: one chunk, records framed by newline scans). Nothing is parsed and no
+schema is stored; this object is data, and you can see it again, verbatim, spliced into the top of
+the emitted loop in every golden lowering on this page.
 
-So the case class is the schema, the shape type is the router, and the loop is generated per query.
-The four pieces behind this (shape, lowering, source, decoder) and the contract at each seam are
-dissected on <Link to="/fusion/integrating">Integrating with fusion</Link>; this page is the proof
-they work: real queries, the scanners the macro emitted for them, and the rivals.
+**2. A compile-time type: `Event`, the schema.** `NdjsonSource[T]` never stores `T`; there is no
+`ClassTag`, no field for it, nothing at runtime. `Event` exists purely in the type, riding along
+until a terminal macro runs, and then it becomes the schema: the decoder reflects `Event`'s
+case-class fields at compile time. The field *names* become the interned key bytes the scanner
+compares against (`JsonScanner.internKey("amount")` in the lowering is `Event`'s field name, made
+bytes); the field *types* choose the readers (`Double` picks `readDoubleAt`). Change a field name
+in the case class and the generated scanner changes with it. The case class is the schema in the
+most literal sense available on the JVM.
+
+**3. A compile-time type: `Ndjson`, the router.** `.stream` wraps the source as
+`Fuse[Event, Ndjson]`, and `Ndjson` is a phantom: no values of it exist. Its only job is implicit
+routing: the `given` in `Ndjson`'s companion puts `JsonLowering`'s terminal methods on every
+`Fuse[_, Ndjson]`, which is why `.sum` and `.find` exist on this value with no imports, why `.run`
+doesn't exist on it at all, and why calling any terminal lands in the hook that names `JsonDecode`.
+The shape type answers "which format module handles this pipeline", at compile time, by scope.
+
+One more piece makes it click: `ndjson` and `stream` are `inline`, so when the terminal macro
+receives the pipeline, the receiver *tree* still contains the `new NdjsonSource[Event](...)`
+construction. The engine looks at that tree's type and switches drivers on it:
+
+```scala
+// FuseMacro, the actual detection:
+if srcTerm.tpe.widen.dealias <:< TypeRepr.of[ByteRecordSource]
+then Some('{ $selfBase.asInstanceOf[ByteRecordSource] })   // → the chunk/record driver + decoder
+else None                                                   // → the array/chunk drivers
+```
+
+So "how can JSON work with fusion" has a short answer: fusion never needed a collection. Stages
+are markers that never run; the engine needs exactly two things from any source — how to iterate
+it (the driver, chosen by the source's type in the tree) and how to read one element's columns
+(the decoder, chosen by the shape type). A byte range plus a schema type answers both, at compile
+time. The four pieces behind this and the contract at each seam are dissected on
+<Link to="/fusion/integrating">Integrating with fusion</Link>; this page is the proof they work.
 
 Three entry points, one per place your bytes live; the file and stream variants run in constant
 memory (one block + the largest record), with the source closed on every exit path:
