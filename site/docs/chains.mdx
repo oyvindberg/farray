@@ -16,12 +16,11 @@ import Related from "@site/src/components/Related";
 export const fused = ["javastream", "farrayFused"];
 
 <p className="lede">
-  The introduction promised the type swap beats the whole field with no fusion. This is where that is
-  made good: everything here is eager <code>FArray</code>, not a <code>.fuse</code> in sight, and the
-  field is already behind. A single operation mostly just ties a raw array — the real result is what
-  happens when you chain, because FArray's advantages multiply per stage while its costs don't. Each
-  pipeline runs twice, Int on the left and String on the right, so you can separate the wins that come
-  from unboxing from the ones that come from structure.
+  The introduction led with fusion, FArray's headline trick, which has{" "}
+  <Link to="/fusion">its own section</Link>. This page is the plain library: no <code>.fuse</code>
+  anywhere, just eager <code>FArray</code>, and it already beats the field. Single ops tie a raw
+  array; chaining is where it pulls ahead, so that is what these benchmarks show, Int on the left and
+  String on the right.
 </p>
 
 The rivals throughout: Scala's `List` (an immutable linked list, not `java.util.List`), `Vector`
@@ -58,9 +57,7 @@ Three effects compound down a chain:
 
 ## The classic: map → filter → fold
 
-Transform, select, aggregate: the shape of half the collection code ever written. In
-java.util.stream terms this is map → filter → reduce, with `foldLeft` being the reduce with a
-seed. One boxed
+Transform, select, aggregate: the shape of half the collection code ever written. One boxed
 crossing per stage for the field; `int[]` end to end for FArray:
 
 <BenchPair
@@ -70,16 +67,16 @@ crossing per stage for the field; `int[]` end to end for FArray:
   caption="map → filter → foldLeft, Int beside String. The boxing collections pay per stage (5.6× over Vector, 12× over List at 100k); IArray and zio.Chunk pay only the intermediate allocations. int[] end to end for FArray, and eager FArray beats eager IArray at every size — its filter is branchless and vectorizes. The lazy single-pass rivals (java.util.stream, and FArray's own .fuse, which both fuse the three stages into one loop with no intermediates) are compared on the fusion benchmarks page; here the field is eager."
 />
 
-## Structure in the middle: take → drop → fold
+## Structure in the middle: take → drop → map → fold
 
-Slice stages are FArray's freebie: a lazy window over the source, no copy. The fold then reads
-straight through the window:
+Slice stages are FArray's freebie: a lazy window over the source, no copy. A `map` then transforms
+through the window, and the fold reads straight out of the result:
 
 <BenchPair
-  int="TakeDropFoldIntBenchmark"
-  str="TakeDropFoldStrBenchmark"
+  int="TakeDropMapFoldIntBenchmark"
+  str="TakeDropMapFoldStrBenchmark"
   ignore={fused}
-  caption="take(n-1) → drop(1) → foldLeft. FArray's take/drop are O(1) SliceNodes; the fold traverses the window without either slice ever existing. The copiers pay for it: 2× over IArray (two full array copies), 7–15× over Vector, 34× over List at 10k+. One tie: zio.Chunk also slices lazily and folds within ~6–9% of us; the win here is over eager copying, not over everyone."
+  caption="take(n-1) → drop(1) → map → foldLeft. FArray's take/drop are O(1) SliceNodes: the map runs over the window without either slice ever being copied, then the fold consumes its result. The array-backed rivals copy at each slice before they even reach the map, and the boxing collections box the map stage on top."
 />
 
 ## Structure at the end: filter → map → reverse

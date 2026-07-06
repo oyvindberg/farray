@@ -6,7 +6,7 @@ import { useStore } from "../data/store";
 // single-op classes deliberately excluded — those are the "floor" story, not the chain story).
 const CHAINED_PREFIXES = [
   "LongMixedPipeline", "StructuralShowcase", "MapFilterFold", "FilterMapReverse", "DropConcatFold",
-  "TakeDropFold", "DropTakeMap", "MapFlatMapFold", "ConcatDropTake", "PrependAppendMap",
+  "TakeDropMapFold", "DropTakeMap", "MapFlatMapFold", "ConcatDropTake", "PrependAppendMap",
   "FlatMapChain", "AppendChain", "PrependChain", "UpdateChain", "MixedTree", "DeepConcat",
   "FlatMapFilterTake", "ReverseMap", "AppendConcatReverse",
 ];
