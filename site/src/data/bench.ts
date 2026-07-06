@@ -41,6 +41,10 @@ const SUBV = new Set([
   // mutable builders and generators, not immutable-collection competitors — excluded from the
   // leaderboard summary (they still appear as bars on their individual benchmark charts).
   "arraybuffer", "arraybuilder", "scalaRange",
+  // java.util.stream is a lazy FUSED pipeline, not an eager immutable collection — the honest
+  // comparison is against .fuse, so it stays out of the eager-collection leaderboard and is shown
+  // only on the fusion-context charts (elsewhere hidden per-chart via the `ignore` prop).
+  "javastream",
 ]);
 // the actual contending structures — the leaderboard ranks only these (a benchmark method like
 // MapMega's `committed` is a scenario, not a collection, and must not show up as a "structure").
@@ -161,6 +165,25 @@ export function verdictAt(series: Series, x: number): { vd: Verdict; r: number |
   if (!o.length || !comp.length) return { vd: "", r: null };
   const r = Math.max(...o) / Math.max(...comp);
   return { vd: r >= 1.05 ? "w" : r >= 0.95 ? "t" : "l", r };
+}
+
+/** A view of a chart with some competitors dropped — for reusing one benchmark in different
+  * contexts (e.g. showing java.stream only where a fused comparison is on the page, hiding it on
+  * the eager charts). W/T/L and every per-cell ratio are RECOMPUTED against the remaining rivals,
+  * so a hidden competitor that happened to be fastest doesn't leave stale verdicts behind. */
+export function filterChart(chart: Chart, ignore?: string[]): Chart {
+  if (!ignore || !ignore.length) return chart;
+  const drop = new Set(ignore);
+  if (!chart.impls.some((v) => drop.has(v))) return chart;
+  const series: Series = {};
+  for (const v of Object.keys(chart.series)) if (!drop.has(v)) series[v] = chart.series[v];
+  let w = 0, t = 0, l = 0;
+  for (const x of chart.xs) {
+    const v = verdictAt(series, x).vd;
+    if (v === "w") w++; else if (v === "t") t++; else if (v === "l") l++;
+  }
+  const agg: Chart["agg"] = w + t + l === 0 ? "mix" : w > l ? "win" : l > w ? "loss" : "mix";
+  return { ...chart, series, impls: chart.impls.filter((v) => !drop.has(v)), w, t, l, agg };
 }
 
 // ---- the ratio color scale: one color language for the whole site ----

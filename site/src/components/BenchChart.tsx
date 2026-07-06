@@ -3,7 +3,7 @@ import { useStore } from "../data/store";
 import { useColorMode } from "@docusaurus/theme-common";
 import BenchSource from "./BenchSource";
 import {
-  ratioBand, ratioEdge, kindOf, lc, nf, nfAxis, ours, verdictAt, type Chart,
+  ratioBand, ratioEdge, kindOf, lc, nf, nfAxis, ours, verdictAt, filterChart, type Chart,
 } from "../data/bench";
 
 // geometry — ported from bench_report.py
@@ -159,14 +159,17 @@ interface Props {
   bare?: boolean;
   /** which benchmark suite to look the class up in (default: the FArray suite) */
   suite?: "farray" | "fset";
+  /** competitors to drop from THIS chart (e.g. ["javastream"]) — W/T/L and ratios recompute
+    * against the rest, so the same benchmark reads correctly in different contexts. */
+  ignore?: string[];
 }
 
-export default function BenchChart({ cls, op, caption, title, bare, suite = "farray" }: Props) {
+export default function BenchChart({ cls, op, caption, title, bare, suite = "farray", ignore }: Props) {
   const { charts: faCharts, setCharts, ready } = useStore();
   const charts = suite === "fset" ? setCharts : faCharts;
   const matches = useMemo(
-    () => charts.filter((c) => c.cls === cls && (op == null || c.op === op)),
-    [charts, cls, op],
+    () => charts.filter((c) => c.cls === cls && (op == null || c.op === op)).map((c) => filterChart(c, ignore)),
+    [charts, cls, op, ignore?.join(",")],
   );
   if (!ready) return <div className="bench-grid bench-grid--loading">measuring…</div>;
   if (!matches.length) return <div className="snippet snippet--error">no benchmark matched <code>{cls}{op ? ` · ${op}` : ""}</code></div>;

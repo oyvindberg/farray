@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { useStore } from "../data/store";
 import { Card } from "./BenchChart";
+import { filterChart } from "../data/bench";
 
 interface Props {
   /** the Int benchmark class, e.g. "MapIntBenchmark" */
@@ -10,16 +11,19 @@ interface Props {
   caption?: ReactNode;
   /** which benchmark suite to look the classes up in (default: the FArray suite) */
   suite?: "farray" | "fset";
+  /** competitors to drop from both charts (e.g. ["javastream"]) — W/T/L and ratios recompute
+    * against the rest, so one benchmark reads correctly across different pages. */
+  ignore?: string[];
 }
 
 // Int (left) next to its String/reference equivalent (right), matched op-by-op, so the
 // primitive-vs-reference picture sits side by side and stays honest.
-export default function BenchPair({ int: intCls, str: strCls, caption, suite = "farray" }: Props) {
+export default function BenchPair({ int: intCls, str: strCls, caption, suite = "farray", ignore }: Props) {
   const { charts: faCharts, setCharts, ready } = useStore();
   const charts = suite === "fset" ? setCharts : faCharts;
   if (!ready) return <div className="bench-grid bench-grid--loading">measuring…</div>;
 
-  const pick = (cls: string) => charts.filter((c) => c.cls === cls);
+  const pick = (cls: string) => charts.filter((c) => c.cls === cls).map((c) => filterChart(c, ignore));
   const ic = pick(intCls);
   const sc = pick(strCls);
   if (!ic.length && !sc.length) {

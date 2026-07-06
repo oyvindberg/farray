@@ -29,7 +29,8 @@ result:
 <BenchPair
   int="FoldLeftIntBenchmark"
   str="FoldLeftStrBenchmark"
-  caption="A lone foldLeft, Int beside String. On Int, FArray, IArray and IntStream all land within a few percent at 100k: a single fold is the case every JIT specializes, Stream included (at 1k Stream trails ~4×, per-call setup it amortizes away at scale). On String the collection field sits within ~±20% and the small/mid cells jitter (fast in-loop ops are noise-sensitive); Stream trails 1.3–1.6×. If folds ended here, no library would have anything to sell."
+  ignore={["javastream"]}
+  caption="A lone foldLeft, Int beside String. On Int, FArray and IArray land within a few percent at 100k: a single fold is the case every JIT specializes. On String the collection field sits within ~±20% and the small/mid cells jitter (fast in-loop ops are noise-sensitive). If folds ended here, no library would have anything to sell."
 />
 
 The tie does not hold once the fold sits in a real method.

@@ -70,6 +70,7 @@ straight through the window:
 <BenchPair
   int="TakeDropFoldIntBenchmark"
   str="TakeDropFoldStrBenchmark"
+  ignore={["javastream"]}
   caption="take(n-1) → drop(1) → foldLeft. FArray's take/drop are O(1) SliceNodes; the fold traverses the window without either slice ever existing. The copiers pay for it: 2× over IArray (two full array copies), 7–15× over Vector, 34× over List at 10k+. One tie: zio.Chunk also slices lazily and folds within ~6–9% of us; the win here is over eager copying, not over everyone."
 />
 
@@ -81,6 +82,7 @@ everyone else allocates a third collection just to flip the second one:
 <BenchPair
   int="FilterMapReverseIntBenchmark"
   str="FilterMapReverseStrBenchmark"
+  ignore={["javastream"]}
   caption="filter → map → reverse. The first two stages are the usual per-element story; the reverse is where FArray stops doing work: an O(1) ReverseNode versus a full reversed copy. (fs2.Chunk has no reverse and sits out.)"
 />
 
@@ -92,6 +94,7 @@ flat leaf, so the following stage reads a tight array rather than a fragment cha
 <BenchPair
   int="FlatMapChainIntBenchmark"
   str="FlatMapChainStrBenchmark"
+  ignore={["javastream"]}
   caption="flatMap → flatMap → map → foldLeft with small inners. Every stage's output is a flat leaf, so the compounding is linear for FArray; the boxing collections pay both the per-element tax and the intermediate allocation, twice over."
 />
 
@@ -103,6 +106,7 @@ method, the profile any nontrivial method builds up:
 <BenchPair
   int="MapMegaIntBenchmark"
   str="MapMegaStrBenchmark"
+  ignore={["javastream"]}
   caption="Eight distinct lambdas through map in one method. IArray's one shared Array.map site sees eight Function1 (Scala's lambda interface) classes, goes megamorphic, and re-boxes on Int: at 10k its boxed intermediates are still cache-resident and it even leads (our one 0.85× cell), but at 100k the re-boxing becomes memory traffic and it falls 4.2× behind (List 12×, Vector 7×). FArray has no shared site to poison. On String there's no re-boxing to pay and the field stays close: the mechanism is megamorphic boxing."
 />
 

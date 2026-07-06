@@ -117,6 +117,7 @@ eight maps are eight tight `int[]` loops, however many of them you write.
 <BenchPair
   int="MapMegaIntBenchmark"
   str="MapMegaStrBenchmark"
+  ignore={["javastream"]}
   caption="eight distinct lambdas through map in one method, re-measured fully serialized. On Int (left): the generic collections pay at every size (List 6.5×, fs2 3.5×, Vector 3.3× at 10k), while IArray hangs on at 10k (0.85×, our one loss in the chart, its boxed intermediates still cache-resident) until 100k, where the megamorphic re-boxing turns into memory traffic and the same IArray that ties FArray on a lone map falls 4.2× behind; List lands at 12×. FArray has no shared site to poison. On String (right) there's no boxing to re-pay and nobody pulls away: same mechanism, only the boxing tax moves the needle."
 />
 
