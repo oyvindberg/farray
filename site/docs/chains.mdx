@@ -7,6 +7,7 @@ description: "Single ops win by percents; real code chains ops, and chaining is 
 import Link from "@docusaurus/Link";
 import BenchPair from "@site/src/components/BenchPair";
 import ChainScore from "@site/src/components/ChainScore";
+import MegaCollapse from "@site/src/components/MegaCollapse";
 import Related from "@site/src/components/Related";
 
 {/* This page is eager-only by construction. The fused/lazy pipelines belong with the fused
@@ -108,13 +109,27 @@ flat leaf, so the following stage reads a tight array rather than a fragment cha
 ## The method-size effect: eight distinct maps
 
 This chain exposes the shared-call-site problem: eight *different* lambdas through `map` in one
-method, the profile any nontrivial method builds up:
+method, the profile any nontrivial method builds up.
+
+📉 **A cliff hides in the primitive case.** IArray funnels all eight lambdas into its one shared
+`Array.map`. That call site now sees eight `Function1` (Scala's lambda interface) classes, well past
+the JIT's ≥3-type megamorphic threshold, so it stops devirtualising and, on `Int`, re-boxes through
+`Integer` on the way out of every stage. While the eight boxed intermediate arrays still fit in
+cache, up to about 1k elements, IArray hides the tax and even ties FArray. But a boxed `Integer[]`
+is far heavier than the `int[]` FArray hands between stages, and the moment those arrays spill the
+cache the re-boxing turns into pure memory traffic: IArray falls off a cliff, from dead even at 1k
+to roughly a third of FArray's speed at 10k, and it never recovers. FArray has no shared site to
+poison, each lambda was bound to its own specialized loop at compile time, so eight maps are eight
+tight `int[]` loops however many you write. On `String` there is no boxing to re-pay, so the whole
+field stays close: the mechanism is megamorphic *boxing*, not dispatch alone.
+
+<MegaCollapse />
 
 <BenchPair
   int="MapMegaIntBenchmark"
   str="MapMegaStrBenchmark"
   ignore={fused}
-  caption="Eight distinct lambdas through map in one method. IArray's one shared Array.map site sees eight Function1 (Scala's lambda interface) classes, goes megamorphic, and re-boxes on Int: at 10k its boxed intermediates are still cache-resident and it even leads (our one 0.85× cell), but at 100k the re-boxing becomes memory traffic and it falls 4.2× behind (List 12×, Vector 7×). FArray has no shared site to poison. On String there's no re-boxing to pay and the field stays close: the mechanism is megamorphic boxing."
+  caption="The full field, Int beside String. On Int (left) FArray and IArray run dead even through 1k (IArray's last stand, 0.97×), then FArray opens to ~3.4× ahead at 10k and holds there; List trails 11×, Vector 5.6×. On String (right) there is no re-boxing to pay and nobody pulls away."
 />
 
 ## A long interleaved structural chain

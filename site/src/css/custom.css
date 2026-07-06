@@ -550,3 +550,11 @@ table.score .sc-total { font-weight: 700; }
 .ratiolegend__labels span:last-child { transform: translateX(-100%); }
 .bcard__glyph { font-size: 9px; margin-right: 4px; vertical-align: 1px; }
 .score .sc-cell { font-variant-numeric: tabular-nums; }
+
+/* ---- MegaCollapse: the megamorphic cliff ---- */
+.megacollapse svg { width: 100%; height: auto; display: block; }
+.megacollapse .mc-base { stroke: var(--ours, #16a34a); stroke-width: 1.5; stroke-dasharray: 5 4; opacity: 0.7; }
+.megacollapse .mc-baselabel { fill: var(--ours, #16a34a); font-family: var(--mono); font-size: 10px; font-weight: 600; }
+.megacollapse .mc-val { fill: var(--ink); font-family: var(--mono); font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.megacollapse .mc-x { fill: var(--ink-faint); font-family: var(--mono); font-size: 10px; }
+.megacollapse .mc-cliff { fill: var(--ink-faint); font-family: var(--mono); font-size: 10.5px; font-style: italic; }
