@@ -128,7 +128,7 @@ compile time, so eight maps are eight tight `int[]` loops, however many of them 
   int="MapMegaIntBenchmark"
   str="MapMegaStrBenchmark"
   ignore={["javastream"]}
-  caption="eight distinct lambdas through map in one method, re-measured fully serialized. On Int (left): the generic collections pay at every size (List 6.5×, fs2 3.5×, Vector 3.3× at 10k), while IArray ties FArray through 1k, then falls ~3.4× behind at 10k and holds there; List lands at 11×, Vector 5.6×. IArray allocates exactly what FArray does (eight int[], no boxing) — the gap is the megamorphic map losing inlining, a per-element compute cost. On String (right) that same overhead is swamped by the real per-element string work, so nobody pulls away, which is the tell that the cost is dispatch, not allocation."
+  caption="Eight distinct lambdas through map in one method. On Int (left): IArray ties FArray through 1k, then falls ~3.4× behind at 10k and holds there; List lands at 11×, Vector 5.6×. On String (right) the field stays close, the dispatch overhead swamped by the per-element string work."
 />
 
 One sibling deserves a name here: `mapConserve`, the identity-preserving map used by compilers and
