@@ -12,12 +12,26 @@ import Related from "@site/src/components/Related";
 
 <p className="lede">
   Everything before this page is about using pipelines; this page is about giving the engine a new
-  thing to run them over. An integration provides four pieces: a <strong>shape</strong> that names
-  your format in the type, a <strong>lowering</strong> that says which terminals your shape
-  supports, a <strong>source</strong> that frames records out of bytes, and a{" "}
-  <strong>decoder</strong> that reads one record's fields. The engine keeps everything else:
-  live-set analysis, dead-field skipping, predicate placement, memoization, the loop.
+  thing to run them over. An integration provides four pieces, in ascending order of strangeness: a{" "}
+  <strong>source</strong> that frames records out of bytes (ordinary I/O code), a{" "}
+  <strong>shape</strong> that names your format in the type, a <strong>lowering</strong> that says
+  which terminals your shape supports, and a <strong>decoder</strong> that reads one record's
+  fields at macro time. The engine keeps everything else: live-set analysis, dead-field skipping,
+  predicate placement, memoization, the loop. We take the pieces in that order, easiest first.
 </p>
+
+## The familiar half: framing bytes
+
+This part is ordinary code, no compiler involvement: something has to hand the runtime loop the
+byte range of the next complete record, in constant memory. Six methods:
+
+<Snippet name="byte-record-source" hideFull />
+
+…and the in-memory NDJSON source is one small implementation of it, plus `def stream` to enter the
+pipeline:
+
+<Snippet name="ndjson-source" hideFull />
+
 
 ## Where terminals come from
 
@@ -68,21 +82,40 @@ The NDJSON plug-in, verbatim: the shape, the given, and the hook.
 every `Fuse[A, Ndjson]`. `StandardTerminals[Ndjson]` is where the terminal *methods* come from,
 and every one of them funnels into the single abstract `lower` you see in the file.
 
-So the hook does exactly one thing. `lower` is an inline macro; its `impl` calls
-`FuseMacro.lower(self, t, JsonDecode)`, handing the engine three values at compile time: the
-pipeline's own syntax tree (`self`), the reified terminal (`t`), and the decoder object. No runtime
-handshake; the decoder rides along inside the compiler.
+The last four lines are the hook, and they are macro syntax, so here is what each piece means if
+you've never written one:
 
-## The source contract
+```scala
+inline def lower[A, R](inline self: Fuse[A, Ndjson], inline t: Terminal[A, R]): R =
+  ${ JsonLowering.impl[A, R]('self, 't) }
+```
 
-Six methods, "hand me the byte range of the next complete record, in constant memory":
+- `inline def lower(inline self, inline t)`: expanded at every call site, and the `inline`
+  parameters mean the *expressions* the caller wrote arrive intact, not evaluated values.
+- `${ ... }`: a splice. Everything inside the braces runs **inside the compiler**, during
+  compilation of the call site. The "body" of `lower` is whatever code that compile-time call
+  returns.
+- `'self` and `'t`: quotes, the inverse of the splice. They take the caller's expressions and hand
+  them to `impl` as *values of type `Expr[...]`*, i.e. as syntax trees the macro can inspect.
 
-<Snippet name="byte-record-source" hideFull />
+```scala
+def impl[A: Type, R: Type](self: Expr[Fuse[A, Ndjson]], t: Expr[Terminal[A, R]])(using Quotes): Expr[R] =
+  FuseMacro.lower(self, t, JsonDecode)
+```
 
-…and the in-memory NDJSON source is one small implementation of it, plus `def stream` to enter the
-pipeline:
+- `impl` is an ordinary method, but it executes at compile time. `Expr[Fuse[A, Ndjson]]` is the
+  pipeline's syntax tree; `Expr[Terminal[A, R]]` is the terminal call, reified. `A: Type, R: Type`
+  carry the type information across the compile-time boundary (erasure hasn't happened here), and
+  `using Quotes` is the compiler's reflection context, the handle everything else operates
+  through.
+- The body hands the engine three things: the pipeline tree, the terminal tree, and `JsonDecode`,
+  the decoder, passed as a plain method argument between two pieces of compile-time code.
+- The return type is the contract: `impl` must produce an `Expr[R]`, a new tree, and **that tree
+  replaces the terminal call in your program**. This is where the emitted `while` loop enters the
+  world.
 
-<Snippet name="ndjson-source" hideFull />
+No runtime handshake anywhere: by the time your program runs, `lower` and `impl` have vanished and
+only the loop they returned remains.
 
 ## The decoder contract
 
