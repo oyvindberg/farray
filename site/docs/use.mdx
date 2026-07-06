@@ -22,9 +22,19 @@ libraryDependencies += "com.olvind.farray" %% "farray" % "1.0.0-M1"
 ```
 
 ```yaml
-# bleep (bleep.build) — in bleep.yaml, under your project
-dependencies: com.olvind.farray::farray:1.0.0-M1
+# bleep (bleep.build) — a complete minimal bleep.yaml
+$schema: https://raw.githubusercontent.com/oyvindberg/bleep/master/schema.json
+$version: 1.0.0-M10
+projects:
+  myapp:
+    dependencies: com.olvind.farray::farray:1.0.0-M1
+    platform:
+      name: jvm
+    scala:
+      version: 3.8.3
 ```
+
+Put code in `myapp/src/scala/`, run with `bleep run myapp`.
 
 ## Try it in thirty seconds
 
