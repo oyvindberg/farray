@@ -17,7 +17,6 @@ const sidebars: SidebarsConfig = {
       collapsed: false,
       items: [
         "chains",
-        "semantics",
         "design/java-core",
         "design/scala-surface",
         "design/combinators",
@@ -40,6 +39,7 @@ const sidebars: SidebarsConfig = {
           ],
         },
         "benchmarks/farray",
+        "semantics",
       ],
     },
     {

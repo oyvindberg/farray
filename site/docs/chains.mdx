@@ -119,17 +119,21 @@ same code, one input-size step, a 3× loss from nowhere.
 **What:** the same eight-map method, run at one size larger, loses 3× against the identical FArray
 code, with no source change of any kind.
 
-**How:** IArray funnels all eight lambdas into its one shared `Array.map`. That call site now sees
-eight `Function1` (Scala's lambda interface) classes, past the JIT's ≥3-type megamorphic threshold,
-so it stops inlining them and, on `Int`, re-boxes through `Integer` at every stage boundary. Those
-boxed `Integer[]` intermediates fit in cache up to ~1k elements, which is why it ties there, but they
-are far heavier than FArray's `int[]`, and the moment they spill the cache the re-boxing becomes pure
-memory traffic. The loss is latent in any hot method and only surfaces once the data outgrows the
-cache.
+**How:** first, what it is *not*. The allocation profiler shows FArray and IArray allocating
+byte-for-byte the same here, eight `int[]` per call (~32 bytes per element), with **no boxing on
+either side** — an `Int => Int` lambda is specialized (`apply$mcII$sp`), so nothing boxes even when
+the map isn't inlined. The gap is pure compute. IArray runs all eight lambdas through its one shared
+`Array.map`; once that call site has seen three or more `Function1` (Scala's lambda interface)
+classes it is megamorphic and the JIT can no longer inline it. Instead of eight tight, inlined
+`int[]` loops, the elements then run through one generic, unspecialized loop with a virtual call per
+element. On trivial `Int` work (`_ + 1`) that per-element overhead is the entire cost, so it shows as
+a multiple; on `String`, where each element already does real allocating work, the same overhead is
+a rounding error, which is why the field stays close there. It ties at 1k because small inputs stay
+near the fixed per-call costs; the per-element penalty only takes over once there are enough elements
+to feel it.
 
-FArray has no shared site to poison: each lambda is bound to its own compiled loop, so eight maps are
-eight tight `int[]` loops. On `String` there is no boxing to re-pay, so the field stays close, which
-pins the mechanism as megamorphic *boxing*, not dispatch alone.
+FArray has no shared site to poison: each lambda is its own monomorphic compiled loop, so eight maps
+are eight tight `int[]` loops however many you write.
 
 </details>
 
@@ -137,7 +141,7 @@ pins the mechanism as megamorphic *boxing*, not dispatch alone.
   int="MapMegaIntBenchmark"
   str="MapMegaStrBenchmark"
   ignore={fused}
-  caption="The full field, Int beside String. On Int (left) FArray and IArray run dead even through 1k (IArray's last stand, 0.97×), then FArray opens to ~3.4× ahead at 10k and holds there; List trails 11×, Vector 5.6×. On String (right) there is no re-boxing to pay and nobody pulls away."
+  caption="The full field, Int beside String. On Int (left) FArray and IArray run dead even through 1k (IArray's last stand, 0.97×), then FArray opens to ~3.4× ahead at 10k and holds there; List trails 11×, Vector 5.6×. On String (right) the same megamorphic call site exists, but the per-element string work is heavy enough to swamp its overhead, so nobody pulls away — which is the tell that the cost is per-element dispatch, not allocation."
 />
 
 ## A long interleaved structural chain

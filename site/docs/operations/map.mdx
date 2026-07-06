@@ -106,19 +106,19 @@ and it doesn't take much.
 
 Write eight of that very same `map`, with eight *distinct* lambdas, in one method. IArray
 funnels all of them into its one shared `Array.map`, and that call site now sees eight different
-`Function1` classes, well past the JIT's ≥3-type megamorphic threshold, so it stops devirtualising:
-every element pays a real virtual `apply`, and on `Int` it re-boxes through `Integer` on the way out.
-The bigger the method, the more distinct lambdas crowd that one site. The same story applies
-verbatim to `java.util.stream`: a hot shared `Stream.map` feeds every lambda class through one
-Sink chain. FArray has no
-shared site to poison: each lambda was already bound to its own specialized loop at compile time, so
-eight maps are eight tight `int[]` loops, however many of them you write.
+`Function1` classes, well past the JIT's ≥3-type megamorphic threshold, so it can no longer inline
+that call: the eight tight `int[]` loops it would have produced become one generic loop with a real
+virtual `apply` per element. It is not a boxing tax — the allocation profiler shows IArray and FArray
+allocating identically here, and `Int => Int` lambdas are specialized, so nothing boxes — it is the
+loss of inlining and specialization. The bigger the method, the more distinct lambdas crowd that one
+site. FArray has no shared site to poison: each lambda was already bound to its own specialized loop
+at compile time, so eight maps are eight tight `int[]` loops, however many of them you write.
 
 <BenchPair
   int="MapMegaIntBenchmark"
   str="MapMegaStrBenchmark"
   ignore={["javastream"]}
-  caption="eight distinct lambdas through map in one method, re-measured fully serialized. On Int (left): the generic collections pay at every size (List 6.5×, fs2 3.5×, Vector 3.3× at 10k), while IArray hangs on at 10k (0.85×, our one loss in the chart, its boxed intermediates still cache-resident) until 100k, where the megamorphic re-boxing turns into memory traffic and the same IArray that ties FArray on a lone map falls 4.2× behind; List lands at 12×. FArray has no shared site to poison. On String (right) there's no boxing to re-pay and nobody pulls away: same mechanism, only the boxing tax moves the needle."
+  caption="eight distinct lambdas through map in one method, re-measured fully serialized. On Int (left): the generic collections pay at every size (List 6.5×, fs2 3.5×, Vector 3.3× at 10k), while IArray ties FArray through 1k, then falls ~3.4× behind at 10k and holds there; List lands at 11×, Vector 5.6×. IArray allocates exactly what FArray does (eight int[], no boxing) — the gap is the megamorphic map losing inlining, a per-element compute cost. On String (right) that same overhead is swamped by the real per-element string work, so nobody pulls away, which is the tell that the cost is dispatch, not allocation."
 />
 
 One sibling deserves a name here: `mapConserve`, the identity-preserving map used by compilers and
