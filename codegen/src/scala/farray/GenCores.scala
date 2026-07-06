@@ -978,13 +978,32 @@ object GenCores extends BleepCodegenScript("GenCores") {
           s"reduceLeaf${dir}${K}Ref[AnyRef](xs, z.asInstanceOf[AnyRef], (acc, v) => ${comb("acc.asInstanceOf[Z]", wrapV(k))}.asInstanceOf[AnyRef]).asInstanceOf[Z]"
         )
       // --- Ref input + PRIMITIVE accumulator (e.g. xs.foldLeft(0)((n, s) => n + s.length)): the acc stays an
-      //     unboxed primitive `${P}`. Realize the `RefTo${P}Fold` SAM (the element `v` is Object) and CALL the
-      //     shared unboxed leaf method. A COMMON reference workload, so it gets the unboxed acc (the leaf path
-      //     never boxes; only a genuine tree boxes, inside the leaf method's cold arm). NO inlined leaf loop. ---
-      def zPrimAccOverRefArm(p: Kind): Unit =
+      //     unboxed primitive `${P}`. A COMMON reference workload.
+      //     PER-CALL-SITE LOOP METHOD (2026-07-06): the flat-leaf/slice loop is a LOCAL def, so the inliner
+      //     lambda-lifts ONE private loop method per fold call site — `op` beta-reduces into its body,
+      //     monomorphic, no SAM call on the hot path, acc threaded as a param/return (never through memory),
+      //     and it tiers/OSRs on its own. This is the SAME shape that fixed CollectMegaStr (see collectLeafCall).
+      //     The prior shape here realized a shared `RefTo${P}Fold` SAM: with N distinct fold literals in one
+      //     method (FoldRefPolluted) that SAM site goes megamorphic — one uninlined interface call per element,
+      //     0.48x of iarray @1000. An earlier attempt inlined the loop FLAT at the surface (like scan): it won
+      //     @1000 but CRATERED @100k to 0.29x — 6 hot loops in one enclosing method never tier up (immature
+      //     profiles, sticky deopt, mid-fork degradation). The lifted local def keeps the loop shape AND the
+      //     enclosing method small. Genuine trees / reverse fall back to the shared leaf (which peels
+      //     Empty/One/leaf and routes trees to the Traverser), so direction and all node shapes stay correct. ---
+      def zPrimAccOverRefArm(p: Kind): Unit = {
+        val P = p.arr // primitive acc type (Int/Long/Double)
+        val step = s"acc0 = rz.unwrap(${comb("rz.wrap(acc0)", wrapV(k))})"
+        val loopBody =
+          if backward then s"var i = n - 1; while (i >= 0) { val v = a(off + i); $step; i -= 1 }"
+          else s"var i = 0; while (i < n) { val v = a(off + i); $step; i += 1 }"
         ee.line(
-          s"rz.wrap(reduceLeaf${dir}Ref${p.name}(xs, rz.unwrap(z), (acc, v) => rz.unwrap(${comb("rz.wrap(acc)", wrapV(k))})))"
+          s"rz.wrap({ def foldLoop(a: Array[Object], off: Int, n: Int, z0: $P): $P = { var acc0 = z0; $loopBody; acc0 }; " +
+            s"xs match { " +
+            s"case leaf: RefArr => foldLoop(leaf.arr, 0, leaf.length, rz.unwrap(z)); " +
+            s"case s: SliceNode if s.base.isInstanceOf[RefArr] => foldLoop(s.base.asInstanceOf[RefArr].arr, s.offset, s.length, rz.unwrap(z)); " +
+            s"case _ => reduceLeaf${dir}Ref${p.name}(xs, rz.unwrap(z), (acc, v) => rz.unwrap(${comb("rz.wrap(acc)", wrapV(k))})) } })"
         )
+      }
       ee.open("summonFrom")
       if k.isPrim then {
         ee.open(s"case rz: ${K}Repr[Z] =>")
