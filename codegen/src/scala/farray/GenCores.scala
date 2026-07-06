@@ -359,14 +359,24 @@ object GenCores extends BleepCodegenScript("GenCores") {
   // inline → foreach speed). A leaf hands its backing array straight in (no copy, lazy); a tree is flattened
   // ONCE via the dfs we already have (materialize). So the tree-walk lives only in dfsBody — no second walker.
   private def cursorClass(k: Kind): String = {
-    val nextBoxed = if k.name == "Ref" then s"next${k.name}()" else k.box(s"next${k.name}()")
-    s"""final class ${k.name}Cursor(a: Array[${k.arr}], len: Int) extends scala.collection.AbstractIterator[Any] {
-       |  private var pos = 0
-       |  def hasNext: Boolean = pos < len
-       |  override def knownSize: Int = len - pos
-       |  def next${k.name}(): ${k.arr} = { val r = a(pos); pos += 1; r }
-       |  def next(): Any = $nextBoxed
-       |}""".stripMargin
+    // Ref: next() IS the accessor — the next()->nextRef() forwarder added a per-element call frame the
+    // JIT didn't always collapse (IteratorStr drain 0.62-0.88x of ArrayIterator, whose next() is one flat
+    // method; 2026-07-06 audit round 2). Primitives keep the split: next${K}() is the UNBOXED accessor
+    // (the whole point), next() the boxing bridge for the generic Iterator drain.
+    if k.name == "Ref" then s"""final class RefCursor(a: Array[Object], len: Int) extends scala.collection.AbstractIterator[Any] {
+         |  private var pos = 0
+         |  def hasNext: Boolean = pos < len
+         |  override def knownSize: Int = len - pos
+         |  def nextRef(): Object = { val r = a(pos); pos += 1; r }
+         |  def next(): Any = { val r = a(pos); pos += 1; r }
+         |}""".stripMargin
+    else s"""final class ${k.name}Cursor(a: Array[${k.arr}], len: Int) extends scala.collection.AbstractIterator[Any] {
+         |  private var pos = 0
+         |  def hasNext: Boolean = pos < len
+         |  override def knownSize: Int = len - pos
+         |  def next${k.name}(): ${k.arr} = { val r = a(pos); pos += 1; r }
+         |  def next(): Any = ${k.box(s"next${k.name}()")}
+         |}""".stripMargin
   }
 
   // Per-kind growable, unboxed accumulator for groupBy/groupMap. One instance per group; `add` appends an
@@ -2387,6 +2397,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val sortedV = dispatchA { k =>
       val genericLt = (a: String, b: String) => s"ord.lt(${readVal(k, a)}, ${readVal(k, b)})"
       if k.name == "Ref" then
+        // NOTE (2026-07-06, measured-rejected): routing `ord eq Ordering.String` to the no-comparator
+        // Arrays.sort(Object[]) (ComparableTimSort) was tried for the sorted-Str 0.88-0.91x cells — no
+        // gain @100 and worse/bimodal @100k. The Comparator indirection is not the gap; keep one path.
         s"{ val c = ord.asInstanceOf[java.util.Comparator[Object]]; ${sortPeel(k, (a, b) => s"c.compare($a, $b) < 0", "java.util.Arrays.sort(vals, c); new RefArr(vals, n)")} }"
       else {
         val merge = s"new ${k.name}Arr(sort${k.name}(vals, n, (x, y) => ${genericLt("x", "y")}), n)"
@@ -2647,17 +2660,17 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def maxImpl[A, Z >: A](xs: FBase)(using ord: Ordering[Z]): A = $maxV
        |  inline def minImpl[A, Z >: A](xs: FBase)(using ord: Ordering[Z]): A = $minV
        |  inline def foreachImpl[A](xs: FBase)(inline f: A => Unit): Unit = $foreach
-       |  inline def foreachWhileImpl[A](xs: FBase)(inline f: A => Boolean): Unit = $foreachWhileV
-       |  inline def existsImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = { val length = xs.length; $existsV }
-       |  inline def forallImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = { val length = xs.length; $forallV }
-       |  inline def findImpl[A](xs: FBase)(inline p: A => Boolean): Option[A] = { val length = xs.length; $findV }
+       |  inline def foreachWhileImpl[A](xs: FBase)(inline f: A => Boolean): Unit = if (xs.length != 0) $foreachWhileV
+       |  inline def existsImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = { val length = xs.length; if (length == 0) false else $existsV }
+       |  inline def forallImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = { val length = xs.length; if (length == 0) true else $forallV }
+       |  inline def findImpl[A](xs: FBase)(inline p: A => Boolean): Option[A] = { val length = xs.length; if (length == 0) None else $findV }
        |  inline def indexWhereImpl[A](xs: FBase, from: Int)(inline p: A => Boolean): Int = { val length = xs.length; if (length == 0) -1 else $indexWhereV }
        |  inline def indexOfImpl[A, B](xs: FBase, elem: B, from: Int): Int = { val length = xs.length; if (length == 0) -1 else $indexOfV }
-       |  inline def segmentLengthImpl[A](xs: FBase, from: Int)(inline p: A => Boolean): Int = { val length = xs.length; $segmentLenV }
+       |  inline def segmentLengthImpl[A](xs: FBase, from: Int)(inline p: A => Boolean): Int = { val length = xs.length; if (length == 0) 0 else $segmentLenV }
        |  inline def lastIndexWhereImpl[A](xs: FBase, end: Int)(inline p: A => Boolean): Int = { val length = xs.length; if (length == 0) -1 else $lastIndexWhereV }
        |  inline def lastIndexOfImpl[A, B](xs: FBase, elem: B, end: Int): Int = { val length = xs.length; if (length == 0) -1 else $lastIndexOfV }
-       |  inline def collectFirstImpl[A, B](xs: FBase)(pf: PartialFunction[A, B]): Option[B] = { val length = xs.length; $collectFirstV }
-       |  inline def prefixLengthImpl[A](xs: FBase)(inline p: A => Boolean): Int = $prefixLenV
+       |  inline def collectFirstImpl[A, B](xs: FBase)(pf: PartialFunction[A, B]): Option[B] = { val length = xs.length; if (length == 0) None else $collectFirstV }
+       |  inline def prefixLengthImpl[A](xs: FBase)(inline p: A => Boolean): Int = if (xs.length == 0) 0 else $prefixLenV
        |  inline def mapImpl[A, B](xs: FBase)(inline f: A => B): FBase = { val n = xs.length; $mapM }
        |  inline def filterImpl[A](xs: FBase)(inline p: A => Boolean): FBase = $filter
        |  inline def distinctImpl[A](xs: FBase): FBase = if (xs.length < 2) xs else $distinctV
@@ -2668,7 +2681,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def partitionImpl[A](xs: FBase)(inline p: A => Boolean): scala.Tuple2[FBase, FBase] = if (xs.length == 0) emptyPair else $partition
        |  inline def collectImpl[A, B](xs: FBase)(pf: PartialFunction[A, B]): FBase = $collect
        |  inline def partitionMapImpl[A, A1, A2](xs: FBase)(inline f: A => Either[A1, A2]): scala.Tuple2[FBase, FBase] = $partitionMap
-       |  inline def containsImpl[A](xs: FBase, elem: A): Boolean = { val length = xs.length; $contains }
+       |  inline def containsImpl[A](xs: FBase, elem: A): Boolean = { val length = xs.length; if (length == 0) false else $contains }
        |  inline def mapConserveImpl[A](xs: FBase)(inline f: A => A): FBase = { val n = xs.length; if (n == 0) xs else if (n == 1) { val e = applyAtImpl[A](xs, 0); val r = f(e); if (r.asInstanceOf[AnyRef] eq e.asInstanceOf[AnyRef]) xs else fromValues1[A](r) } else $mapConserve }
        |  inline def unzipImpl[A, A1, A2](xs: FBase)(ev: A <:< (A1, A2)): (FBase, FBase) = { val n = xs.length; if (n == 0) emptyPair else if (n == 1) { val t = ev(applyAtImpl[A](xs, 0)); new scala.Tuple2(fromValues1[A1](t._1), fromValues1[A2](t._2)) } else $unzipV }
        |  inline def unzip3Impl[A, A1, A2, A3](xs: FBase)(ev: A <:< (A1, A2, A3)): (FBase, FBase, FBase) = { val n = xs.length; if (n == 0) emptyTriple else if (n == 1) { val t = ev(applyAtImpl[A](xs, 0)); new scala.Tuple3(fromValues1[A1](t._1), fromValues1[A2](t._2), fromValues1[A3](t._3)) } else $unzip3V }
