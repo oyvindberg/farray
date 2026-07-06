@@ -6,6 +6,7 @@ description: "Where FArrays come from: the varargs macro that unrolls to typed s
 
 import Link from "@docusaurus/Link";
 import BenchChart from "@site/src/components/BenchChart";
+import BenchPair from "@site/src/components/BenchPair";
 import Related from "@site/src/components/Related";
 
 <p className="lede">
@@ -82,6 +83,15 @@ The boundary is narrow, and easy to over-read: this trick is an island. Every
 only from a `tabulate`/`fill` (or a `fromArray` you handed a typed array) straight to `toArray` with
 no transform in between. It's a real win on exactly that path and costs nothing elsewhere; it is not
 a general property of reference FArrays.
+
+Construction is inherently allocating, so the honest baseline is `IArray` — a raw array, no wrapper.
+`fill` ties it; `tabulate` is the surprise:
+
+<BenchPair
+  int="ConstructIntBenchmark"
+  str="ConstructStrBenchmark"
+  caption="fill and tabulate, building `size` elements from a rule, Int beside String. `fill` on Int ties IArray and leaves the boxing collections behind (List 19–25×, Vector 6.6–7.9×). `tabulate` on Int is the standout: FArray pulls ~13.8× ahead of IArray at 100k, because `FArray.tabulate` takes its function `inline` and fills the `int[]` directly, while `Array.tabulate` is generic and boxes every `f(i)` through a `Function1` — the allocation profiler measures 2.0 MB/op for IArray against FArray's 0.40 MB (one `int[]`, nothing extra). On String every element allocates anyway, so the gap narrows to structure alone (1.5–2.2× over the field)."
+/>
 
 ## range is not a loop
 
