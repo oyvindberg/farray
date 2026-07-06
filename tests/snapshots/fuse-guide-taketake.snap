@@ -1,0 +1,40 @@
+(({
+  val src0: FBase = {
+    val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
+
+    (xs$proxy: ints)
+  }.asInstanceOf[FBase]
+  val n0: Int = src0.length
+  var done: Boolean = false
+  val lim: Int = {
+    val t: Int = java.lang.Math.min(7, 3)
+
+    (if (t.<(0)) 0 else t: Int)
+  }
+  var c: Int = 0
+  val cap: Int = java.lang.Math.min(n0, lim)
+  val out: Array[Int] = new Array[Int](cap)
+  var o: Int = 0
+  val s: FBase = src0
+  val a: Array[Int] = s match {
+    case l: IntArr =>
+      (l.arr: Array[Int])
+    case _ =>
+      null
+  }
+  val len: Int = s.length
+  var i: Int = 0
+  while (i.<(len).&&(done.unary_!)) {
+    val elem: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+    val cv: Int = c
+    if (cv.>=(lim)) done = true else {
+      val mapped: Int = elem.*(2)
+      out.update(o, mapped)
+      o = o.+(1)
+      c = c.+(1)
+      if (cv.+(1).>=(lim)) done = true else ()
+    }
+    i = i.+(1)
+  }
+  if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(out.apply(0)) else if (o.==(cap)) new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o)
+}.asInstanceOf[FArray[Int]]: FArray[Int]): FArray[Int])

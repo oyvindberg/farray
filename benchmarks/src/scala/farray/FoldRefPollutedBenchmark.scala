@@ -132,13 +132,4 @@ class FoldRefPollutedBenchmark extends CommonParams {
     bh.consume(zChar.foldLeft(0)((acc, c) => acc + c.charValue.toInt))
   }
 
-  // MONOMORPHIC control: identical total work, but only String flows through the read site.
-  @Benchmark def farrayMono(bh: Blackhole): Unit = {
-    bh.consume(fStr.foldLeft(0)((acc, s) => acc + s.length))
-    bh.consume(fStr.foldLeft(1)((acc, s) => acc + s.length))
-    bh.consume(fStr.foldLeft(2)((acc, s) => acc + s.length))
-    bh.consume(fStr.foldLeft(3)((acc, s) => acc + s.length))
-    bh.consume(fStr.foldLeft(4)((acc, s) => acc + s.length))
-    bh.consume(fStr.foldLeft(5)((acc, s) => acc + s.length))
-  }
 }

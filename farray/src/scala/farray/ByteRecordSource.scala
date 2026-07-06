@@ -20,6 +20,7 @@ package farray
   * decoder's String columns are lazy `(start,len)` slices forced to a real `String` ON READ, before any chunk swap — so a survivor's projected string never
   * dangles. Folding terminals never escape a record. Working set is therefore O(one chunk + the largest single record), independent of stream length.
   */
+// start:byte-record-source
 trait ByteRecordSource:
   /** Advance to the next backing buffer. `false` once the stream is exhausted (idempotent after that). An in-memory implementor returns `true` exactly once; a
     * streaming implementor reads the next block. After this returns true, `buf` and the `recordStart`/`recordEnd` cursor describe the new chunk and
@@ -46,3 +47,4 @@ trait ByteRecordSource:
     * short-circuit, AND exception. Idempotent.
     */
   def close(): Unit = ()
+// stop:byte-record-source

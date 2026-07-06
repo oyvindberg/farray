@@ -1,0 +1,30 @@
+(({
+  val src0: FBase = {
+    val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
+
+    (xs$proxy: ints)
+  }.asInstanceOf[FBase]
+  val n0: Int = src0.length
+  var done: Boolean = false
+  var res: Option[Any] = None
+  val s: FBase = src0
+  val a: Array[Int] = s match {
+    case l: IntArr =>
+      (l.arr: Array[Int])
+    case _ =>
+      null
+  }
+  val len: Int = s.length
+  var i: Int = 0
+  while (i.<(len).&&(done.unary_!)) {
+    val elem: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+    val mapped: Int = elem.*(3)
+    if (mapped.>(100)) {
+      res = Some.apply[Any](mapped)
+      done = true
+    } else ()
+    i = i.+(1)
+  }
+
+  (res: Option[Any])
+}.asInstanceOf[Option[Int]]: Option[Int]): Option[Int])

@@ -9,6 +9,10 @@ case class P2(a: Int, b: Int)
 case class Inner(x: Int, y: Int)
 case class Outer(inner: Inner, z: Int)
 case class Stat(id: Int, score: Int, weight: Int) // fused-optimizer fold-decomposition demo
+// start:guide-trade
+case class Trade(day: Int, amount: Double) // the guide's running record: a day-clustered trade log
+case class Summary(total: Double, n: Int, top: Double) // where the guide's aggTo example lands
+// stop:guide-trade
 case class Box[T](v: T, n: Int) // GENERIC case class (type-arg threading in mkProduct)
 case class Rec(base: Int, label: String, extra: Int) // mixed Int/String/Int fields
 object Cx: // top-level helpers (opaque method-call columns)
@@ -909,8 +913,11 @@ class FListTest:
   // re-emit. We check the EXECUTED block (after the `val src0` marker) contains no `new Array`/`${K}Arr`. Float and
   // Char are the kinds the old matcher missed; the non-literal `tabulate` inner is the negative control.
   @Test def test_fuse_flatMap_splats: Unit =
-    def execAllocs(code: String): Int = // `new Array`/`*Arr` ctors in the EXECUTED block (after the run-marker)
-      val exec = code.indexOf("val src0") match { case -1 => code; case i => code.substring(i) }
+    def execAllocs(code: String): Int = // `new Array`/`*Arr` ctors in the EXECUTED block (after the run-marker).
+      // Count from `val n0` (the line AFTER the src0 binding): with extension-provided terminals the receiver
+      // chain — including the source's own construction — inlines INTO src0's initializer, and the source's
+      // array allocation is not the loop's business.
+      val exec = code.indexOf("val n0") match { case -1 => code; case i => code.substring(i) }
       "new Array\\[".r.findAllIn(exec).size + "new \\w+Arr\\(".r.findAllIn(exec).size
     val intCode = FuseDebug.show(FArray(7).fuse.flatMap(x => FArray(x, x + 1)).foldLeft(0)((a, x) => a + x))
     val floatCode = FuseDebug.show(FArray(7.0f).fuse.flatMap(x => FArray(x, x + 1.0f)).foldLeft(0.0f)((a, x) => a + x))
@@ -1699,19 +1706,19 @@ class FListTest:
       FuseDebug.show(
         ints.fuse
           .flatMap(x => FArray(x, x + 1))
-          .filter(_ % 3 != 0)
-          .map(_ * 2)
-          .flatMap(x => FArray(x, x ^ 5))
-          .filter(_ % 2 == 0)
-          .map(_ - 7)
+          .filter(n => n % 3 != 0)
+          .map(n => n * 2)
+          .flatMap(m => FArray(m, m ^ 5))
+          .filter(p => p % 2 == 0)
+          .map(p => p - 7)
           .zip(zipSrc)
           .map((a, b) => a + b)
           .zipWithIndex
           .filter((v, i) => (v + i) % 4 != 0)
           .map((v, i) => v - i)
-          .flatMap(x => FArray(x, x + 3))
-          .filter(_ > 0)
-          .foldLeft(0)(_ + _)
+          .flatMap(d => FArray(d, d + 3))
+          .filter(r => r > 0)
+          .foldLeft(0)((acc, r) => acc + r)
       )
     )
 
@@ -1726,7 +1733,7 @@ class FListTest:
         ints.fuse
           .zip(ys)
           .collect { case (a, b) if (a + b) % 2 == 0 => a * b }
-          .map(_ + 1)
+          .map(r => r + 1)
           .run
       )
     )
@@ -1744,15 +1751,52 @@ class FListTest:
     val ints = FArray(3, 14, 15, 92, 65, 35, 89, 79)
     def expensive(x: Int): Int = { var s = x; var k = 0; while (k < 24) { s = s * 1103515245 + 12345; k += 1 }; s }
     // 1 · one loop, no closures
-    Snapshots.check("fuse-opt-oneloop.snap", FuseDebug.show(ints.fuse.map(_ + 1).filter(_ % 2 == 0).map(_ * 2).run))
+    Snapshots.check("fuse-opt-oneloop.snap", FuseDebug.show(ints.fuse.map(x => x + 1).filter(y => y % 2 == 0).map(z => z * 2).run))
     // 2 · dead-column elimination — column 2 (x*13) is read by nobody and never built
-    Snapshots.check("fuse-opt-dce.snap", FuseDebug.show(ints.fuse.map(x => (x % 3, x * 7, x * 13)).filter(_._1 == 0).map(_._2).run))
+    Snapshots.check("fuse-opt-dce.snap", FuseDebug.show(ints.fuse.map(x => (x % 3, x * 7, x * 13)).filter(t => t._1 == 0).map(t => t._2).run))
     // 3 · compute-for-survivors — expensive(x) lands inside the filter's `if`
-    Snapshots.check("fuse-opt-sink.snap", FuseDebug.show(ints.fuse.map(x => (x % 2, expensive(x))).filter(_._1 == 0).map(_._2).sum))
+    Snapshots.check("fuse-opt-sink.snap", FuseDebug.show(ints.fuse.map(x => (x % 2, expensive(x))).filter(t => t._1 == 0).map(t => t._2).sum))
     // 4 · common-subexpression elimination — x*x bound once, reused
     Snapshots.check("fuse-opt-cse.snap", FuseDebug.show(ints.fuse.map(x => (x * x + 1, x * x + 2)).map(t => t._1 + t._2).run))
     // 5 · decomposition reaches the fold's lambda — Stat never built; loop is acc + x*100
     Snapshots.check("fuse-opt-fold.snap", FuseDebug.show(ints.fuse.map(x => Stat(x, x * 100, x * 1000)).foldLeft(0)((acc, s) => acc + s.score)))
+
+  // The user-guide demos for the website's "Using .fuse" page — each the verbatim lowering of the
+  // pipeline above it. The collect ones are the headline: a stdlib `collect` allocates a PartialFunction
+  // and boxes every primitive through applyOrElse; fused, the match is spliced into the loop body.
+  @Test def test_fuse_guide_snapshots: Unit =
+    val ints = FArray(3, 14, 15, 92, 65, 35, 89, 79)
+    // 1 · collect, unboxed — no PartialFunction object, no isDefinedAt/apply double dispatch, no Integer;
+    //     the guard becomes the loop's `if`.
+    Snapshots.check("fuse-guide-collect.snap", FuseDebug.show(ints.fuse.map(_ + 1).collect { case x if x % 2 == 0 => x * 2 }.run))
+    // 2 · a short-circuit terminal — find stops the whole traversal at the first hit
+    Snapshots.check("fuse-guide-find.snap", FuseDebug.show(ints.fuse.map(_ * 3).find(_ > 100)))
+    // 3 · multi-aggregate — three answers from ONE pass, one unboxed accumulator each
+    Snapshots.check("fuse-guide-agg.snap", FuseDebug.show(ints.fuse.filter(_ % 2 == 0).agg(Agg.sum((x: Int) => x), Agg.count, Agg.max1((x: Int) => x))))
+    // 4 · unboxed group-reduce — Int keys and values stay unboxed in the hot loop (open-addressing map),
+    //     boxing only at the final O(#keys) materialization
+    Snapshots.check("fuse-guide-groupsum.snap", FuseDebug.show(ints.fuse.groupSum(_ % 3)(x => x)))
+    // 5-9 use a realistic record: a day-clustered trade log (Trade / Summary defined at top level).
+    val trades = FArray(Trade(1, 250.5), Trade(1, 99.0), Trade(2, 12.0), Trade(2, 41.5), Trade(3, 5.0))
+    // 5 · aggTo — several unboxed aggregates in one pass, landing in the user's own case class
+    Snapshots.check(
+      "fuse-guide-aggto.snap",
+      FuseDebug.show(trades.fuse.aggTo(Summary.apply)(Agg.sum(_.amount), Agg.count, Agg.max1(_.amount)))
+    )
+    // 6 · the adjacent family — input already clustered by key: one (key, acc) per run, O(1) memory
+    Snapshots.check("fuse-guide-foldadj.snap", FuseDebug.show(trades.fuse.foldAdjacentBy(_.day)(0.0)((acc, t) => acc + t.amount).run))
+    // 7 · groupAdjacentBy — each run's ROWS as an FArray, one run buffered at a time, short-circuits downstream
+    Snapshots.check("fuse-guide-groupadj.snap", FuseDebug.show(trades.fuse.groupAdjacentBy(_.day).map(_.length).take(2).run))
+    // 8 · nested fusion — a fused sub-pipeline per run; the run's rows are never materialized
+    Snapshots.check(
+      "fuse-guide-nested.snap",
+      FuseDebug.show(trades.fuse.groupAdjacentReduceBy(_.day)(_.map(_.amount).filter(_ > 20.0))(Agg.sum((x: Double) => x)).run)
+    )
+    // 9 · top-N via a bounded size-n heap — no full sort, no O(N) buffer
+    Snapshots.check("fuse-guide-topn.snap", FuseDebug.show(trades.fuse.topNBy(2)(_.amount)))
+    // 10 · algebraic stage rewriting — take(7).map(f).take(3): the inner take slides left past the map and
+    //      fuses with the outer into ONE clamped limit (see RewriteTest for the structural assertions)
+    Snapshots.check("fuse-guide-taketake.snap", FuseDebug.show(ints.fuse.take(7).map(_ * 2).take(3).run))
 
   // The five fused-JSON demos for the website's "Fused JSON" page — the SAME optimizer over byte ranges.
   // Mirrors farray.json.JsonDemo's pipelines (Event/Wide/Stats live there), regenerated to current codegen.
@@ -1760,18 +1804,24 @@ class FListTest:
     import farray.json.{Json, JsonDemo}
     val src = JsonDemo.sample
     val wsrc = JsonDemo.wideSample
-    Snapshots.check("fuse-json-sum.snap", FuseDebug.show(Json.ndjson[JsonDemo.Event](src).stream.filter(_.amount > 150).map(_.amount).foldLeft(0.0)(_ + _)))
-    Snapshots.check("fuse-json-cat.snap", FuseDebug.show(Json.ndjson[JsonDemo.Event](src).stream.filter(_.amount > 150).map(_.category).toList))
-    Snapshots.check("fuse-json-count.snap", FuseDebug.show(Json.ndjson[JsonDemo.Event](src).stream.filter(_.status == "active").map(_.category).count))
-    Snapshots.check("fuse-json-wide.snap", FuseDebug.show(Json.ndjson[JsonDemo.Wide](wsrc).stream.filter(_.key > 90).map(_.payload).count))
+    Snapshots.check(
+      "fuse-json-sum.snap",
+      FuseDebug.show(Json.ndjson[JsonDemo.Event](src).stream.filter(e => e.amount > 150).map(e => e.amount).foldLeft(0.0)((acc, amount) => acc + amount))
+    )
+    Snapshots.check("fuse-json-cat.snap", FuseDebug.show(Json.ndjson[JsonDemo.Event](src).stream.filter(e => e.amount > 150).map(e => e.category).toList))
+    Snapshots.check(
+      "fuse-json-count.snap",
+      FuseDebug.show(Json.ndjson[JsonDemo.Event](src).stream.filter(e => e.status == "active").map(e => e.category).count)
+    )
+    Snapshots.check("fuse-json-wide.snap", FuseDebug.show(Json.ndjson[JsonDemo.Wide](wsrc).stream.filter(w => w.key > 90).map(w => w.payload).count))
     Snapshots.check(
       "fuse-json-agg.snap",
       FuseDebug.show(
         Json
           .ndjson[JsonDemo.Event](src)
           .stream
-          .filter(_.status == "active")
-          .aggTo(JsonDemo.Stats.apply)(farray.Agg.sum(_.amount), farray.Agg.count, farray.Agg.max1(_.score))
+          .filter(e => e.status == "active")
+          .aggTo(JsonDemo.Stats.apply)(farray.Agg.sum(e => e.amount), farray.Agg.count, farray.Agg.max1(e => e.score))
       )
     )
 

@@ -1,0 +1,387 @@
+---
+title: FSet
+sidebar_label: FSet
+description: "An immutable, unboxed set on the FArray playbook: frozen flat leaves, queried hard, combined lazily."
+---
+
+import Snippet from "@site/src/components/Snippet";
+import GeneratedCode from "@site/src/components/GeneratedCode";
+import BenchChart from "@site/src/components/BenchChart";
+import BenchPair from "@site/src/components/BenchPair";
+import Scorecard from "@site/src/components/Scorecard";
+import Related from "@site/src/components/Related";
+
+export const FINITENESS = [
+  { op: "a ∪ b", finite: "both finite", note: "infinite if either side is" },
+  { op: "a ∩ b", finite: "either finite", note: "infinite ∩ finite is always finite — the gem of the table" },
+  { op: "a ∖ b", finite: "left finite", note: "removing anything from a finite set stays finite" },
+  { op: "a ⊕ b", finite: "both finite", note: "infinite ⊕ infinite is unknown — unlike ∪" },
+  { op: "¬a", finite: "never (from finite)", note: "complement of a finite set is infinite; of an infinite one, unknown" },
+  { op: "a + x · a − x", finite: "same as a", note: "single-element updates preserve the class" },
+];
+
+export function FinitenessTable() {
+  return (
+    <figure className="figure">
+      <table className="cx">
+        <thead>
+          <tr><th className="cx-op">operation</th><th className="cx-cost">result is finite iff</th><th className="cx-b">why</th></tr>
+        </thead>
+        <tbody>
+          {FINITENESS.map((r) => (
+            <tr key={r.op}>
+              <td className="cx-op">{r.op}</td>
+              <td className="cx-cost cx-cost--free">{r.finite}</td>
+              <td className="cx-b">{r.note}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </figure>
+  );
+}
+
+<p className="page__eyebrow">the second collection</p>
+
+<p className="lede">
+  An immutable, unboxed set on the FArray playbook — a generated Java core, per-kind specialization,{" "}
+  <code>inline</code> dispatch — and one contrarian bet on top. Every immutable set on the JVM pays
+  the persistent-trie tax to make single-element updates cheap. FSet refuses to pay it, and builds an
+  immutable set the way you actually use one: <strong>frozen flat leaves, queried hard, combined
+  lazily</strong> — so you pay for the questions you ask, not the structure you didn't need.
+  Everything on this page is a consequence of that one bet. And as everywhere on this site: every bar
+  is a JMH measurement you can hover, every snippet is extracted from source that compiles.
+</p>
+
+## The trie tax
+
+Persistent sets — Scala's `immutable.Set`, Clojure's, CHAMP, all of them — are built around one trade:
+store the elements in a 32-way trie so that adding one element shares almost the whole structure. It's
+a beautiful trade *if your workload is single-element churn with old versions retained*. But it taxes
+everything else: every `contains` hops pointer-to-pointer down the trie, every primitive is boxed into
+a node, every bulk union walks and rebuilds tree structure, and the whole thing runs 4–15× the memory
+of the flat data. And the workload most immutable sets actually live is the opposite one — **build
+once, then query and combine a lot**.
+
+So FSet inverts the trade. A materialized set is a **frozen flat leaf** — a packed sorted primitive
+array, a frozen open-addressing hash table, a dense bitmap, or a 16-byte range — with no tree to hop
+and nothing boxed. And the persistent operations don't rebuild anything at all: `∪ ∩ ∖ ⊕`, `+` and `-`
+are **O(1) lazy nodes** that share both operands. No other set on the JVM has a lazy set algebra.
+Immutability stops being the thing you apologize for: a table that will never grow again can be laid
+out for pure probe speed, and the algebra comes free.
+
+<Snippet name="set-node-tree" hideFull />
+
+Same construction as [FArray's core](./design/java-core.mdx): generated, `final`, fields-and-methods
+Java, one class per shape per element kind, all behind `opaque type FSet[A] <: AnyRef = SBase` — zero
+wrapper allocation, primitives never boxed.
+
+## A set is more than a HashSet
+
+Mainstream languages ship one thing called "Set": a finite, enumerable hash collection. But that's the
+special case, not the concept. Mathematically a set of `A`s is an element of the **Boolean algebra
+2<sup>A</sup>** — something you can ask membership of, union, intersect, subtract, complement. "All
+the Ints above 5" is a perfectly good set; you just can't enumerate it. FSet models the whole algebra,
+and recovers the classical enumerable set as the *materialized special case*.
+
+The type system tracks which kind you're holding, as a small lattice of capabilities — built on a
+Scala 3 trick long believed impossible. The folklore says opaque types can't subtype each other; it's
+false. An opaque type's upper bound doesn't have to be spent on `AnyRef` — bound it against the
+*parent opaque type* and you get real, externally visible, zero-wrapper subtyping. Every level below
+is the same bare `SBase` at runtime; upcasts are free; an op defined once at the top is inherited by
+everything beneath it:
+
+<Snippet name="set-lattice" hideFull />
+
+Membership and the algebra live at the top. Traversals and transforms — `foreach`, `filter`, `map`,
+`flatMap` — live on `FSetFinite`: anything provably finite may enumerate (they materialize internally,
+memoized on the node), and since a transform builds a fresh materialized set anyway, demanding an
+explicit `.materialize` first would add a keyword but no information. The cheap observations and value
+equality — `size`, `iterator`, `sameElements` — need the frozen leaf itself and sit on
+`FSetMaterialized`. The compiler enforces the split: `(a ++ b).size` doesn't compile until you
+`.materialize`, and `FSet.above(5).size` doesn't compile at all. `FSetInfinite` is the honest outlier
+— an infinite set *is* a predicate, so it's contravariant like one, kept out of the invariant chain
+and bridged in by a `Conversion`. Ranges round it out: `FSet.range(0, 1_000_000_000)` is a finite,
+materializable set that costs 16 bytes.
+
+Here's the part with real depth: **finiteness is never decided — it's propagated.** Whether an
+arbitrary set is finite is undecidable (Rice's theorem), so FSet never asks. Finiteness is a syntactic
+property of which combinator built the set, and each operation has a transfer rule:
+
+<FinitenessTable />
+
+The gem is intersection: *anything* ∩ finite is finite, so filtering an infinite set by a finite one
+lands you safely back in enumerable territory — and the types know it statically. The cases the rules
+can't decide (infinite ∩ infinite, a set handed to you as bare `FSet`) fall to the top type,
+narrowable at runtime by `.finite: Option[FSetFinite[A]]` — a conservative structural inspection that
+never returns a false `Some`.
+
+Two more consequences of taking the algebra seriously. **Emptiness is the single decision primitive**:
+`a == b` is `(a ⊕ b).isEmpty`, `a subsetOf b` is `(a ∖ b).isEmpty`, disjointness is
+`(a ∩ b).isEmpty` — so the comparisons ride the same lazy algebra as everything else. And **map is not
+a homomorphism** — the image of a set doesn't distribute over ∩ or ¬ — which is precisely why `map`
+lives on the finite tier while `filter`, which *is* just ∩ with a predicate, could in principle stay
+symbolic. The capability lattice isn't API taste; it's the algebra's own structure, spelled as types.
+
+<Snippet name="set-surface" hideFull />
+
+## The crown op: contains
+
+Everything above was designed backwards from one question: how fast can `xs.contains(x)` possibly be?
+The answer is one compiled-once loop per element kind — no recursion on the spine, no allocation, and
+a neat trick for negations: `SXor` and `SComplement` don't get evaluated, they just flip a parity bit
+that's applied to whatever the leaf answers. On the common leaf-only path `flip` is provably false and
+folds away.
+
+<Snippet name="set-contains-int" hideFull />
+
+Each arm is a leaf giving its best answer: the bitmap is a single bit-test, the range is two compares,
+the frozen hash is a one-hop probe, the small sorted leaf is an early-exit scan that stays in
+registers. And the algebra arms are why the lazy nodes are queryable at all — `contains` distributes
+over `∪ ∩ ∖ ⊕ ¬` as a Boolean homomorphism (evaluate membership at a point and the whole algebra
+collapses to Boolean logic), so membership in a combined set never materializes anything.
+
+<BenchPair
+  suite="fset"
+  int="IntSetContainsHitBenchmark"
+  str="StrSetContainsHitBenchmark"
+  caption={
+    <>
+      Point-lookup hits, Int (left) and String (right), against every serious JVM set — mutable ones
+      included. Int runs at the hardware floor — one mix, one load, one compare — and at 100k the
+      frozen table is the fastest of the entire field. On String, FSet ties{" "}
+      <code>scala.mutable</code> outright at 1000 and 100k and leads everything immutable.
+    </>
+  }
+/>
+
+For references there's no primitive trick to lean on, so the frozen leaf borrows the best idea in
+modern hash tables — Facebook's F14 / abseil's control bytes. Next to the key array sits a dense
+`byte[]` of 7-bit hash fingerprints; a probe reads *one cache-resident byte* and rejects almost every
+miss before touching a key object, and only a fingerprint match pays `.equals`:
+
+<Snippet name="set-f14-probe" hideFull />
+
+That's why *misses* — half of real membership traffic — are where the frozen layout shines: FSet's
+miss path is fastest-or-tied in the whole field at every size, mutable tables included. The honest gap
+is elsewhere: probe with a *scrambled mix* of hits and misses, defeating branch prediction, and the
+chained layout of `scala.mutable` and friends pulls 1.4–2× ahead on String. That loss is measured,
+understood, structural — and accepted, after a real fight: SWAR group probing, cheaper multiplicative
+hashes, higher load factors and ctrl-less small tables were each tried and killed by JMH. It's the
+one tax paid for a layout that wins nearly everything else on this page.
+
+## Dense Int data wants to be a bitmap
+
+Int sets in the wild are rarely random 32-bit noise — they're IDs, indices, year ranges, enum
+ordinals. Dense, in other words. The leaf builder measures density at construction and, when the value
+span is at most 64× the element count, skips hashing entirely: the set becomes `SIntBitmap`, a bare
+`long[]` where `contains` is one shift and one mask.
+
+<Snippet name="set-bitmap-leaf" hideFull />
+
+<GeneratedCode
+  name="set-density-router"
+  summary="The density router — bitmap when span ≤ 64·n, else sorted/hash"
+/>
+
+The payoff compounds on bulk operations, because the algebra closes over the representation: bitmap ∪
+bitmap is a word-parallel OR, intersection an AND, difference an AND-NOT — 64 elements per
+instruction, cardinality by `popcount`, and the merge kernels work region-split, so an intersection
+only touches the window where the two bitmaps overlap. That's the entire reason a general-purpose
+immutable set can stand next to `immutable.BitSet` and RoaringBitmap in their own niche — while also
+being a set of Strings tomorrow.
+
+<GeneratedCode name="set-bitmap-merge" summary="The word-parallel bitmap merge — ∪ ∩ ∖ ⊕ at 64 elements per op" />
+
+<BenchChart
+  suite="fset"
+  cls="IntSetMergeUnionBenchmark"
+  caption={
+    <>
+      Union two sets and materialize the result. A dead heat with <code>immutable.BitSet</code> at
+      16, ~1.9× past it at 1000 and ~4× at 100k, with RoaringBitmap ~1.8× behind — and every
+      hash-based set thousands of times back, because they must rehash every element FSet ORs in
+      bulk.
+    </>
+  }
+/>
+
+One honest cell goes the other way: at size 16, Scala's `BitSet1`/`BitSet2` keep their entire
+population in one or two *fields* — no array, no indirection — and no array-backed bitmap can match a
+single-word update. Measured, accepted; it's a size-16 trophy.
+
+## The algebra is lazy, and materialize is a merge
+
+Because `a ++ b` is just a node, the natural way to use FSet is to *build an algebra and query it*.
+When you do need the elements, `.materialize` folds the tree into one leaf — iteratively, spine-first,
+never JVM recursion (a loop-built chain of ten thousand `+` nodes must not be a StackOverflow) — and
+**memoizes** the result on the node, so a shared subtree is merged once ever. Even here the discipline
+is measured, not assumed: the first cut collected a spine list for *every* materialize and regressed
+small merges — shallow trees like a plain `a & b` now take a fast path that allocates nothing but the
+answer:
+
+<Snippet name="set-union-node" hideFull />
+
+<GeneratedCode name="set-materialize" summary="Iterative left-spine materialize — pairwise union rounds, memoized per node" />
+
+## To materialize or not — two opposite answers
+
+So when should you actually call `.materialize`? FSet's benchmarks give a beautifully clean answer,
+and it's *different per element kind* — which is itself the strongest argument for a lazy algebra: the
+right eagerness isn't a property of your code, it's a property of the data, so the library decides.
+
+**For Int, merging is nearly free** — a word-parallel OR — so the smart `++` constructor eagerly
+merges cheap pairs (two bitmaps, two tiny leaves) on the spot, and a chain of unions quietly collapses
+into a single bitmap. There is no lazy-versus-eager distinction left to care about:
+
+<BenchChart
+  suite="fset"
+  cls="IntSetUnion3ContainsBenchmark"
+  caption={
+    <>
+      The signature workload: union three sets, then probe the result <em>n</em> times. On Int the
+      chain collapses to one bitmap — FSet edges past both BitSets from 1000 up (~1.1–1.2×), runs
+      ~3.7× past Roaring at 100k, and the hash sets — which must eagerly rebuild the union — are
+      25–670× behind.
+    </>
+  }
+/>
+
+**For references, merging is the expensive thing** — every String rehashed into a new table — so FSet
+keeps reference unions lazy and lets `contains` distribute over the tree. Every competitor must pay
+the full O(n) rebuild before answering a single query; FSet just answers:
+
+<BenchChart
+  suite="fset"
+  cls="StrSetUnion3ContainsBenchmark"
+  caption={
+    <>
+      The same workload on Strings, never materialized. Fastest at every size — ~3× the best mutable
+      table at 100k, 6–9× fastutil, Guava, HPPC and CHAMP. This is the moat: no other JVM set can
+      answer membership in a union it hasn't built.
+    </>
+  }
+/>
+
+And the kicker, straight from the data: at *n* queries over the union, the lazy tree beats **FSet's
+own materialized path** — by ~2.7× at 16, ~2× at 1000, ~1.2× at 100k. Deferring the merge wins even
+when you query as many times as there are elements; you'd materialize a reference union only when you
+intend to query it *far* more than that. And when you do, you still come out ahead:
+
+<BenchChart
+  suite="fset"
+  cls="StrSetUnion3MatContainsBenchmark"
+  caption={
+    <>
+      Union three String sets, <code>.materialize</code> once, then probe <em>n</em> times —
+      build-once-query-many. The cached-hash merge keeps FSet fastest here too: ~3× the best mutable
+      table and ~4.9× fastutil at 100k.
+    </>
+  }
+/>
+
+## References merge on cached hashes
+
+What makes that materialized-String row fast is that the bulk algebra for reference elements has its
+own unboxed column: every materialized Ref leaf carries its elements alongside a parallel `int[]` of
+cached hashes, kept *hash-sorted*. Union, intersection, difference and xor then become two-pointer
+merges over plain `int` comparisons — cache-sequential, allocation-tight, with `.equals` paid only
+inside a hash-collision run:
+
+<Snippet name="set-merge-ref" hideFull />
+
+Even the *build* is arranged around the freeze. Constructing a String set dedups through the F14 table
+and records the hashes as it goes, deferring the hash-sort to a memoized view that only exists if the
+algebra ever asks for it. The result is the part that should sting the most for a mutable table:
+**building the frozen, immutable set is faster than building any mutable one**:
+
+<BenchChart
+  suite="fset"
+  cls="StrSetBuildBenchmark"
+  caption={
+    <>
+      Build a String set from an array. Fastest at every size — ~1.2× <code>scala.mutable</code> at
+      16 rising to ~2.5× at 100k, ~2× fastutil, and 33× the immutable CHAMP Set, which pays trie
+      construction per element.
+    </>
+  }
+/>
+
+The same two sorted hash columns make value equality embarrassingly fast: two pointers, int compares,
+done — no probing one set with the other's elements. `sameElements` on String sets is the clearest
+structural win in the whole suite:
+
+<BenchChart
+  suite="fset"
+  cls="StrSetEqualsBenchmark"
+  caption={
+    <>
+      Set equality on Strings. One merge-shaped pass over cached hashes versus probe-per-element:
+      fastest at every size — ~5× the mutable table at 100k, ~17× fastutil, ~23× the immutable Set.
+      Value equality is CHAMP's documented weak spot; here it's a headline.
+    </>
+  }
+/>
+
+## Even map stays in bitmap-land
+
+Transforms are where set semantics usually force a detour — collect values, sort, dedup, rebuild.
+FSet's `map` on an Int set instead word-scans the source bitmap and ORs each `f(e)` straight into a
+growable bitmap accumulator that re-bases on both ends. Dense in, dense out: no intermediate array, no
+sort, dedup for free — and if the output turns out sparse, the builder degrades once to the ordinary
+path and loses nothing.
+
+<GeneratedCode name="set-bitmap-builder" summary="The growable bitmap accumulator behind map — dense outputs never leave bitmap form" />
+
+<BenchChart
+  suite="fset"
+  cls="IntSetMapBenchmark"
+  caption={
+    <>
+      map an Int set through a function and rebuild the set. The fused scan-into-bitmap build beats
+      even <code>immutable.BitSet</code> from 1000 up (~1.2–1.3×) and runs ~19× past fastutil at
+      100k; at size 16 the BitSet's single-word build still wins.
+    </>
+  }
+/>
+
+`flatMap` gets the same treatment, split by write kind. Each element's result set is already a
+materialized leaf, so for Int the leaves fold together with pairwise word-OR union rounds; for
+references each part's raw element column is appended — a bulk `System.arraycopy`, no iterator, no
+boxing — and the deduplicating one-pass build runs *once* at the end. That last choice was measured,
+not assumed: the first cut merged Ref leaves pairwise too, re-allocating at every round, and lost to
+`immutable.Set`; append-once turned it into a win.
+
+<BenchPair
+  suite="fset"
+  int="IntSetFlatMapBenchmark"
+  str="StrSetFlatMapBenchmark"
+  caption={
+    <>
+      flatMap with a 2× expansion (<code>x → {"{x, x+1}"}</code> / <code>s → {"{s, s+\"x\"}"}</code>).
+      fastutil has no flatMap, so its bar is the raw hand-written double-add loop — the strongest
+      possible baseline, allocating no inner sets at all. At small sizes that raw loop wins, as it
+      should; at 100k FSet passes even it — ~2.6× on Int, ~1.3× on String.
+    </>
+  }
+/>
+
+## Where it lands
+
+The same leaderboard treatment as FArray's: every operation at every size, each structure scored by
+the geometric mean of its distance from the fastest-in-cell. The bet is visible right in the table —
+the scattered-probe and size-16 cells documented above go to the specialists, and everything
+structural — build, merge, equality, transforms, the algebra itself — goes to FSet, usually by
+multiples.
+
+<Scorecard suite="fset" />
+
+The full record — every chart, every competitor, with the exact `@Benchmark` source behind each card —
+is on the [FSet benchmarks page](./benchmarks/fset.mdx).
+
+<Related
+  links={[
+    { to: "/benchmarks/fset", label: "FSet benchmarks", desc: "The complete scorecard — every chart, every competitor." },
+    { to: "/design/java-core", label: "The FArray core", desc: "The generated-Java playbook FSet is built on." },
+  ]}
+/>

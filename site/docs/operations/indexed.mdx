@@ -1,0 +1,77 @@
+---
+title: "Indexed access: apply, head, last"
+sidebar_label: indexed access
+description: "The wrapper's price measured at the smallest possible op — one read — and where the lazy tree changes the cost model."
+---
+
+import Link from "@docusaurus/Link";
+import BenchChart from "@site/src/components/BenchChart";
+import Related from "@site/src/components/Related";
+
+<p className="lede">
+  A single read is the one place a wrapper can't hide: there's no loop to amortize into, no lambda to
+  specialize — just "give me element <em>i</em>". This page is the honest accounting of what{" "}
+  <code>xs(i)</code>, <code>head</code> and <code>last</code> cost on a structure that is sometimes a
+  flat array and sometimes a lazy tree.
+</p>
+
+## The cost model
+
+On a **leaf** — the flat array every elementwise op leaves behind — an indexed read is a bounds
+check, one type test (which node shape is this?), and the array load. That type test is the entire
+price of the wrapper relative to a raw `int[]`, and on this page it is *visible*: a lone read is the
+one op with nothing to amortize into, so the measured ~25% gap below is the wrapper tax stated
+exactly. It's the same hair that buys value `equals`, `hashCode` and a printable `toString` —{" "}
+<Link to="/design/combinators">the trade named early</Link>. (Loop-shaped ops read the backing array
+directly and pay the test once per *traversal*, which is why every other page shows ties and wins.)
+
+On a **lazy tree**, a read is O(depth): a `Concat` of two leaves resolves one comparison and
+recurses left or right; a `SliceNode` adds an offset; a `ReverseNode` flips the index. Nothing
+materializes — reading element 3 of a twenty-array concat touches one leaf. `head` and `last` are
+the special cases the nodes answer directly: `last` of an `Append` is the appended element, `head`
+of a `Prepend` likewise — O(1) even on trees built by a million-element cons chain.
+
+<BenchChart
+  cls="ApplyStrBenchmark"
+  caption="apply(size/2) — a random-access read at a non-constant index, isolated re-measure. The honest number: FArray runs at ~0.72–0.75× of a raw IArray read — the type test is ~a quarter of a nano-op that is otherwise just bounds-check + load. That is the whole wrapper tax, visible only because nothing amortizes it. List is the designed outlier (O(n) walk); Vector pays its trie hops."
+/>
+
+<BenchChart
+  cls="HeadStrBenchmark"
+  caption="head. Same shape as apply: ~0.65× of a bare IArray read (arr(0) with no type test is unbeatable), while the other wrapped structures — fs2.Chunk, zio.Chunk, Vector — land at or behind FArray. List's head is its one native O(1) op and keeps honest company."
+/>
+
+<BenchChart
+  cls="LastStrBenchmark"
+  caption="last. The same wrapper tax against IArray — and the page's one spectacular number: List walks all n nodes to reach the final slot, which at 100k is a ~200,000× gap. The lazy tree never pays that shape of cost: last of an Append node is O(1) by construction."
+/>
+
+These are String benchmarks, but a single read is the op where element kind matters least — no
+lambda crosses a boundary, so there is nothing to box on the way *in*. (On the way out, a
+`List[Int].head` still unboxes an `Integer`; an `FArray[Int]`'s read is a primitive load.) The
+summary a reviewer should leave with: against a *bare array*, a lone read costs the type test —
+~25–35%, stated above, nothing hidden. Against the other *wrapped* structures, FArray's reads are
+at par or ahead. And no loop-shaped op on any other page pays this per element — traversals resolve
+the node shape once and read the backing array directly.
+
+`isDefinedAt(i)` belongs to this family, not to conversions: it's the bounds check that guards a
+read — `i >= 0 && i < length` — with `length` read straight off the node. It runs ~1.2× over a bare
+`IArray.isDefinedAt` (which routes through `ArraySeq`), the mirror of the small tax `apply` pays: a
+comparison against a directly-available length beats a wrapped one.
+
+## The honest floor
+
+One cell in the suite goes against us and is worth naming: at **size 1**, ops that *read before
+looping* (reduce, scan) sit measurably behind a bare array. That floor was hunted properly — an
+int-tag `tableswitch` instead of the sealed-trait match was built and measured (17–20% *slower* for
+monomorphic reads; HotSpot folds the match better), and a dedicated single-element fast path
+measured as a no-op. The conclusion stands as measured: the size-1 read floor is the irreducible
+price of being a data structure rather than a pointer, and it's paid only where n=1.
+
+<Related
+  links={[
+    { to: "/design/combinators", label: "The cost model", desc: "What the wrapper buys for the hair it costs." },
+    { to: "/operations/list-parity", label: "List's own game", desc: "head/tail recursion at cons-list speed." },
+    { to: "/chains", label: "Chained operations", desc: "Where single-op percents become chain multiples." },
+  ]}
+/>

@@ -1,0 +1,32 @@
+---
+title: Where it all lands
+sidebar_label: The scoreboard
+description: The entire benchmark suite boiled down to one number per structure.
+---
+
+import Scorecard from "@site/src/components/Scorecard";
+import Related from "@site/src/components/Related";
+
+<p className="lede">
+  That's the construction. Here's the scoreboard — the entire benchmark suite, every operation at every
+  size, boiled down to one number per structure.
+</p>
+
+<Scorecard />
+
+Not every nut and bolt is the fastest of its kind, and the pages before this one were honest about the
+ties and the one or two places a bare array still edges it. But assembled — unboxed elementwise ops at
+raw array speed, structural ops in O(1), fusion when you ask for it, and a real immutable collection
+with value semantics on top — it adds up to the fastest of the field. Every bar on this site is a JMH
+measurement you can hover, and every chart will show you the exact benchmark that produced it. The
+full suite, chart by chart, lives on [the FArray benchmarks page](./benchmarks/farray.mdx). And FArray
+no longer travels alone — [FSet](./fset.mdx), the immutable unboxed set built on the same core, has
+[a scorecard of its own](./benchmarks/fset.mdx).
+
+<Related
+  links={[
+    { to: "/benchmarks/farray", label: "FArray benchmarks", desc: "The complete record behind this table, chart by chart." },
+    { to: "/fusion", label: "The fusion engine", desc: "The gear above eager: whole pipelines compiled to one loop." },
+    { to: "/fset", label: "FSet", desc: "The second collection — an immutable, unboxed set with a lazy algebra." },
+  ]}
+/>

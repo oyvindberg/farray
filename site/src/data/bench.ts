@@ -11,7 +11,9 @@ export const SECTIONS: Section[] = ["Primitive", "String", "ListLike", "Diagnost
 export const KNOWN: Record<string, [string, string]> = {
   farray: ["FArray", "#16a34a"],
   farrayFused: ["FArray fused", "#16a34a"], farrayEager: ["FArray eager", "#9bb6a6"],
+  farraySource: ["FArray fused", "#16a34a"], farrayLines: ["FArray fused", "#16a34a"],
   array: ["Array", "#a0a6ac"],
+  arraybuffer: ["ArrayBuffer", "#8aa2b8"], arraybuilder: ["ArrayBuilder", "#c29a63"],
   iarray: ["IArray", "#bf9d57"], list: ["List", "#9b8fb2"],
   vector: ["Vector", "#7ea2bd"], fs2chunk: ["fs2.Chunk", "#c5876b"],
   ziochunk: ["zio.Chunk", "#bd8aa6"], scalaRange: ["Range", "#8b9197"],

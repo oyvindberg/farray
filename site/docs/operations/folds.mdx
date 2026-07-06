@@ -1,0 +1,102 @@
+---
+title: Folds, reduces and scans
+sidebar_label: folds
+description: "The accumulator ops — where the boxing tax is purest, where the JIT's inlining budget betrays competitors, and where a loop-shape mistake cost 4× until measured."
+---
+
+import Link from "@docusaurus/Link";
+import BenchChart from "@site/src/components/BenchChart";
+import BenchPair from "@site/src/components/BenchPair";
+import Related from "@site/src/components/Related";
+
+<p className="lede">
+  A fold is the purest boxing benchmark there is: no output collection, no structural work — just one
+  lambda applied per element into an accumulator. Whatever a library's per-element crossing costs,
+  a fold is <em>nothing but</em> that crossing, a hundred thousand times. Which makes this page the
+  cleanest view of the thesis: FArray's unboxing lives in method signatures, everyone else's lives in
+  the JIT's good mood.
+</p>
+
+## The microbenchmark that can't tell anyone apart
+
+Start with the honest baseline, because it frames everything after it. A *lone* fold is the case
+every JIT handles: one call site, one lambda class, the shared generic `foldLeft` inlines and
+specializes, and everyone's loop ends up load-add-load-add. Measured that way, FArray and a bare
+`int[]` sit together at the hardware ceiling — within 1% at every size — and that tie is the correct
+result, not a disappointment:
+
+<BenchPair
+  int="FoldLeftIntBenchmark"
+  str="FoldLeftStrBenchmark"
+  caption="A lone foldLeft, Int beside String. On Int, FArray and IArray are within 1% at every size — both are the raw load-add loop, and a single fold is exactly the case the JIT specializes for everyone. On String the whole field sits within ~±20% and the small/mid cells jitter (fast in-loop ops are where the sweep's re-measure methodology is noisiest — documented in the repo, not hidden). If folds ended here, no library would have anything to sell."
+/>
+
+The interesting question is why that tie doesn't survive contact with a codebase.
+
+## The part that matters: folds in real methods
+
+Competitors' primitive folds run unboxed *because* the JIT inlines the shared generic `foldLeft`
+into the call site and specializes it — the tie above is rented, paid for out of the method's
+inlining budget. Put **several folds in one method** — a completely ordinary reporting or
+aggregation method — and the budget runs out: the shared fold collapses back to its generic boxed
+signature, one call site at a time, as the method grows. We measured the collapse beginning at four
+folds per method on C2 and around twelve on Graal.
+
+FArray's fold surface is a tiny call to a compiled-once leaf — deliberately *not* inlined — so the
+sixth fold in a method compiles exactly like the first. The benchmark runs six reference folds in one
+measured method, and the sweep shows the whole arc:
+
+<BenchChart
+  cls="FoldRefPollutedBenchmark"
+  caption="Six reference folds in ONE measured method. At 1k the competitors' folds are still inlined and FArray's shared-leaf call overhead shows — an honest 0.47× cell. By 10k the budget strain begins (1.2×), and at 100k the collapse is complete: FArray is 3.5× ahead of the same IArray that tied it on the lone-fold chart. The crossover IS the finding — speed that lives in the bytecode versus speed rented from the inliner."
+/>
+
+If you take one number away from this page, take the pair: 1.00× alone, 3.5× embedded. The first is
+what microbenchmarks measure; the second is what your codebase runs.
+
+## reduce, min, max, sum
+
+The reduce family is fold with the seed taken from the data, and the aggregations are folds with a
+fixed combiner — same machinery, same result:
+
+<BenchChart
+  cls="ReduceIntBenchmark"
+  caption="reduce / reduceLeft / reduceRight (and Option variants) on Int. Seeded from the first element, then the same unboxed accumulator loop; reduceRight is the standout (~3.4× — competitors traverse twice or reverse first). (fs2.Chunk has no reduce family and sits this one out.)"
+/>
+
+<BenchChart
+  cls="AggregateIntBenchmark"
+  caption="max / min / maxBy / minBy / sum / product on Int. The By-variants are where FArray stretches the lead: the projected key is computed once per element into a primitive local, versus an Ordering[B] call chain that boxes both the key and the comparison."
+/>
+
+## scan: the op that taught us about loop shape
+
+`scanLeft` emits every intermediate accumulator — a fold that writes its state out as it goes. It
+also carries this library's favorite measure-don't-assume scar: the first implementation carried the
+accumulator *through the output array* (`out(o) = op(out(o - 1), v)`), which reads back a value
+written one iteration ago — a store-to-load dependency on the loop's serial chain. That one shape
+decision ran at 0.22–0.40× of a raw array. Moving the accumulator into a register local — the change
+is two lines — made it 4×, to a dead tie with `IArray`. Nothing about dispatch, boxing, or the
+tree: just where a loop-carried value lives.
+
+<BenchChart
+  cls="ScanIntBenchmark"
+  caption="scanLeft / scanRight / scan on Int, post-fix: the accumulator lives in a register, the output array is write-only, and FArray sits at-or-above the raw array through the mid and large sizes (small-n cells jitter). The 4× loop-shape lesson is documented in the repo's memory so nobody re-learns it."
+/>
+
+For completeness, the family's remaining members are all the same machinery pointed differently:
+`foldRight` and `reduceRight` run the backward driver (no reverse-then-fold copy — the ~3.4× in the
+chart above is exactly that saved pass), and `reduceOption`/`reduceLeftOption`/`reduceRightOption`
+are the empty-safe spellings, one branch in front of the same loop.
+
+One more gear exists above all of this: when the fold ends a *chain*,{" "}
+<Link to="/fusion/farray">fusing the chain</Link> folds without materializing any stage at all — and
+`agg` runs several folds in one pass.
+
+<Related
+  links={[
+    { to: "/chains", label: "Chained operations", desc: "Where the per-stage wins compound." },
+    { to: "/operations/map", label: "How map stays unboxed", desc: "The signature-level machinery folds share." },
+    { to: "/fusion/terminals", label: "Fused folds & agg", desc: "Several accumulators, one pass, no chain materialization." },
+  ]}
+/>

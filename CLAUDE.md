@@ -37,8 +37,9 @@ keeping the full `IndexedSeq` API.
 ## Benchmark-driven workflow
 
 The scorecard **is the checked-in JSON** under `docs/`: `bench-results.json` (farray suite) and
-`set-bench-results.json` (fset suite) — raw JMH numbers, rendered by the site (`site/`, pages
-`#/reference` and `#/setbench`: W/T/L per op × size, ≥1.05× win, 0.95–1.05× tie, <0.95× loss).
+`set-bench-results.json` (fset suite) — raw JMH numbers, rendered by the site (`site/`, a Docusaurus
+app; pages `/benchmarks/farray` and `/benchmarks/fset`: W/T/L per op × size, ≥1.05× win, 0.95–1.05×
+tie, <0.95× loss).
 There is NO generated HTML report anymore. Treat the data like code: **re-measure and commit it
 alongside the change that moved the numbers.**
 
@@ -51,6 +52,9 @@ re-run the competitors — edit `GenCores.scala`, run the sweep, read the refres
 caffeinate -i bash scripts/bench-run.sh [warmup-iters] [measure-iters] [forks] [max-shards]
 #   typical:  caffeinate -i bash scripts/bench-run.sh 3 5 1 6
 ```
+- **NEVER `bleep compile`/`bleep test` while a JMH run is live.** Recompilation swaps class files
+  under the running forks' classpath and JMH silently truncates the run (exits 0 with a partial
+  matrix — diagnosed 2026-07-04, two runs lost). Queue compiles behind the lock, or wait.
 - **One JMH consumer per box — `scripts/bench-lock.sh`.** Multiple agents/sessions may work here
   concurrently; two JMH runs contend and both measure garbage (and invite pkill collateral). The sweep
   runners (`bench-run.sh` / `setbench-run.sh`) take the mutex automatically; **wrap ad-hoc runs
@@ -89,7 +93,14 @@ FArray's implementation is **generated** — do NOT edit generated sources; edit
 ### Project layout (`bleep.yaml`)
 - `codegen` — the `GenCores` generator.
 - `farray` — the library (generated `FBase`/`FArrayOps` + hand-written `FArray.scala`).
-- `tests` (dependsOn `farray`) — `FListTest`, parity vs `List`.
+- `example-json-decoder` (dependsOn `farray`) — the NDJSON record decoder as a downstream module.
+  Pipelines are shape-indexed (`Fuse[A, S]`); terminal SYNTAX lives once in farray's capability traits
+  (`AggTerminals`/`SearchTerminals`/`GroupTerminals`/`PlanTerminals`/`MaterializeTerminals`,
+  bundle `StandardTerminals`), every method funneling into the shape lowering's single abstract
+  `inline def lower(self, t: Terminal[A, R])` hook. A module = shape + given + hook whose macro calls
+  `FuseMacro.lower(self, t, itsRecordDecoder)` — see `example-json-decoder/…/Integration.scala` (the
+  whole plug-in, one file; design: docs/fusion-integration-design.md). No registry, no reflection.
+- `tests` (dependsOn `farray`, `example-json-decoder`) — `FListTest`, parity vs `List`.
 - `benchmarks` / `benchmarks-runner` — JMH suites, driven by `scripts/bench-run.sh`.
 
 ### Build notes

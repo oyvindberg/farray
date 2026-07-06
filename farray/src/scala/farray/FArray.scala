@@ -21,6 +21,12 @@ object FArray:
   // (`FArray(xs*)`) falls back to the runtime applyImpl.
   inline def apply[A](inline as: A*): FArray[A] = ${ FArrayMacros.applyMacro[A]('as) }
   inline def tabulate[A](n: Int)(inline f: Int => A): FArray[A] = FArrayOps.tabulateImpl[A](n)(f)
+
+  /** an unboxed imperative builder: accumulate with `+=`/`++=`, then `result()`. The element kind is resolved at THIS call site so primitive elements are
+    * written without boxing — see [[FBuilder]].
+    */
+  inline def newBuilder[A]: FBuilder[A] = FBuilder[A](16)
+  inline def newBuilder[A](initialCapacity: Int): FBuilder[A] = FBuilder[A](initialCapacity)
   inline def fromArray[A](as: Array[A]): FArray[A] = FArrayOps.fromArrayImpl[A](as)
   inline def fromIterable[A](it: Iterable[A]): FArray[A] = FArrayOps.applyImpl[A](it.toSeq)
 
@@ -77,6 +83,11 @@ object FArray:
   }
 
   extension [A](xs: FArray[A])
+    /** The opaque `FArray` IS its `FBase` core. Here in the defining scope the alias is transparent, so this is a plain ascription — no cast. Its job is to
+      * carry that conversion to the OTHER files (where the opaque equality is hidden and a raw `asInstanceOf` would otherwise be needed).
+      */
+    private[farray] inline def asFBase: FBase = xs
+
     // ---- shape ----
     def length: Int = xs.length
     def size: Int = xs.length
@@ -113,7 +124,7 @@ object FArray:
     private[farray] def boxedAt(i: Int): A = (xs: FBase).applyBoxed(i).asInstanceOf[A]
 
     /** enter a fused pipeline: `xs.fuse.map(..).filter(..).run` compiles to one unboxed loop. */
-    inline def fuse: Fuse[A] = new Fuse[A](xs)
+    inline def fuse: Fuse[A, Chunks] = new Fuse[A, Chunks](xs)
     inline def foldLeft[Z](z: Z)(inline op: (Z, A) => Z): Z = FArrayOps.foldLeftImpl[A, Z](xs, z)(op)
     inline def foreach(inline f: A => Unit): Unit = FArrayOps.foreachImpl[A](xs)(f)
 
@@ -123,7 +134,7 @@ object FArray:
     inline def filter(inline p: A => Boolean): FArray[A] = FArrayOps.filterImpl[A](xs)(p)
     inline def filterNot(inline p: A => Boolean): FArray[A] = FArrayOps.filterNotImpl[A](xs)(p)
     inline def contains(elem: A): Boolean = FArrayOps.containsImpl[A](xs, elem)
-    inline def flatMap[B](inline f: A => FArray[B]): FArray[B] = FArrayOps.flatMapImpl[A, B](xs)(a => f(a).asInstanceOf[FBase])
+    inline def flatMap[B](inline f: A => FArray[B]): FArray[B] = FArrayOps.flatMapImpl[A, B](xs)(a => f(a).asFBase)
     inline def updated[B >: A](index: Int, elem: B): FArray[B] = FArrayOps.updatedImpl[A, B](xs, index, elem)
     inline def :+[B >: A](elem: B): FArray[B] = FArrayOps.appendImpl[A, B](xs, elem)
 
@@ -180,7 +191,11 @@ object FArray:
     // was the whole cost of partition on an empty/cheap input (the impl's cached emptyPair never survived).
     inline def partition(inline p: A => Boolean): (FArray[A], FArray[A]) =
       FArrayOps.partitionImpl[A](xs)(p).asInstanceOf[(FArray[A], FArray[A])]
-    inline def collect[B](pf: PartialFunction[A, B]): FArray[B] = FArrayOps.collectImpl[A, B](xs)(pf).asInstanceOf[FArray[B]]
+    // a LITERAL pattern match is picked apart at compile time (CollectMacro): pattern+guard become
+    // the predicate, the case body the transform, both fed inline to the fused one-pass impl — no
+    // PartialFunction object, no boxing. A stored PF falls back to the runtime impl.
+    inline def collect[B](inline pf: PartialFunction[A, B]): FArray[B] =
+      ${ CollectMacro.impl[A, B]('xs, 'pf) }
     // unboxed per-kind seen-tables (domain/offset bitmaps, position-index probes, F14 ctrl bytes for refs),
     // Scala `==` semantics preserved exactly (NaN never collapses, ±0.0 does), identity return when nothing
     // was duplicated. Replaces the boxed mutable.HashSet[Any] + filter pass.
@@ -279,7 +294,7 @@ object FArray:
     inline def unzip3[A1, A2, A3](using ev: A <:< (A1, A2, A3)): (FArray[A1], FArray[A2], FArray[A3]) =
       FArrayOps.unzip3Impl[A, A1, A2, A3](xs)(ev)
     inline def flatten[B](using ev: A <:< FArray[B]): FArray[B] =
-      FArrayOps.flatMapImpl[A, B](xs)(a => ev(a).asInstanceOf[FBase])
+      FArrayOps.flatMapImpl[A, B](xs)(a => ev(a).asFBase)
     inline def transpose[B](using ev: A <:< FArray[B]): FArray[FArray[B]] =
       val n = xs.length
       if n == 0 then FArray.empty[FArray[B]]

@@ -1,0 +1,122 @@
+---
+title: "Chains: where it runs away"
+sidebar_label: Chained operations
+description: "Single ops win by percents; real code chains ops, and chaining is where FArray's model compounds — every pairing shown Int beside String, every bar hoverable."
+---
+
+import Link from "@docusaurus/Link";
+import BenchPair from "@site/src/components/BenchPair";
+import Related from "@site/src/components/Related";
+
+<p className="lede">
+  The single-op chapters were deliberately honest: measured one op at a time, FArray ties a bare
+  array and beats the boxing collections by whatever the boxing costs. But nobody writes one op.
+  Real code chains them — transform, select, slice, aggregate — and chains are where the design
+  compounds, because FArray's advantages <em>multiply per stage</em> while its costs don't. This page
+  is that argument, run on every pipeline twice: Int on the left, String on the right, so you can see
+  exactly which wins come from unboxing and which come from structure.
+</p>
+
+Three effects compound down a chain:
+
+<ul className="points">
+  <li>
+    <strong>Boxing is paid per stage.</strong> A three-stage pipeline over boxed elements boxes at
+    every crossing — the tax isn't amortized by chaining, it's multiplied by it. FArray's stages hand
+    each other primitive arrays.
+  </li>
+  <li>
+    <strong>Structural stages cost nothing.</strong> A <code>take</code>, <code>drop</code> or{" "}
+    <code>reverse</code> in the middle of a chain is an O(1) lazy node for FArray and a full copy for
+    every array-backed rival — a copy of data whose only purpose is to be consumed by the next stage.
+  </li>
+  <li>
+    <strong>Call sites stay private.</strong> Each FArray lambda binds to its own compiled loop at
+    its own call site. Competitors funnel all lambdas through one shared <code>map</code>/
+    <code>filter</code> site, which goes megamorphic as the method grows —{" "}
+    <Link to="/operations/map">the mechanism</Link> that turns their microbenchmark ties into
+    production losses.
+  </li>
+</ul>
+
+## The classic: map → filter → fold
+
+Transform, select, aggregate — the shape of half the collection code ever written. One boxed
+crossing per stage for the field; `int[]` end to end for FArray:
+
+<BenchPair
+  int="MapFilterFoldIntBenchmark"
+  str="MapFilterFoldStrBenchmark"
+  caption="map → filter → foldLeft, Int beside String. The identical chain on every structure. On Int the boxing collections pay per stage — 5.6× over Vector, 8.5× over fs2.Chunk, 12× over List at 100k — while the two unboxed-array rivals hold closer: IArray and zio.Chunk pay only the intermediate allocations (1.3–1.5×). On String the elements never box, so what remains is the tighter loops and the fold's unboxed Int accumulator."
+/>
+
+## Structure in the middle: take → drop → fold
+
+Slice stages are FArray's freebie — a lazy window over the source, no copy — and the fold then reads
+straight through the window:
+
+<BenchPair
+  int="TakeDropFoldIntBenchmark"
+  str="TakeDropFoldStrBenchmark"
+  caption="take(n-1) → drop(1) → foldLeft. FArray's take/drop are O(1) SliceNodes — the fold traverses the window without either slice ever existing. The copiers pay for it: 2× over IArray (two full array copies), 7–15× over Vector, 34× over List at 10k+. The one honest tie: zio.Chunk also slices lazily and folds within ~6–9% of us — respect where due; the win here is over eager copying, not over everyone."
+/>
+
+## Structure at the end: filter → map → reverse
+
+The mirror case — the structural stage last. FArray's `reverse` is a node pointing at the result;
+everyone else allocates a third collection just to flip the second one:
+
+<BenchPair
+  int="FilterMapReverseIntBenchmark"
+  str="FilterMapReverseStrBenchmark"
+  caption="filter → map → reverse. The first two stages are the usual per-element story; the reverse is where FArray simply stops doing work — an O(1) ReverseNode versus a full reversed copy. (fs2.Chunk has no reverse and sits out.)"
+/>
+
+## Expansion: flatMap → flatMap → map → fold
+
+Chained expansion stresses what a library hands its next stage. Each FArray `flatMap` produces one
+flat leaf, so the following stage reads a tight array rather than a fragment chain:
+
+<BenchPair
+  int="FlatMapChainIntBenchmark"
+  str="FlatMapChainStrBenchmark"
+  caption="flatMap → flatMap → map → foldLeft with small inners. Every stage's output is a flat leaf, so the compounding is linear for FArray; the boxing collections pay both the per-element tax and the intermediate allocation, twice over."
+/>
+
+## The method-size effect: eight distinct maps
+
+The chain that exposes the shared-call-site problem — eight *different* lambdas through `map` in one
+method, the profile any nontrivial method builds up:
+
+<BenchPair
+  int="MapMegaIntBenchmark"
+  str="MapMegaStrBenchmark"
+  caption="Eight distinct lambdas through map in one method. IArray's one shared Array.map site sees eight Function1 classes, goes megamorphic, and re-boxes on Int: at 10k its boxed intermediates are still cache-resident and it even leads (our one 0.85× cell), but at 100k the re-boxing becomes memory traffic and it falls 4.2× behind — List 12×, Vector 7×. FArray has no shared site to poison. On String there's no re-boxing to pay and the field stays close: the mechanism is megamorphic boxing, precisely."
+/>
+
+## The grand finale: a long interleaved structural chain
+
+And the case that stops being a race at all — a long alternating chain of `+:`, `:+`, `++` and
+`reverse`, forced by one final `map`. For FArray that's a string of O(1) nodes and a single O(n)
+traversal; for array-copying structures it's a full copy *per op*:
+
+<BenchPair
+  int="StructuralShowcaseIntBenchmark"
+  str="StructuralShowcaseStrBenchmark"
+  caption="An interleaved prepend/append/concat/reverse chain, materialized once at the end. O(n) total for FArray versus O(n·chain-length) for the copiers — this is the thousands-× regime, and it's identical on Int and String because structural ops never touch elements."
+/>
+
+---
+
+One rung remains above all of this: handing the *whole* chain to the compiler.{" "}
+<Link to="/fusion">Fusion</Link> takes these same pipelines and emits a single loop — the 14-stage
+version runs ~15× past even FArray's own eager chains. This page is why the eager ops are already
+the strongest field; that one is why the ceiling isn't here.
+
+<Related
+  links={[
+    { to: "/fusion/benchmarks", label: "The fused receipts", desc: "The same argument, one loop deeper." },
+    { to: "/scoreboard", label: "The scoreboard", desc: "Every op at every size, boiled to one number." },
+    { to: "/benchmarks/farray", label: "The full suite", desc: "All charts, including every chain here." },
+  ]}
+/>

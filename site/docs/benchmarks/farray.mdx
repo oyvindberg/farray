@@ -1,0 +1,20 @@
+---
+title: FArray benchmarks
+sidebar_label: FArray benchmarks
+description: The whole JMH suite, unabridged — every operation at every size, FArray against every competitor.
+hide_table_of_contents: true
+---
+
+import Link from "@docusaurus/Link";
+import BenchIndex from "@site/src/components/BenchIndex";
+
+<p className="page__eyebrow">the complete scorecard</p>
+
+<p className="lede">
+  The whole JMH suite, unabridged — every operation at every size, FArray against every competitor,
+  wins and losses alike. <Link to="/">The story</Link> pulls out the highlights and explains the
+  machinery; this page is the raw record. Every bar is a measurement you can hover, and every card
+  reveals the exact <code>@Benchmark</code> source it came from.
+</p>
+
+<BenchIndex suite="farray" />
