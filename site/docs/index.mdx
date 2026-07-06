@@ -36,9 +36,10 @@ guarantee correct. There will also be performance cliffs the scorecard didn't th
 ## Ten years of waiting for the JVM
 
 <p className="lede">
-  Scala collections read the way code should read, and the price is a heap allocation for every
-  <code>Int</code> that passes through them. The <code>while</code> loop that avoids the boxing is
-  miserable to write and worse to maintain. I spent about a decade waiting for something in
+  Scala collections read the way code should read, but they are not fast: the price of that
+  readability is a heap allocation for every <code>Int</code> that passes through them. The{" "}
+  <code>while</code> loop that avoids the boxing is fast, but miserable to write and worse to
+  maintain. I spent about a decade waiting for something in
   between: specialization, miniboxing, the Dotty linker, Valhalla's <code>List&lt;int&gt;</code>. None of it shipped.
   So the conclusion, every release, was the same: if it has to be fast, write it in Java.
 </p>
