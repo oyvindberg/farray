@@ -1,7 +1,7 @@
 ---
 title: Semantics and sharp edges
 sidebar_label: Sharp edges
-description: "The contracts that differ from the standard library: purity under fusion, lazy nodes pinning memory, collect re-evaluation, and the binary-compatibility reality of an inline API."
+description: "The contracts that differ from the standard library: purity under fusion, lazy nodes pinning memory, reference-identity sharing, and the binary-compatibility reality of an inline API."
 ---
 
 <p className="lede">
@@ -30,13 +30,6 @@ reachable, the same trap `String.substring` was before JDK 7. When you keep a sm
 large FArray long-term, break the tie by materializing: any elementwise operation
 (`slice.map(identity)`) or `FArray.from(slice)` copies the two elements into fresh storage and
 drops the reference.
-
-## `collect` may evaluate patterns more than once
-
-`collect` splits your pattern match at compile time into an `isDefined` check and an extraction.
-Guards and extractors in the patterns can therefore run up to twice per element, where the standard
-library's `PartialFunction` machinery runs them once. Pure patterns cannot tell the difference;
-side-effecting guards can. Same purity contract as fusion, same reason.
 
 ## Reference identity differs where copying was avoided
 

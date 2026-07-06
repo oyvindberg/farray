@@ -47,11 +47,12 @@ Three effects compound down a chain:
     every array-backed rival, a copy of data whose only purpose is to be consumed by the next stage.
   </li>
   <li>
-    <strong>Call sites stay private.</strong> Each FArray lambda binds to its own compiled loop at
-    its own call site. Competitors funnel all lambdas through one shared <code>map</code>/
-    <code>filter</code> site, which goes megamorphic as the method grows:{" "}
-    <Link to="/operations/map">the mechanism</Link> that turns their microbenchmark ties into
-    production losses.
+    <strong>Big methods slow the rivals down.</strong> The array-backed collections run every lambda
+    you pass to <code>map</code>/<code>filter</code> through one shared, generic copy of that method.
+    Pack several different lambdas into one method and the JIT can no longer keep that shared copy
+    specialized, so it deoptimizes and slows down. FArray compiles each lambda into its own loop, so
+    there is nothing shared to spoil. This is what turns a one-line benchmark tie into a loss in real
+    code, shown in full <Link to="#the-method-size-effect-eight-distinct-maps">further down</Link>.
   </li>
 </ul>
 
