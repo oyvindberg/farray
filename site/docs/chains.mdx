@@ -16,12 +16,10 @@ import Related from "@site/src/components/Related";
 export const fused = ["javastream", "farrayFused"];
 
 <p className="lede">
-  Measured one op at a time (the op chapters later do exactly that), FArray ties a
-  bare array and beats the boxing collections by whatever the boxing costs. But nobody writes one op.
-  Real code chains them: transform, select, slice, aggregate. Chains are where the design
-  compounds, because FArray's advantages <em>multiply per stage</em> while its costs don't. This page
-  runs that argument on every pipeline twice, Int on the left and String on the right, so you can see
-  which wins come from unboxing and which come from structure.
+  The introduction ended on a promise: the type swap beats the whole field with no fusion at all.
+  This page is that promise scored — every chained benchmark in the suite, eager <code>FArray</code>,
+  no <code>.fuse</code>. Each pipeline runs twice, Int on the left and String on the right, so you can
+  separate the wins that come from unboxing from the ones that come from structure.
 </p>
 
 The rivals throughout: Scala's `List` (an immutable linked list, not `java.util.List`), `Vector`
