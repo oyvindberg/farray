@@ -94,12 +94,6 @@ The byte-source numbers live with their scanners and rivals on{" "}
 hand-written reader loop at ~1 B/op, 4–9× past the AST parsers, and 2.5× on selective queries where
 records are abandoned mid-scan.
 
----
-
-Method: the checked-in `docs/bench-results.json`, produced by `scripts/bench-run.sh` (JMH, GraalVM
-CE 25, Apple Silicon; farray-only patch mode re-measures our methods against cached rival runs; see
-the repo's benchmarking notes). Cold numbers are SingleShotTime; allocation numbers are `-prof gc`.
-
 <Related
   links={[
     { to: "/benchmarks/farray", label: "The full FArray suite", desc: "Every op at every size, wins and losses alike." },
