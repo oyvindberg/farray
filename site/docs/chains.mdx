@@ -55,6 +55,21 @@ Three effects compound down a chain:
   </li>
 </ul>
 
+## The showstopper: flatMap → filter → take
+
+`flatMap` doubles the sequence, `filter` thins it, and `take` throws a chunk of it away. FArray's
+`take` is an O(1) SliceNode, so it discards the tail for *free* — everyone else copies out what they
+just finished building. With flat-leaf `flatMap` feeding an unboxed `filter` on top, eager FArray
+runs this shape up to **22× past List** and 6–10× past Vector and the Chunks, before a single
+`.fuse`:
+
+<BenchPair
+  int="FlatMapFilterTakeIntBenchmark"
+  str="FlatMapFilterTakeStrBenchmark"
+  ignore={fused}
+  caption="flatMap (doubles the sequence) → filter → take, Int beside String. The trailing take is a lazy SliceNode for FArray and a full copy for every rival. On Int: 22× List at 1k (13× at 100k), 6–10× Vector and the Chunks, and 1.6× IArray — which keeps its flatMap inners unboxed too, so only the take-copy separates them. String is the same shape: 11× List, 7× the Chunks."
+/>
+
 ## The classic: map → filter → fold
 
 Transform, select, aggregate: the shape of half the collection code ever written. One boxed

@@ -76,15 +76,13 @@ processing data you don't want in memory:
 
 ## The chain that used to collapse
 
-The case for compiling the pipeline instead of relying on the JIT, preserved as a benchmark: this
-exact shape once ran at 0.055× of IArray when a trailing structural call silently disabled escape
-analysis on a spliced loop (<Link to="/operations/flatmap">the full story</Link>). Fused, that
-failure mode cannot occur:
-
-<BenchChart
-  cls="FlatMapFilterTakeStrBenchmark"
-  caption="flatMap → filter → take on String elements. The trailing take is O(1) for FArray (a lazy SliceNode), and the fused pipeline leads at every size, with no dependence on the caller's method size or call-site history."
-/>
+The case for compiling the pipeline instead of relying on the JIT, preserved: `flatMap → filter → take`
+once ran at 0.055× of IArray when a trailing structural call silently disabled escape analysis on a
+spliced loop (<Link to="/operations/flatmap">the full story</Link>). Compiling the chain to one loop
+removes any dependence on the caller's method size or call-site history, so that failure mode cannot
+recur. Eager FArray already runs the shape well ahead of the field — up to 22× past List — on the{" "}
+<Link to="/chains#the-showstopper-flatmap--filter--take">chains page</Link>; fusion is the same shape
+with the intermediates gone.
 
 ## The other JIT: Temurin/C2
 
