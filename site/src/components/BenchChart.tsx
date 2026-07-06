@@ -117,7 +117,7 @@ export function Card({ chart, title }: { chart: Chart; title?: string }) {
           ))}
         </svg>
         {g && (
-          <div className="bcard__tip" style={{ left: `${(g.cx / W) * 100}%` }}>
+          <div className="bcard__tip" style={{ left: `clamp(90px, ${((g.cx / W) * 100).toFixed(2)}%, calc(100% - 90px))` }}>
             <div className="bcard__tip-h">
               size {nf(g.x)}
               {g.vd && <span className={`vd vd--${g.vd}`}>{VLABEL[g.vd]}</span>}

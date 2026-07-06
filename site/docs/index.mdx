@@ -44,23 +44,22 @@ have, and the repo sat untouched for three years.
 
 ## And then, all at once
 
-I picked it up again in June 2026, with Claude doing the heavy lifting. Seventeen days and nearly four
-hundred commits later, all of it existed:
+I picked it back up in June 2026, this time with Claude. Seventeen days and nearly four hundred
+commits later:
 
 <ul className="points">
   <li>
-    <strong>A working FArray.</strong> An <code>FArray[Int]</code> that <em>is</em> an{" "}
-    <code>int[]</code>, carrying the whole collections API with no{" "}
-    <code>java.lang.Integer</code> anywhere.
+    <strong>FArray works.</strong> An <code>FArray[Int]</code> <em>is</em> an <code>int[]</code>,
+    and it carries the whole collections API with no <code>java.lang.Integer</code> in sight.
   </li>
   <li>
-    <strong>Working fusion.</strong> A chain of <code>map</code> / <code>filter</code> /{" "}
-    <code>flatMap</code> / <code>zip</code> / <code>fold</code> rewritten at compile time into one
-    pass, allocating nothing between stages.
+    <strong>Fusion works.</strong> A chain of <code>map</code> / <code>filter</code> /{" "}
+    <code>flatMap</code> / <code>zip</code> / <code>fold</code> compiles to one pass that allocates
+    nothing between stages.
   </li>
   <li>
-    <strong>And a working Claude,</strong> which is the reason the other two exist. The benchmark
-    suite refereed every commit.
+    <strong>Claude is why.</strong> The redesign was years of evenings I didn't have. The benchmark
+    suite kept the pace honest: every optimization measured, several reverted.
   </li>
 </ul>
 
