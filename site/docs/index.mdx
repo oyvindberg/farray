@@ -11,6 +11,7 @@ hide_title: true
 import SideBySide from "@site/src/components/SideBySide";
 import GeneratedCode from "@site/src/components/GeneratedCode";
 import Related from "@site/src/components/Related";
+import Ladder from "@site/src/components/Ladder";
 import { FusionDiagram } from "@site/src/components/Diagrams";
 
 <header className="hero--farray">
@@ -123,14 +124,52 @@ compiled to.
 
 That the Scala 3 macro system can do this — read a call chain off the tree, work out which columns
 nobody downstream reads, and emit the specialized loop you'd have written by hand — is, frankly, a
-little phenomenal. There's a whole section building [the fusion engine up from first principles](./fusion/index.mdx). But
-fusion is the summit, and we're at the trailhead. The pages that follow are the climb: the Java core
-the loop runs over, the Scala that keeps it unboxed, and the cost model that makes the whole thing
-hang together.
+little phenomenal. There's a whole section building [the fusion engine up from first principles](./fusion/index.mdx).
+
+## The ladder
+
+Now calibrate that number, because on its own it proves too little. Fast code on the JVM has never
+been the hard part: an `int[]` and a `while` loop hit the memory-bandwidth ceiling on any JIT you can
+buy. If you're willing to mutate in place, you can have that today, and nothing on this page beats
+it. The hard part — the decade-old part — is getting within reach of that ceiling from **immutable,
+expression-oriented collection code**: the style where values are values, erasure boxes your
+primitives, every combinator is a call the inliner may abandon, and each stage of a pipeline
+materializes a collection whose entire lifetime is one line.
+
+So the honest way to read the chart is as a **ladder** — the same fourteen immutable stages on every
+rung, and only the collection changes underneath them:
+
+<Ladder />
+
+**The bottom rungs** are the collections you already use. `List` and `Vector` pay per element, per
+stage: a box, an allocation, a dispatch. The Chunks put arrays under the boxes and climb a little.
+`IArray` drops the boxes and climbs further — but it's copying eagerly at every one of the thirteen
+seams, and that's where it stops. Escape analysis will not save a fourteen-stage pipeline; the
+intermediates are real.
+
+**Rung five is the library.** Change the type, keep the code. FArray's storage is a genuine `int[]`
+behind an opaque type, so there is nothing to box. Every lambda-taking operation is `inline`, so your
+lambda compiles into the library's loop with the unboxing fixed in the method signature — it can't
+quietly collapse back to boxing as the surrounding method grows, which is precisely where
+competitors' "effectively unboxed" folds give out. And structural steps are O(1) nodes instead of
+copies. No fusion yet — this rung is just a better collection, and it already clears everything below
+it. [The next page](./chains.mdx) walks the evidence across every chained-operation benchmark in the
+suite, and keeps its score live from the checked-in data.
+
+**The top rung costs one word.** Iterators, views and LazyList have promised chain-collapsing for
+years and delivered interpreter overhead. `.fuse` is not a runtime abstraction — it rewrites the
+chain at compile time into the loop above, and the 15× it adds over our own eager rung is simply what
+deleting thirteen materializations buys. The ladder tops out at the hand-written `while` loop,
+because `.fuse` *emits* the hand-written while loop. You just never have to see it — or maintain it.
+
+Most codebases will live on rung five — a type swap — and reach for the top rung where it matters.
+The pages that follow are the climb in that order: first the chains rung five wins on its own, then
+the machinery underneath — the Java core the loops run over, the Scala that keeps them unboxed, and
+the cost model that makes it hang together.
 
 <Related
   links={[
-    { to: "/design/java-core", label: "Start the climb", desc: "The generated Java core the loops run over." },
+    { to: "/chains", label: "Chains: where it runs away", desc: "Rung five, measured: every chained pipeline in the suite, eagerly." },
     { to: "/fusion", label: "The fusion engine", desc: "From first principles: sources, stages, terminals, the optimizer — and the receipts." },
     { to: "/benchmarks/farray", label: "FArray benchmarks", desc: "The complete scorecard — every op, every size, every rival." },
   ]}

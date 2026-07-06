@@ -46,6 +46,9 @@ class StructuralShowcaseIntBenchmark:
     leafZio = zio.Chunk(-1, -2, -3)
     leafFs2 = fs2.Chunk(-1, -2, -3)
 
+  // start:structural-chain
+  // thousands of interleaved prepends, appends, concats and reverses, then ONE materializing map.
+  // Every structural step is an O(1) node for FArray; a full array copy for everyone else.
   @Benchmark def farray_showcase(): FArray[Int] =
     var c: FArray[Int] = FArray(0)
     var i = 1
@@ -56,6 +59,7 @@ class StructuralShowcaseIntBenchmark:
       if i % 8 == 0 then c = c.reverse
       i += 1
     c.map(_ + 1)
+  // stop:structural-chain
 
   @Benchmark def iarray_showcase(): IArray[Int] =
     var c: IArray[Int] = IArray(0)

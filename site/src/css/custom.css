@@ -496,3 +496,28 @@ table.score .sc-total { font-weight: 700; }
 
 /* ----- a11y ----- */
 :focus-visible { outline: 2px solid var(--emerald-bright); outline-offset: 2px; }
+
+/* ---- the ladder (intro): one pipeline, every rung as a log-scaled horizontal bar ---- */
+.ladder__rows { display: flex; flex-direction: column; gap: 7px; padding: 14px 0 4px; }
+.ladder__row { display: flex; align-items: center; gap: 12px; }
+.ladder__label {
+  flex: 0 0 108px; text-align: right; font-family: var(--mono, monospace); font-size: 0.78rem;
+  color: var(--ink-soft); white-space: nowrap;
+}
+.ladder__track { flex: 1; display: flex; align-items: center; gap: 10px; min-width: 0; }
+.ladder__bar { height: 15px; border-radius: 2px; flex: none; transition: width 0.2s; }
+.ladder__val {
+  font-family: var(--mono, monospace); font-size: 0.72rem; color: var(--ink-faint); white-space: nowrap;
+}
+
+/* ---- the chained-ops live scoreline (chains page) ---- */
+.chainscore {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.55em;
+  padding: 14px 16px; margin: 20px 0; background: var(--card); border: 1px solid var(--hair-strong);
+  border-radius: 6px; font-size: 0.95rem;
+}
+.chainscore__num { font-weight: 700; font-variant-numeric: tabular-nums; }
+.chainscore__num--w { color: #16a34a; }
+.chainscore__num--t { color: var(--ink-faint); }
+.chainscore__num--l { color: #ef4444; }
+.chainscore__note { color: var(--ink-soft); font-size: 0.88em; }

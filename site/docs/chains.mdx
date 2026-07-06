@@ -6,16 +6,22 @@ description: "Single ops win by percents; real code chains ops, and chaining is 
 
 import Link from "@docusaurus/Link";
 import BenchPair from "@site/src/components/BenchPair";
+import ChainScore from "@site/src/components/ChainScore";
 import Related from "@site/src/components/Related";
 
 <p className="lede">
-  The single-op chapters were deliberately honest: measured one op at a time, FArray ties a bare
-  array and beats the boxing collections by whatever the boxing costs. But nobody writes one op.
+  Measured one op at a time — and the op chapters later do exactly that, honestly — FArray ties a
+  bare array and beats the boxing collections by whatever the boxing costs. But nobody writes one op.
   Real code chains them — transform, select, slice, aggregate — and chains are where the design
   compounds, because FArray's advantages <em>multiply per stage</em> while its costs don't. This page
   is that argument, run on every pipeline twice: Int on the left, String on the right, so you can see
   exactly which wins come from unboxing and which come from structure.
 </p>
+
+Before the tour, the whole book in one line — every size of every chained-operation benchmark class
+in the suite, eager FArray only, no `.fuse`:
+
+<ChainScore />
 
 Three effects compound down a chain:
 

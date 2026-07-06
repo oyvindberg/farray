@@ -16,6 +16,7 @@ const sidebars: SidebarsConfig = {
       label: "FArray",
       collapsed: false,
       items: [
+        "chains",
         "design/java-core",
         "design/scala-surface",
         "design/combinators",
@@ -37,7 +38,6 @@ const sidebars: SidebarsConfig = {
             "operations/list-parity",
           ],
         },
-        "chains",
         "scoreboard",
         "benchmarks/farray",
       ],
