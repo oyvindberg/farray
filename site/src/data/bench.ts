@@ -157,30 +157,54 @@ export function verdictAt(series: Series, x: number): { vd: Verdict; r: number |
   return { vd: r >= 1.05 ? "w" : r >= 0.95 ? "t" : "l", r };
 }
 
-// ---- band / edge color, ported 1:1 (HSL) ----
-const clamp1 = (x: number) => Math.min(x, 1);
-export function bandColor(r: number | null, dark = false): string {
-  if (r == null) return "transparent";
-  if (dark) {
-    // translucent fills that read as a tint over a dark card, never as a glowing block
-    if (r >= 1.05) { const f = clamp1(Math.log10(r)); return `rgba(52,210,122,${(0.07 + 0.17 * f).toFixed(3)})`; }
-    if (r >= 0.95) return "rgba(148,163,184,0.09)";
-    const f = clamp1(Math.log10(1 / r)); return `rgba(236,106,94,${(0.07 + 0.18 * f).toFixed(3)})`;
+// ---- the ratio color scale: one color language for the whole site ----
+// r = ours / best-competitor. r >= 1 means we ARE the fastest (by margin r); r < 1 means we sit
+// 1/r behind the winner. The scale is continuous and log-spaced so it reads pedagogically:
+//   winner            -> green (deepening slightly with margin)
+//   1.2x behind       -> green-yellow
+//   1.5x              -> amber
+//   2x                -> faint red
+//   5x or worse       -> blood red
+// Discrete W/T/L verdicts stay as chips/dots; color always answers "how far from the winner?".
+const HUE_STOPS: [number, number][] = [[1.0, 100], [1.2, 72], [1.5, 45], [2.0, 22], [3.0, 8], [5.0, 0]];
+function behindHue(b: number): number {
+  if (b <= HUE_STOPS[0][0]) return HUE_STOPS[0][1];
+  for (let i = 1; i < HUE_STOPS.length; i++) {
+    const [b1, h1] = HUE_STOPS[i - 1], [b2, h2] = HUE_STOPS[i];
+    if (b <= b2) {
+      const t = (Math.log(b) - Math.log(b1)) / (Math.log(b2) - Math.log(b1));
+      return h1 + (h2 - h1) * t;
+    }
   }
-  if (r >= 1.05) { const f = clamp1(Math.log10(r)); return `hsl(148,${(36 + 22 * f).toFixed(0)}%,${(97 - 9 * f).toFixed(0)}%)`; }
-  if (r >= 0.95) return "hsl(48,70%,96%)";
-  const f = clamp1(Math.log10(1 / r)); const hp = clamp1(f / 0.061);
-  return `hsl(${(48 * (1 - hp)).toFixed(0)},${(84 + 13 * f).toFixed(0)}%,${(93 - 15 * hp - 23 * f).toFixed(0)}%)`;
+  return 0;
 }
-export function edgeColor(r: number | null): string {
-  if (r == null) return "#cbd5e1";
-  if (r >= 1.05) { const f = clamp1(Math.log10(r)); return `hsl(150,68%,${(52 - 12 * f).toFixed(0)}%)`; }
-  if (r >= 0.95) return "#fbbf24";
-  const f = clamp1(Math.log10(1 / r)); const hp = clamp1(f / 0.061);
-  return `hsl(${(45 * (1 - hp)).toFixed(0)},${(82 + 13 * f).toFixed(0)}%,${(66 - 8 * hp - 20 * f).toFixed(0)}%)`;
+const clamp1 = (x: number) => Math.min(Math.max(x, 0), 1);
+/** translucent fill: hover bands, scorecard cells, chips. */
+export function ratioBand(r: number | null, dark = false): string {
+  if (r == null) return "transparent";
+  if (r >= 1) { // winner: green tint, a touch deeper with margin
+    const f = clamp1(Math.log10(r) / Math.log10(3));
+    return dark ? `hsla(150, 60%, 45%, ${(0.10 + 0.14 * f).toFixed(3)})`
+                : `hsla(150, 55%, 42%, ${(0.10 + 0.13 * f).toFixed(3)})`;
+  }
+  const b = Math.min(1 / r, 8);
+  const h = behindHue(b);
+  const t = clamp1(Math.log(b) / Math.log(5)); // 0 at winner's doorstep, 1 at 5x behind
+  const a = 0.10 + (dark ? 0.38 : 0.34) * t;
+  return `hsla(${h.toFixed(0)}, 78%, ${dark ? 50 : 44}%, ${a.toFixed(3)})`;
 }
+/** full-strength stroke: card frames, accents. */
+export function ratioEdge(r: number | null, dark = false): string {
+  if (r == null) return "transparent";
+  if (r >= 1) return dark ? "hsl(150, 55%, 48%)" : "hsl(150, 55%, 38%)";
+  const b = Math.min(1 / r, 8);
+  const h = behindHue(b);
+  return dark ? `hsl(${h.toFixed(0)}, 70%, 52%)` : `hsl(${h.toFixed(0)}, 72%, 42%)`;
+}
+// transitional aliases (old names) so nothing else breaks while callers migrate
+export function bandColor(r: number | null, dark = false): string { return ratioBand(r, dark); }
+export function edgeColor(r: number | null): string { return ratioEdge(r); }
 
-// ---- scorecard: geometric mean of (best-in-cell / own) per structure, per section + TOTAL ----
 export interface Scorecard { cols: string[]; rows: { v: string; label: string; color: string; ours: boolean; vals: (number | null)[] }[]; }
 export function buildScorecard(charts: Chart[]): Scorecard {
   const sum = new Map<string, [number, number]>(); // `${v} ${col}` -> [sumLn, count]

@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { useStore } from "../data/store";
 import { Card } from "./BenchChart";
 import Scorecard from "./Scorecard";
+import RatioLegend from "./RatioLegend";
 import { SECTIONS, ours, type Section, type Chart } from "../data/bench";
 
 type SectionInfo = Partial<Record<Section, { title: string; blurb: string }>>;
@@ -76,6 +77,7 @@ export default function BenchIndex({ suite = "farray" }: { suite?: "farray" | "f
           One number per structure and section: the geometric mean of how far each sits behind the
           fastest-in-cell. 1.00 means fastest across the board; higher is slower.
         </p>
+        <RatioLegend />
         <Scorecard suite={suite} />
       </section>
 

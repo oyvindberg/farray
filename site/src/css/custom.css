@@ -532,3 +532,13 @@ table.score .sc-total { font-weight: 700; }
   font-family: var(--mono, monospace); font-size: 0.7rem; letter-spacing: 0.04em;
   text-transform: uppercase; color: var(--ink-faint); padding-left: 120px;
 }
+
+/* ---- the ratio color scale legend + chip glyph + scorecard cells ---- */
+.ratiolegend { margin: 6px 0 18px; max-width: 460px; }
+.ratiolegend__bar { height: 10px; border-radius: 5px; border: 1px solid var(--hair-strong); }
+.ratiolegend__labels { position: relative; height: 16px; font-family: var(--mono); font-size: 0.68rem; color: var(--ink-faint); }
+.ratiolegend__labels span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+.ratiolegend__labels span:first-child { transform: none; }
+.ratiolegend__labels span:last-child { transform: translateX(-100%); }
+.bcard__glyph { font-size: 9px; margin-right: 4px; vertical-align: 1px; }
+.score .sc-cell { font-variant-numeric: tabular-nums; }
