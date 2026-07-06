@@ -12,6 +12,7 @@ import SideBySide from "@site/src/components/SideBySide";
 import GeneratedCode from "@site/src/components/GeneratedCode";
 import Related from "@site/src/components/Related";
 import Ladder from "@site/src/components/Ladder";
+import Scorecard from "@site/src/components/Scorecard";
 import { FusionDiagram } from "@site/src/components/Diagrams";
 
 <header className="hero--farray">
@@ -138,6 +139,14 @@ written by hand. You just don't have to write it, or maintain it.
 
 In practice you swap the type everywhere and add `.fuse` on the paths that matter. The rest of the
 site explains each layer.
+
+## The whole suite, one number per structure
+
+The pages above argue from selected benchmarks; this is the unselected version. Every operation at
+every size, boiled down per structure, losses included; [the benchmarks page](./benchmarks/farray.mdx)
+has every chart behind it.
+
+<Scorecard />
 
 <Related
   links={[
