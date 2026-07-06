@@ -93,35 +93,34 @@ repo, and this is what those fourteen stages compiled to.
 
 How the macro pulls that off gets [its own section](./fusion/index.mdx).
 
-## The ladder
+## Three speeds
 
 One number proves too little, so calibrate it. Fast JVM code was never the hard part — anyone can
 mutate an `int[]` in a `while` loop. The hard part is that speed from **immutable,
 expression-oriented code**, where erasure boxes, inlining gives out, and every stage materializes a
-collection that lives for one line. So read the chart as a ladder: the same fourteen immutable
-stages on every rung, only the collection changes.
+collection that lives for one line. The chart is really three speeds:
 
 <Ladder />
 
-**Bottom rungs.** `List` and `Vector` pay a box, an allocation and a dispatch — per element, per
+**Today's speed.** `List` and `Vector` pay a box, an allocation and a dispatch — per element, per
 stage. The Chunks put arrays under the boxes; `IArray` drops the boxes but still copies at all
 thirteen seams. The intermediates are real; escape analysis will not save you.
 
-**Rung five: change the type, keep the code.** Storage is a genuine `int[]`, structural steps are
+**The type swap.** Same code, `FArray` under it. Storage is a genuine `int[]`, structural steps are
 O(1) nodes instead of copies, and every lambda-taking op is `inline` — the unboxing lives in the
 method signature, so it can't collapse back to boxing as the surrounding method grows, which is
 exactly where the rivals' single-op ties give out. No fusion yet, and it already clears the field:
 [the next page](./chains.mdx) scores every chained benchmark in the suite, live.
 
-**Top rung: one word.** Views, iterators and LazyList promised chain-collapsing and delivered
-interpreter overhead; `.fuse` deletes the thirteen intermediates at compile time. The ladder tops
-out at the hand-written loop — because that's what `.fuse` emits.
+**The word.** Views, iterators and LazyList promised chain-collapsing and delivered interpreter
+overhead; `.fuse` deletes the thirteen intermediates at compile time. The ceiling is the
+hand-written loop — because that's what `.fuse` emits.
 
-Live on rung five; type `.fuse` where it matters. The rest of the site is the climb.
+Live on the type swap; spend the word where it matters. The rest of the site is the climb.
 
 <Related
   links={[
-    { to: "/chains", label: "Chains: where it runs away", desc: "Rung five, measured: every chained pipeline in the suite, eagerly." },
+    { to: "/chains", label: "Chains: where it runs away", desc: "The type swap, measured: every chained pipeline in the suite, eagerly." },
     { to: "/fusion", label: "The fusion engine", desc: "From first principles: sources, stages, terminals, the optimizer — and the receipts." },
     { to: "/benchmarks/farray", label: "FArray benchmarks", desc: "The complete scorecard — every op, every size, every rival." },
   ]}

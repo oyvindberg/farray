@@ -114,7 +114,7 @@ traversal; for array-copying structures it's a full copy *per op*:
 
 ---
 
-One rung remains above all of this: handing the *whole* chain to the compiler.{" "}
+One speed remains above all of this: handing the *whole* chain to the compiler.{" "}
 <Link to="/fusion">Fusion</Link> takes these same pipelines and emits a single loop — the 14-stage
 version runs ~15× past even FArray's own eager chains. This page is why the eager ops are already
 the strongest field; that one is why the ceiling isn't here.
