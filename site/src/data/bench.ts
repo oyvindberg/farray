@@ -38,6 +38,9 @@ const XPRIORITY = ["size", "numChunks", "chunkCount", "numLeaves", "n", "innerSi
 // fused/eager pipeline probes which are FArray-vs-itself, not a competing collection)
 const SUBV = new Set([
   "farrayTree", "farrayMat", "ziochunkTree", "ziochunkMat", "farrayFused", "farrayEager",
+  // mutable builders and generators, not immutable-collection competitors — excluded from the
+  // leaderboard summary (they still appear as bars on their individual benchmark charts).
+  "arraybuffer", "arraybuilder", "scalaRange",
 ]);
 // the actual contending structures — the leaderboard ranks only these (a benchmark method like
 // MapMega's `committed` is a scenario, not a collection, and must not show up as a "structure").
