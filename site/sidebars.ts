@@ -9,7 +9,7 @@ const sidebars: SidebarsConfig = {
       type: "category",
       label: "The story",
       collapsed: false,
-      items: ["index", "use", "how-this-was-built"],
+      items: ["index", "use"],
     },
     {
       type: "category",

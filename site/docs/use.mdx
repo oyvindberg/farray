@@ -70,6 +70,13 @@ This is a milestone release of an experiment.
 - **No binary compatibility between versions.** The API is `inline` end to end, which means library
   internals expand into your compiled call sites. Pin an exact version and expect to recompile on
   every upgrade. There is no MiMa story for an inline API and there won't be.
+- **Mostly written by a model.** Most of the implementation (the code generator, the generated
+  operations, the fusion macro and its optimizer, the benchmark suite) was written by Claude, from a
+  human design and under human review, across roughly four hundred commits in seventeen days. Every
+  operation is gated by ~480 parity tests against `List`, every macro lowering by a golden file, and
+  every performance claim by a checked-in JMH result. Nothing landed on the strength of an
+  explanation, but review was read-and-questioned, not formal verification, which is part of why the
+  version starts with M.
 
 :::
 
