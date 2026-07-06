@@ -48,17 +48,22 @@ export default function BenchIndex({ suite = "farray" }: { suite?: "farray" | "f
   const { charts: faCharts, setCharts, ready } = useStore();
   const charts = suite === "fset" ? setCharts : faCharts;
   const info = suite === "fset" ? FSET_SECTIONS : FARRAY_SECTIONS;
-  const grouped = useMemo(() => {
+  const { grouped, selfRaces } = useMemo(() => {
     const g = new Map<Section, Chart[]>();
+    const self: Chart[] = [];
     for (const c of charts) {
-      // self-races (every series is a farray/fset variant) aren't a competition; docs pages may
-      // still embed them directly, they just don't belong in the reference index.
-      if (!Object.keys(c.series).some((v) => !ours(v))) continue;
+      const keys = Object.keys(c.series);
+      if (!keys.some((v) => !ours(v))) {
+        // no external competitor: fused-vs-eager (and similar FArray-vs-itself decompositions) get
+        // their own group below; single-series probes aren't a race at all and are dropped.
+        if (keys.length >= 2) self.push(c);
+        continue;
+      }
       const arr = g.get(c.section) ?? [];
       arr.push(c);
       g.set(c.section, arr);
     }
-    return g;
+    return { grouped: g, selfRaces: self };
   }, [charts]);
 
   if (!ready) return <p className="ref-loading">measuring…</p>;
@@ -85,6 +90,22 @@ export default function BenchIndex({ suite = "farray" }: { suite?: "farray" | "f
           </div>
         </section>
       ))}
+
+      {selfRaces.length > 0 && (
+        <section className="ref-section">
+          <h2>
+            Fusion: eager vs fused <span className="ref-count">{selfRaces.length} charts</span>
+          </h2>
+          <p className="ref-blurb">
+            FArray against itself: the same pipeline eager and through <code>.fuse</code>. These
+            measure what fusion adds, not how FArray compares to other collections; they are kept
+            out of the leaderboard.
+          </p>
+          <div className="bench-grid ref-grid">
+            {selfRaces.map((c) => <Card key={c.key} chart={c} />)}
+          </div>
+        </section>
+      )}
     </>
   );
 }
