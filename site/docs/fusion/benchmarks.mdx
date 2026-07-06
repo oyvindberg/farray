@@ -9,6 +9,7 @@ import Link from "@docusaurus/Link";
 import Snippet from "@site/src/components/Snippet";
 import SideBySide from "@site/src/components/SideBySide";
 import BenchChart from "@site/src/components/BenchChart";
+import BenchPair from "@site/src/components/BenchPair";
 import Related from "@site/src/components/Related";
 
 <p className="page__eyebrow">the receipts</p>
@@ -38,6 +39,19 @@ by the one word:
       benchmark's own zip source), with the pipeline contributing zero.
     </>
   }
+/>
+
+## Against java.util.stream: the same pipeline, both fused
+
+`java.util.stream` is the JVM's own fused pipeline, which makes it the fair rival for `.fuse` and
+the wrong one for the eager chains on the <Link to="/chains">chains page</Link> (comparing a lazy
+pipeline against eager materialization would be a strawman, so it sits this one out there). Here is
+the classic map → filter → foldLeft with both sides collapsed to a single pass:
+
+<BenchPair
+  int="MapFilterFoldIntBenchmark"
+  str="MapFilterFoldStrBenchmark"
+  caption="map → filter → foldLeft. Eager FArray and every eager collection materialize two intermediate arrays across three passes; IntStream and FArray's .fuse both run it as one pass with none. On Int, IntStream leads the EAGER FArray chain ~1.5×, and .fuse retakes the lead at 1.1–1.2×. On String the per-element String allocation dwarfs the intermediate-array traffic, so eager already nearly ties and fusion changes little. The eager FArray bar is the same measurement shown on the chains page; the fused bar is the point of this chart."
 />
 
 ## Cold: no warmup lap
