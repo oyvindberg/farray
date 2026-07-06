@@ -51,11 +51,7 @@ This is a milestone release of an experiment.
 
 ## From Java or Kotlin
 
-The honest answer: no. The value proposition lives in the Scala 3 compiler: `inline` dispatch picks
-the unboxed loop at your call site, and `.fuse` is a macro. Java and Kotlin never run that
-machinery; what they can reach is the erased Java core, an untyped node soup that is deliberately
-not a public API. Using FArray means the code that touches it is Scala 3. If the benchmarks here
-make that trade interesting, that is the trade.
+No. The machinery lives in the Scala 3 compiler; the code that touches FArray is Scala 3.
 
 ## The two-line start
 
