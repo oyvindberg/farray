@@ -164,12 +164,12 @@ export function verdictAt(series: Series, x: number): { vd: Verdict; r: number |
 // r = ours / best-competitor. r >= 1 means we ARE the fastest (by margin r); r < 1 means we sit
 // 1/r behind the winner. The scale is continuous and log-spaced so it reads pedagogically:
 //   winner            -> green (deepening slightly with margin)
-//   1.2x behind       -> green-yellow
-//   1.5x              -> amber
-//   2x                -> faint red
+//   1.1x behind       -> green-yellow
+//   1.2x              -> amber
+//   1.3x              -> red (the boundary: past 1.3x behind is a real loss)
 //   5x or worse       -> blood red
 // Discrete W/T/L verdicts stay as chips/dots; color always answers "how far from the winner?".
-const HUE_STOPS: [number, number][] = [[1.0, 100], [1.2, 72], [1.5, 45], [2.0, 22], [3.0, 8], [5.0, 0]];
+const HUE_STOPS: [number, number][] = [[1.0, 100], [1.1, 68], [1.2, 40], [1.3, 15], [2.0, 6], [5.0, 0]];
 function behindHue(b: number): number {
   if (b <= HUE_STOPS[0][0]) return HUE_STOPS[0][1];
   for (let i = 1; i < HUE_STOPS.length; i++) {
@@ -193,7 +193,7 @@ export function ratioBand(r: number | null, dark = false): string {
   const b = Math.min(1 / r, 8);
   const h = behindHue(b);
   const t = clamp1(Math.log(b) / Math.log(5)); // 0 at winner's doorstep, 1 at 5x behind
-  const a = 0.10 + (dark ? 0.38 : 0.34) * t;
+  const a = 0.12 + (dark ? 0.42 : 0.38) * t;
   return `hsla(${h.toFixed(0)}, 78%, ${dark ? 50 : 44}%, ${a.toFixed(3)})`;
 }
 /** full-strength stroke: card frames, accents. */
