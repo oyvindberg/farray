@@ -9,9 +9,11 @@ import BenchPair from "@site/src/components/BenchPair";
 import ChainScore from "@site/src/components/ChainScore";
 import Related from "@site/src/components/Related";
 
-{/* This page is eager-only by construction: no .fuse, and java.util.stream (a lazy fused pipeline)
-    belongs with the fused comparison, not here. Every chart drops these three. */}
-export const eager = ["javastream", "farrayFused", "farrayEager"];
+{/* This page is eager-only by construction. The fused/lazy pipelines belong with the fused
+    comparison, not here: java.util.stream (a lazy fused pipeline) and FArray's own .fuse. Every
+    chart drops them. (No chains benchmark has a farrayEager bar; the eager FArray method is just
+    `farray`.) */}
+export const fused = ["javastream", "farrayFused"];
 
 <p className="lede">
   Measured one op at a time (the op chapters later do exactly that), FArray ties a
@@ -63,7 +65,7 @@ crossing per stage for the field; `int[]` end to end for FArray:
 <BenchPair
   int="MapFilterFoldIntBenchmark"
   str="MapFilterFoldStrBenchmark"
-  ignore={eager}
+  ignore={fused}
   caption="map → filter → foldLeft, Int beside String. The boxing collections pay per stage (5.6× over Vector, 12× over List at 100k); IArray and zio.Chunk pay only the intermediate allocations. int[] end to end for FArray, and eager FArray beats eager IArray at every size — its filter is branchless and vectorizes. The lazy single-pass rivals (java.util.stream, and FArray's own .fuse, which both fuse the three stages into one loop with no intermediates) are compared on the fusion benchmarks page; here the field is eager."
 />
 
@@ -75,7 +77,7 @@ straight through the window:
 <BenchPair
   int="TakeDropFoldIntBenchmark"
   str="TakeDropFoldStrBenchmark"
-  ignore={eager}
+  ignore={fused}
   caption="take(n-1) → drop(1) → foldLeft. FArray's take/drop are O(1) SliceNodes; the fold traverses the window without either slice ever existing. The copiers pay for it: 2× over IArray (two full array copies), 7–15× over Vector, 34× over List at 10k+. One tie: zio.Chunk also slices lazily and folds within ~6–9% of us; the win here is over eager copying, not over everyone."
 />
 
@@ -87,7 +89,7 @@ everyone else allocates a third collection just to flip the second one:
 <BenchPair
   int="FilterMapReverseIntBenchmark"
   str="FilterMapReverseStrBenchmark"
-  ignore={eager}
+  ignore={fused}
   caption="filter → map → reverse. The first two stages are the usual per-element story; the reverse is where FArray stops doing work: an O(1) ReverseNode versus a full reversed copy. (fs2.Chunk has no reverse and sits out.)"
 />
 
@@ -99,7 +101,7 @@ flat leaf, so the following stage reads a tight array rather than a fragment cha
 <BenchPair
   int="FlatMapChainIntBenchmark"
   str="FlatMapChainStrBenchmark"
-  ignore={eager}
+  ignore={fused}
   caption="flatMap → flatMap → map → foldLeft with small inners. Every stage's output is a flat leaf, so the compounding is linear for FArray; the boxing collections pay both the per-element tax and the intermediate allocation, twice over."
 />
 
@@ -111,7 +113,7 @@ method, the profile any nontrivial method builds up:
 <BenchPair
   int="MapMegaIntBenchmark"
   str="MapMegaStrBenchmark"
-  ignore={eager}
+  ignore={fused}
   caption="Eight distinct lambdas through map in one method. IArray's one shared Array.map site sees eight Function1 (Scala's lambda interface) classes, goes megamorphic, and re-boxes on Int: at 10k its boxed intermediates are still cache-resident and it even leads (our one 0.85× cell), but at 100k the re-boxing becomes memory traffic and it falls 4.2× behind (List 12×, Vector 7×). FArray has no shared site to poison. On String there's no re-boxing to pay and the field stays close: the mechanism is megamorphic boxing."
 />
 
@@ -124,7 +126,7 @@ traversal; for array-copying structures it's a full copy *per op*:
 <BenchPair
   int="StructuralShowcaseIntBenchmark"
   str="StructuralShowcaseStrBenchmark"
-  ignore={eager}
+  ignore={fused}
   caption="An interleaved prepend/append/concat/reverse chain, materialized once at the end. O(n) total for FArray versus O(n·chain-length) for the copiers: this is the thousands-× regime, identical on Int and String because structural ops never touch elements."
 />
 
