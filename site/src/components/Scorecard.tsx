@@ -39,8 +39,7 @@ export default function Scorecard({ suite = "farray" }: { suite?: "farray" | "fs
         <b>geometric mean</b> of those per-cell ratios across the group; geometric, so a handful of
         thousand-× structural wins can't paper over ordinary losses. <b>Lower is better</b>: 1.00 = fastest
         everywhere, 3.0 = typically 3× off the pace. TOTAL is everything at once. Cell color is the
-        site's one scale: green at the front, green-yellow within ~1.2×, amber toward 1.5×, red past
-        2× and blood-red at 5× behind.
+        site's one scale: green at the front, amber by 1.2×, red past 1.3×, blood-red at 3× behind.
       </p>
     </div>
   );

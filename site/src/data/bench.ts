@@ -167,9 +167,10 @@ export function verdictAt(series: Series, x: number): { vd: Verdict; r: number |
 //   1.1x behind       -> green-yellow
 //   1.2x              -> amber
 //   1.3x              -> red (the boundary: past 1.3x behind is a real loss)
-//   5x or worse       -> blood red
+//   2x                -> deepening red
+//   3x or worse       -> blood red
 // Discrete W/T/L verdicts stay as chips/dots; color always answers "how far from the winner?".
-const HUE_STOPS: [number, number][] = [[1.0, 100], [1.1, 68], [1.2, 40], [1.3, 15], [2.0, 6], [5.0, 0]];
+const HUE_STOPS: [number, number][] = [[1.0, 100], [1.1, 68], [1.2, 40], [1.3, 15], [2.0, 8], [3.0, 0]];
 function behindHue(b: number): number {
   if (b <= HUE_STOPS[0][0]) return HUE_STOPS[0][1];
   for (let i = 1; i < HUE_STOPS.length; i++) {
@@ -190,9 +191,9 @@ export function ratioBand(r: number | null, dark = false): string {
     return dark ? `hsla(150, 60%, 45%, ${(0.10 + 0.14 * f).toFixed(3)})`
                 : `hsla(150, 55%, 42%, ${(0.10 + 0.13 * f).toFixed(3)})`;
   }
-  const b = Math.min(1 / r, 8);
+  const b = Math.min(1 / r, 6);
   const h = behindHue(b);
-  const t = clamp1(Math.log(b) / Math.log(5)); // 0 at winner's doorstep, 1 at 5x behind
+  const t = clamp1(Math.log(b) / Math.log(3)); // 0 at the winner's doorstep, 1 (blood) at 3x behind
   const a = 0.12 + (dark ? 0.42 : 0.38) * t;
   return `hsla(${h.toFixed(0)}, 78%, ${dark ? 50 : 44}%, ${a.toFixed(3)})`;
 }
@@ -200,7 +201,7 @@ export function ratioBand(r: number | null, dark = false): string {
 export function ratioEdge(r: number | null, dark = false): string {
   if (r == null) return "transparent";
   if (r >= 1) return dark ? "hsl(150, 55%, 48%)" : "hsl(150, 55%, 38%)";
-  const b = Math.min(1 / r, 8);
+  const b = Math.min(1 / r, 6);
   const h = behindHue(b);
   return dark ? `hsl(${h.toFixed(0)}, 70%, 52%)` : `hsl(${h.toFixed(0)}, 72%, 42%)`;
 }
