@@ -143,7 +143,9 @@ Four rules:
   </li>
   <li>
     <strong>The chain must be written out at the call site.</strong> It's read off the syntax tree,
-    not built at runtime; a pipeline assembled dynamically is a job for the eager ops.
+    not built at runtime; a pipeline assembled dynamically is a job for the eager ops. You can still
+    factor out shared stages into an <code>inline def</code> and call it in the chain — it splices in
+    and fuses exactly as if written in place, so reuse doesn't cost the fusion.
   </li>
   <li>
     <strong>Unsupported means "does not compile".</strong> A terminal a source shape doesn't support

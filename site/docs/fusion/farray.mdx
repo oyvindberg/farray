@@ -110,7 +110,8 @@ callers see only the resulting `FArray`.
   <li>
     <strong>Dynamic pipelines are a different tool.</strong> The chain is read off the syntax tree,
     so it must be written down. Assembling stages at runtime from config is a case for the
-    eager ops.
+    eager ops. Static reuse is fine, though: pull shared stages into an <code>inline def</code> and
+    call it in the chain — it splices in and fuses just as if written in place.
   </li>
 </ul>
 
