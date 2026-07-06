@@ -981,26 +981,10 @@ object GenCores extends BleepCodegenScript("GenCores") {
       //     unboxed primitive `${P}`. Realize the `RefTo${P}Fold` SAM (the element `v` is Object) and CALL the
       //     shared unboxed leaf method. A COMMON reference workload, so it gets the unboxed acc (the leaf path
       //     never boxes; only a genuine tree boxes, inside the leaf method's cold arm). NO inlined leaf loop. ---
-      //     PEELED (2026-07-06, mirrors scFwdPeel): forward Ref-input+prim-acc folds peel the flat RefArr and
-      //     leaf-backed SliceNode arms INLINE at the surface — the user's op inlines monomorphically into the
-      //     hot loop, killing the per-element SAM interface call that made small-n Ref->prim folds lose to
-      //     IArray (FoldRefPollutedBenchmark @1000). Empty/One/genuine trees still fall back to the shared
-      //     leaf method, so the many-folds-in-one-method behavior (the shared-leaf design guard) is preserved.
       def zPrimAccOverRefArm(p: Kind): Unit =
-        if backward then
-          ee.line(
-            s"rz.wrap(reduceLeaf${dir}Ref${p.name}(xs, rz.unwrap(z), (acc, v) => rz.unwrap(${comb("rz.wrap(acc)", wrapV(k))})))"
-          )
-        else {
-          def loop(el: String): String =
-            s"var acc = rz.unwrap(z); var j = 0; while (j < n) { acc = rz.unwrap(${comb("rz.wrap(acc)", s"r.wrap($el.asInstanceOf[A])")}); j += 1 }; rz.wrap(acc)"
-          ee.line(
-            s"xs match { " +
-              s"case leaf: RefArr => { val a = leaf.arr; val n = leaf.length; ${loop("a(j)")} }; " +
-              s"case sl: SliceNode if sl.base.isInstanceOf[RefArr] => { val a = sl.base.asInstanceOf[RefArr].arr; val so = sl.offset; val n = sl.length; ${loop("a(so + j)")} }; " +
-              s"case _ => rz.wrap(reduceLeaf${dir}Ref${p.name}(xs, rz.unwrap(z), (acc, v) => rz.unwrap(${comb("rz.wrap(acc)", wrapV(k))}))) }"
-          )
-        }
+        ee.line(
+          s"rz.wrap(reduceLeaf${dir}Ref${p.name}(xs, rz.unwrap(z), (acc, v) => rz.unwrap(${comb("rz.wrap(acc)", wrapV(k))})))"
+        )
       ee.open("summonFrom")
       if k.isPrim then {
         ee.open(s"case rz: ${K}Repr[Z] =>")
