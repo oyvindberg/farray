@@ -1,47 +1,84 @@
 ---
 title: Integrating with fusion
 sidebar_label: Integrating
-description: "The library-author page: what a fusion integration provides (shape, lowering, source, decoder), what the engine keeps, and the contract at every seam."
+description: "What the engine actually is (a loop assembler over columns), why one optimizer serves an FArray and a stream of JSON bytes, what an integration provides, and where the magic stops."
 ---
 
 import Link from "@docusaurus/Link";
 import Snippet from "@site/src/components/Snippet";
+import GeneratedCode from "@site/src/components/GeneratedCode";
 import Related from "@site/src/components/Related";
 
 <p className="page__eyebrow">for library authors</p>
 
 <p className="lede">
-  Everything before this page is about using pipelines; this page is about giving the engine a new
-  thing to run them over. An integration provides four pieces, in ascending order of strangeness: a{" "}
-  <strong>source</strong> that frames records out of bytes (ordinary I/O code), a{" "}
-  <strong>shape</strong> that names your format in the type, a <strong>lowering</strong> that says
-  which terminals your shape supports, and a <strong>decoder</strong> that reads one record's
-  fields at macro time. The engine keeps everything else: live-set analysis, dead-field skipping,
-  predicate placement, memoization, the loop. We take the pieces in that order, easiest first.
+  To integrate a new data source you need the engine's real shape, which the user-facing pages
+  never had to state. The fusion engine is not a collections library that learned about bytes; it
+  is an assembler that builds one loop out of three parts. A <strong>driver</strong> owns
+  iteration: who advances, when to stop. <strong>Columns</strong> are how the parts of one element
+  get read: an array index, or twenty byte-level field scans. A <strong>terminal</strong> owns the
+  accumulators. Stages and the optimizer live entirely in the column layer and never learn where
+  columns come from. Integrating a format means providing a driver and a way to make columns; the
+  optimizer is not yours to build, and it works on day one.
 </p>
+
+## One optimizer, two worlds
+
+The claim above is checkable, because every lowering is a golden test. Here is the same logical
+query lowered twice. First over an `FArray[Int]`: filter, then three aggregates in one pass:
+
+<GeneratedCode name="fuse-guide-agg" summary="filter + sum/count/max over FArray[Int] — the emitted loop" />
+
+Now over a stream of NDJSON bytes: filter on a field, sum it:
+
+<GeneratedCode name="fuse-json-sum" summary="filter + sum over NDJSON bytes — the emitted scanner" />
+
+Read the bottom of each. They end in the same code: a `val keep = <predicate>` and a guarded
+accumulation. That part came from the shared machinery. Everything above it is the answer to one
+question, "how do I read this element's columns": the array world answers with `a(i)`; the JSON
+world answers with a key-matching scan that decodes `amount` (`readDoubleAt`) and walks past every
+other field without decoding it (`skipValue`), abandoning the record scan the moment the last live
+field is captured (`if (seen) open = false`). Different worlds above the line, the same optimizer
+below it.
+
+## The column model, in one paragraph
+
+Inside the engine a value in flight is not an object; it is a set of columns. A scalar column is a
+deferred read that binds to a `val` on first use and is reused after (so a column read only inside
+a filter's guard is computed only for survivors). A product is its columns plus a rebuild function
+that fires only if someone uses the value whole. `map` and `filter` transform and guard columns;
+`.map(_._2)` plucks column two and the others never fire; a column nothing reads is never emitted
+at all. Dead-code elimination, compute-for-survivors and decode-once memoization are all corollaries
+of this one representation, which is why the <Link to="/fusion/optimizer">optimizer page</Link>
+never mentions data formats.
+
+The seam is now easy to state: **to the engine, a JSON record is a tuple.** When the decoder hands
+over its per-field columns, the engine wraps them in exactly the product-of-columns it would have
+built for a tuple literal in a `map` lambda, and from that line on there is no byte-specific code
+path in the machine. String columns get the standard memoizer, which is where "a field decodes at
+most once, and only for survivors" comes from: it is the ordinary in-memory behavior, inherited.
 
 ## The familiar half: chunks and records
 
-This part is ordinary code, no compiler involvement, but it rests on a distinction worth being
-precise about, because the whole memory story hangs on it. A byte source deals in two different
-units:
+The driver for byte sources rests on a distinction worth being precise about, because the memory
+story hangs on it. A byte source deals in two units:
 
 - **A chunk is a unit of memory.** The source holds exactly one block of bytes at a time: `buf`,
   advanced by `nextChunk()`. A file source reads block after block; an in-memory source answers
-  `nextChunk()` with `true` exactly once and its whole array. This is the constant-memory
-  guarantee: nothing upstream ever demands two blocks at once.
+  `nextChunk()` with `true` exactly once. Nothing upstream ever demands two blocks at once.
 - **A record is a unit of meaning.** Within the current chunk, `nextRecord()` frames the next
   complete record as a range, `recordStart` until `recordEnd`, no copy and no allocation; the
-  generated scanner reads fields straight out of `buf` between those bounds. For NDJSON a record
-  is a line; for a length-prefixed format it would be a length header's worth of bytes.
+  generated scanner reads fields straight out of `buf` between those bounds.
 
-The engine's runtime loop is exactly the nesting you'd guess, with `close()` in a `finally` that
-fires on exhaustion, short-circuit and exception alike:
+The engine emits exactly the nesting you'd guess, with `close()` in a `finally` that fires on
+exhaustion, short-circuit and exception alike:
 
 ```scala
-while (source.nextChunk())            // memory: one block resident
-  while (source.nextRecord())         // meaning: one complete frame
-    scan(source.buf, source.recordStart, source.recordEnd)
+try
+  while (source.nextChunk() && notDone)     // memory: one block resident
+    while (source.nextRecord() && notDone)  // meaning: one complete frame
+      scan(source.buf, source.recordStart, source.recordEnd)
+finally source.close()
 ```
 
 The two units don't line up: records do not respect block boundaries. That misalignment is modeled
@@ -51,58 +88,38 @@ has to remember is what keeps the boundary logic in exactly one place:
 <Snippet name="framed-adt" hideFull />
 
 The place is `FramedByteSource`, which farray provides: it owns the working buffer, the block
-reads, and the carry/stitch for a record that straddles two reads (compact the partial tail to the
-front, read the next block behind it, re-frame). Memory is therefore one block plus the largest
-record, and the engine never sees the seam. What's left for a format is one function from a byte
-window to a verdict; here is the NDJSON framer, in its entirety:
+reads, and the carry/stitch for a record that straddles two reads. Memory is one block plus the
+largest record, and the engine never sees the seam. What's left for a format is one function from
+a byte window to a verdict; here is the NDJSON framer, in its entirety:
 
 <Snippet name="ndjson-frame" hideFull />
-
-A length-prefixed binary format would read a header instead of scanning for a newline; the four
-verdicts and everything downstream of them are unchanged. The in-memory source skips all of this
-(one chunk, no straddling) and is a screenful, plus `def stream` to enter the pipeline:
-
-<Snippet name="ndjson-source" hideFull />
-
 
 ## Where terminals come from
 
 None of the terminal methods is defined on the pipeline class. `Fuse[A, S]` carries only the stage
-markers; `S` is the pipeline's source shape (<Link to="/fusion/sources">the sources page</Link>),
-and the terminals are inline extension methods (methods bolted onto a type from outside it,
-resolved statically at compile time) provided by the shape's `FuseLowering[S]` given (Scala's
-keyword for publishing a typeclass instance the compiler locates by type), published in the shape's
-companion object, so it rides the implicit scope of every `Fuse[A, S]` with no imports at the use
-site.
+markers; `S` is the pipeline's source shape, and the terminals are inline extension methods
+provided by the shape's `FuseLowering[S]` given, published in the shape's companion object, so it
+rides the implicit scope of every `Fuse[A, S]` with no imports at the use site.
 
 Three consequences:
 
 <ul className="points">
   <li>
     <strong>Scope lives in the types.</strong> A shape mixes in the terminal families it supports:
-    the capability traits <code>AggTerminals</code>, <code>SearchTerminals</code>,{" "}
-    <code>GroupTerminals</code>, <code>PlanTerminals</code>, <code>MaterializeTerminals</code>{" "}
-    (bundled as <code>StandardTerminals</code>). A terminal a shape doesn't mix in is <em>not a
-    member</em> of its pipelines and doesn't compile; there is no runtime error and no slow fallback.
+    <code>AggTerminals</code>, <code>SearchTerminals</code>, <code>GroupTerminals</code>,{" "}
+    <code>PlanTerminals</code>, <code>MaterializeTerminals</code> (bundled as{" "}
+    <code>StandardTerminals</code>). A terminal a shape doesn't mix in is <em>not a member</em> of
+    its pipelines and doesn't compile; there is no runtime error and no slow fallback.
   </li>
   <li>
     <strong>The syntax is written once.</strong> Those traits contain every terminal method, each a
-    one-liner that reifies the call into a typed <code>Terminal[A, R]</code> marker
-    (<code>Terminal.find(p): Terminal[A, Option[A]]</code>) and hands it to the one abstract hook a
-    lowering implements.
+    one-liner that reifies the call into a typed <code>Terminal[A, R]</code> marker and hands it to
+    the one abstract hook a lowering implements.
   </li>
   <li>
-    <strong>The hook is the whole integration surface.</strong> A lowering module implements a
-    single <code>inline def lower(self, t)</code> whose macro forwards pipeline + terminal to the
-    engine, together with the module's decoder, as an ordinary method argument at compile time. No
-    registry, no reflection, no service files.
+    <strong>The hook is the whole integration surface</strong>, shown below.
   </li>
 </ul>
-
-The native shape (`Chunks`, covering in-memory arrays and chunk streams) mixes in everything. The
-NDJSON shape below takes `StandardTerminals` and skips `MaterializeTerminals`, which is why
-`Json.ndjson[T](bytes).stream.run` is a compile error while `.sum` is a byte-level scanner. The
-difference between two shapes is spelled out in their mixin lists.
 
 ## The whole integration, one file
 
@@ -110,57 +127,75 @@ The NDJSON plug-in, verbatim: the shape, the given, and the hook.
 
 <Snippet name="json-integration" hideFull />
 
-`Ndjson` is the source shape, and the given in its companion puts `JsonLowering`'s terminals on
-every `Fuse[A, Ndjson]`. `StandardTerminals[Ndjson]` is where the terminal *methods* come from,
-and every one of them funnels into the single abstract `lower` you see in the file.
-
-The last four lines are the hook, and they exist to solve one problem: the engine and your format
-have never met. `FuseMacro` lives in farray and can compile any pipeline into a loop, but it has no
-idea how to read your bytes; your module owns the decoder, but has no loop compiler. The hook is
-the meeting point, and it has to happen inside the compiler, because that is where the loop gets
-generated.
-
-```scala
-inline def lower[A, R](inline self: Fuse[A, Ndjson], inline t: Terminal[A, R]): R =
-  ${ JsonLowering.impl[A, R]('self, 't) }
-
-def impl[A: Type, R: Type](self: Expr[Fuse[A, Ndjson]], t: Expr[Terminal[A, R]])(using Quotes): Expr[R] =
-  FuseMacro.lower(self, t, JsonDecode)
-```
+The last four lines exist to solve one problem: the engine and your format have never met.
+`FuseMacro` lives in farray and can compile any pipeline into a loop, but it has no idea how to
+read your bytes; your module owns the decoder, but has no loop compiler. The hook is the meeting
+point, and it happens inside the compiler, because that is where the loop gets generated.
 
 What actually happens when a user writes `pipeline.sum`: the terminal method reifies the call and
-lands here, in `lower`, during compilation. Three things go across to the engine: the pipeline as
-the user wrote it, the terminal that ended it, and `JsonDecode`, your decoder. The engine builds
-the scanner loop out of them and returns it, and that loop is compiled into the user's program in
-place of the `.sum` call. By runtime, these four lines have no existence; only the loop they
-brokered remains.
+lands in `lower` during compilation. Three things go across to the engine: the pipeline as the user
+wrote it, the terminal that ended it, and `JsonDecode`, your decoder. The engine builds the scanner
+loop and returns it, and that loop is compiled into the user's program in place of the `.sum` call.
+By runtime these four lines have no existence; only the loop they brokered remains.
 
 Why it takes two declarations and this exact punctuation: that is Scala 3's required ritual for
 crossing from ordinary code into compiler-executed code and back. It is not a place where your
 integration does anything. Copy the four lines verbatim; the only token that is yours is the
 decoder's name.
 
-## The decoder contract
+## The decoder: answering the column question
 
-The decoder is the format-specific work, and its contract with the engine is one conversation, at
-macro-expansion time. The engine calls the decoder once per pipeline with a request carrying: the
-record's case-class type, the runtime byte source, the pipeline's `map` and `filter` lambdas plus
-the terminal's element readers (the decoder walks these to compute the *live set*, which fields
-anything downstream actually reads), a short-circuit flag for `take`/`find`, and a `continue`
-callback the engine owns. The decoder answers with one column per record field, in declaration
-order: each column is a read thunk that emits the byte-level code for that field, or a skip plus
-default constant if the field is dead.
+With the model in hand, the decoder's job stops being abstract. The engine asks it, once per
+pipeline, at compile time: *"here is the record type, here is every lambda in the pipeline and the
+terminal's readers; produce this record's columns."* Concretely the decoder:
 
-That's all it answers; the engine takes the columns and does the rest: memoizing String reads so a
-field decodes at most once, placing predicates for the mid-record early-out, assembling whatever
-the terminal needs, and emitting the loop. That split of labor is why the decoder stays small, and
-why a CSV or length-prefixed-binary decoder would be the same shape: implement the framing,
-implement the per-field reads, publish a given.
+1. **Computes the live set.** It walks the lambdas' syntax trees collecting field paths: a pipeline
+   of `.filter(_.amount > 150).map(_.category)` touches `amount` and `category`, so of a 20-field
+   record those two are live and eighteen are dead. (A lambda that uses the record *whole* makes
+   every field live; so do the terminals that keep whole elements, see the boundaries below.)
+2. **Answers with one column per field, in declaration order.** A live numeric field's column is a
+   read of the `var` its scanner fills (`readDoubleAt` in the snapshot above). A live String
+   field's column stores slice bounds during the scan and emits the actual `new String` only when
+   read, which, combined with the engine's memoizer, means: decoded at most once, and only for
+   records that survive the filter. A dead field's column is a typed default constant that no one
+   will read, and its bytes are `skipValue`d.
+3. **Optionally hands the engine a leading-filter early-out**: if the pipeline starts with plain
+   `filter`s whose fields appear before projection-only fields in the record, the emitted scanner
+   evaluates the predicate mid-record and abandons the rest of the scan on failure. The filter is
+   still re-checked downstream; the early-out is an optimization, never the correctness path.
+
+Everything else in the emitted code, the memoization, the predicate placement, the accumulators,
+the loop, is the engine's, shared with the in-memory world. That split is why the NDJSON decoder is
+one file, and why a CSV or length-prefixed-binary decoder would be the same shape: implement the
+framing, implement the per-field reads, publish a given.
+
+The decoder also renders its decisions as a plan string
+(`JsonPlan(record=Event, live=[amount], decoded=[amount], earlyOut=…, rebuildsRecord=false)`), and
+the test suite asserts on plans as well as on the golden lowerings, so "which fields does this
+query touch" is pinned by tests, not by faith.
+
+## Where the magic stops
+
+The boundaries, stated as plainly as the wins:
+
+- **Byte-source pipelines are `map`/`filter` only (v1).** `zip`, `flatMap`, `take`, `drop`,
+  `scan`, the adjacent-grouping family: all compile errors on a decomposed source. The engine
+  guards this at the one place that knows the stage list, so a decoder never has to.
+- **Records are flat case classes** with `Int`/`Long`/`Double`/`String` fields. Nested records,
+  options, collections in fields: not in v1, and the error says so at compile time.
+- **One frame at a time.** The driver sees a single complete record; there is no lookahead and no
+  cross-record window on a byte source.
+- **Synchronous.** The emitted code is a `while` loop in a `try`/`finally`; there is no async
+  variant.
+- **A performance cliff to know:** `topN`, `reduce` and `extremumByElem` keep whole elements, so on
+  a byte source they force every field live and rebuild the record per surviving element,
+  projection pushdown is off. `sum`/`fold`/`count`/`avg`/`agg` and the key-projecting extremums
+  decode only what they touch. The plan string makes this visible (`rebuildsRecord=true`).
 
 <Related
   links={[
     { to: "/fusion/json", label: "The worked example", desc: "The NDJSON integration running real queries, with scanners and rivals." },
+    { to: "/fusion/optimizer", label: "The optimizer", desc: "The column machinery this page's model rests on." },
     { to: "/fusion/terminals", label: "The terminals", desc: "What the capability traits actually grant." },
-    { to: "/fusion/sources", label: "Sources & shapes", desc: "Where S comes from and what it promises." },
   ]}
 />
