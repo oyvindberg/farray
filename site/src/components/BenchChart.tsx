@@ -126,7 +126,7 @@ export function Card({ chart, title }: { chart: Chart; title?: string }) {
             {sortedBars.map((b, i) => {
               const ratio = fa && !b.ours ? fa.v / b.v : null;
               return (
-                <div key={i} className={b.ours ? "row row--me" : "row"}>
+                <div key={i} className={b.ours ? "tiprow tiprow--me" : "tiprow"}>
                   <i style={{ background: b.color }} />
                   <span className="nm">{b.label}</span>
                   <span className="vv">{nf(b.v)}</span>

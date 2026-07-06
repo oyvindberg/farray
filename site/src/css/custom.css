@@ -351,8 +351,12 @@ table.cx td.cx-b { color: var(--ink-soft); }
 .bcard__plot svg .base { stroke: var(--hair-strong); stroke-width: 1; }
 
 .bcard__tip {
-  /* width: max-content so the background always covers the rows: an absolutely-positioned box
-     otherwise gets clamped by the card's right edge and the nowrap rows render past the box. */
+  /* width: max-content so the box sizes to its widest row. The rows are .tiprow, NOT .row:
+     Infima's grid defines a global .row (flex-wrap: wrap + negative horizontal margins), which
+     silently made each row 36px wider than the tip's content box AND shrank the rows' intrinsic
+     contribution below min-width — the box came out header-sized while rows overflowed the right
+     padding. Diagnosed live (headless Chrome, computed width == min-width). Never name a child
+     of this tip "row"/"col". */
   position: absolute; top: 4px; transform: translateX(-50%); pointer-events: none; z-index: 9;
   min-width: 152px; width: max-content;
   background: #11141a; color: #fff; border-radius: 8px; padding: 9px 11px; font-family: var(--mono); font-size: 11px;
@@ -361,12 +365,12 @@ table.cx td.cx-b { color: var(--ink-soft); }
 .bcard__tip-h { font-weight: 600; font-size: 10px; color: #aeb2b8; margin-bottom: 6px; letter-spacing: 0.04em; display: flex; align-items: center; gap: 6px; text-transform: uppercase; }
 .bcard__tip .vd { font-size: 9px; font-weight: 700; padding: 1px 6px; border-radius: 4px; letter-spacing: 0.05em; margin-left: auto; }
 .bcard__tip .vd--w { background: #0c3d20; color: #86efac; } .bcard__tip .vd--t { background: #2b3340; color: #cbd5e1; } .bcard__tip .vd--l { background: #4a1410; color: #fca5a5; }
-.bcard__tip .row { display: flex; align-items: center; gap: 6px; padding: 1.5px 0; }
-.bcard__tip .row--me { font-weight: 700; }
-.bcard__tip .row i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
-/* .nm must be content-sized (flex:none), not flex:1: a grow item with flex-basis 0 makes the row's
-   intrinsic max-content width smaller than its real content, so the tip's width:max-content box
-   came out narrower than the nowrap text it holds. margin-right:auto does the push instead. */
+.bcard__tip .tiprow { display: flex; align-items: center; gap: 6px; padding: 1.5px 0; }
+.bcard__tip .tiprow--me { font-weight: 700; }
+.bcard__tip .tiprow i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+/* .nm is content-sized (flex:none) with margin-right:auto doing the push: both this and the
+   tip's width:max-content behaved correctly all along — the visible overflow was Infima's
+   global .row grid class leaking in (see the .bcard__tip comment above). */
 .bcard__tip .nm { flex: none; margin-right: auto; padding-right: 12px; white-space: nowrap; }
 .bcard__tip .vv { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .bcard__tip .rt { font-size: 9.5px; padding: 1px 5px; border-radius: 4px; font-weight: 700; }
