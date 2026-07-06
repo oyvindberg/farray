@@ -20,15 +20,37 @@ import Related from "@site/src/components/Related";
   predicate placement, memoization, the loop. We take the pieces in that order, easiest first.
 </p>
 
-## The familiar half: framing bytes
+## The familiar half: chunks and records
 
-This part is ordinary code, no compiler involvement: something has to hand the runtime loop the
-byte range of the next complete record, in constant memory. Six methods:
+This part is ordinary code, no compiler involvement, but it rests on a distinction worth being
+precise about, because the whole memory story hangs on it. A byte source deals in two different
+units:
 
-<Snippet name="byte-record-source" hideFull />
+- **A chunk is a unit of memory.** The source holds exactly one block of bytes at a time: `buf`,
+  advanced by `nextChunk()`. A file source reads block after block; an in-memory source answers
+  `nextChunk()` with `true` exactly once and its whole array. This is the constant-memory
+  guarantee: nothing upstream ever demands two blocks at once.
+- **A record is a unit of meaning.** Within the current chunk, `nextRecord()` frames the next
+  complete record as a range, `recordStart` until `recordEnd`, no copy and no allocation; the
+  generated scanner reads fields straight out of `buf` between those bounds. For NDJSON a record
+  is a line; for a length-prefixed format it would be a length header's worth of bytes.
 
-…and the in-memory NDJSON source is one small implementation of it, plus `def stream` to enter the
-pipeline:
+The engine's runtime loop is exactly the nesting you'd guess, with `close()` in a `finally` that
+fires on exhaustion, short-circuit and exception alike:
+
+```scala
+while (source.nextChunk())            // memory: one block resident
+  while (source.nextRecord())         // meaning: one complete frame
+    scan(source.buf, source.recordStart, source.recordEnd)
+```
+
+The two units don't line up, and that misalignment is the one real job of a source implementor:
+records do not respect block boundaries, and the contract makes a straddling record the *source's*
+problem, not the engine's. A streaming source carries the partial tail of one block over into the
+next buffer so that `nextRecord()` only ever frames complete, contiguous bytes. Memory is therefore
+one block plus the largest record, and the engine never sees the seam. The in-memory NDJSON source
+skips all of that (one chunk, records are just newline scans) and is a screenful, plus `def stream`
+to enter the pipeline:
 
 <Snippet name="ndjson-source" hideFull />
 
