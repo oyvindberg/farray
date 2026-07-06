@@ -7,7 +7,6 @@ description: "What the engine actually is (a loop assembler over columns), why o
 import Link from "@docusaurus/Link";
 import Snippet from "@site/src/components/Snippet";
 import GeneratedCode from "@site/src/components/GeneratedCode";
-import Related from "@site/src/components/Related";
 
 <p className="page__eyebrow">for library authors</p>
 
@@ -155,11 +154,3 @@ The boundaries, stated as plainly as the wins:
   a byte source they force every field live and rebuild the record per surviving element,
   projection pushdown is off. `sum`/`fold`/`count`/`avg`/`agg` and the key-projecting extremums
   decode only what they touch. The plan string makes this visible (`rebuildsRecord=true`).
-
-<Related
-  links={[
-    { to: "/fusion/json", label: "The worked example", desc: "The NDJSON integration running real queries, with scanners and rivals." },
-    { to: "/fusion/optimizer", label: "The optimizer", desc: "The column machinery this page's model rests on." },
-    { to: "/fusion/terminals", label: "The terminals", desc: "What the capability traits actually grant." },
-  ]}
-/>

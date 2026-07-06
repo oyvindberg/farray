@@ -6,7 +6,6 @@ description: "The short-circuit engine and its loop-shape lesson, the backward s
 
 import Link from "@docusaurus/Link";
 import BenchPair from "@site/src/components/BenchPair";
-import Related from "@site/src/components/Related";
 
 <p className="lede">
   Everything on this page answers a question and stops: is this element here, where does this run
@@ -71,17 +70,9 @@ one value and a handful of short verifications:
 <BenchPair
   int="SearchSliceIntBenchmark"
   str="SearchSliceStrBenchmark"
-  caption="The slice-search family, 3-element needle from the middle of the haystack. The candidate-scan ops are the win: on Int indexOfSlice/containsSlice run 2.1–2.4× and lastIndexOfSlice 2.4–2.8× over the best rival (where the old KMP-shaped code measured 0.76×, a loss); on String (every compare an equals call, a cost all share) they still lead 1.2–1.4×. The bounded compares split by kind: on Int startsWith/endsWith run ~1.3× and sameElements/segmentLength tie; on String those same fixed-length compares sit slightly BELOW parity (startsWith ~0.57×, sameElements/segmentLength ~0.9×): a Ref compare pays a node-match + checkcast per read, and a 3-element compare has no loop to amortize it into, the same nano-op floor the indexed-access page prices. The candidate scans win because they amortize; the tiny compares don't, so they sit at the Ref read floor."
+  caption="The slice-search family, a 3-element needle from the middle of the haystack. The candidate-scan ops are the win: on Int, indexOfSlice/containsSlice run 2.1–2.4× and lastIndexOfSlice 2.4–2.8× over the best rival; on String, where every compare is an equals, they still lead 1.2–1.4×. The fixed-length compares (startsWith/endsWith/sameElements) are the exception. With no loop to amortize the wrapper's per-read cost into, on String they sit slightly below parity (startsWith ~0.57×) — the same nano-op floor the indexed-access page prices. Candidate scans win because they amortize; the tiny compares don't."
 />
 
 The boundary: a pathological input (long needle of one repeated value over a haystack of the
 same value) degrades toward O(n·m), which KMP's guarantee avoids. Collection workloads don't look
 like that, and the 0.76× → 2.2× swing is what the guarantee was costing on everything else.
-
-<Related
-  links={[
-    { to: "/operations/indexed", label: "Indexed access", desc: "The other read-only family, and the wrapper tax priced exactly." },
-    { to: "/fusion/terminals", label: "Fused search terminals", desc: "find/exists that stop a whole pipeline, not just a scan." },
-    { to: "/operations/folds", label: "Folds & reduces", desc: "The scans that don't stop." },
-  ]}
-/>

@@ -10,7 +10,6 @@ hide_title: true
 
 import SideBySide from "@site/src/components/SideBySide";
 import GeneratedCode from "@site/src/components/GeneratedCode";
-import Related from "@site/src/components/Related";
 import Ladder from "@site/src/components/Ladder";
 import Scorecard from "@site/src/components/Scorecard";
 import { FusionDiagram } from "@site/src/components/Diagrams";
@@ -66,9 +65,10 @@ commits later:
     nothing between stages.
   </li>
   <li>
-    <strong>Claude is why.</strong> The redesign was years of evenings I didn't have. Most of the
-    implementation was written by the model from a human design; every optimization was measured and
-    several were reverted. A note on how that worked is in the <a href="./use">M1 status</a>.
+    <strong>Claude is why.</strong> Most of the implementation was written by the model from a human
+    design, under review and a test gate: every operation parity-checked against <code>List</code>,
+    every optimization measured, several reverted. That is what made the redesign — years of evenings
+    I never had — tractable at all. How it worked is in the <a href="./use">M1 status</a>.
   </li>
 </ul>
 
@@ -131,7 +131,8 @@ Scala 3 is a guarantee performed by the compiler, not a hint to the JIT: the op'
 lambda land in your method, with the unboxing fixed in the signature. That last part matters: the rivals that tie us on a
 single op lose that tie as the surrounding method grows, because their unboxing depends on the JIT's
 inlining budget and ours doesn't. No fusion involved, and it already beats the field.
-[Fast without fusion](./chains.mdx) is the whole eager argument, scored across the suite.
+The whole eager argument, scored across every chained benchmark in the suite, is [the next
+page](./chains.mdx).
 
 **The word.** Java Streams, Scala views and iterators all fuse at runtime and pay for it per
 element, per stage. `.fuse` does it at compile time, and what it emits is the `while` loop you would have
@@ -147,11 +148,3 @@ every size, boiled down per structure, losses included; [the benchmarks page](./
 has every chart behind it.
 
 <Scorecard />
-
-<Related
-  links={[
-    { to: "/chains", label: "Fast without fusion", desc: "Eager FArray, no .fuse: it already beats the field, and chaining is where it pulls away." },
-    { to: "/fusion", label: "The fusion engine", desc: "Sources, stages, terminals, the optimizer, and the receipts." },
-    { to: "/benchmarks/farray", label: "FArray benchmarks", desc: "The complete scorecard: every op, every size, every rival." },
-  ]}
-/>

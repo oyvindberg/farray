@@ -7,16 +7,14 @@ description: "Where FArrays come from: the varargs macro that unrolls to typed s
 import Link from "@docusaurus/Link";
 import BenchChart from "@site/src/components/BenchChart";
 import BenchPair from "@site/src/components/BenchPair";
-import Related from "@site/src/components/Related";
 
 <p className="lede">
   Construction is the one place this library starts a step behind by definition: a raw{" "}
-  <code>IArray(1, 2, 3)</code> (an immutable raw array) is one array
+  <code>IArray(1, 2, 3)</code> is one array
   allocation, and an FArray is that array <em>plus</em> its leaf node. That gap is accepted: the
   design principle says losing to a bare array on inherently-allocating ops is fine, losing to the
-  wrapper libraries (Scala's <code>List</code> and <code>Vector</code>, plus the array-backed{" "}
-  <code>Chunk</code> types from the fs2 and ZIO streaming
-  libraries) is not. This page is how the
+  wrapper libraries (<code>List</code>, <code>Vector</code>, and the{" "}
+  <code>Chunk</code> types) is not. This page is how the
   entry points hold that line.
 </p>
 
@@ -29,8 +27,7 @@ compiler wraps your three literals into an array, boxes each one if it's a primi
 constructor a sequence to iterate. You pay a wrapper, N boxes, and a loop to build a three-element
 collection.
 
-FArray's `apply` is `inline` (the compiler is guaranteed to expand it at each call site; not a JIT
-hint), and it forwards to a macro that never lets the `Seq` form. The macro
+FArray's `apply` is `inline`, and it forwards to a macro that never lets the `Seq` form. The macro
 reads the varargs literal straight off the syntax tree and unrolls it: it counts the arguments,
 dispatches on the *static element type* to pick the concrete leaf kind, and emits the stores
 directly:
@@ -111,12 +108,3 @@ For the imperative case (pushing elements one at a time when you don't know the 
 primitive boxes at the interface. FArray has a dedicated
 <Link to="/operations/builder">unboxed builder</Link> that avoids the boxing and beats even the
 standard library's specialized `int[]` builder.
-
-<Related
-  links={[
-    { to: "/operations/builder", label: "The unboxed builder", desc: "Accumulate element-by-element without boxing." },
-    { to: "/operations/getting-out", label: "Getting things out", desc: "toArray, mkString, and the zero-copy Seq wrapper." },
-    { to: "/design/java-core", label: "The node zoo", desc: "What that leaf-plus-node representation buys." },
-    { to: "/operations/map", label: "map", desc: "The first thing you'll do with what you built." },
-  ]}
-/>

@@ -9,7 +9,6 @@ import GeneratedCode from "@site/src/components/GeneratedCode";
 import BenchChart from "@site/src/components/BenchChart";
 import BenchPair from "@site/src/components/BenchPair";
 import Scorecard from "@site/src/components/Scorecard";
-import Related from "@site/src/components/Related";
 
 export const FINITENESS = [
   { op: "a ∪ b", finite: "both finite", note: "infinite if either side is" },
@@ -45,8 +44,7 @@ export function FinitenessTable() {
 
 <p className="lede">
   An immutable, unboxed set on the FArray playbook (a generated Java core, per-kind specialization,{" "}
-  <code>inline</code> dispatch, where Scala's <code>inline</code> is a compiler guarantee rather
-  than a JIT hint), plus one contrarian bet. Every immutable set on the JVM pays
+  <code>inline</code> dispatch), plus one contrarian bet. Every immutable set on the JVM pays
   the persistent-trie tax to make single-element updates cheap. FSet refuses to pay it, and builds an
   immutable set the way you actually use one: frozen flat leaves, queried hard, combined
   lazily. Everything on this page is a consequence of that one bet. And as everywhere on this site:
@@ -388,10 +386,3 @@ multiples.
 
 The full record is on the [FSet benchmarks page](./benchmarks/fset.mdx): every chart, every
 competitor, with the exact `@Benchmark` source behind each card.
-
-<Related
-  links={[
-    { to: "/benchmarks/fset", label: "FSet benchmarks", desc: "The complete scorecard: every chart, every competitor." },
-    { to: "/design/java-core", label: "The FArray core", desc: "The generated-Java playbook FSet is built on." },
-  ]}
-/>

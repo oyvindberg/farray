@@ -6,7 +6,6 @@ description: "Why JVM pipelines are slow, what compiling them at compile time bu
 
 import Link from "@docusaurus/Link";
 import Snippet from "@site/src/components/Snippet";
-import Related from "@site/src/components/Related";
 
 export function FuseEx({ src, gen }) {
   return (
@@ -153,11 +152,3 @@ Four rules:
     stage. There is no fallback path that silently runs slow.
   </li>
 </ul>
-
-<Related
-  links={[
-    { to: "/fusion/sources", label: "Start: Sources", desc: "Where pipelines begin: arrays, chunk streams, raw bytes." },
-    { to: "/fusion/benchmarks", label: "The receipts", desc: "Warm, cold, streaming, and against the field." },
-    { to: "/", label: "The FArray story", desc: "The collection library the engine grew out of." },
-  ]}
-/>

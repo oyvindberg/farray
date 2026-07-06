@@ -7,7 +7,6 @@ description: "The cost model: structural ops build lazy O(1) nodes; elementwise 
 import BenchChart from "@site/src/components/BenchChart";
 import BenchPair from "@site/src/components/BenchPair";
 import Complexity from "@site/src/components/Complexity";
-import Related from "@site/src/components/Related";
 
 <p className="lede">
   The whole cost model hangs off the split between the flavours. The{" "}
@@ -21,7 +20,7 @@ import Related from "@site/src/components/Related";
 
 That laziness is the trade. A bare array would be a hair quicker at a single indexed read (one
 type-check that `int[]` doesn't carry), but it can't compare or print itself:
-`IArray(1, 2, 3).toString` (IArray being Scala's immutable view of a raw array) is `[I@5a07e868`
+`IArray(1, 2, 3).toString` is `[I@5a07e868`
 and `==` is identity. FArray wraps the array in an object,
 so it gives that hair back and gets value `equals`, `hashCode` and `toString`, plus a collection you
 can assemble any way you please, in constant time, paying for a flat array only when you ask for one.
@@ -46,8 +45,7 @@ that is array-speed. The flat array is the preferred shape, and computing restor
 />
 
 One consequence gets [a page of its own](../operations/list-parity.mdx): driven as a
-literal cons-list, FArray keeps pace with `List` (the immutable cons list, no relation to
-`java.util.List`) at `List`'s own game.
+literal cons-list, FArray keeps pace with `List` at `List`'s own game.
 
 Two more ops belong to the O(1) family and rarely get counted: `updated(i, x)` is an `Updated`
 node (a view of the original with one slot overridden, no copy of the other n−1 elements) and
@@ -66,11 +64,4 @@ materialized array, with a run-detecting mergesort, no boxed indices, and no `Or
   int="SortIntBenchmark"
   str="SortStrBenchmark"
   caption="sortBy / sortWith / sorted, Int beside String. On Int the unboxed mergesort runs ~2–2.3× past IArray on sortBy/sortWith and buries the boxing collections (sorted is a dead heat with IArray; both bottom out in the same array sort). On String there's no unboxing to win, so sortWith and sorted tie IArray, but sortBy still runs ~4–5× past the whole field, because FArray sorts cached keys instead of re-deriving them per comparison."
-/>
-
-<Related
-  links={[
-    { to: "/operations/map", label: "How map stays unboxed", desc: "Inside the elementwise machinery the cost model rests on." },
-    { to: "/benchmarks/farray", label: "FArray benchmarks", desc: "Every structural and elementwise op, at every size." },
-  ]}
 />

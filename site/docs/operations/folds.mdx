@@ -7,7 +7,6 @@ description: "The accumulator ops: where the boxing tax is purest, where the JIT
 import Link from "@docusaurus/Link";
 import BenchChart from "@site/src/components/BenchChart";
 import BenchPair from "@site/src/components/BenchPair";
-import Related from "@site/src/components/Related";
 
 <p className="lede">
   A fold is the purest boxing benchmark there is: no output collection, no structural work, just one
@@ -37,13 +36,13 @@ The tie does not hold once the fold sits in a real method.
 
 ## The part that matters: folds in real methods
 
-Competitors' primitive folds run unboxed *because* the JIT inlines the shared generic `foldLeft`
-into the call site and specializes it; the tie above is paid for out of the method's
-inlining budget. With several folds in one method (an ordinary reporting or
-aggregation method), the budget runs out: the shared fold collapses back to its generic boxed
-signature, one call site at a time, as the method grows. We measured the collapse beginning at four
-folds per method on C2 and around twelve on Graal. The story applies verbatim to
-`java.util.stream`: a `Stream.reduce` runs unboxed only while the JIT keeps its Sink chain inlined.
+The same [method-size effect](/operations/map#where-it-stops-being-a-tie) as `map`, with a fold's
+own twist. Competitors' primitive folds run unboxed *because* the JIT inlines the shared generic
+`foldLeft` and specializes it; the lone-fold tie above is paid out of the method's inlining budget.
+With several folds in one method the budget runs out and the shared fold collapses to its generic
+boxed signature, one call site at a time — and unlike `map`, where nothing boxed, what boxes here is
+the *accumulator*, threaded through every element. We measured the collapse beginning at four folds
+per method on C2 and around twelve on Graal.
 
 FArray's fold surface is a tiny call to a compiled-once leaf, not inlined, so the
 sixth fold in a method compiles exactly like the first. The benchmark runs six reference folds in one
@@ -94,11 +93,3 @@ are the empty-safe spellings, one branch in front of the same loop.
 When the fold ends a *chain*,{" "}
 <Link to="/fusion/farray">fusing the chain</Link> folds without materializing any stage at all, and
 `agg` runs several folds in one pass.
-
-<Related
-  links={[
-    { to: "/chains", label: "Fast without fusion", desc: "Where the per-stage wins compound." },
-    { to: "/operations/map", label: "How map stays unboxed", desc: "The signature-level machinery folds share." },
-    { to: "/fusion/terminals", label: "Fused folds & agg", desc: "Several accumulators, one pass, no chain materialization." },
-  ]}
-/>

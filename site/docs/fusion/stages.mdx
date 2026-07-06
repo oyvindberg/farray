@@ -6,7 +6,6 @@ description: "The pipeline vocabulary: markers that cost nothing, the algebraic 
 
 import Link from "@docusaurus/Link";
 import Snippet from "@site/src/components/Snippet";
-import Related from "@site/src/components/Related";
 
 export function FuseEx({ src, gen }) {
   return (
@@ -151,10 +150,3 @@ a million elements. And when a `map` builds a product whose columns a later `fil
 reads, the unread columns are computed only for survivors; that analysis belongs to{" "}
 <Link to="/fusion/optimizer">the optimizer</Link>. For pure lambdas the results are identical to the
 strict semantics; side-effecting lambdas can observe the difference.
-
-<Related
-  links={[
-    { to: "/fusion/terminals", label: "Next: Terminals", desc: "The call that ends the chain is the compiler invocation." },
-    { to: "/fusion/optimizer", label: "The optimizer", desc: "Columns, dead-column elimination, compute-for-survivors." },
-  ]}
-/>
