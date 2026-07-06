@@ -28,7 +28,7 @@ MAIN="org.openjdk.jmh.Main"
 
 # Fast-iteration mode: if results already exist, re-measure ONLY the farray methods and
 # patch them into the cached json (keeping every competitor entry). Otherwise full suite.
-RESULTS="docs/bench-results.json"
+RESULTS="${BENCH_RESULTS:-docs/bench-results.json}"
 if [ -f "$RESULTS" ]; then
   MODE="farray"; echo "▶ Mode: farray-only patch ($RESULTS exists)"
 else
@@ -57,6 +57,10 @@ for _ in $(seq 1 90); do
 done
 kill "$CAPPID" 2>/dev/null; pkill -f "$MAIN" 2>/dev/null
 { [ -z "$CP" ] || [ -z "$JAVA" ]; } && { echo "failed to capture classpath; see /tmp/cp-cap.log"; exit 1; }
+# BENCH_JAVA: run the suite on a different JVM than the build's (e.g. the Temurin/C2 scorecard:
+#   BENCH_JAVA="$(coursier java-home --jvm temurin:25)/bin/java" BENCH_RESULTS=docs/bench-results-c2.json ...)
+# The classpath capture above still uses the build JVM; only the measuring JVM is swapped.
+[ -n "${BENCH_JAVA:-}" ] && { JAVA="$BENCH_JAVA"; echo "  BENCH_JAVA override: $JAVA"; }
 echo "  java=$(basename "$(dirname "$(dirname "$JAVA")")") · classpath $(printf '%s' "$CP" | tr ':' '\n' | grep -c .) entries"
 
 echo "▶ Listing benchmarks…"
@@ -94,7 +98,7 @@ echo "$ALL" | grep -qE "^($UPDATED)$" && { throttle; run_shard "upd" "$UPDATED" 
 echo "▶ $(jobs -rp 2>/dev/null | grep -c .) shards running in parallel across $CORES cores…"
 wait
 echo "▶ Merging + rendering…"
-MODE="$MODE" python3 - <<'PY'
+MODE="$MODE" RESULTS="$RESULTS" python3 - <<'PY'
 import json, glob, os
 mode = os.environ["MODE"]
 new, files = [], sorted(glob.glob("docs/parts/part-*.json"))
@@ -105,7 +109,7 @@ for f in files:
 def is_farray(b):  # farray_map, farray_scanLeft, bare farray, plus farrayMat_*/farrayTree_* variants
     return b["benchmark"].split(".")[-1].split("_")[0].startswith("farray")
 
-dst = "docs/bench-results.json"
+dst = os.environ.get("RESULTS", "docs/bench-results.json")
 if mode == "farray":
     old = json.load(open(dst))
     kept = [b for b in old if not is_farray(b)]
@@ -117,4 +121,4 @@ else:
     print(f"  full suite: merged {len(new)} results from {len(files)} shards")
 PY
 # The report is the site: site/ renders docs/bench-results.json (see site/scripts/build-data.mjs).
-echo "✔ Done → docs/bench-results.json  (view: cd site && npm run dev → #/reference; publish: git add docs/ && git commit && git push)"
+echo "✔ Done → $RESULTS  (view: cd site && npm run dev → #/reference; publish: git add docs/ && git commit && git push)"
