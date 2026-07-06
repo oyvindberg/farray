@@ -1,0 +1,110 @@
+---
+title: Integrating with fusion
+sidebar_label: Integrating
+description: "The library-author page: what a fusion integration provides (shape, lowering, source, decoder), what the engine keeps, and the contract at every seam."
+---
+
+import Link from "@docusaurus/Link";
+import Snippet from "@site/src/components/Snippet";
+import Related from "@site/src/components/Related";
+
+<p className="page__eyebrow">for library authors</p>
+
+<p className="lede">
+  Everything before this page is about using pipelines; this page is about giving the engine a new
+  thing to run them over. An integration provides four pieces: a <strong>shape</strong> that names
+  your format in the type, a <strong>lowering</strong> that says which terminals your shape
+  supports, a <strong>source</strong> that frames records out of bytes, and a{" "}
+  <strong>decoder</strong> that reads one record's fields. The engine keeps everything else:
+  live-set analysis, dead-field skipping, predicate placement, memoization, the loop.
+</p>
+
+## Where terminals come from
+
+None of the terminal methods is defined on the pipeline class. `Fuse[A, S]` carries only the stage
+markers; `S` is the pipeline's source shape (<Link to="/fusion/sources">the sources page</Link>),
+and the terminals are inline extension methods (methods bolted onto a type from outside it,
+resolved statically at compile time) provided by the shape's `FuseLowering[S]` given (Scala's
+keyword for publishing a typeclass instance the compiler locates by type), published in the shape's
+companion object, so it rides the implicit scope of every `Fuse[A, S]` with no imports at the use
+site.
+
+Three consequences:
+
+<ul className="points">
+  <li>
+    <strong>Scope lives in the types.</strong> A shape mixes in the terminal families it supports:
+    the capability traits <code>AggTerminals</code>, <code>SearchTerminals</code>,{" "}
+    <code>GroupTerminals</code>, <code>PlanTerminals</code>, <code>MaterializeTerminals</code>{" "}
+    (bundled as <code>StandardTerminals</code>). A terminal a shape doesn't mix in is <em>not a
+    member</em> of its pipelines and doesn't compile; there is no runtime error and no slow fallback.
+  </li>
+  <li>
+    <strong>The syntax is written once.</strong> Those traits contain every terminal method, each a
+    one-liner that reifies the call into a typed <code>Terminal[A, R]</code> marker
+    (<code>Terminal.find(p): Terminal[A, Option[A]]</code>) and hands it to the one abstract hook a
+    lowering implements.
+  </li>
+  <li>
+    <strong>The hook is the whole integration surface.</strong> A lowering module implements a
+    single <code>inline def lower(self, t)</code> whose macro forwards pipeline + terminal to the
+    engine, together with the module's decoder, as an ordinary method argument at compile time. No
+    registry, no reflection, no service files.
+  </li>
+</ul>
+
+The native shape (`Chunks`, covering in-memory arrays and chunk streams) mixes in everything. The
+NDJSON shape below takes `StandardTerminals` and skips `MaterializeTerminals`, which is why
+`Json.ndjson[T](bytes).stream.run` is a compile error while `.sum` is a byte-level scanner. The
+difference between two shapes is spelled out in their mixin lists.
+
+## The whole integration, one file
+
+The NDJSON plug-in, verbatim: the shape, the given, and the hook.
+
+<Snippet name="json-integration" hideFull />
+
+`Ndjson` is the source shape, and the given in its companion puts `JsonLowering`'s terminals on
+every `Fuse[A, Ndjson]`. `StandardTerminals[Ndjson]` is where the terminal *methods* come from,
+and every one of them funnels into the single abstract `lower` you see in the file.
+
+So the hook does exactly one thing. `lower` is an inline macro; its `impl` calls
+`FuseMacro.lower(self, t, JsonDecode)`, handing the engine three values at compile time: the
+pipeline's own syntax tree (`self`), the reified terminal (`t`), and the decoder object. No runtime
+handshake; the decoder rides along inside the compiler.
+
+## The source contract
+
+Six methods, "hand me the byte range of the next complete record, in constant memory":
+
+<Snippet name="byte-record-source" hideFull />
+
+…and the in-memory NDJSON source is one small implementation of it, plus `def stream` to enter the
+pipeline:
+
+<Snippet name="ndjson-source" hideFull />
+
+## The decoder contract
+
+The decoder is the format-specific work, and its contract with the engine is one conversation, at
+macro-expansion time. The engine calls the decoder once per pipeline with a request carrying: the
+record's case-class type, the runtime byte source, the pipeline's `map` and `filter` lambdas plus
+the terminal's element readers (the decoder walks these to compute the *live set*, which fields
+anything downstream actually reads), a short-circuit flag for `take`/`find`, and a `continue`
+callback the engine owns. The decoder answers with one column per record field, in declaration
+order: each column is a read thunk that emits the byte-level code for that field, or a skip plus
+default constant if the field is dead.
+
+That's all it answers; the engine takes the columns and does the rest: memoizing String reads so a
+field decodes at most once, placing predicates for the mid-record early-out, assembling whatever
+the terminal needs, and emitting the loop. That split of labor is why the decoder stays small, and
+why a CSV or length-prefixed-binary decoder would be the same shape: implement the framing,
+implement the per-field reads, publish a given.
+
+<Related
+  links={[
+    { to: "/fusion/json", label: "The worked example", desc: "The NDJSON integration running real queries, with scanners and rivals." },
+    { to: "/fusion/terminals", label: "The terminals", desc: "What the capability traits actually grant." },
+    { to: "/fusion/sources", label: "Sources & shapes", desc: "Where S comes from and what it promises." },
+  ]}
+/>

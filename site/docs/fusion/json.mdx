@@ -76,7 +76,7 @@ export const WIDE_BENCH = {
   ],
 };
 
-<p className="page__eyebrow">concept five of five: the engine, pointed at bytes</p>
+<p className="page__eyebrow">the engine, pointed at bytes</p>
 
 <p className="lede">
   You have a few gigabytes of NDJSON and one question: total revenue where <code>amount > 150</code>.
@@ -119,51 +119,12 @@ The queries on this page run against a 10 000-record, ~3.2 MB NDJSON buffer of t
 Throughput is ops/s over the whole buffer (÷10 000 ≈ per record); every rival runs that library's
 best idiom for the same query.
 
-## The whole integration, one file
+## The integration behind it
 
-Before the demos, the part a library author should read closely. This is the whole plug-in,
-verbatim: the shape, the typeclass instance (an interface implementation the compiler selects by
-type, like a ServiceLoader resolved at compile time), and the hook.
-
-<Snippet name="json-integration" hideFull />
-
-Unpacking it against <Link to="/fusion/terminals">the lowerings page</Link>: `Ndjson` is the source
-shape, and the given (Scala's keyword for publishing such a compiler-resolved instance) in its
-companion puts `JsonLowering`'s terminals on every `Fuse[A, Ndjson]`. `StandardTerminals[Ndjson]`
-is where the terminal *methods* come from: mixing it in is what makes `.sum`, `.find`,
-`.groupAdjacentReduceBy` and the rest exist on these pipelines at all (and what makes `.run` not
-compile; element materialization isn't in the mixin list). Every one of those methods is sugar
-that funnels into the single abstract `lower` you see in the file.
-
-So the hook is the entire integration surface, and it does exactly one thing. `lower` is an inline
-macro; its `impl` calls `FuseMacro.lower(self, t, JsonDecode)`, handing the engine three values at
-compile time: the pipeline's own syntax tree (`self`), the reified terminal (`t`), and the decoder
-object. No registry, no reflection, no runtime handshake; the decoder rides along as an ordinary
-method argument inside the compiler.
-
-The other two pieces are just as inspectable. The **source** contract is six methods, "hand me the
-byte range of the next complete record, in constant memory":
-
-<Snippet name="byte-record-source" hideFull />
-
-…and the in-memory NDJSON source is one small implementation of it, plus `def stream` to enter the
-pipeline:
-
-<Snippet name="ndjson-source" hideFull />
-
-The **decoder** (`JsonDecode.scala`) is the format-specific work, and its contract with the engine
-is one conversation, at macro-expansion time. The engine calls the decoder once per pipeline with a
-request carrying: the record's case-class type, the runtime byte source, the pipeline's `map` and
-`filter` lambdas plus the terminal's element readers (the decoder walks these to compute the *live
-set*, which fields anything downstream actually reads), a short-circuit flag for `take`/`find`, and
-a `continue` callback the engine owns. The decoder answers with one column per record field, in
-declaration order: each column is a read thunk that emits the byte-level code for that field, or a
-skip plus default constant if the field is dead. That's all it answers; the engine takes the
-columns and does the rest: memoizing String reads so a field decodes at most once, placing
-predicates for the mid-record early-out, assembling whatever the terminal needs, and emitting the
-loop. That split of labor is why the decoder stays small, and why a CSV or length-prefixed-binary
-decoder would be the same shape: implement the framing, implement the per-field reads, publish a
-given.
+The plug-in itself (shape, lowering, source, decoder, and the contract at each seam) is dissected
+on <Link to="/fusion/integrating">Integrating with fusion</Link>; it is one readable file. What
+this page adds is the proof it works: real queries, the scanners the macro emitted for them, and
+the rivals.
 
 Three entry points, one per place your bytes live; the file and stream variants run in constant
 memory (one block + the largest record), with the source closed on every exit path:
@@ -242,7 +203,7 @@ Scanners are the verbatim post-typer expansion, regenerated to current codegen a
 <Related
   links={[
     { to: "/fusion/benchmarks", label: "Next: The receipts", desc: "The fusion benchmarks, end to end." },
-    { to: "/fusion/terminals", label: "Terminals & lowerings", desc: "The typeclass machinery this page plugs into." },
+    { to: "/fusion/integrating", label: "Integrating with fusion", desc: "The plug-in contract this page is a worked example of." },
     { to: "/fusion/optimizer", label: "The optimizer", desc: "The column analysis, over tuples instead of bytes." },
   ]}
 />

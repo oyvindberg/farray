@@ -53,6 +53,7 @@ const sidebars: SidebarsConfig = {
         "fusion/terminals",
         "fusion/optimizer",
         "fusion/farray",
+        "fusion/integrating",
         "fusion/json",
         "fusion/benchmarks",
       ],

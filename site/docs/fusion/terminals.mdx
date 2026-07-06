@@ -1,7 +1,7 @@
 ---
-title: Terminals & lowerings
-sidebar_label: Terminals & lowerings
-description: "The call that ends the chain is the compiler invocation, and which terminals a pipeline has is a typeclass decision; that is what makes the engine pluggable."
+title: Terminals
+sidebar_label: Terminals
+description: "The call that ends the chain is the compiler invocation: the terminal families, and the lowerings of the ones the standard library can't do."
 ---
 
 import Link from "@docusaurus/Link";
@@ -33,16 +33,15 @@ export function Api({ label, ops }) {
   );
 }
 
-<p className="page__eyebrow">concept three of five</p>
+<p className="page__eyebrow">the terminals</p>
 
 <p className="lede">
   Stages are inert; the <strong>terminal</strong> is where everything happens. When you write{" "}
   <code>.sum</code> or <code>.find(p)</code> or <code>.run</code>, that call (an inline macro:
   code that runs inside the compiler, guaranteed-inlined at the call site, rewriting the typed
-  syntax tree) receives the whole chain as a syntax tree and compiles it into one loop. The second
-  half of this page covers who decides which terminals a pipeline has: the answer is a typeclass
-  (an interface implementation the compiler selects by type, like a ServiceLoader resolved at
-  compile time), and it is the engine's extension mechanism.
+  syntax tree) receives the whole chain as a syntax tree and compiles it into one loop. Which terminals
+  a pipeline has is decided per source shape; <Link to="/fusion/integrating">Integrating</Link>{" "}
+  covers that machinery. This page is what the terminals do.
 </p>
 
 ## The families
@@ -106,49 +105,9 @@ a bounded size-*n* heap inside the pass (O(N log n) time, O(n) memory, best-firs
 
 <FuseEx src="fuse-src-guide-topn" gen="fuse-guide-topn" />
 
-## Lowerings: where terminals come from
-
-This is the part of the design that concerns library authors. None of the methods above is
-defined on the pipeline class. `Fuse[A, S]` carries only the stage markers; `S` is the pipeline's
-source shape (<Link to="/fusion/sources">previous page</Link>), and the terminals are inline
-extension methods (methods bolted onto a type from outside it, resolved statically at compile time)
-provided by the shape's `FuseLowering[S]` given (Scala's keyword for publishing a typeclass
-instance the compiler locates by type), published in the shape's companion object, so it rides the
-implicit scope of every `Fuse[A, S]` with no imports at the use site.
-
-Three consequences:
-
-<ul className="points">
-  <li>
-    <strong>Scope lives in the types.</strong> A shape mixes in the terminal families it supports:
-    the capability traits <code>AggTerminals</code>, <code>SearchTerminals</code>,{" "}
-    <code>GroupTerminals</code>, <code>PlanTerminals</code>, <code>MaterializeTerminals</code>{" "}
-    (bundled as <code>StandardTerminals</code>). A terminal a shape doesn't mix in is <em>not a
-    member</em> of its pipelines and doesn't compile; there is no runtime error and no slow fallback.
-  </li>
-  <li>
-    <strong>The syntax is written once.</strong> Those traits contain every method above, each a
-    one-liner that reifies the call into a typed <code>Terminal[A, R]</code> marker
-    (<code>Terminal.find(p): Terminal[A, Option[A]]</code>) and hands it to the one abstract hook a
-    lowering implements.
-  </li>
-  <li>
-    <strong>The hook is the whole integration.</strong> A lowering module implements a single{" "}
-    <code>inline def lower(self, t)</code> whose macro forwards pipeline + terminal to the engine,
-    together with the module's decoder, as an ordinary method argument at compile time. No registry,
-    no reflection, no service files. The NDJSON decoder's entire hook is five lines, shown on{" "}
-    <Link to="/fusion/json">the JSON page</Link>.
-  </li>
-</ul>
-
-The native shape (`Chunks`, covering in-memory arrays and chunk streams) mixes in everything. The
-JSON shape takes `StandardTerminals` and skips `MaterializeTerminals`, which is why
-`Json.ndjson[T](bytes).stream.run` is a compile error while `.sum` is a byte-level scanner. The
-difference between the two shapes is spelled out in the mixin list.
-
 <Related
   links={[
     { to: "/fusion/optimizer", label: "Next: The optimizer", desc: "Columns, DCE, compute-for-survivors: the shared brain." },
-    { to: "/fusion/json", label: "The JSON integration", desc: "A lowering + decoder in one readable file." },
+    { to: "/fusion/integrating", label: "Integrating", desc: "Where terminals come from: shapes, lowerings, and the plug-in contract." },
   ]}
 />

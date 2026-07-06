@@ -1,7 +1,7 @@
 ---
 title: Fusion, from first principles
 sidebar_label: From first principles
-description: "Why JVM pipelines are slow, what compiling them at compile time buys, and the five concepts the whole machine is built from."
+description: "Why JVM pipelines are slow, what compiling them at compile time buys, and the moving parts the machine is built from."
 ---
 
 import Link from "@docusaurus/Link";
@@ -82,7 +82,7 @@ why a fused pipeline leads even measured cold, and why the lead persists when th
 grows or a call site gets shared. The taxes are avoided in the emitted bytecode rather than
 optimized away at runtime.
 
-## The machine, in five concepts
+## The machine
 
 Everything in this section builds from five ideas, each with its own page, each depending only on
 the ones before it:
@@ -100,7 +100,7 @@ the ones before it:
     bodies.
   </li>
   <li>
-    <strong><Link to="/fusion/terminals">Terminals & lowerings</Link></strong>: the call that ends
+    <strong><Link to="/fusion/terminals">Terminals</Link></strong>: the call that ends
     the chain <em>is</em> the compiler invocation. Which terminals a pipeline has is decided per
     source shape by a typeclass (an interface implementation the compiler selects by type, like a
     ServiceLoader resolved at compile time), which is what makes the engine extensible.
