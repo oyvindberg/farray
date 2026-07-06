@@ -354,7 +354,7 @@ table.cx td.cx-b { color: var(--ink-soft); }
   /* width: max-content so the background always covers the rows: an absolutely-positioned box
      otherwise gets clamped by the card's right edge and the nowrap rows render past the box. */
   position: absolute; top: 4px; transform: translateX(-50%); pointer-events: none; z-index: 9;
-  min-width: 152px; width: max-content; max-width: 280px;
+  min-width: 152px; width: max-content;
   background: #11141a; color: #fff; border-radius: 8px; padding: 9px 11px; font-family: var(--mono); font-size: 11px;
   box-shadow: 0 12px 34px -8px rgba(0, 0, 0, 0.4);
 }
