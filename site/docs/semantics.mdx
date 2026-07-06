@@ -1,0 +1,56 @@
+---
+title: Semantics and sharp edges
+sidebar_label: Sharp edges
+description: "The contracts that differ from the standard library: purity under fusion, lazy nodes pinning memory, reference-identity sharing, and the binary-compatibility reality of an inline API."
+---
+
+<p className="lede">
+  Everything on this page is by design, and every one of them can surprise you. Read this before
+  putting FArray in a hot path; it is short on purpose.
+</p>
+
+## Fused lambdas are assumed pure
+
+The fusion optimizer reorders, deduplicates, sinks past filters, and deletes computations whose
+results nothing reads. Pure lambdas cannot observe any of that; lambdas with side effects can. A
+counter inside a `map` may run fewer times than the input has elements (dead-column elimination),
+more times than you expect (no common-subexpression guarantee across pattern branches), or after a
+`filter` you wrote it before (sinking). This is the same contract database optimizers put on
+expressions, and it is not checked by the compiler: a logger inside a fused stage is legal Scala
+and a semantic bug.
+
+Eager operations (everything without `.fuse`) run your lambda exactly once per element, in order,
+like the standard library.
+
+## Lazy structural nodes pin their source
+
+`take`, `drop`, `slice` and `reverse` are O(1) because they return a node pointing at the source
+array. That reference is permanent: `hundredMegabytes.take(2)` keeps all hundred megabytes
+reachable, the same trap `String.substring` was before JDK 7. When you keep a small slice of a
+large FArray long-term, break the tie by materializing: any elementwise operation
+(`slice.map(identity)`) or `FArray.from(slice)` copies the two elements into fresh storage and
+drops the reference.
+
+## Reference identity differs where copying was avoided
+
+A `filter` that keeps everything returns the same object, not a copy. `map` on an empty FArray
+returns the empty singleton. Code that relies on `eq`-distinctness of collection results (rare, but
+it exists) will see sharing the standard library doesn't do.
+
+## Binary compatibility does not exist here
+
+Every operation is `inline`: the dispatch, and often the surrounding logic, expands into your
+compiled call sites. Upgrading FArray without recompiling everything that uses it is not supported
+and never will be; there is no MiMa story for an inline API. Pin an exact version. If you publish a
+library whose public API exposes `FArray`, your downstream users inherit the same rule.
+
+## Compile-time cost
+
+`.fuse` runs a macro per terminal call: the whole pipeline is parsed off the typed tree, optimized,
+and re-emitted. Measured on a file of forty 5-stage pipelines (incremental recompile, warm build
+server, Apple Silicon): the fused file compiles in ~0.85s, the identical eager file in ~1.4s, about
+20ms per fused pipeline against 36ms per eager one. The direction surprised us too: eager chains
+pay an inline kind-dispatch expansion per stage per call site, while fused stages are inert markers
+and the one macro per terminal costs less than the five expansions it replaces. Expect fused code
+to compile at worst comparably to the eager code it replaces; if you find a pipeline shape where
+that inverts badly, that is a cliff worth [an issue](https://github.com/oyvindberg/farray/issues).

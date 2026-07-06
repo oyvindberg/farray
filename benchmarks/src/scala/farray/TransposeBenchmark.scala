@@ -23,5 +23,6 @@ class TransposeIntBenchmark extends IntInputs {
   @Benchmark def farray_transpose(): FArray[FArray[Int]] = farrayMatrix.transpose
   @Benchmark def list_transpose(): List[List[Int]] = listMatrix.transpose
   @Benchmark def vector_transpose(): Vector[Vector[Int]] = vectorMatrix.transpose
+  // IArray has no transpose
   @Benchmark def ziochunk_transpose(): zio.Chunk[zio.Chunk[Int]] = zioMatrix.transpose
 }

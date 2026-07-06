@@ -7,9 +7,9 @@ const ROWS: { op: string; cost: string; builds: string; o1: boolean }[] = [
   { op: "reverse", cost: "O(1)", builds: "a ReverseNode", o1: true },
   { op: "updated", cost: "O(1)", builds: "an Updated node", o1: true },
   { op: "padTo", cost: "O(1)", builds: "a Pad node", o1: true },
-  { op: "FArray.range", cost: "O(1)", builds: "a RangeNode — elements never allocated", o1: true },
-  { op: "apply(i) · head · last", cost: "O(1) on a leaf · O(depth) on a node chain", builds: "—", o1: false },
-  { op: "map · filter · flatMap · fold", cost: "O(n)", builds: "a flat array — you hold a leaf after", o1: false },
+  { op: "FArray.range", cost: "O(1)", builds: "a RangeNode (elements never allocated)", o1: true },
+  { op: "apply(i) · head · last", cost: "O(1) on a leaf · O(depth) on a node chain", builds: "nothing", o1: false },
+  { op: "map · filter · flatMap · fold", cost: "O(n)", builds: "a flat array; you hold a leaf after", o1: false },
 ];
 
 export default function Complexity() {

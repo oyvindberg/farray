@@ -11,6 +11,8 @@ import org.openjdk.jmh.annotations.Benchmark
 //
 // Each collection runs the IDENTICAL logical transform; the only differences are forced by API shape
 // (zip tuple types). The result is a single Int folded out, so the whole chain is consumed.
+// java.util.stream is excluded here: Streams have no zip/zipWithIndex, so the 14 stages cannot be
+// expressed stage-for-stage. See MapFilterFold/FlatMapChain/FoldLeft for the IntStream comparison.
 class LongMixedPipelineIntBenchmark extends IntInputs {
 
   @Benchmark def list(): Int = {
@@ -67,7 +69,7 @@ class LongMixedPipelineIntBenchmark extends IntInputs {
       .foldLeft(0)(_ + _)
   }
 
-  @Benchmark def farrayEager(): Int = {
+  @Benchmark def farray(): Int = {
     farrayInput
       .flatMap(x => FArray(x, x + 1))
       .filter(_ % 3 != 0)

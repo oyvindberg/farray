@@ -166,8 +166,8 @@ article a:not(.related__card) {
   color: var(--ink);
 }
 .hero__lede {
-  font-size: clamp(22px, 3vw, 27px); line-height: 1.42; font-weight: 460; letter-spacing: -0.012em;
-  max-width: 32ch; margin: 30px 0 0;
+  font-size: clamp(17px, 2vw, 21px); line-height: 1.42; font-weight: 460; letter-spacing: -0.012em;
+  max-width: none; margin: 30px 0 0;
 }
 .hero__sub { font-size: 18px; color: var(--ink-soft); max-width: var(--measure); margin: 22px 0 40px; }
 
@@ -351,17 +351,28 @@ table.cx td.cx-b { color: var(--ink-soft); }
 .bcard__plot svg .base { stroke: var(--hair-strong); stroke-width: 1; }
 
 .bcard__tip {
-  position: absolute; top: 4px; transform: translateX(-50%); pointer-events: none; z-index: 9; min-width: 152px;
+  /* width: max-content so the box sizes to its widest row. The rows are .tiprow, NOT .row:
+     Infima's grid defines a global .row (flex-wrap: wrap + negative horizontal margins), which
+     silently made each row 36px wider than the tip's content box AND shrank the rows' intrinsic
+     contribution below min-width — the box came out header-sized while rows overflowed the right
+     padding. Diagnosed live (headless Chrome, computed width == min-width). Never name a child
+     of this tip "row"/"col". */
+  position: absolute; top: 4px; transform: translateX(-50%); pointer-events: none; z-index: 9;
+  min-width: 152px; width: max-content;
   background: #11141a; color: #fff; border-radius: 8px; padding: 9px 11px; font-family: var(--mono); font-size: 11px;
   box-shadow: 0 12px 34px -8px rgba(0, 0, 0, 0.4);
 }
 .bcard__tip-h { font-weight: 600; font-size: 10px; color: #aeb2b8; margin-bottom: 6px; letter-spacing: 0.04em; display: flex; align-items: center; gap: 6px; text-transform: uppercase; }
 .bcard__tip .vd { font-size: 9px; font-weight: 700; padding: 1px 6px; border-radius: 4px; letter-spacing: 0.05em; margin-left: auto; }
 .bcard__tip .vd--w { background: #0c3d20; color: #86efac; } .bcard__tip .vd--t { background: #2b3340; color: #cbd5e1; } .bcard__tip .vd--l { background: #4a1410; color: #fca5a5; }
-.bcard__tip .row { display: flex; align-items: center; gap: 6px; padding: 1.5px 0; }
-.bcard__tip .row--me { font-weight: 700; }
-.bcard__tip .row i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
-.bcard__tip .nm { flex: 1; white-space: nowrap; } .bcard__tip .vv { font-variant-numeric: tabular-nums; }
+.bcard__tip .tiprow { display: flex; align-items: center; gap: 6px; padding: 1.5px 0; }
+.bcard__tip .tiprow--me { font-weight: 700; }
+.bcard__tip .tiprow i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+/* .nm is content-sized (flex:none) with margin-right:auto doing the push: both this and the
+   tip's width:max-content behaved correctly all along — the visible overflow was Infima's
+   global .row grid class leaking in (see the .bcard__tip comment above). */
+.bcard__tip .nm { flex: none; margin-right: auto; padding-right: 12px; white-space: nowrap; }
+.bcard__tip .vv { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .bcard__tip .rt { font-size: 9.5px; padding: 1px 5px; border-radius: 4px; font-weight: 700; }
 .bcard__tip .rt--up { background: #0c3d20; color: #86efac; } .bcard__tip .rt--dn { background: #4a1410; color: #fca5a5; }
 
@@ -496,3 +507,47 @@ table.score .sc-total { font-weight: 700; }
 
 /* ----- a11y ----- */
 :focus-visible { outline: 2px solid var(--emerald-bright); outline-offset: 2px; }
+
+/* ---- the ladder (intro): one pipeline, every rung as a log-scaled horizontal bar ---- */
+.ladder__rows { display: flex; flex-direction: column; gap: 7px; padding: 14px 0 4px; }
+.ladder__row { display: flex; align-items: center; gap: 12px; }
+.ladder__label {
+  flex: 0 0 108px; text-align: right; font-family: var(--mono, monospace); font-size: 0.78rem;
+  color: var(--ink-soft); white-space: nowrap;
+}
+.ladder__track { flex: 1; display: flex; align-items: center; gap: 10px; min-width: 0; }
+.ladder__bar { height: 15px; border-radius: 2px; flex: none; transition: width 0.2s; }
+.ladder__val {
+  font-family: var(--mono, monospace); font-size: 0.72rem; color: var(--ink-faint); white-space: nowrap;
+}
+
+/* ---- the chained-ops live scoreline (chains page) ---- */
+.chainscore {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.55em;
+  padding: 14px 16px; margin: 20px 0; background: var(--card); border: 1px solid var(--hair-strong);
+  border-radius: 6px; font-size: 0.95rem;
+}
+.chainscore__num { font-weight: 700; font-variant-numeric: tabular-nums; }
+.chainscore__num--w { color: #16a34a; }
+.chainscore__num--t { color: var(--ink-faint); }
+.chainscore__num--l { color: #ef4444; }
+.chainscore__note { color: var(--ink-soft); font-size: 0.88em; }
+
+/* tier grouping inside the ladder */
+.ladder__tier { display: flex; flex-direction: column; gap: 7px; }
+.ladder__tier + .ladder__tier { margin-top: 14px; }
+.ladder__tiercap {
+  font-family: var(--mono, monospace); font-size: 0.7rem; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--ink-faint); padding-left: 120px;
+}
+
+/* ---- the ratio color scale legend + chip glyph + scorecard cells ---- */
+.ratiolegend { margin: 6px 0 18px; max-width: 460px; }
+.ratiolegend__bar { height: 10px; border-radius: 5px; border: 1px solid var(--hair-strong); }
+.ratiolegend__labels { position: relative; height: 16px; font-family: var(--mono); font-size: 0.68rem; color: var(--ink-faint); }
+.ratiolegend__labels span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+.ratiolegend__labels span:first-child { transform: none; }
+.ratiolegend__labels span:last-child { transform: translateX(-100%); }
+.bcard__glyph { font-size: 9px; margin-right: 4px; vertical-align: 1px; }
+.score .sc-cell { font-variant-numeric: tabular-nums; }
+

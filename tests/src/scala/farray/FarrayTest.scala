@@ -728,6 +728,21 @@ class FListTest:
       assertCanonical(fa.partitionMap(em)._2, s"$name partitionMap._2 canon")
 
   // ---- fused pipelines (xs.fuse.…) ----
+  // REUSE CONTRACT: pipeline fragments extracted into an `inline def` splice back into the call
+  // site before the terminal macro reads the chain (FuseMacro.unwrapChain peels Inlined+bindings),
+  // so the fragment fuses exactly as if written out. A non-inline def would hide the stages behind
+  // an opaque call and MUST NOT compile-and-silently-fall-back; it is a compile error (tested by
+  // the macro's unsupported-chain diagnostics, not here).
+  inline def sharedStages[S](inline f: farray.Fuse[Int, S]): farray.Fuse[Int, S] =
+    f.map(_ * 2).filter(_ % 3 != 0)
+  @Test def test_fuse_inline_helper_reuse: Unit = {
+    val xs = FArray.tabulate(100)(identity)
+    val direct = xs.fuse.map(_ * 2).filter(_ % 3 != 0).foldLeft(0)(_ + _)
+    val viaHelper = sharedStages(xs.fuse).foldLeft(0)(_ + _)
+    val eager = xs.map(_ * 2).filter(_ % 3 != 0).foldLeft(0)(_ + _)
+    org.junit.Assert.assertEquals(eager, direct)
+    org.junit.Assert.assertEquals(eager, viaHelper)
+  }
   @Test def test_fuse_identity_int: Unit =
     org.junit.Assert.assertEquals(FArray(1, 2, 3, 4, 5).toList, FArray(1, 2, 3, 4, 5).fuse.run.toList)
   @Test def test_fuse_identity_empty: Unit =

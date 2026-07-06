@@ -37,6 +37,12 @@ class BuilderStrBenchmark:
     while i < n do { b += src(i); i += 1 }
     b.result()
 
+  @Benchmark def iarray(): IArray[String] =
+    val b = IArray.newBuilder[String]
+    var i = 0; val n = size
+    while i < n do { b += src(i); i += 1 }
+    b.result()
+
   @Benchmark def vector(): Vector[String] =
     val b = Vector.newBuilder[String]
     var i = 0; val n = size
@@ -48,6 +54,8 @@ class BuilderStrBenchmark:
     var i = 0; val n = size
     while i < n do { b += src(i); i += 1 }
     b.result()
+
+  // fs2.Chunk has no element-wise builder (Collector.Builder appends whole Chunks only)
 
   @Benchmark def ziochunk(): zio.Chunk[String] =
     val b = zio.ChunkBuilder.make[String]()

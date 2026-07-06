@@ -1,7 +1,7 @@
 ---
 title: It keeps up with List at List's own game
 sidebar_label: List's own game
-description: "FArray driven as a literal cons-list — built with ::, torn down by recursion — keeps pace with List, the structure built for exactly that."
+description: "FArray driven as a literal cons-list (built with ::, torn down by recursion) keeps pace with List, the structure built for exactly that."
 ---
 
 import Snippet from "@site/src/components/Snippet";
@@ -9,18 +9,23 @@ import BenchPair from "@site/src/components/BenchPair";
 
 <p className="lede">
   A result I still find faintly absurd. Because <code>+:</code> is O(1) and the tree is lazy, you can
-  drive FArray as a literal cons-list — build it with <code>::</code>, take it apart with{" "}
-  <code>case h :: t</code>, recursively — and it keeps pace with <code>List</code>, the structure that
+  drive FArray as a literal cons-list (build it with <code>::</code>, take it apart with{" "}
+  <code>case h :: t</code>, recursively) and it keeps pace with <code>List</code>, the structure that
   exists for precisely that.
 </p>
 
+Terms first, for the Java reader: Scala's `List` is an immutable singly linked list (not
+`java.util.List`), and `::`, pronounced "cons", is its cell, a head plus a tail pointer, so
+`x :: xs` prepends in O(1) and `case h :: t` pattern-matches a list apart into head and tail.
+`+:` is the same prepend on FArray.
+
 <Snippet name="cons-list" hideFull />
 
-Character-for-character the same code you'd write for `List`. On pure tear-down recursion it's a dead
-heat; on the cons-build it's about twice as quick.
+The code is character-for-character what you'd write for `List`. On pure tear-down recursion it's a
+dead heat; on the cons-build it's about twice as quick.
 
 <BenchPair
   int="ListLikeScalingIntBenchmark"
   str="ListLikeScalingStrBenchmark"
-  caption="FArray driven as a cons-list — built by ::, summed and mapped by recursion — versus List, Int beside String. On Int it takes the build (~2× at 100k, ~2.6× at 1M) and the map-then-sum (~1.9–2.3×), and ties the pure tear-down. On String everything lands within ~10% of List either way. References were never boxed, so there's no gap to open: matching the cons-list at its own game is the whole win."
+  caption="FArray driven as a cons-list (built by ::, summed and mapped by recursion) versus List, Int beside String. On Int it takes the build (~2× at 100k, ~2.6× at 1M) and the map-then-sum (~1.9–2.3×), and ties the pure tear-down. On String everything lands within ~10% of List either way. References were never boxed, so there's no gap to open: keeping pace at the cons-list's own game is the whole result."
 />

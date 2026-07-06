@@ -22,6 +22,8 @@ class ToArrayRefBenchmark {
   var iarrayInput: IArray[String] = _
   var listInput: List[String] = _
   var vectorInput: Vector[String] = _
+  var fs2ChunkInput: fs2.Chunk[String] = _
+  var zioChunkInput: zio.Chunk[String] = _
 
   @Setup
   def setup(): Unit = {
@@ -30,6 +32,9 @@ class ToArrayRefBenchmark {
     iarrayInput = IArray.tabulate(size)(_.toString)
     listInput = List.tabulate(size)(_.toString)
     vectorInput = Vector.tabulate(size)(_.toString)
+    // array-backed chunks: their best-case, matching the typed farray/iarray inputs
+    fs2ChunkInput = fs2.Chunk.iarray(iarrayInput)
+    zioChunkInput = zio.Chunk.fromIterable(listInput)
   }
 
   @Benchmark def farray_typedBacking(): Array[String] = farrayTyped.toArray
@@ -37,4 +42,6 @@ class ToArrayRefBenchmark {
   @Benchmark def iarray(): Array[String] = iarrayInput.toArray
   @Benchmark def list(): Array[String] = listInput.toArray
   @Benchmark def vector(): Array[String] = vectorInput.toArray
+  @Benchmark def fs2chunk(): Array[String] = fs2ChunkInput.toArray
+  @Benchmark def ziochunk(): Array[String] = zioChunkInput.toArray
 }

@@ -1,7 +1,7 @@
 ---
 title: Getting things out
 sidebar_label: getting things out
-description: "The exits: toArray as an arraycopy, mkString, indices — and toSeq, the zero-copy IndexedSeq wrapper that hands you the standard-library interface for free."
+description: "The exits: toArray as an arraycopy, mkString, indices, and toSeq, the zero-copy IndexedSeq wrapper that hands you the standard-library interface for free."
 ---
 
 import Link from "@docusaurus/Link";
@@ -9,40 +9,41 @@ import BenchChart from "@site/src/components/BenchChart";
 import Related from "@site/src/components/Related";
 
 <p className="lede">
-  The exits are as boring as they should be, and that's the point: turning an FArray back into an
-  array, a string, or a standard-library <code>Seq</code> is either a raw copy or no copy at all.
-  There's exactly one interesting decision here — how <code>toSeq</code> hands you the collections
-  interface without materializing anything — and it's the reason the conversions are cheap.
+  The exits are boring, as they should be: turning an FArray back into an
+  array, a string, or a standard-library <code>Seq</code> (Scala's read-only sequence interface,
+  the role <code>java.util.List</code> plays in Java) is either a raw copy or no copy at all.
+  There's exactly one interesting decision here, how <code>toSeq</code> provides the collections
+  interface without materializing anything, and it's the reason the conversions are cheap.
 </p>
 
 ## The copies
 
-`toArray`, `copyToArray`, and `indices` are memory-bound and tie the field, because there's no
-cleverness available: moving n elements into an array is moving n elements into an array, and
-everyone does the same `arraycopy`. The one thing FArray can get wrong here is the *type* of the
-copy — a reference FArray backed by `Object[]` makes `toArray[String]` a *checked* per-element copy
+`toArray`, `copyToArray`, and `indices` are memory-bound and tie the field: there's no
+cleverness available, everyone does the same `arraycopy` for the same n elements.
+The one thing FArray can get wrong here is the *type* of the
+copy: a reference FArray backed by `Object[]` makes `toArray[String]` a *checked* per-element copy
 rather than a bulk `arraycopy`. Whether you dodge that depends on how the FArray was born:
-`tabulate`/`fill` (with a `ClassTag` in scope) and `fromArray` of a typed array give a real
+`tabulate`/`fill` (with a `ClassTag` in scope, Scala's runtime class token that survives erasure) and `fromArray` of a typed array give a real
 `String[]` backing, so `toArray` is a straight `arraycopy`; a result of `map`/`filter`/`collect` is
 `Object[]`-backed and pays the checked copy. It's an <Link to="/operations/building">island, not a
-guarantee</Link> — worth knowing precisely because it's easy to assume it's always fast.
+guarantee</Link>, worth knowing because it's easy to assume it's always fast.
 
-`mkString` is the one exit that pulls ahead — a tuned append loop over the backing array runs
+`mkString` is the one exit that pulls ahead: a tuned append loop over the backing array runs
 ~1.3–1.5× past the rivals at scale (and lopsidedly more at tiny sizes, where their builder setup
 dominates).
 
 <BenchChart
   cls="ConvertIntBenchmark"
-  caption="The exits at 100k Int: toArray / copyToArray / indices at parity (memory-bound copies — nothing to win), mkString ~1.3× on a tuned append loop. (isDefinedAt appears here only because it shares this benchmark class; it's a bounds check, part of the indexed-access family, not a conversion.)"
+  caption="The exits at 100k Int: toArray / copyToArray / indices at parity (memory-bound copies, nothing to win), mkString ~1.3× on a tuned append loop. (isDefinedAt appears here only because it shares this benchmark class; it's a bounds check, part of the indexed-access family, not a conversion.)"
 />
 
 ## toSeq: the interface without the collection
 
 The interesting exit is the one that copies nothing. `List` and `Vector` *are* `Seq`s, so their
-`toSeq` returns `this` for free — and an FArray that had to materialize a fresh `Seq` would lose that
-comparison by a whole allocation on every call. It doesn't have to.
+`toSeq` returns `this` for free, and an FArray that had to materialize a fresh `Seq` would lose that
+comparison by a whole allocation on every call. FArray materializes nothing.
 
-`toSeq` and `toIndexedSeq` return an `FArraySeq` — a tiny wrapper that *is* an
+`toSeq` and `toIndexedSeq` return an `FArraySeq`, a tiny wrapper that *is* an
 `immutable.IndexedSeq` and holds the original FArray by reference:
 
 ```scala
@@ -53,20 +54,20 @@ final class FArraySeq[A](under: FBase) extends immutable.IndexedSeq[A]:
 ```
 
 That's the whole thing: O(1) to construct, no elements copied, and now you have the full
-standard-library `Seq` API — pattern matching, `for`-comprehensions, anything typed to `Seq[A]` —
-over your FArray's storage. The honest cost is in the signature: a `Seq[A]` hands back **boxed**
+standard-library `Seq` API (pattern matching, Scala's `for`-comprehension loops, anything typed to `Seq[A]`)
+over your FArray's storage. The cost is in the signature: a `Seq[A]` hands back *boxed*
 `A`, so reads through the wrapper go via `applyBoxed` and a primitive re-boxes on the way out. The
-wrapper is the right tool for handing an FArray to code that speaks `Seq`; it is not a way to keep
-reading unboxed — for that you stay on the FArray surface, which is the entire rest of this section.
+wrapper is for handing an FArray to code that speaks `Seq`; unboxed reads stay on the FArray
+surface, which is the entire rest of this section.
 
-The trade named plainly: FArray pays one small wrapper allocation where `List`/`Vector` pay zero
+The trade: FArray pays one small wrapper allocation where `List`/`Vector` pay zero
 (they were already Seqs). That single allocation is the one un-winnable cell against a native Seq,
-and the benchmark suite omits it rather than dress it up — an honest loss of exactly one object,
+and the benchmark suite omits it rather than dress it up: a loss of exactly one object,
 in exchange for having a real array underneath everywhere else.
 
 <Related
   links={[
-    { to: "/operations/building", label: "Building FArrays", desc: "The other end — and the ClassTag trick that makes toArray fast." },
+    { to: "/operations/building", label: "Building FArrays", desc: "The other end, and the ClassTag trick that makes toArray fast." },
     { to: "/operations/indexed", label: "Indexed access", desc: "Where isDefinedAt and apply actually live." },
     { to: "/", label: "The FArray story", desc: "Why a real array underneath is the whole point." },
   ]}

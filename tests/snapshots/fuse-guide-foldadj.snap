@@ -10,7 +10,7 @@
   var started: Boolean = false
   val seed0: Double = 0.0
   val cap: Int = n0
-  var out: Array[Object] = null
+  var out: Array[Object] = if (n0.<=(64)) null else new Array[Object](cap)
   var single: Object = null
   var o: Int = 0
   val s: FBase = src0
@@ -34,11 +34,9 @@
       acc.+(elem.amount)
     } else {
       val _v: Object = new Tuple2$mcID$sp(curKey, acc0).asInstanceOf[Tuple2[Int, Double]].asInstanceOf[Object]
-      if (o.==(0)) single = _v else {
-        if (out.==(null)) {
-          out = new Array[Object](cap)
-          out.update(0, single)
-        } else ()
+      if (out.!=(null)) out.update(o, _v) else if (o.==(0)) single = _v else {
+        out = new Array[Object](cap)
+        out.update(0, single)
         out.update(o, _v)
       }
       o = o.+(1)
@@ -49,14 +47,12 @@
   }
   if (started) {
     val `_v₂`: Object = new Tuple2$mcID$sp(curKey, acc0).asInstanceOf[Tuple2[Int, Double]].asInstanceOf[Object]
-    if (o.==(0)) single = `_v₂` else {
-      if (out.==(null)) {
-        out = new Array[Object](cap)
-        out.update(0, single)
-      } else ()
+    if (out.!=(null)) out.update(o, `_v₂`) else if (o.==(0)) single = `_v₂` else {
+      out = new Array[Object](cap)
+      out.update(0, single)
       out.update(o, `_v₂`)
     }
     o = o.+(1)
   } else ()
-  if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new RefOne(single) else if (o.==(cap)) new RefArr(out, o) else new RefArr(java.util.Arrays.copyOf[Object](out, o), o)
+  if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new RefOne(if (out.==(null)) single else out.apply(0)) else if (o.==(cap)) new RefArr(out, o) else new RefArr(java.util.Arrays.copyOf[Object](out, o), o)
 }.asInstanceOf[FArray[Tuple2[Int, Double]]]: FArray[Tuple2[Int, Double]]): FArray[Tuple2[Int, Double]])

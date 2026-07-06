@@ -1,7 +1,7 @@
 ---
-title: Fusion benchmarks
-sidebar_label: The receipts
-description: "The fused pipeline measured warm, cold, streaming, and on the chain that used to collapse — every bar hoverable, every @Benchmark source one click away."
+title: Motivation
+sidebar_label: Motivation
+description: "What fusion buys, measured first: the fused pipeline warm, cold, streaming, against java.util.stream, and on a second long chain — every bar hoverable, every @Benchmark source one click away."
 hide_table_of_contents: true
 ---
 
@@ -9,20 +9,22 @@ import Link from "@docusaurus/Link";
 import Snippet from "@site/src/components/Snippet";
 import SideBySide from "@site/src/components/SideBySide";
 import BenchChart from "@site/src/components/BenchChart";
+import BenchPair from "@site/src/components/BenchPair";
 import Related from "@site/src/components/Related";
 
-<p className="page__eyebrow">the receipts</p>
+<p className="page__eyebrow">motivation</p>
 
 <p className="lede">
-  Everything this section claimed, measured. Every bar is a JMH sweep you can hover; every card
-  reveals the exact <code>@Benchmark</code> methods behind it, so you can check that each rival runs
-  its best idiom rather than a strawman.
+  Before the how, the what. This is what fusion buys, measured — every bar a JMH sweep you can hover,
+  every card the exact <code>@Benchmark</code> methods behind it, so you can check each rival runs its
+  best idiom rather than a strawman. The rest of this section is how it is done.
 </p>
 
 ## The headline: fourteen stages, warm
 
-The pipeline from the introduction — `flatMap`, `filter`, `map`, `zip`, `zipWithIndex`, `foldLeft`,
-twice over. Every collection runs the identical code; the FArray entry differs by the one word:
+The pipeline from the introduction: `flatMap`, `filter`, `map`, `zip`, `zipWithIndex`, `foldLeft`
+(a seeded reduce), twice over. Every collection runs the identical code; the FArray entry differs
+by the one word:
 
 <SideBySide
   snippet="fuse-pipeline"
@@ -30,13 +32,26 @@ twice over. Every collection runs the identical code; the FArray entry differs b
   title="14-stage pipeline"
   caption={
     <>
-      Swept from empty to 100k elements. At 100k: ~36× the quickest rival, ~83× List — and ~15× the
-      same pipeline run eagerly on FArray itself, which is the honest number: the gap between
-      compiled-once ops and a compiled pipeline. Hover any column for exact ratios; the fused
-      variant's allocation profile measures at inputs-only (4·N + 40 bytes per invocation — the
+      Swept from empty to 100k elements. At 100k: ~36× the quickest rival, ~83× List, and ~15× the
+      same pipeline run eagerly on FArray itself (the gap between compiled-once ops and a compiled
+      pipeline). Hover any column for exact ratios; the fused
+      variant's allocation profile measures at inputs-only (4·N + 40 bytes per invocation, the
       benchmark's own zip source), with the pipeline contributing zero.
     </>
   }
+/>
+
+## Against java.util.stream: the same pipeline, both fused
+
+`java.util.stream` is the JVM's own fused pipeline, which makes it the fair rival for `.fuse` and
+the wrong one for the eager chains on the <Link to="/chains">chains page</Link> (comparing a lazy
+pipeline against eager materialization would be a strawman, so it sits this one out there). Here is
+the classic map → filter → foldLeft with both sides collapsed to a single pass:
+
+<BenchPair
+  int="MapFilterFoldIntBenchmark"
+  str="MapFilterFoldStrBenchmark"
+  caption="map → filter → foldLeft. Eager FArray and every eager collection materialize two intermediate arrays across three passes; IntStream and FArray's .fuse both run it as one pass with none. On Int, IntStream leads the EAGER FArray chain ~1.5×, and .fuse retakes the lead at 1.1–1.2×. On String the per-element String allocation dwarfs the intermediate-array traffic, so eager already nearly ties and fusion changes little. The eager FArray bar is the same measurement shown on the chains page; the fused bar is the point of this chart."
 />
 
 ## Cold: no warmup lap
@@ -46,7 +61,7 @@ ahead:
 
 <BenchChart
   cls="ColdPipelineIntBenchmark"
-  caption="The same 14-stage pipeline measured COLD — SingleShotTime, zero warmup, one uncompiled invocation at 100k elements (invocations/sec). Fused FArray is ~3.8× past List and IArray, ~2.7× past the quickest rival, before the JIT compiles anything. Warmup sets the size of the lead, not its existence."
+  caption="The same 14-stage pipeline measured COLD: SingleShotTime, zero warmup, one uncompiled invocation at 100k elements (invocations/sec). Fused FArray is ~3.8× past List and IArray, ~2.7× past the quickest rival, before the JIT compiles anything. Warmup only changes the size of the lead."
 />
 
 ## Streaming: constant memory without the streaming tax
@@ -56,37 +71,32 @@ processing data you don't want in memory:
 
 <BenchChart
   cls="StreamPipelineBenchmark"
-  caption="filter → map → sum over a lazily GENERATED sequence (vs Iterator, LazyList, fs2.Stream) and over an InputStream of lines (vs scala.io.Source and a hand-rolled BufferedReader loop). Chunks amortize the pull; the per-element cost is the fused loop."
+  caption="filter → map → sum over a lazily GENERATED sequence (vs Iterator, LazyList (Scala's lazy linked list), fs2.Stream) and over an InputStream of lines (vs scala.io.Source and a hand-rolled BufferedReader loop). Chunks amortize the pull; the per-element cost is the fused loop."
 />
 
-## The chain that used to collapse
+## A second pipeline, a different stage mix
 
-The reason "compile the pipeline" beats "hope the JIT saves you", preserved as a benchmark: this
-exact shape once ran at 0.055× of IArray when a trailing structural call silently disabled escape
-analysis on a spliced loop — <Link to="/operations/flatmap">the full story</Link>. Fused, the
-question doesn't exist:
+A nine-stage chain built from a different set of combinators — `map`, `filter`, `collect` (a
+PartialFunction the macro folds into one filter-plus-map), `zipWithIndex`, `takeWhile`, and `sum` —
+so the win isn't an artifact of one lucky shape. Fused, eager, and the whole field, Int beside
+String:
 
-<BenchChart
-  cls="FlatMapFilterTakeStrBenchmark"
-  caption="flatMap → filter → take on String elements. The trailing take is O(1) for FArray (a lazy SliceNode), and the fused pipeline leads at every size — with no dependence on the caller's method size or call-site history."
+<BenchPair
+  int="IntLongPipelineBench"
+  str="StrLongPipelineBench"
+  caption="map · filter · collect · map · zipWithIndex · map · takeWhile · filter · map · sum. Fused FArray runs it in one unboxed pass with no intermediate collections: on Int at 100k, 22.6× the best rival and 4.9× over eager FArray. On String the per-element string work compresses the field, but fusion still leads eager 1.7× and the best rival 1.8×. Both bars are FArray — the bright one is .fuse, the darker one the same chain eager."
 />
 
 ## JSON projection queries
 
 The byte-source numbers live with their scanners and rivals on{" "}
-<Link to="/fusion/json">the JSON integration page</Link> — headline: 1.6× past jsoniter-scala's
+<Link to="/fusion/json">the JSON integration page</Link>. The headline: 1.6× past jsoniter-scala's
 hand-written reader loop at ~1 B/op, 4–9× past the AST parsers, and 2.5× on selective queries where
 records are abandoned mid-scan.
-
----
-
-Method: the checked-in `docs/bench-results.json`, produced by `scripts/bench-run.sh` (JMH, GraalVM
-CE 25, Apple Silicon; farray-only patch mode re-measures our methods against cached rival runs — see
-the repo's benchmarking notes). Cold numbers are SingleShotTime; allocation numbers are `-prof gc`.
 
 <Related
   links={[
     { to: "/benchmarks/farray", label: "The full FArray suite", desc: "Every op at every size, wins and losses alike." },
-    { to: "/fusion", label: "Back to first principles", desc: "Why these numbers are structural, not situational." },
+    { to: "/fusion", label: "Back to first principles", desc: "Why these numbers don't depend on the call site." },
   ]}
 />

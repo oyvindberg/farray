@@ -17,8 +17,15 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # Keep the box awake for the whole run (macOS). Re-exec under caffeinate once.
+# -is: -i alone does NOT survive lid-close — a mid-run sleep produced garbage across whole shards
+# (2026-07-05). -s prevents system sleep while on AC power, so run this PLUGGED IN.
 if [ -z "${BENCH_CAFFEINATED:-}" ] && command -v caffeinate >/dev/null 2>&1; then
-  exec env BENCH_CAFFEINATED=1 caffeinate -i bash "$0" "$@"
+  exec env BENCH_CAFFEINATED=1 caffeinate -is bash "$0" "$@"
+fi
+
+# An 8h run on battery dies mid-flight and low-power mode throttles the CPU (garbage numbers).
+if command -v pmset >/dev/null 2>&1 && pmset -g batt 2>/dev/null | grep -q "Battery Power"; then
+  echo "⚠ On battery power — plug in before an 8h serialized run (caffeinate -s is AC-only)." >&2
 fi
 
 WI=5; MI=8; FORKS=1; MAXJ=1

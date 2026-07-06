@@ -11,13 +11,10 @@ import org.openjdk.jmh.infra.Blackhole
 // instead of blowing the JIT's method-size / inline budget (the HugeMethodLimit cliff documented in the
 // project memory — "8 folds @100k → 0.29× iarray"). This benchmark exists to keep that property honest.
 //
-// Two shapes, both running 6 folds in one measured method (JMH forks one JVM per @Benchmark, so the
-// interesting profile must be built up INSIDE the method):
-//   `polluted` — 6 DISTINCT reference element types (String/Integer/Long/Char + two case classes) funnel
-//                through the same generated read site, so its `v.asInstanceOf[A]` checkcast goes
-//                MEGAMORPHIC (the real-application profile, not the artificial single-type benchmark).
-//   `strMono`  — 6 folds of the SAME String FArray: identical work, but the read site stays MONOMORPHIC.
-// The gap between them isolates the megamorphic-checkcast cost of the Object[]-backed read.
+// Each impl runs 6 folds in one measured method (JMH forks one JVM per @Benchmark, so the interesting
+// profile must be built up INSIDE the method): 6 DISTINCT reference element types (String/Integer/Long/
+// Char + two case classes) funnel through the same generated read site, so its `v.asInstanceOf[A]`
+// checkcast goes MEGAMORPHIC — the real-application profile, not the artificial single-type benchmark.
 //
 // History / why this is here: a typed-`Array[A]` reference leaf (String[] etc., read with a cast-free
 // `aaload`) was prototyped to kill that per-element checkcast. It can ONLY read typed by INLINING the

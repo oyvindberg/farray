@@ -4,20 +4,21 @@ title: FArray
 sidebar_label: Introduction
 description: >-
   How an immutable, Array-backed Scala sequence ended up beating List, Vector, fs2.Chunk and
-  zio.Chunk — told through benchmarks and the source that produced them.
+  zio.Chunk, told through benchmarks and the source that produced them.
 hide_title: true
 ---
 
 import SideBySide from "@site/src/components/SideBySide";
 import GeneratedCode from "@site/src/components/GeneratedCode";
 import Related from "@site/src/components/Related";
+import Ladder from "@site/src/components/Ladder";
+import Scorecard from "@site/src/components/Scorecard";
 import { FusionDiagram } from "@site/src/components/Diagrams";
 
 <header className="hero--farray">
   <h1 className="wordmark">FArray</h1>
   <p className="hero__lede">
-    An immutable, unboxed Scala 3 sequence with the whole <code>IndexedSeq</code> API — and a
-    decade-old grudge against the heap, finally settled.
+    An immutable, unboxed Scala 3 sequence with the whole collections API. Fast.
   </p>
   <p className="hero__sub">
     Every number here is a JMH measurement you can hover; every snippet is extracted from source that
@@ -25,69 +26,54 @@ import { FusionDiagram } from "@site/src/components/Diagrams";
   </p>
 </header>
 
+:::info An experiment, stated plainly
+FArray is published as `com.olvind.farray::farray:1.0.0-M1` (MIT). It is an experiment: well
+benchmarked, parity-tested against `List` on every operation, and not yet something we can
+guarantee correct. There will also be performance cliffs the scorecard didn't think to measure.
+[What M1 means](./use.mdx) states the boundaries; when you find a cliff, please file an issue.
+:::
+
 ## Ten years of waiting for the JVM
 
 <p className="lede">
-  For most of a decade I tried to write fast code in Scala, and spent most of it frustrated. The
-  collections are a joy to write — and box every primitive into the bargain. The <code>while</code> loop
-  that doesn't box is a joy to nobody. Everything in between was a promise with a version number.
+  Scala collections read the way code should read, but they are not fast: the price of that
+  readability is a heap allocation for every <code>Int</code> that passes through them. The{" "}
+  <code>while</code> loop that avoids the boxing is fast, but miserable to write and worse to
+  maintain. I spent about a decade waiting for something in
+  between: specialization, miniboxing, the Dotty linker, Valhalla's <code>List&lt;int&gt;</code>. None of it shipped.
+  So the conclusion, every release, was the same: if it has to be fast, write it in Java.
 </p>
 
-So I waited. For specialization that actually held up. For miniboxing. For the Dotty linker. For
-Valhalla — always, eventually, for Valhalla, and the `List<int>` it kept almost promising: generics
-specialized all the way down to flat, unboxed storage. That's the half of Valhalla that still hasn't
-shipped. Every release I'd read the bytecode, fight the inliner, and arrive at the same verdict: if it
-has to be fast, write it in something else. Usually Java. A genuinely terrible state of affairs for a
-language this good.
+In 2023 I wrote a prototype out of spite: the whole collections API as `inline` `while` loops over
+one flat `Array[AnyRef]`. It beat the collection library, but it boxed, and unboxing turned out not
+to be something you bolt on. It needed per-kind storage, a core the inliner can't defeat, and a way
+to keep a user's lambda unboxed across the library boundary. That was years of evenings I didn't
+have, and the repo sat untouched for three years.
 
-### A thousand lines of spite
+## And then, all at once
 
-Eventually spite won. The initial commit lands in January 2023, at three in the morning: one
-thousand-line file, the whole `IndexedSeq` API hand-written as `inline` `while` loops over a single
-flat `Array[AnyRef]`, casts on the way out, `System.arraycopy` wherever shapes lined up. It worked —
-flat storage and straight-line loops beat the collection library, exactly as the profiler always said
-they would.
-
-But it was boxed. The readme of the time is honest about it: *"if you need specialized primitives this
-is not (at least yet) the library for you."* And that "yet" was load-bearing — unboxing wasn't a
-feature you could bolt on, it wanted a different animal entirely: storage specialized per element kind,
-a core the inliner couldn't defeat, machinery to keep a user's lambda unboxed across a library
-boundary. I kept picking at it, and the experiments sprawled across an old machine, most of them never
-reaching the repo — whose only commit in the three years that followed bumps the version of the build
-tool. The shape of the thing was clear the whole time. The evenings weren't there.
-
-## And then — boom
-
-In June 2026 I picked it back up, this time with Claude doing the heavy lifting. Twelve days and
-nearly three hundred commits later, the roadmap I'd been quietly resequencing for a decade had stopped
-being sequential. The milestones didn't arrive one by one; they arrived **on top of each other**:
+I picked it back up in June 2026, this time with Claude. Seventeen days and nearly four hundred
+commits later:
 
 <ul className="points">
   <li>
-    <strong>A working FArray.</strong> An <code>FArray[Int]</code> that <em>is</em> a real{" "}
-    <code>int[]</code>, carrying the entire <code>IndexedSeq</code> API — <code>map</code>,{" "}
-    <code>filter</code>, <code>fold</code>, <code>sort</code> — without a single{" "}
-    <code>java.lang.Integer</code> anywhere. The thing the decade was spent waiting for.
+    <strong>FArray works.</strong> An <code>FArray[Int]</code> <em>is</em> an <code>int[]</code>,
+    and it carries the whole collections API with no <code>java.lang.Integer</code> in sight.
   </li>
   <li>
-    <strong>Working fusion.</strong> A whole chain of <code>map</code> / <code>filter</code> /{" "}
-    <code>flatMap</code> / <code>zip</code> / <code>fold</code>, rewritten at compile time into one pass
-    over the backing array, allocating nothing between stages. The part I'd given up on ever having —
-    its design note is dated one day before the first three working phases.
+    <strong>Fusion works.</strong> A chain of <code>map</code> / <code>filter</code> /{" "}
+    <code>flatMap</code> / <code>zip</code> / <code>fold</code> compiles to one pass that allocates
+    nothing between stages.
   </li>
   <li>
-    <strong>And a working Claude.</strong> The reason the other two exist. The redesign the prototype
-    demanded — a generated Java core, per-kind specialization, a macro optimizer — was years of evenings
-    I didn't have. It became twelve days, with the benchmark suite as referee on every commit.
+    <strong>Claude is why.</strong> The redesign was years of evenings I didn't have. Most of the
+    implementation was written by the model from a human design; every optimization was measured and
+    several were reverted. A note on how that worked is in the <a href="./use">M1 status</a>.
   </li>
 </ul>
 
-Everything on this site follows from those three landing together. And they stack — unboxed elements
-under structural laziness under fused pipelines — so the fairest way to show it is to stack them.
-Fourteen stages: `flatMap`, `filter`, `map`, `zip`, `zipWithIndex`, `foldLeft`, twice over — the kind
-of pipeline you'd write on any ordinary Tuesday and pay for on every element. Every collection in the
-race runs the identical code; the FArray version differs by a single word: `.fuse`. Before you look at
-the chart, pick the speedup you'd refuse to believe.
+The three build on each other, so one benchmark can show all of them at once. Fourteen ordinary
+stages, identical code on every collection; the FArray version differs by one word, `.fuse`:
 
 <SideBySide
   snippet="fuse-pipeline"
@@ -95,43 +81,77 @@ the chart, pick the speedup you'd refuse to believe.
   title="14-stage pipeline"
   caption={
     <>
-      The identical transform on every collection, swept from empty to 100k elements. Hover any size to
-      read throughput and the fused FArray's ratio over each rival — including the same pipeline run
-      eagerly on FArray itself.
+      The identical transform on every collection, empty to 100k elements. Hover any size for
+      throughput and ratios.
     </>
   }
 />
 
-At a hundred thousand elements: roughly **36× the quickest competitor**, **83× List** — and, the
-number that says the most, **15× the very same pipeline run eagerly on FArray itself**. Whatever
-factor you picked, the green bar probably clears it; it stands so far above the field that everyone
-else flattens to slivers. Hover them for the exact numbers.
+At 100k elements: **36× the fastest competitor**, **83× List**, and **15× the same pipeline run
+eagerly on FArray itself**.
 
-The reason it runs away with it: `.fuse` refuses to build any of the work-in-progress. Run those
-stages eagerly and each one allocates an array whose only purpose is to be consumed and thrown away by
-the next. Fusion collapses the whole chain into a single pass:
+If you're coming from Java: the pipeline reads like a Stream, but the comparison ends there.
+A Stream fuses at runtime, pushing every element through a chain of virtual `Sink` calls;
+`.fuse` rewrites the chain at compile time, so at runtime there is no chain.
+
+The reason for the gap is simple. Run those stages eagerly and each one allocates a collection that
+lives for one line before the next stage throws it away. `.fuse` builds none of them:
 
 <FusionDiagram />
 
-`.fuse` is a macro, not a runtime call. At compile time it reads the entire chain off the typed syntax
-tree and rewrites it into one `while` loop over the backing array — the intermediate collections, the
-`Function1`s, the boxing: gone. And this isn't a claim to take on faith. The lowering is checked into
-the repo as a golden test, regenerated on every build. Here is exactly what those fourteen stages
-compiled to.
+It's a macro: compiler-executed code that reads the pipeline off the typed syntax tree and
+replaces it, the kind of rewrite an annotation processor could never do at expression level. The
+whole chain becomes one `while` loop, with no intermediate collections, no lambda objects, and no
+boxing. The lowering is checked into the repo as a golden test,
+so you can read exactly what those fourteen stages compiled to:
 
-<GeneratedCode name="fuse-generated" summary="The loop .fuse emitted — 14 stages, one pass" />
+<GeneratedCode name="fuse-generated" summary="The loop .fuse emitted: 14 stages, one pass" />
 
-That the Scala 3 macro system can do this — read a call chain off the tree, work out which columns
-nobody downstream reads, and emit the specialized loop you'd have written by hand — is, frankly, a
-little phenomenal. There's a whole section building [the fusion engine up from first principles](./fusion/index.mdx). But
-fusion is the summit, and we're at the trailhead. The pages that follow are the climb: the Java core
-the loop runs over, the Scala that keeps it unboxed, and the cost model that makes the whole thing
-hang together.
+How the macro works gets [its own section](./fusion/index.mdx).
+
+## Three speeds
+
+A single benchmark number doesn't mean much on its own, so here is the context for it. Fast JVM
+code was never the hard part; anyone can write a `while` loop over an `int[]`, and nothing on this
+site beats that. The hard part is getting that speed from immutable, expression-oriented code, where
+erasure boxes your primitives and every pipeline stage materializes a collection that lives for one
+line. The chart above is really three speeds:
+
+<Ladder />
+
+**Today's speed.** `List` and `Vector` pay a box, an allocation and a virtual call per element, per
+stage. The Chunks keep arrays underneath but box at the stage boundaries. `IArray` (Scala's immutable
+view of a raw array) doesn't box at all, but it copies the whole array at each of the thirteen seams, and the copies are what you end up
+paying for. They are all really allocated; escape analysis doesn't remove intermediates at this
+depth.
+
+**The type swap.** The same code with `FArray` under it. Storage is a real `int[]`, structural steps
+like `take` and `reverse` are O(1) nodes instead of copies, and every lambda-taking op is `inline`, which in
+Scala 3 is a guarantee performed by the compiler, not a hint to the JIT: the op's body and your
+lambda land in your method, with the unboxing fixed in the signature. That last part matters: the rivals that tie us on a
+single op lose that tie as the surrounding method grows, because their unboxing depends on the JIT's
+inlining budget and ours doesn't. No fusion involved, and it already beats the field.
+[Fast without fusion](./chains.mdx) is the whole eager argument, scored across the suite.
+
+**The word.** Java Streams, Scala views and iterators all fuse at runtime and pay for it per
+element, per stage. `.fuse` does it at compile time, and what it emits is the `while` loop you would have
+written by hand. You just don't have to write it, or maintain it.
+
+In practice you swap the type everywhere and add `.fuse` on the paths that matter. The rest of the
+site explains each layer.
+
+## The whole suite, one number per structure
+
+The pages above argue from selected benchmarks; this is the unselected version. Every operation at
+every size, boiled down per structure, losses included; [the benchmarks page](./benchmarks/farray.mdx)
+has every chart behind it.
+
+<Scorecard />
 
 <Related
   links={[
-    { to: "/design/java-core", label: "Start the climb", desc: "The generated Java core the loops run over." },
-    { to: "/fusion", label: "The fusion engine", desc: "From first principles: sources, stages, terminals, the optimizer — and the receipts." },
-    { to: "/benchmarks/farray", label: "FArray benchmarks", desc: "The complete scorecard — every op, every size, every rival." },
+    { to: "/chains", label: "Fast without fusion", desc: "Eager FArray, no .fuse: it already beats the field, and chaining is where it pulls away." },
+    { to: "/fusion", label: "The fusion engine", desc: "Sources, stages, terminals, the optimizer, and the receipts." },
+    { to: "/benchmarks/farray", label: "FArray benchmarks", desc: "The complete scorecard: every op, every size, every rival." },
   ]}
 />

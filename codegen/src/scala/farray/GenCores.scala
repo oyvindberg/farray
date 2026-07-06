@@ -103,7 +103,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
   /** specCh: the JVM erasure descriptor char — I/J/D for primitives, L (object) for references — which is also the char in stdlib @specialized class names
     * (Tuple2$mcII$sp etc.). prim: present iff a primitive.
     */
-  final case class Kind(name: String, arr: String, pat: String, dflt: String, specCh: String, prim: Option[Box]) {
+  final case class Kind(name: String, arr: String, pat: String, dflt: String, specCh: String, prim: Option[Box], natLtFn: Option[(String, String) => String]) {
     def lc = name.toLowerCase
     def isPrim: Boolean = prim.isDefined
 
@@ -112,19 +112,26 @@ object GenCores extends BleepCodegenScript("GenCores") {
 
     /** unbox an Object expression to the element type (auto-unboxes for prims; cast for references). */
     def unbox(v: String): String = prim match { case Some(b) => b.from(v); case None => s"($v).asInstanceOf[$arr]" }
+
+    /** natural strictly-less-than over two raw `$arr`-typed exprs — the SAME total order `java.util.Arrays.sort($arr[])` uses (Double/Float via the boxed
+      * total-order compare), so code derived from this may hand the array to Arrays.sort. None for Ref (no natural order).
+      */
+    def natLt(a: String, b: String): Option[String] = natLtFn.map(f => f(a, b))
   }
+
+  private val ltRaw: Option[(String, String) => String] = Some((a, b) => s"$a < $b")
 
   // Every JVM primitive kind + reference. The ops (map/foldLeft/filter/scan/…) specialize over ALL of these.
   val opKinds: List[Kind] = List(
-    Kind("Int", "Int", "Int", "0", "I", Some(Box("java.lang.Integer", "Int"))),
-    Kind("Long", "Long", "Long", "0L", "J", Some(Box("java.lang.Long", "Long"))),
-    Kind("Double", "Double", "Double", "0.0", "D", Some(Box("java.lang.Double", "Double"))),
-    Kind("Float", "Float", "Float", "0.0f", "F", Some(Box("java.lang.Float", "Float"))),
-    Kind("Short", "Short", "Short", "0", "S", Some(Box("java.lang.Short", "Short"))),
-    Kind("Byte", "Byte", "Byte", "0", "B", Some(Box("java.lang.Byte", "Byte"))),
-    Kind("Char", "Char", "Char", "'\\u0000'", "C", Some(Box("java.lang.Character", "Char"))),
-    Kind("Boolean", "Boolean", "Boolean", "false", "Z", Some(Box("java.lang.Boolean", "Boolean"))),
-    Kind("Ref", "Object", "AnyRef", "null", "L", None)
+    Kind("Int", "Int", "Int", "0", "I", Some(Box("java.lang.Integer", "Int")), ltRaw),
+    Kind("Long", "Long", "Long", "0L", "J", Some(Box("java.lang.Long", "Long")), ltRaw),
+    Kind("Double", "Double", "Double", "0.0", "D", Some(Box("java.lang.Double", "Double")), Some((a, b) => s"java.lang.Double.compare($a, $b) < 0")),
+    Kind("Float", "Float", "Float", "0.0f", "F", Some(Box("java.lang.Float", "Float")), Some((a, b) => s"java.lang.Float.compare($a, $b) < 0")),
+    Kind("Short", "Short", "Short", "0", "S", Some(Box("java.lang.Short", "Short")), ltRaw),
+    Kind("Byte", "Byte", "Byte", "0", "B", Some(Box("java.lang.Byte", "Byte")), ltRaw),
+    Kind("Char", "Char", "Char", "'\\u0000'", "C", Some(Box("java.lang.Character", "Char")), ltRaw),
+    Kind("Boolean", "Boolean", "Boolean", "false", "Z", Some(Box("java.lang.Boolean", "Boolean")), Some((a, b) => s"java.lang.Boolean.compare($a, $b) < 0")),
+    Kind("Ref", "Object", "AnyRef", "null", "L", None, None)
   )
 
   /** the primitive kinds only — used e.g. for the Ref-element + primitive-accumulator folds. */
@@ -352,14 +359,24 @@ object GenCores extends BleepCodegenScript("GenCores") {
   // inline → foreach speed). A leaf hands its backing array straight in (no copy, lazy); a tree is flattened
   // ONCE via the dfs we already have (materialize). So the tree-walk lives only in dfsBody — no second walker.
   private def cursorClass(k: Kind): String = {
-    val nextBoxed = if k.name == "Ref" then s"next${k.name}()" else k.box(s"next${k.name}()")
-    s"""final class ${k.name}Cursor(a: Array[${k.arr}], len: Int) extends scala.collection.AbstractIterator[Any] {
-       |  private var pos = 0
-       |  def hasNext: Boolean = pos < len
-       |  override def knownSize: Int = len - pos
-       |  def next${k.name}(): ${k.arr} = { val r = a(pos); pos += 1; r }
-       |  def next(): Any = $nextBoxed
-       |}""".stripMargin
+    // Ref: next() IS the accessor — the next()->nextRef() forwarder added a per-element call frame the
+    // JIT didn't always collapse (IteratorStr drain 0.62-0.88x of ArrayIterator, whose next() is one flat
+    // method; 2026-07-06 audit round 2). Primitives keep the split: next${K}() is the UNBOXED accessor
+    // (the whole point), next() the boxing bridge for the generic Iterator drain.
+    if k.name == "Ref" then s"""final class RefCursor(a: Array[Object], len: Int) extends scala.collection.AbstractIterator[Any] {
+         |  private var pos = 0
+         |  def hasNext: Boolean = pos < len
+         |  override def knownSize: Int = len - pos
+         |  def nextRef(): Object = { val r = a(pos); pos += 1; r }
+         |  def next(): Any = { val r = a(pos); pos += 1; r }
+         |}""".stripMargin
+    else s"""final class ${k.name}Cursor(a: Array[${k.arr}], len: Int) extends scala.collection.AbstractIterator[Any] {
+         |  private var pos = 0
+         |  def hasNext: Boolean = pos < len
+         |  override def knownSize: Int = len - pos
+         |  def next${k.name}(): ${k.arr} = { val r = a(pos); pos += 1; r }
+         |  def next(): Any = ${k.box(s"next${k.name}()")}
+         |}""".stripMargin
   }
 
   // Per-kind growable, unboxed accumulator for groupBy/groupMap. One instance per group; `add` appends an
@@ -961,13 +978,32 @@ object GenCores extends BleepCodegenScript("GenCores") {
           s"reduceLeaf${dir}${K}Ref[AnyRef](xs, z.asInstanceOf[AnyRef], (acc, v) => ${comb("acc.asInstanceOf[Z]", wrapV(k))}.asInstanceOf[AnyRef]).asInstanceOf[Z]"
         )
       // --- Ref input + PRIMITIVE accumulator (e.g. xs.foldLeft(0)((n, s) => n + s.length)): the acc stays an
-      //     unboxed primitive `${P}`. Realize the `RefTo${P}Fold` SAM (the element `v` is Object) and CALL the
-      //     shared unboxed leaf method. A COMMON reference workload, so it gets the unboxed acc (the leaf path
-      //     never boxes; only a genuine tree boxes, inside the leaf method's cold arm). NO inlined leaf loop. ---
-      def zPrimAccOverRefArm(p: Kind): Unit =
+      //     unboxed primitive `${P}`. A COMMON reference workload.
+      //     PER-CALL-SITE LOOP METHOD (2026-07-06): the flat-leaf/slice loop is a LOCAL def, so the inliner
+      //     lambda-lifts ONE private loop method per fold call site — `op` beta-reduces into its body,
+      //     monomorphic, no SAM call on the hot path, acc threaded as a param/return (never through memory),
+      //     and it tiers/OSRs on its own. This is the SAME shape that fixed CollectMegaStr (see collectLeafCall).
+      //     The prior shape here realized a shared `RefTo${P}Fold` SAM: with N distinct fold literals in one
+      //     method (FoldRefPolluted) that SAM site goes megamorphic — one uninlined interface call per element,
+      //     0.48x of iarray @1000. An earlier attempt inlined the loop FLAT at the surface (like scan): it won
+      //     @1000 but CRATERED @100k to 0.29x — 6 hot loops in one enclosing method never tier up (immature
+      //     profiles, sticky deopt, mid-fork degradation). The lifted local def keeps the loop shape AND the
+      //     enclosing method small. Genuine trees / reverse fall back to the shared leaf (which peels
+      //     Empty/One/leaf and routes trees to the Traverser), so direction and all node shapes stay correct. ---
+      def zPrimAccOverRefArm(p: Kind): Unit = {
+        val P = p.arr // primitive acc type (Int/Long/Double)
+        val step = s"acc0 = rz.unwrap(${comb("rz.wrap(acc0)", wrapV(k))})"
+        val loopBody =
+          if backward then s"var i = n - 1; while (i >= 0) { val v = a(off + i); $step; i -= 1 }"
+          else s"var i = 0; while (i < n) { val v = a(off + i); $step; i += 1 }"
         ee.line(
-          s"rz.wrap(reduceLeaf${dir}Ref${p.name}(xs, rz.unwrap(z), (acc, v) => rz.unwrap(${comb("rz.wrap(acc)", wrapV(k))})))"
+          s"rz.wrap({ def foldLoop(a: Array[Object], off: Int, n: Int, z0: $P): $P = { var acc0 = z0; $loopBody; acc0 }; " +
+            s"xs match { " +
+            s"case leaf: RefArr => foldLoop(leaf.arr, 0, leaf.length, rz.unwrap(z)); " +
+            s"case s: SliceNode if s.base.isInstanceOf[RefArr] => foldLoop(s.base.asInstanceOf[RefArr].arr, s.offset, s.length, rz.unwrap(z)); " +
+            s"case _ => reduceLeaf${dir}Ref${p.name}(xs, rz.unwrap(z), (acc, v) => rz.unwrap(${comb("rz.wrap(acc)", wrapV(k))})) } })"
         )
+      }
       ee.open("summonFrom")
       if k.isPrim then {
         ee.open(s"case rz: ${K}Repr[Z] =>")
@@ -1886,23 +1922,53 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // comparing the raw `v: Object` skips the per-element checkcast that `wrapV` inserts (`equals` takes
     // Object; the element stays the receiver, matching stdlib's `exists(_ == elem)`).
     def eqVal(k: Kind): String = if k.name == "Ref" then "v" else wrapV(k)
-    val existsV = dispatchA(k => s"scFwdLeaf${k.name}(xs, 0, ${predSAM(k, s"p(${wrapV(k)})")}) < length")
-    val forallV = dispatchA(k => s"scFwdLeaf${k.name}(xs, 0, ${predSAM(k, s"!p(${wrapV(k)})")}) == length")
+    // PEELED short-circuit surfaces (2026-07-05 audit): all 12 breakable ops used to hand their predicate
+    // as a ${K}Pred SAM to the ONE shared scFwdLeaf${K}/scBwdLeaf${K}, so the per-element `p.apply` call
+    // site inside the shared method saw 10+ lambda classes — megamorphic, never inlined, a standing
+    // ~0.9x-vs-IArray tax on every scan cell. Peel Empty/${K}One/top-${K}Arr/leaf-slice INLINE at the
+    // surface (the user predicate inlines MONOMORPHICALLY into the hot loop — the same §B.4 hybrid shape
+    // the other surfaces use); only a genuine TREE realizes the SAM and routes through the shared leaf
+    // method. `cond` renders the user predicate against a raw element expression.
+    def wrapE(k: Kind, e: String): String = if k.name == "Ref" then s"r.wrap($e.asInstanceOf[A])" else s"r.wrap($e)"
+    def eqE(k: Kind, e: String): String = if k.name == "Ref" then e else wrapE(k, e)
+    // forward: first index >= from0 where cond holds, else >= length (same contract as scFwdLeaf).
+    def scFwdPeel(k: Kind, from0: String, cond: String => String): String = {
+      val K = k.name
+      s"{ val from0 = $from0; xs match { " +
+        s"case leaf: ${K}Arr => { val a = leaf.arr; val n = leaf.length; var j = from0; while (j < n && !(${cond("a(j)")})) j += 1; j }; " +
+        s"case sl: SliceNode if sl.base.isInstanceOf[${K}Arr] => { val a = sl.base.asInstanceOf[${K}Arr].arr; val so = sl.offset; val n = sl.length; var j = from0; while (j < n && !(${cond("a(so + j)")})) j += 1; j }; " +
+        s"case o: ${K}One => if (from0 <= 0 && (${cond("o.elem")})) 0 else 1; " +
+        s"case _: Empty => 0; " +
+        s"case _ => scFwdLeaf${K}(xs, from0, (v) => ${cond("v")}) } }"
+    }
+    // backward: last index <= end0 where cond holds, else -1 (same contract as scBwdLeaf; end0 pre-clamped).
+    def scBwdPeel(k: Kind, end0: String, cond: String => String): String = {
+      val K = k.name
+      s"{ val end0 = $end0; xs match { " +
+        s"case leaf: ${K}Arr => { val a = leaf.arr; var j = end0; while (j >= 0 && !(${cond("a(j)")})) j -= 1; if (j < 0) -1 else j }; " +
+        s"case sl: SliceNode if sl.base.isInstanceOf[${K}Arr] => { val a = sl.base.asInstanceOf[${K}Arr].arr; val so = sl.offset; var j = end0; while (j >= 0 && !(${cond("a(so + j)")})) j -= 1; if (j < 0) -1 else j }; " +
+        s"case o: ${K}One => if (end0 >= 0 && (${cond("o.elem")})) 0 else -1; " +
+        s"case _: Empty => -1; " +
+        s"case _ => scBwdLeaf${K}(xs, end0, (v) => ${cond("v")}) } }"
+    }
+    def pCond(k: Kind): String => String = e => s"p(${wrapE(k, e)})"
+    def notPCond(k: Kind): String => String = e => s"!p(${wrapE(k, e)})"
+    def eqCond(k: Kind): String => String = e => s"${eqE(k, e)} == elem"
+    val existsV = dispatchA(k => s"{ val i = ${scFwdPeel(k, "0", pCond(k))}; i < length }")
+    val forallV = dispatchA(k => s"{ val i = ${scFwdPeel(k, "0", notPCond(k))}; i == length }")
     val findV =
-      dispatchA(k => s"{ val i = scFwdLeaf${k.name}(xs, 0, ${predSAM(k, s"p(${wrapV(k)})")}); if (i < length) Some(applyAtImpl[A](xs, i)) else None }")
+      dispatchA(k => s"{ val i = ${scFwdPeel(k, "0", pCond(k))}; if (i < length) Some(applyAtImpl[A](xs, i)) else None }")
     val indexWhereV =
-      dispatchA(k => s"{ val i = scFwdLeaf${k.name}(xs, if (from < 0) 0 else from, ${predSAM(k, s"p(${wrapV(k)})")}); if (i < length) i else -1 }")
+      dispatchA(k => s"{ val i = ${scFwdPeel(k, "if (from < 0) 0 else from", pCond(k))}; if (i < length) i else -1 }")
     val indexOfV =
-      dispatchA(k => s"{ val i = scFwdLeaf${k.name}(xs, if (from < 0) 0 else from, ${predSAM(k, s"${eqVal(k)} == elem")}); if (i < length) i else -1 }")
-    val collectFirstV = dispatchA(k =>
-      s"{ val i = scFwdLeaf${k.name}(xs, 0, ${predSAM(k, s"pf.isDefinedAt(${wrapV(k)})")}); if (i < length) Some(pf(applyAtImpl[A](xs, i))) else None }"
-    )
-    val segmentLenV = dispatchA(k =>
-      s"{ val f0 = if (from < 0) 0 else if (from > length) length else from; scFwdLeaf${k.name}(xs, f0, ${predSAM(k, s"!p(${wrapV(k)})")}) - f0 }"
-    )
-    val prefixLenV = dispatchA(k => s"scFwdLeaf${k.name}(xs, 0, ${predSAM(k, s"!p(${wrapV(k)})")})")
-    val lastIndexWhereV = dispatchA(k => s"scBwdLeaf${k.name}(xs, if (end > length - 1) length - 1 else end, ${predSAM(k, s"p(${wrapV(k)})")})")
-    val lastIndexOfV = dispatchA(k => s"scBwdLeaf${k.name}(xs, if (end > length - 1) length - 1 else end, ${predSAM(k, s"${eqVal(k)} == elem")})")
+      dispatchA(k => s"{ val i = ${scFwdPeel(k, "if (from < 0) 0 else from", eqCond(k))}; if (i < length) i else -1 }")
+    val collectFirstV =
+      dispatchA(k => s"{ val i = ${scFwdPeel(k, "0", e => s"pf.isDefinedAt(${wrapE(k, e)})")}; if (i < length) Some(pf(applyAtImpl[A](xs, i))) else None }")
+    val segmentLenV =
+      dispatchA(k => s"{ val f0 = if (from < 0) 0 else if (from > length) length else from; val i = ${scFwdPeel(k, "f0", notPCond(k))}; i - f0 }")
+    val prefixLenV = dispatchA(k => scFwdPeel(k, "0", notPCond(k)))
+    val lastIndexWhereV = dispatchA(k => scBwdPeel(k, "if (end > length - 1) length - 1 else end", pCond(k)))
+    val lastIndexOfV = dispatchA(k => scBwdPeel(k, "if (end > length - 1) length - 1 else end", eqCond(k)))
     // count/sum/product: hybrid Reduce surfaces over the shared leaf method (design §2.1/§5). Each ONLY
     // realizes the combine SAM and CALLS reduceLeafFwd${I}${I} (which peels Empty/One/leaf and routes genuine
     // TREES through Traversers) — NO inlined leaf loop. The SAME shared leaf machinery as foldLeft. Prim inputs
@@ -2039,7 +2105,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     )
     // foreachWhile: a short-circuit scan for the FIRST element where f returns false (the SAM is the negation);
     // the hit index is discarded — we only need the side effects f produced up to the stop. ONE leaf-method call.
-    val foreachWhileV = dispatchA(k => s"{ scFwdLeaf${k.name}(xs, 0, ${predSAM(k, s"!f(${wrapV(k)})")}); () }")
+    val foreachWhileV = dispatchA(k => s"{ val i = ${scFwdPeel(k, "0", e => s"!f(${wrapE(k, e)})")}; () }")
     // foldRight: the hybrid Bwd reduce surface — the EXACT mirror of foldLeft, dir = Bwd. A BACKWARD walk
     // hands elements last-to-first (foldRight order), applying op(elem, acc). Self-kind prim Z + Ref Z ride
     // the new Bwd engine traversers; cross-prim Z falls to the old lowered walk.
@@ -2126,14 +2192,17 @@ object GenCores extends BleepCodegenScript("GenCores") {
         case "Byte"           => "val words = new Array[Long](4)"
         case "Short" | "Char" => "val words = new Array[Long](1024)"
         case "Int"            =>
-          // Int keys get a WINDOWED BITMAP fast path (span 64n clamped to [4096, 65536] bits, centered on
-          // the first key) + a LAZY ctrl-table for out-of-window strays. Small-span keys — `_.length`,
-          // enum-ish codes, the canonical distinctBy shapes — stay on the ~4-cycle bit test the whole run
-          // (measured: the pure mix+probe fused cut regressed by-length 20-40% vs the bitmap); wide keys
-          // pay one branch and fall to the table, which is only allocated (and zeroed) if actually reached.
+          // Int keys get a WINDOWED BITMAP fast path (span 64n rounded up to a power of two, clamped to
+          // [64, 65536] bits, centered on the first key) + a LAZY ctrl-table for out-of-window strays.
+          // Small-span keys — `_.length`, enum-ish codes, the canonical distinctBy shapes — stay on the
+          // ~4-cycle bit test the whole run (measured: the pure mix+probe fused cut regressed by-length
+          // 20-40% vs the bitmap); wide keys pay one branch and fall to the table, which is only allocated
+          // (and zeroed) if actually reached. The old 4096-bit floor zeroed 512 B per call — 4x List's
+          // whole HashSet start — and was the entire distinctBy@10 loss (2026-07-05 audit); tiny n now
+          // zeroes only ~n<<6 bits, and a stray beyond the smaller window just takes the table arm.
           "var cap = 16; while (cap.toLong < (n.toLong << 1) && cap != (1 << 30)) cap <<= 1; " +
             "val mask = cap - 1; var ctrl: Array[Byte] = null; var kv: Array[Int] = null; " +
-            "val bmSpan = if (n >= 1024) 65536 else { var s = 4096; while (s < (n << 6)) s <<= 1; s }; " +
+            "val bmSpan = if (n >= 1024) 65536 else { var s = 64; while (s < (n << 6)) s <<= 1; s }; " +
             "val words = new Array[Long](bmSpan >>> 6); var bmBase = 0; var bmInit = false"
         case _ =>
           val kv = kb.name match {
@@ -2209,16 +2278,34 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // collectPick: the PICKED-APART collect — the surface macro (CollectMacro) splits a literal
     // PartialFunction into predicate p (pattern+guard) and transform f (case body) and feeds them here
     // as INLINE lambdas, so this is filter+map fused in one pass with NO PartialFunction object and no
-    // A/B boxing: p and f inline into the per-element lambda like every other elementwise op. Output
-    // goes through the growable unboxed ${O}Group buffer (count unknown), canonicalised by toLeaf.
-    // Covered (I, O) pairs realize the predicate + transform SAMs and CALL the shared
-    // collectLeaf${I}${O} (filter-shaped: one max-size out, slack via trimLeaf — no growable buffer,
-    // no toLeaf copy). Uncovered cross-prim pairs keep the ${O}Group fallback (cold path).
+    // A/B boxing: p and f inline into the per-element lambda like every other elementwise op.
+    // PER-CALL-SITE LOOP METHOD (2026-07-06): the flat-leaf loop is a LOCAL def, so the inliner
+    // lambda-lifts ONE private loop method per collect call site — p/f beta-reduce into its body,
+    // monomorphic, no SAM call on the hot path, and it tiers/OSRs on its own. Three shapes were
+    // measured before landing here: (a) shared leaf method taking (${I}Pred, ${I}To${O}Fn) — with N
+    // distinct collect literals in one method both SAM sites go megamorphic, TWO uninlined interface
+    // calls per element (each re-casting a Ref element) put CollectMegaStr at 0.74-0.78x of
+    // iarray/chunk's ONE applyOrElse; (b) ONE combined step SAM (`o = step(v, out, o)`) fixed mega but
+    // REGRESSED monomorphic plain collect 1.6-2.5x — the write cursor flowing through the SAM return
+    // breaks Graal's branchless lowering of the `if (p) { out(o) = f; o += 1 }` filter shape; (c) the
+    // loop inlined FLAT at the surface fixed plain but CRATERED CollectMegaStr@100k to 0.25x — eight
+    // hot loops in one enclosing method never tier up (few invocations, OSR-quality code only), with a
+    // visible 3x warmup cliff @1k. The lifted local def keeps the exact baseline loop shape AND the
+    // enclosing method small. Slices run the same loop with a base offset; genuine trees (rare here —
+    // elementwise ops hand collect flat leaves) fall back to the shared two-SAM collectLeaf${I}${O}
+    // (filter-shaped: one max-size out, slack via trimLeaf). Uncovered cross-prim pairs keep the
+    // ${O}Group fallback (cold path).
     def collectLeafCall(ka: Kind, kb: Kind): String = {
       val toA = wrapV(ka)
+      val fWrite = if kb.isPrim then s"rb.unwrap(f($toA))" else s"f($toA).asInstanceOf[Object]"
       val fBody = if kb.isPrim then s"rb.unwrap(f($toA))" else s"f($toA).asInstanceOf[B & AnyRef]"
       val tpClause = if !kb.isPrim then "[B & AnyRef]" else ""
-      s"collectLeaf${ka.name}${kb.name}$tpClause(xs, (v) => p($toA), (v) => $fBody)"
+      s"{ def collectLoop(a: Array[${ka.arr}], off: Int, n: Int): FBase = { val out = new Array[${kb.arr}](n); var i = 0; var o = 0; " +
+        s"while (i < n) { val v = a(off + i); if (p($toA)) { out(o) = $fWrite; o += 1 }; i += 1 }; trimLeaf${kb.name}(out, o, n) }; " +
+        s"xs match { " +
+        s"case leaf: ${ka.name}Arr => collectLoop(leaf.arr, 0, leaf.length); " +
+        s"case s: SliceNode if s.base.isInstanceOf[${ka.name}Arr] => collectLoop(s.base.asInstanceOf[${ka.name}Arr].arr, s.offset, s.length); " +
+        s"case _ => collectLeaf${ka.name}${kb.name}$tpClause(xs, (v) => p($toA), (v) => $fBody) } }"
     }
     def collectGroupFallback(ka: Kind, kb: Kind): String =
       s"{ val buf = new ${kb.name}Group(); foreachLeaf${ka.name}(xs, (v) => { val a = ${wrapV(ka)}; if (p(a)) buf.add(${wr(kb, "rb.unwrap(f(a))")}) }); buf.toLeaf }"
@@ -2279,7 +2366,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // fused short-circuiting contains (prim compares unboxed against the unwrapped elem). Empty-body scan.
     // contains: a short-circuit forward scan for the first element == elem (the ${I}Pred wraps the raw element to
     // A and compares to elem). One leaf-method call; hit -> index < length.
-    val contains = dispatchA(k => s"scFwdLeaf${k.name}(xs, 0, ${predSAM(k, s"${eqVal(k)} == elem")}) < length")
+    val contains = dispatchA(k => s"{ val i = ${scFwdPeel(k, "0", eqCond(k))}; i < length }")
     val applyAt = dispatchA(k => if k.name == "Ref" then s"r.wrap(${k.lc}At(xs, i).asInstanceOf[A])" else s"r.wrap(${k.lc}At(xs, i))")
     // mapConserve: I == O == k (always a COVERED pair — prim-self + Ref->Ref). SAME slim surface as map, plus
     // the identity-check: scan for the first element f actually changes (reference !eq); if NONE, return xs with
@@ -2431,11 +2518,30 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // (fully unboxed); sorted/sortBy box only per ord comparison.
     // sortWith/sorted: Ref arrays use java.util.Arrays.sort (TimSort — stable, run-detecting, no boxing on
     // Object[]); primitive arrays keep the unboxed mergesort (a boxed-Integer TimSort would be slower).
-    def sortDirect(k: Kind, ltXY: String, ltYX: String): String =
+    // SORTEDNESS PRE-SCAN (2026-07-05 audit): sorted/sortWith get the same fused pre-scan sortBy already
+    // has — borrow the leaf backing array READ-ONLY, scan adjacent pairs under the op's own comparator;
+    // already-ascending returns the identity `xs` with ZERO allocation, strictly-descending returns a lazy
+    // ReverseNode (strict => no equal pair anywhere => reversal is sorted AND stable). Only genuinely
+    // unsorted input pays copy+sort (random input exits the scan in ~1-2 compares). `owned` distinguishes
+    // a borrowed leaf array (must copy before the in-place sort) from a fresh materialize (sorted in
+    // place, no second copy). `unsorted` consumes `vals` (owned, exact length) and `n`.
+    def sortPeel(k: Kind, lt: (String, String) => String, unsorted: String): String =
+      s"{ val n = xs.length; if (n < 2) xs else { " +
+        s"var src: Array[${k.arr}] = null; var owned = false; " +
+        s"xs match { case leaf: ${k.name}Arr => src = leaf.arr; case _ => { src = materialize${k.name}(xs); owned = true } }; " +
+        s"var q = 1; while (q < n && !(${lt("src(q)", "src(q - 1)")})) q += 1; " +
+        s"if (q == n) xs else { var isRev = false; " +
+        s"if (q == 1) { var dq = 2; var rising = false; while (dq < n && !rising) { if (${lt("src(dq)", "src(dq - 1)")}) dq += 1 else rising = true }; if (!rising) isRev = true }; " +
+        s"if (isRev) new ReverseNode(xs) else { val vals = if (owned) src else java.util.Arrays.copyOf(src, n); $unsorted } } } }"
+    def sortDirect(k: Kind, lt: (String, String) => String): String =
       if k.name == "Ref" then
-        s"{ val vals = materializeRef(xs); val n = vals.length; if (n < 2) xs else { java.util.Arrays.sort(vals, ((x: Object, y: Object) => { if ($ltXY) -1 else if ($ltYX) 1 else 0 }): java.util.Comparator[Object]); new RefArr(vals, n) } }"
-      else s"{ val vals = materialize${k.name}(xs); val n = vals.length; if (n < 2) xs else new ${k.name}Arr(sort${k.name}(vals, n, (x, y) => $ltXY), n) }"
-    val sortWith = dispatchA(k => sortDirect(k, s"lt(${readVal(k, "x")}, ${readVal(k, "y")})", s"lt(${readVal(k, "y")}, ${readVal(k, "x")})"))
+        sortPeel(
+          k,
+          lt,
+          s"java.util.Arrays.sort(vals, ((x: Object, y: Object) => { if (${lt("x", "y")}) -1 else if (${lt("y", "x")}) 1 else 0 }): java.util.Comparator[Object]); new RefArr(vals, n)"
+        )
+      else sortPeel(k, lt, s"new ${k.name}Arr(sort${k.name}(vals, n, (x, y) => ${lt("x", "y")}), n)")
+    val sortWith = dispatchA(k => sortDirect(k, (a, b) => s"lt(${readVal(k, a)}, ${readVal(k, b)})"))
     // sorted has an Ordering, which IS a Comparator -> for Ref hand it straight to Arrays.sort (1 compare per
     // comparison; the lt-comparator would do up to 2). Primitives keep the unboxed natural mergesort.
     // natural primitive orderings -> hand the materialised array straight to java.util.Arrays.sort
@@ -2451,18 +2557,24 @@ object GenCores extends BleepCodegenScript("GenCores") {
       "Double" -> "ord.isInstanceOf[scala.math.Ordering.Double.TotalOrdering]",
       "Float" -> "ord.isInstanceOf[scala.math.Ordering.Float.TotalOrdering]"
     )
-    val sortedV = dispatchA(k =>
+    val sortedV = dispatchA { k =>
+      val genericLt = (a: String, b: String) => s"ord.lt(${readVal(k, a)}, ${readVal(k, b)})"
       if k.name == "Ref" then
-        s"{ val vals = materializeRef(xs); val n = vals.length; if (n < 2) xs else { java.util.Arrays.sort(vals, ord.asInstanceOf[java.util.Comparator[Object]]); new RefArr(vals, n) } }"
+        // NOTE (2026-07-06, measured-rejected): routing `ord eq Ordering.String` to the no-comparator
+        // Arrays.sort(Object[]) (ComparableTimSort) was tried for the sorted-Str 0.88-0.91x cells — no
+        // gain @100 and worse/bimodal @100k. The Comparator indirection is not the gap; keep one path.
+        s"{ val c = ord.asInstanceOf[java.util.Comparator[Object]]; ${sortPeel(k, (a, b) => s"c.compare($a, $b) < 0", "java.util.Arrays.sort(vals, c); new RefArr(vals, n)")} }"
       else {
-        val merge = s"new ${k.name}Arr(sort${k.name}(vals, n, (x, y) => ord.lt(${readVal(k, "x")}, ${readVal(k, "y")})), n)"
-        val body = sortedNatCond.get(k.name) match {
-          case Some(cond) => s"if ($cond) { java.util.Arrays.sort(vals); new ${k.name}Arr(vals, n) } else $merge"
-          case None       => merge
+        val merge = s"new ${k.name}Arr(sort${k.name}(vals, n, (x, y) => ${genericLt("x", "y")}), n)"
+        sortedNatCond.get(k.name) match {
+          case Some(cond) =>
+            // k.natLt is the SAME total order Arrays.sort uses, so the pre-scan and the sort agree.
+            val natLt = (a: String, b: String) => k.natLt(a, b).get
+            s"if ($cond) ${sortPeel(k, natLt, s"java.util.Arrays.sort(vals); new ${k.name}Arr(vals, n)")} else ${sortPeel(k, genericLt, merge)}"
+          case None => sortPeel(k, genericLt, merge)
         }
-        s"{ val vals = materialize${k.name}(xs); val n = vals.length; if (n < 2) xs else $body }"
       }
-    )
+    }
     // sortBy: keys are computed ONCE into a RAW kind-B array (no FBase intermediate, no per-compare
     // applyAtImpl node-match — the old form paid a node dispatch + Ordering box per comparison, measured
     // 0.19-0.30x of iarray). Natural-ordering fast paths:
@@ -2506,13 +2618,16 @@ object GenCores extends BleepCodegenScript("GenCores") {
       val generic = preScan(genericCmp, idxSort(genericCmp("karr(ii)", "karr(jj)")))
       val pack =
         s"{ val packed = new Array[Long](n); var t = 0; while (t < n) { packed(t) = (karr(t).toLong << 32) | (t.toLong & 0xffffffffL); t += 1 }; java.util.Arrays.sort(packed); ${permute("(packed(p) & 0xffffffffL).toInt")} }"
+      // natural-ordering fast arms: the comparator is the key kind's OWN natLt (== Arrays.sort's order);
+      // only the sort STRATEGY (pack vs idxSort) stays per-kind.
+      def natLtB(a: String, b: String): String = kb.natLt(a, b).get
       val fast = kb.name match {
         case "Int" =>
-          s"if (ord.asInstanceOf[AnyRef] eq scala.math.Ordering.Int) ${preScan((a, b) => s"$a < $b", pack)} else $generic"
+          s"if (ord.asInstanceOf[AnyRef] eq scala.math.Ordering.Int) ${preScan(natLtB, pack)} else $generic"
         case "Long" =>
-          s"if (ord.asInstanceOf[AnyRef] eq scala.math.Ordering.Long) ${preScan((a, b) => s"$a < $b", idxSort("karr(ii) < karr(jj)"))} else $generic"
+          s"if (ord.asInstanceOf[AnyRef] eq scala.math.Ordering.Long) ${preScan(natLtB, idxSort(natLtB("karr(ii)", "karr(jj)")))} else $generic"
         case "Double" =>
-          s"if (ord.isInstanceOf[scala.math.Ordering.Double.TotalOrdering]) ${preScan((a, b) => s"java.lang.Double.compare($a, $b) < 0", idxSort("java.lang.Double.compare(karr(ii), karr(jj)) < 0"))} else $generic"
+          s"if (ord.isInstanceOf[scala.math.Ordering.Double.TotalOrdering]) ${preScan(natLtB, idxSort(natLtB("karr(ii)", "karr(jj)")))} else $generic"
         case _ => generic
       }
       // sortBy only READS `vals` (keys derive from it, the permute copies out of it) — unlike
@@ -2527,17 +2642,40 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // array. A final O(#groups) pass wraps each buffer into a leaf — no second per-element rebuild. dispatch on
     // the VALUE kind: A for groupBy, B for groupMap.
     val groupBy = dispatchA { k =>
-      def perElem(e0: String) =
-        s"val e = $e0; val key = f(e); var g = m.get(key); if (g == null) { g = new ${k.name}Group(); m.put(key, g) }; g.add(${wr(k, "r.unwrap(e)")})"
+      val K = k.name
       // FLAT-LEAF FAST PATH: the common ${k.name}Arr / SliceNode-over-Arr inputs loop the backing array
       // directly — no ${k.name}Dfs visitor allocation, no dfsC walk, no onRunF dispatch (that fixed
       // per-call tax was ~1.5x the whole computation at n=10). Trees keep the visitor.
-      val leafLoop = (arr: String, off: String) => s"val a = $arr; var i = 0; while (i < n) { ${perElem(readVal(k, s"a($off)"))}; i += 1 }"
-      s"{ val m = new java.util.HashMap[K, ${k.name}Group](); xs match { " +
-        s"case leaf: ${k.name}Arr => { val n = leaf.length; ${leafLoop("leaf.arr", "i")} }; " +
-        s"case s: SliceNode if s.base.isInstanceOf[${k.name}Arr] => { val n = s.length; val so = s.offset; ${leafLoop(s"s.base.asInstanceOf[${k.name}Arr].arr", "so + i")} }; " +
-        s"case _ => { val c = new ${k.name}Dfs { ${runMethods(k, e0 => perElem(e0))}; def onOne(v: ${k.arr}): Unit = { ${perElem(readOne(k))} } }; dfsC${k.name}(xs, c) } }; " +
-        s"val b = Map.newBuilder[K, FBase]; val it = m.entrySet().iterator(); while (it.hasNext) { val en = it.next(); b += ((en.getKey, en.getValue.toLeaf)) }; b.result() }"
+      def walk(perElem: String => String): String = {
+        val leafLoop = (arr: String, off: String) => s"val a = $arr; var i = 0; while (i < n) { ${perElem(readVal(k, s"a($off)"))}; i += 1 }"
+        s"xs match { " +
+          s"case leaf: ${K}Arr => { val n = leaf.length; ${leafLoop("leaf.arr", "i")} }; " +
+          s"case s: SliceNode if s.base.isInstanceOf[${K}Arr] => { val n = s.length; val so = s.offset; ${leafLoop(s"s.base.asInstanceOf[${K}Arr].arr", "so + i")} }; " +
+          s"case _ => { val c = new ${K}Dfs { ${runMethods(k, e0 => perElem(e0))}; def onOne(v: ${k.arr}): Unit = { ${perElem(readOne(k))} } }; dfsC${K}(xs, c) } }"
+      }
+      // generic keys: boxed K in a java.util.HashMap (no encounter-order promise — matches List/Vector).
+      def perElemGeneric(e0: String) =
+        s"val e = $e0; val key = f(e); var g = m.get(key); if (g == null) { g = new ${K}Group(); m.put(key, g) }; g.add(${wr(k, "r.unwrap(e)")})"
+      val generic =
+        s"{ val m = new java.util.HashMap[K, ${K}Group](); ${walk(perElemGeneric)}; " +
+          s"val b = Map.newBuilder[K, FBase]; val it = m.entrySet().iterator(); while (it.hasNext) { val en = it.next(); b += ((en.getKey, en.getValue.toLeaf)) }; b.result() }"
+      // INT keys (2026-07-05 audit): the HashMap probe boxed the key and chased Node.equals per element —
+      // the dominant shared cost that kept mid-size groupBy at 0.68x of IArray. An open-addressing
+      // int->${K}Group table probes with one mix + int compare, no per-element allocation; grows by
+      // doubling + reinsert at 3/4 load (group counts are usually tiny, so rehash is rare and cheap).
+      // `gt` (group table) uses null group slot = empty; keys boxed only once per GROUP at finalization.
+      def perElemInt(e0: String) =
+        s"val e = $e0; val key = rk.unwrap(f(e)); var h = Mixers.mixInt(key) & gmask; var g: ${K}Group = null; " +
+          "var probing = true; while (probing) { val gg = gt(h); if (gg == null) probing = false else if (gk(h) == key) { g = gg; probing = false } else h = (h + 1) & gmask }; " +
+          s"if (g == null) { g = new ${K}Group(); gk(h) = key; gt(h) = g; gcnt += 1; " +
+          "if ((gcnt << 2) > (gcap * 3)) { val ncap = gcap << 1; val nmask = ncap - 1; val nk = new Array[Int](ncap); " +
+          s"val nt = new Array[${K}Group](ncap); var t = 0; while (t < gcap) { val og = gt(t); if (og != null) { val ok = gk(t); " +
+          "var h2 = Mixers.mixInt(ok) & nmask; while (nt(h2) != null) h2 = (h2 + 1) & nmask; nk(h2) = ok; nt(h2) = og }; t += 1 }; " +
+          s"gk = nk; gt = nt; gcap = ncap; gmask = nmask } }; g.add(${wr(k, "r.unwrap(e)")})"
+      val intKeyed =
+        s"{ var gcap = 16; var gmask = gcap - 1; var gcnt = 0; var gk = new Array[Int](gcap); var gt = new Array[${K}Group](gcap); ${walk(perElemInt)}; " +
+          "val b = Map.newBuilder[K, FBase]; var t = 0; while (t < gcap) { val og = gt(t); if (og != null) b += ((rk.wrap(gk(t)), og.toLeaf)); t += 1 }; b.result() }"
+      s"summonFrom { case rk: IntRepr[K] => $intKeyed; case _ => $generic }"
     }
     // groupMap dispatches on the VALUE kind B (the unboxed buffer). The SOURCE A is read through the already
     // inlined/unboxed `xs.foreach` at the FArray call site, which hands each `a: A` to this accumulator. So the
@@ -2696,7 +2834,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def maxImpl[A, Z >: A](xs: FBase)(using ord: Ordering[Z]): A = $maxV
        |  inline def minImpl[A, Z >: A](xs: FBase)(using ord: Ordering[Z]): A = $minV
        |  inline def foreachImpl[A](xs: FBase)(inline f: A => Unit): Unit = $foreach
-       |  inline def foreachWhileImpl[A](xs: FBase)(inline f: A => Boolean): Unit = $foreachWhileV
+       |  inline def foreachWhileImpl[A](xs: FBase)(inline f: A => Boolean): Unit = if (xs.length != 0) $foreachWhileV
        |  inline def existsImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = { val length = xs.length; if (length == 0) false else $existsV }
        |  inline def forallImpl[A](xs: FBase)(inline p: A => Boolean): Boolean = { val length = xs.length; if (length == 0) true else $forallV }
        |  inline def findImpl[A](xs: FBase)(inline p: A => Boolean): Option[A] = { val length = xs.length; if (length == 0) None else $findV }
@@ -2706,7 +2844,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def lastIndexWhereImpl[A](xs: FBase, end: Int)(inline p: A => Boolean): Int = { val length = xs.length; if (length == 0) -1 else $lastIndexWhereV }
        |  inline def lastIndexOfImpl[A, B](xs: FBase, elem: B, end: Int): Int = { val length = xs.length; if (length == 0) -1 else $lastIndexOfV }
        |  inline def collectFirstImpl[A, B](xs: FBase)(pf: PartialFunction[A, B]): Option[B] = { val length = xs.length; if (length == 0) None else $collectFirstV }
-       |  inline def prefixLengthImpl[A](xs: FBase)(inline p: A => Boolean): Int = $prefixLenV
+       |  inline def prefixLengthImpl[A](xs: FBase)(inline p: A => Boolean): Int = if (xs.length == 0) 0 else $prefixLenV
        |  inline def mapImpl[A, B](xs: FBase)(inline f: A => B): FBase = { val n = xs.length; $mapM }
        |  inline def filterImpl[A](xs: FBase)(inline p: A => Boolean): FBase = $filter
        |  inline def distinctImpl[A](xs: FBase): FBase = if (xs.length < 2) xs else $distinctV

@@ -18,38 +18,40 @@ export function FuseEx({ src, gen }) {
   );
 }
 
-<p className="page__eyebrow">concept four of five</p>
+<p className="page__eyebrow">the optimizer</p>
 
 <p className="lede">
-  Fusing stages into one loop removes the plumbing tax. This page is about the second engine inside
-  the engine — the part that removes work you <em>wrote but never needed</em>. Its single organizing
-  idea: a product — a tuple, a case class, later a JSON record — is not a value, it's a set of
-  independent <strong>columns</strong>, and each column is computed at its first read or not at all.
-  Everything below falls out of that idea; every emitted block is a golden test.
+  Fusing stages into one loop removes the plumbing tax. This page is about the optimizer, the part
+  that removes work you <em>wrote but never needed</em>. Its organizing idea: a product (a tuple, a
+  case class (Scala's record type), later a JSON record) is treated as a set of independent{" "}
+  <strong>columns</strong>, and
+  each column is computed at its first read or not at all. Everything below falls out of that idea;
+  every emitted block is a golden test.
 </p>
 
 ## Dead-column elimination
 
 A tuple or case class is a set of independent **columns**. Here `map` builds three, then the pipeline
 reads only two of them. The optimizer never builds the tuple: column 2 (`x * 13`) is read by nobody,
-so it's dead and simply absent from the loop; column 0 (`x % 3`) is needed by the filter, so it's
-computed eagerly. A `View` allocates the 3-tuple — plus three boxed `Int`s — for every element, and
+so it's dead and absent from the loop; column 0 (`x % 3`) is needed by the filter, so it's
+computed eagerly. A `View` (Scala's runtime-lazy collection wrapper, its analogue of a
+`java.util.stream` pipeline) allocates the 3-tuple (plus three boxed `Int`s) for every element, and
 throws most of it away.
 
 <FuseEx src="fuse-src-dce" gen="fuse-opt-dce" />
 
-## Compute-for-survivors — the sink
+## Compute-for-survivors: the sink
 
-Look at *where* `expensive(x)` lands: inside the `if`. Column 1 is needed only by the final `map`,
-which sits downstream of the filter, so it's computed only for elements that **survive**. An expensive
-column behind a selective filter runs a fraction of the time — an optimization the lazy-collection
-model can't even express, because it has no idea which columns a later stage will read.
+`expensive(x)` lands inside the `if`. Column 1 is needed only by the final `map`,
+which sits downstream of the filter, so it's computed only for elements that survive. An expensive
+column behind a selective filter runs a fraction of the time, an optimization the lazy-collection
+model can't express, because it has no view of which columns a later stage will read.
 
 <FuseEx src="fuse-src-sink" gen="fuse-opt-sink" />
 
 ## Common-subexpression elimination
 
-`x * x` is written twice but computed **once** — bound to one `val` and reused across both tuple
+`x * x` is written twice but computed once: bound to one `val` and reused across both tuple
 components. Decomposition, dead-column elimination, the sink, and CSE all fall out of a single idea:
 model a product as independent lazy columns, and bind each at its first use.
 
@@ -57,8 +59,10 @@ model a product as independent lazy columns, and bind each at its first use.
 
 ## …and the decomposition reaches the fold's lambda
 
-The same column analysis reaches into a `foldLeft`/`reduce` lambda. Here the fold reads only
-`s.score`, so the optimizer never builds the `Stat`: its other fields — and the object itself — are
+The same column analysis reaches into a `foldLeft`/`reduce` lambda (`foldLeft` is a seeded reduce:
+it starts from an initial value and folds left to right, so the result type can differ from the
+element type). Here the fold reads only
+`s.score`, so the optimizer never builds the `Stat`: its other fields (and the object itself) are
 dead and absent, and the loop is just `acc = acc + (x * 100)`. Without this, the fold would rebuild
 the entire product per element just to read one field.
 
@@ -67,12 +71,12 @@ the entire product per element just to read one field.
 ---
 
 Emitted blocks are the verbatim post-typer expansion (`FuseDebug.show`), regenerated to current
-codegen and checked into `tests/snapshots/`. Shown, never executed.
+codegen and checked into `tests/snapshots/`; they are shown, not executed.
 
 <Related
   links={[
     { to: "/fusion", label: "Using .fuse", desc: "The user guide: every stage and terminal, with their loops." },
-    { to: "/fusion/json", label: "The JSON experiment", desc: "The same optimizer, unchanged, turned loose on raw bytes." },
+    { to: "/fusion/json", label: "The JSON experiment", desc: "The same optimizer, unchanged, applied to raw bytes." },
     { to: "/operations/map", label: "How map stays unboxed", desc: "The eager gear below fusion, and why they split." },
   ]}
 />

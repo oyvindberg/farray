@@ -38,12 +38,12 @@ export function RepresentationDiagram() {
         {/* leaves */}
         <Cells x={105} y={212} nums={[1, 2, 3]} />
         <Cells x={350} y={212} nums={[4, 5]} />
-        <text className="dgm-dim dgm-leaflbl" x={150} y={262} textAnchor="middle">IntArr — a real int[]</text>
+        <text className="dgm-dim dgm-leaflbl" x={150} y={262} textAnchor="middle">IntArr: a real int[]</text>
         <text className="dgm-dim dgm-leaflbl" x={380} y={262} textAnchor="middle">IntArr</text>
       </svg>
       <figcaption className="dgm-cap">
         <code>(1,2,3) ++ (4,5)</code> then <code>take(4)</code>. Each structural op just adds a{" "}
-        <span className="dgm-key dgm-key--lazy">lazy node</span> — O(1), copies nothing. The data never moves
+        <span className="dgm-key dgm-key--lazy">lazy node</span>: O(1), copies nothing. The data never moves
         from the <span className="dgm-key dgm-key--leaf">flat leaves</span>. Reading walks the tree;{" "}
         <code>take(4)</code> stops after four elements, so the fifth is never even touched.
       </figcaption>
@@ -87,14 +87,14 @@ export function FusionDiagram() {
 
         <text className="dgm-dim dgm-rowlbl" x={0} y={150} textAnchor="start">.fuse</text>
         {box(6, 162, "src", "dgm-box")}
-        {arrow(68, 300, 179, "map · filter · map — one while-loop")}
+        {arrow(68, 300, 179, "map · filter · map: one while-loop")}
         {box(300, 162, "out", "dgm-box")}
         <text className="dgm-op dgm-note" x={376} y={183} textAnchor="start">0 intermediates</text>
       </svg>
       <figcaption className="dgm-cap">
         Every eager stage allocates an array whose only purpose is to be consumed and discarded by the next.{" "}
-        <code>.fuse</code> rewrites the chain, at compile time, into one pass over the source — the middle
-        arrays, the <code>Function1</code>s, the boxing: gone.
+        <code>.fuse</code> rewrites the chain, at compile time, into one pass over the source; the middle
+        arrays, the <code>Function1</code>s and the boxing all disappear.
       </figcaption>
     </figure>
   );
@@ -112,14 +112,14 @@ export function DispatchDiagram() {
     <figure className="dgm dgm--flow">
       <div className="dgm-flow-col">
         {step("you write", <code>xs.map(_ + 1)</code>)}
-        <div className="dgm-down"><span>inline — body + lambda spliced at the call site</span></div>
+        <div className="dgm-down"><span>inline: body + lambda spliced at the call site</span></div>
         {step("compile time", <><code>summonFrom</code>: <code>A = Int</code> → keep the <code>IntRepr</code> branch, delete the other 80</>)}
         <div className="dgm-down"><span>one resolved, monomorphic call</span></div>
-        {step("runs", <><code>mapLeafIntInt(xs, (v: Int) =&gt; v + 1)</code> — one shared <code>int[]</code> loop, unboxed <code>IntToIntFn</code></>)}
+        {step("runs", <><code>mapLeafIntInt(xs, (v: Int) =&gt; v + 1)</code>: one shared <code>int[]</code> loop, unboxed <code>IntToIntFn</code></>)}
       </div>
       <figcaption className="dgm-cap">
         The dispatch happens in the compiler, not the JIT. By the time the program runs there's no branch
-        left to predict — just a specialized loop and an unboxed function value.
+        left to predict, just a specialized loop and an unboxed function value.
       </figcaption>
     </figure>
   );

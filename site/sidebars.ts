@@ -9,13 +9,14 @@ const sidebars: SidebarsConfig = {
       type: "category",
       label: "The story",
       collapsed: false,
-      items: ["index"],
+      items: ["index", "use"],
     },
     {
       type: "category",
       label: "FArray",
       collapsed: false,
       items: [
+        "chains",
         "design/java-core",
         "design/scala-surface",
         "design/combinators",
@@ -37,9 +38,8 @@ const sidebars: SidebarsConfig = {
             "operations/list-parity",
           ],
         },
-        "chains",
-        "scoreboard",
         "benchmarks/farray",
+        "semantics",
       ],
     },
     {
@@ -47,14 +47,15 @@ const sidebars: SidebarsConfig = {
       label: "Fusion",
       collapsed: false,
       items: [
+        "fusion/benchmarks",
         "fusion/index",
         "fusion/sources",
         "fusion/stages",
         "fusion/terminals",
         "fusion/optimizer",
         "fusion/farray",
+        "fusion/integrating",
         "fusion/json",
-        "fusion/benchmarks",
       ],
     },
     {

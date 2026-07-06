@@ -1,0 +1,86 @@
+---
+title: Use it
+sidebar_label: Use it
+description: "Coordinates, license, requirements, and a straight answer on maturity and Java/Kotlin interop."
+---
+
+<p className="lede">
+  FArray is published as an experiment. The design is serious and the benchmarks are real, but a
+  collection library earns trust over years, not milestones. This page states exactly where it
+  stands.
+</p>
+
+## Coordinates
+
+MIT licensed. Source at [github.com/oyvindberg/farray](https://github.com/oyvindberg/farray).
+Requires Scala 3.8 or later. Built and benchmarked on JDK 25; the Java core uses sealed classes, so
+JDK 17 is the floor.
+
+```scala
+// sbt
+libraryDependencies += "com.olvind.farray" %% "farray" % "1.0.0-M1"
+```
+
+```yaml
+# bleep (bleep.build) — a complete minimal bleep.yaml
+$schema: https://raw.githubusercontent.com/oyvindberg/bleep/master/schema.json
+$version: 1.0.0-M10
+projects:
+  myapp:
+    dependencies: com.olvind.farray::farray:1.0.0-M1
+    platform:
+      name: jvm
+    scala:
+      version: 3.8.3
+```
+
+Put code in `myapp/src/scala/`, run with `bleep run myapp`.
+
+## Try it in thirty seconds
+
+Paste into `farray.sc`, run with `scala-cli farray.sc`:
+
+```scala
+//> using dep com.olvind.farray::farray:1.0.0-M1
+import farray.FArray
+
+val xs = FArray.tabulate(1_000_000)(identity) // an int[] underneath
+val eager = xs.map(_ * 2).filter(_ % 3 != 0).foldLeft(0L)(_ + _)
+val fused = xs.fuse.map(_ * 2).filter(_ % 3 != 0).foldLeft(0L)(_ + _) // same result, one loop
+println(s"$eager == $fused")
+```
+
+Swap the type where the profile says collections cost you; add `.fuse` where the chain is hot.
+[When to fuse (and when not to)](./fusion/farray.mdx) covers the judgment calls.
+
+## What M1 means
+
+:::warning Experiment status
+
+This is a milestone release of an experiment.
+
+- **Somewhat tested, not guaranteed.** Every operation is checked against the equivalent `List`
+  operation across sizes and structural shapes (~480 parity tests), and every macro lowering is a
+  golden test regenerated on each build. That catches a lot. It does not add up to a correctness
+  guarantee yet; that takes more work and more users.
+- **Expect performance cliffs.** The scorecard covers the shapes we thought to measure. Your
+  workload will contain shapes we didn't, and some of them will be slow in ways that surprise both
+  of us. When you hit one, [open an issue](https://github.com/oyvindberg/farray/issues) with a JMH
+  reproduction if you can; finding the cliffs is the point of this milestone.
+- **No binary compatibility between versions.** The API is `inline` end to end, which means library
+  internals expand into your compiled call sites. Pin an exact version and expect to recompile on
+  every upgrade. There is no MiMa story for an inline API and there won't be.
+- **Mostly written by a model.** Most of the implementation (the code generator, the generated
+  operations, the fusion macro and its optimizer, the benchmark suite) was written by Claude, from a
+  human design and under human review, across roughly four hundred commits in seventeen days. Every
+  operation is gated by ~480 parity tests against `List`, every macro lowering by a golden file, and
+  every performance claim by a checked-in JMH result. Nothing landed on the strength of an
+  explanation, but review was read-and-questioned, not formal verification, which is part of why the
+  version starts with M.
+
+:::
+
+## From Java or Kotlin
+
+No. The machinery lives in the Scala 3 compiler; the code that touches FArray is Scala 3.
+

@@ -10,11 +10,15 @@ export const SECTIONS: Section[] = ["Primitive", "String", "ListLike", "Diagnost
 // desaturated so the eye reads "is green tallest?" at a glance and the chart stays calm.
 export const KNOWN: Record<string, [string, string]> = {
   farray: ["FArray", "#16a34a"],
-  farrayFused: ["FArray fused", "#16a34a"], farrayEager: ["FArray eager", "#9bb6a6"],
+  farrayFused: ["FArray fused", "#4ade80"],
   farraySource: ["FArray fused", "#16a34a"], farrayLines: ["FArray fused", "#16a34a"],
   array: ["Array", "#a0a6ac"],
   arraybuffer: ["ArrayBuffer", "#8aa2b8"], arraybuilder: ["ArrayBuilder", "#c29a63"],
   iarray: ["IArray", "#bf9d57"], list: ["List", "#9b8fb2"],
+  javastream: ["java.stream", "#5382a1"],
+  farrayFuse: ["FArray .fuse", "#16a34a"], farrayFuseFold: ["FArray .fuse (fold)", "#6ee7a8"],
+  jsoniterNarrow: ["jsoniter (narrow)", "#c58a4e"], jsoniterFull: ["jsoniter (full)", "#d8b184"],
+  jsoniterManual: ["jsoniter (manual)", "#a9743d"], jawn: ["jawn", "#9b8fb2"], jackson: ["Jackson", "#7ea2bd"],
   vector: ["Vector", "#7ea2bd"], fs2chunk: ["fs2.Chunk", "#c5876b"],
   ziochunk: ["zio.Chunk", "#bd8aa6"], scalaRange: ["Range", "#8b9197"],
   farrayTree: ["FArray·tree", "#16a34a"], farrayMat: ["FArray·flat", "#6ee7a8"],
@@ -33,7 +37,14 @@ const XPRIORITY = ["size", "numChunks", "chunkCount", "numLeaves", "n", "innerSi
 // diagnostic / non-structure variants excluded from the leaderboard (decompositions, and the
 // fused/eager pipeline probes which are FArray-vs-itself, not a competing collection)
 const SUBV = new Set([
-  "farrayTree", "farrayMat", "ziochunkTree", "ziochunkMat", "farrayFused", "farrayEager",
+  "farrayTree", "farrayMat", "ziochunkTree", "ziochunkMat", "farrayFused",
+  // mutable builders and generators, not immutable-collection competitors — excluded from the
+  // leaderboard summary (they still appear as bars on their individual benchmark charts).
+  "arraybuffer", "arraybuilder", "scalaRange",
+  // java.util.stream is a lazy FUSED pipeline, not an eager immutable collection — the honest
+  // comparison is against .fuse, so it stays out of the eager-collection leaderboard and is shown
+  // only on the fusion-context charts (elsewhere hidden per-chart via the `ignore` prop).
+  "javastream",
 ]);
 // the actual contending structures — the leaderboard ranks only these (a benchmark method like
 // MapMega's `committed` is a scenario, not a collection, and must not show up as a "structure").
@@ -156,34 +167,79 @@ export function verdictAt(series: Series, x: number): { vd: Verdict; r: number |
   return { vd: r >= 1.05 ? "w" : r >= 0.95 ? "t" : "l", r };
 }
 
-// ---- band / edge color, ported 1:1 (HSL) ----
-const clamp1 = (x: number) => Math.min(x, 1);
-export function bandColor(r: number | null, dark = false): string {
-  if (r == null) return "transparent";
-  if (dark) {
-    // translucent fills that read as a tint over a dark card, never as a glowing block
-    if (r >= 1.05) { const f = clamp1(Math.log10(r)); return `rgba(52,210,122,${(0.07 + 0.17 * f).toFixed(3)})`; }
-    if (r >= 0.95) return "rgba(148,163,184,0.09)";
-    const f = clamp1(Math.log10(1 / r)); return `rgba(236,106,94,${(0.07 + 0.18 * f).toFixed(3)})`;
+/** A view of a chart with some competitors dropped — for reusing one benchmark in different
+  * contexts (e.g. showing java.stream only where a fused comparison is on the page, hiding it on
+  * the eager charts). W/T/L and every per-cell ratio are RECOMPUTED against the remaining rivals,
+  * so a hidden competitor that happened to be fastest doesn't leave stale verdicts behind. */
+export function filterChart(chart: Chart, ignore?: string[]): Chart {
+  if (!ignore || !ignore.length) return chart;
+  const drop = new Set(ignore);
+  if (!chart.impls.some((v) => drop.has(v))) return chart;
+  const series: Series = {};
+  for (const v of Object.keys(chart.series)) if (!drop.has(v)) series[v] = chart.series[v];
+  let w = 0, t = 0, l = 0;
+  for (const x of chart.xs) {
+    const v = verdictAt(series, x).vd;
+    if (v === "w") w++; else if (v === "t") t++; else if (v === "l") l++;
   }
-  if (r >= 1.05) { const f = clamp1(Math.log10(r)); return `hsl(148,${(36 + 22 * f).toFixed(0)}%,${(97 - 9 * f).toFixed(0)}%)`; }
-  if (r >= 0.95) return "hsl(48,70%,96%)";
-  const f = clamp1(Math.log10(1 / r)); const hp = clamp1(f / 0.061);
-  return `hsl(${(48 * (1 - hp)).toFixed(0)},${(84 + 13 * f).toFixed(0)}%,${(93 - 15 * hp - 23 * f).toFixed(0)}%)`;
-}
-export function edgeColor(r: number | null): string {
-  if (r == null) return "#cbd5e1";
-  if (r >= 1.05) { const f = clamp1(Math.log10(r)); return `hsl(150,68%,${(52 - 12 * f).toFixed(0)}%)`; }
-  if (r >= 0.95) return "#fbbf24";
-  const f = clamp1(Math.log10(1 / r)); const hp = clamp1(f / 0.061);
-  return `hsl(${(45 * (1 - hp)).toFixed(0)},${(82 + 13 * f).toFixed(0)}%,${(66 - 8 * hp - 20 * f).toFixed(0)}%)`;
+  const agg: Chart["agg"] = w + t + l === 0 ? "mix" : w > l ? "win" : l > w ? "loss" : "mix";
+  return { ...chart, series, impls: chart.impls.filter((v) => !drop.has(v)), w, t, l, agg };
 }
 
-// ---- scorecard: geometric mean of (best-in-cell / own) per structure, per section + TOTAL ----
+// ---- the ratio color scale: one color language for the whole site ----
+// r = ours / best-competitor. r >= 1 means we ARE the fastest (by margin r); r < 1 means we sit
+// 1/r behind the winner. The scale is continuous and log-spaced so it reads pedagogically:
+//   winner            -> green (deepening slightly with margin)
+//   1.1x behind       -> green-yellow
+//   1.2x              -> amber
+//   1.3x              -> red (the boundary: past 1.3x behind is a real loss)
+//   2x                -> deepening red
+//   3x or worse       -> blood red
+// Discrete W/T/L verdicts stay as chips/dots; color always answers "how far from the winner?".
+const HUE_STOPS: [number, number][] = [[1.0, 100], [1.1, 68], [1.2, 40], [1.3, 15], [2.0, 8], [3.0, 0]];
+function behindHue(b: number): number {
+  if (b <= HUE_STOPS[0][0]) return HUE_STOPS[0][1];
+  for (let i = 1; i < HUE_STOPS.length; i++) {
+    const [b1, h1] = HUE_STOPS[i - 1], [b2, h2] = HUE_STOPS[i];
+    if (b <= b2) {
+      const t = (Math.log(b) - Math.log(b1)) / (Math.log(b2) - Math.log(b1));
+      return h1 + (h2 - h1) * t;
+    }
+  }
+  return 0;
+}
+const clamp1 = (x: number) => Math.min(Math.max(x, 0), 1);
+/** translucent fill: hover bands, scorecard cells, chips. */
+export function ratioBand(r: number | null, dark = false): string {
+  if (r == null) return "transparent";
+  if (r >= 1) { // winner: green tint, a touch deeper with margin
+    const f = clamp1(Math.log10(r) / Math.log10(3));
+    return dark ? `hsla(150, 60%, 45%, ${(0.10 + 0.14 * f).toFixed(3)})`
+                : `hsla(150, 55%, 42%, ${(0.10 + 0.13 * f).toFixed(3)})`;
+  }
+  const b = Math.min(1 / r, 6);
+  const h = behindHue(b);
+  const t = clamp1(Math.log(b) / Math.log(3)); // 0 at the winner's doorstep, 1 (blood) at 3x behind
+  const a = 0.12 + (dark ? 0.42 : 0.38) * t;
+  return `hsla(${h.toFixed(0)}, 78%, ${dark ? 50 : 44}%, ${a.toFixed(3)})`;
+}
+/** full-strength stroke: card frames, accents. */
+export function ratioEdge(r: number | null, dark = false): string {
+  if (r == null) return "transparent";
+  if (r >= 1) return dark ? "hsl(150, 55%, 48%)" : "hsl(150, 55%, 38%)";
+  const b = Math.min(1 / r, 6);
+  const h = behindHue(b);
+  return dark ? `hsl(${h.toFixed(0)}, 70%, 52%)` : `hsl(${h.toFixed(0)}, 72%, 42%)`;
+}
+// transitional aliases (old names) so nothing else breaks while callers migrate
+export function bandColor(r: number | null, dark = false): string { return ratioBand(r, dark); }
+export function edgeColor(r: number | null): string { return ratioEdge(r); }
+
 export interface Scorecard { cols: string[]; rows: { v: string; label: string; color: string; ours: boolean; vals: (number | null)[] }[]; }
 export function buildScorecard(charts: Chart[]): Scorecard {
   const sum = new Map<string, [number, number]>(); // `${v} ${col}` -> [sumLn, count]
   for (const ch of charts) {
+    if (ch.section === "Diagnostics") continue; // probes/pipeline shapes, not structure-vs-structure races
     for (const x of ch.xs) {
       const present: [string, number][] = [];
       for (const v of Object.keys(ch.series)) {

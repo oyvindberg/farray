@@ -3,6 +3,7 @@ package farray
 import org.openjdk.jmh.annotations.{Param, Setup}
 
 abstract class Inputs extends CommonParams {
+  var strArrInput: Array[String] = _ // raw array for the java.util.stream competitor
   var listInput: List[String] = _
   var farrayInput: FArray[String] = _
   var iarrayInput: IArray[String] = _
@@ -16,6 +17,7 @@ abstract class Inputs extends CommonParams {
   @Setup
   def setup(): Unit = {
     val arr = Array.tabulate(size)(_.toString)
+    strArrInput = arr
     listInput = arr.toList
     farrayInput = FArray.tabulate(size)(_.toString)
     iarrayInput = IArray.tabulate(size)(_.toString)

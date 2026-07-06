@@ -38,6 +38,12 @@ class BuilderSizedIntBenchmark:
     while i < n do { b += src(i); i += 1 }
     b.result()
 
+  @Benchmark def iarray(): IArray[Int] =
+    val b = IArray.newBuilder[Int]; b.sizeHint(size)
+    var i = 0; val n = size
+    while i < n do { b += src(i); i += 1 }
+    b.result()
+
   @Benchmark def vector(): Vector[Int] =
     val b = Vector.newBuilder[Int]; b.sizeHint(size)
     var i = 0; val n = size
@@ -49,6 +55,8 @@ class BuilderSizedIntBenchmark:
     var i = 0; val n = size
     while i < n do { b += src(i); i += 1 }
     b.result()
+
+  // fs2.Chunk has no element-wise builder (Collector.Builder appends whole Chunks only)
 
   @Benchmark def ziochunk(): zio.Chunk[Int] =
     val b = new zio.ChunkBuilder.Int; b.sizeHint(size)

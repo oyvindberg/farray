@@ -1,7 +1,7 @@
 ---
 title: Sources
 sidebar_label: Sources
-description: "Where pipelines begin: in-memory arrays, chunk streams in constant memory, and record-framed bytes — with the source shape carried in the pipeline's type."
+description: "Where pipelines begin: in-memory arrays, chunk streams in constant memory, and record-framed bytes, with the source shape carried in the pipeline's type."
 ---
 
 import Link from "@docusaurus/Link";
@@ -9,11 +9,11 @@ import Snippet from "@site/src/components/Snippet";
 import BenchChart from "@site/src/components/BenchChart";
 import Related from "@site/src/components/Related";
 
-<p className="page__eyebrow">concept one of five</p>
+<p className="page__eyebrow">the source</p>
 
 <p className="lede">
   A pipeline has to read from somewhere, and fusion's first structural decision is that the engine is
-  a <strong>streaming consumer</strong> defined against a <em>source</em> — not an array trick. The
+  a <strong>streaming consumer</strong> defined against a <em>source</em>, not an array trick. The
   same stages and terminals compile over three source shapes, and which one you're on is written in
   the pipeline's type.
 </p>
@@ -22,60 +22,62 @@ import Related from "@site/src/components/Related";
 
 <ul className="points">
   <li>
-    <strong>An in-memory <code>FArray</code></strong> — <code>xs.fuse</code>. The degenerate case:
-    the whole collection is one chunk, and the emitted code is the tight indexed loop you've seen on
+    <strong>An in-memory <code>FArray</code></strong>: <code>xs.fuse</code>. The degenerate case:
+    the whole collection is one chunk, and the emitted code is the tight indexed loop shown on
     the previous page. <code>run</code> hands you an <code>FArray</code> back, so fused pipelines
     slot invisibly into eager code.
   </li>
   <li>
-    <strong>A chunked <code>Source[A]</code></strong> — <code>Source.fromIterator(it).fuse</code>,{" "}
+    <strong>A chunked <code>Source[A]</code></strong>: <code>Source.fromIterator(it).fuse</code>,{" "}
     <code>Source.unfold(z)(step)</code>, <code>Source.iterate(x)(f)</code>. Pull-based and{" "}
     <em>chunk-granular</em>: one virtual <code>pullChunk</code> call hands the loop a whole unboxed
-    leaf (~4096 elements), so the hot path stays the same element loop — no per-element virtual call,
-    no boxed sentinel. <strong>Constant memory</strong>: the loop holds one chunk, not the data, so a
+    leaf (~4096 elements), so the hot path stays the same element loop, with no per-element virtual
+    call and no boxed sentinel. <strong>Constant memory</strong>: the loop holds one chunk, not the data, so a
     gigabyte input needs kilobytes of heap. And the driver wraps the loop in{" "}
     <code>try/finally close()</code>, so a file or socket behind the source is released on
     exhaustion, on short-circuit (<code>take</code>/<code>find</code> stopping early), and on
     exception alike.
   </li>
   <li>
-    <strong>A record-framed byte source</strong> (<code>ByteRecordSource</code>) —{" "}
+    <strong>A record-framed byte source</strong> (<code>ByteRecordSource</code>):{" "}
     <code>{"Json.ndjson[Rec](bytes).stream"}</code>: elements decoded straight out of raw bytes,
     fields the pipeline doesn't read skipped at the byte level. Same stages, same terminals, same
-    optimizer — the whole story is <Link to="/fusion/json">the JSON integration page</Link>.
+    optimizer; the details are on <Link to="/fusion/json">the JSON integration page</Link>.
   </li>
 </ul>
 
 The chunked contract is two methods. A source hands back leaves until it's done, and promises a chunk
-is only valid until the next pull — which is exactly the license an `InputStream`-backed source needs
-to reuse one read buffer forever:
+is only valid until the next pull, which is the license an `InputStream`-backed source needs to
+reuse one read buffer across pulls:
 
 <Snippet name="source-trait" hideFull />
 
 ## Streaming, measured
 
-"Constant memory" and "fast" rarely travel together on the JVM — `Iterator` chains pay per-element
-virtual dispatch, `LazyList` allocates a cons per element, effect-system streams pay their runtime.
-The chunk-granular design is what lets fusion keep its loop shape over lazy data. Fold a generated
-sequence, and a file's lines, without ever holding the data:
+Constant-memory processing on the JVM usually costs throughput: `Iterator` chains and
+`java.util.stream` pipelines pay per-element virtual dispatch, `LazyList` (Scala's lazily evaluated
+linked list) allocates a cons cell per element, effect-system streams pay their runtime.
+The chunk-granular design keeps fusion's loop shape over lazy data. The benchmark folds a generated
+sequence, and a file's lines, without holding either in memory:
 
 <BenchChart
   cls="StreamPipelineBenchmark"
-  caption="Streaming pipelines in constant memory: filter → map → sum over a lazily GENERATED sequence (against Iterator, LazyList and fs2.Stream), and over an InputStream of lines (against scala.io.Source and a hand-rolled BufferedReader loop). The chunk model keeps the fused element loop intact — the per-element cost is the loop, not the plumbing."
+  caption="Streaming pipelines in constant memory: filter → map → sum over a lazily GENERATED sequence (against Iterator, LazyList and fs2.Stream), and over an InputStream of lines (against scala.io.Source and a hand-rolled BufferedReader loop). The chunk model keeps the fused element loop intact; the per-element cost is the loop, not the plumbing."
 />
 
 ## The shape is in the type
 
 The entry point stamps the pipeline: `xs.fuse` gives `Fuse[A, Chunks]`, and the JSON module's
-`.stream` gives `Fuse[T, Ndjson]`. That phantom parameter — the **source shape** — is how the rest of
-the machine stays honest: stages are shape-generic, but{" "}
+`.stream` gives `Fuse[T, Ndjson]`. That phantom parameter, the **source shape**, drives the rest of
+the machine: stages are shape-generic, but{" "}
 <Link to="/fusion/terminals">which terminals exist, and how they lower</Link>, is decided per shape
-by a typeclass. Nothing about it costs anything at runtime; it exists so that "this shape can't do
-that" is a compile error instead of a surprise.
+by a typeclass (an interface implementation the compiler selects by type, like a ServiceLoader
+resolved at compile time). It has no runtime cost; it exists so that an unsupported operation is a
+compile error rather than a runtime surprise.
 
 <Related
   links={[
-    { to: "/fusion/stages", label: "Next: Stages", desc: "The vocabulary — markers that cost nothing." },
+    { to: "/fusion/stages", label: "Next: Stages", desc: "The vocabulary: markers that cost nothing." },
     { to: "/fusion/json", label: "Byte sources in full", desc: "ByteRecordSource and the NDJSON integration, one file." },
   ]}
 />

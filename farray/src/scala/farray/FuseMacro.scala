@@ -2408,27 +2408,35 @@ object FuseMacro:
             }.asTerm
           else if adjCount == 1 then
             // DEFERRED sink for run-emitting pipelines: a buffering stage emits once per RUN/window, not
-            // per element, so the branch amortizes — the first emit is held in a local and the output
-            // array only exists from the second emit on. A single-run pipeline (groupAdjacentReduceBy
-            // over a tiny input) then allocates NO array at all: just the RefOne (was 0.52-0.61x of List
-            // @1 paying an up-front Array[Object](cap) for one tuple).
+            // per element, so the branch amortizes — for a SMALL input (n0 <= 64) the first emit is held in
+            // a local and the output array only exists from the second emit on; a single-run pipeline
+            // (groupAdjacentReduceBy over a tiny input) then allocates NO array at all: just the RefOne
+            // (was 0.52-0.61x of List @1 paying an up-front Array[Object](cap) for one tuple).
+            // The deferral is decided ONCE, OUTSIDE the loop: larger inputs pre-allocate exactly like the
+            // eager sink and their per-emit path is one always-false null check + store. The original
+            // always-deferred form put the o==0/out==null chain on EVERY emit and halved groupMin @1000
+            // (1.52M -> 0.86M ops/s, bisected to e3cf7c5; 2026-07-05).
             '{
-              val cap = ${ capExpr(n0, counters) }; var out: Array[Object] = null; var single: Object = null; var o = 0
+              val cap = ${ capExpr(n0, counters) }
+              // 64: a single-run/tiny input must keep the zero-array path (n0=10 with one 16-elem run
+              // halved at threshold 8 — the eager arm zeroed a cap array for one emit); above that the
+              // upfront allocation amortizes and the hot emit is branch-free.
+              var out: Array[Object] = if $n0 <= 64 then null else new Array[Object](cap)
+              var single: Object = null
+              var o = 0
               ${
                 loop(v =>
                   '{
                     val _v = ${ v.asExpr }.asInstanceOf[Object]
-                    if o == 0 then single = _v
-                    else {
-                      if out == null then { out = new Array[Object](cap); out(0) = single }
-                      out(o) = _v
-                    }
+                    if out != null then out(o) = _v
+                    else if o == 0 then single = _v
+                    else { out = new Array[Object](cap); out(0) = single; out(o) = _v }
                     o += 1
                   }.asTerm
                 )
               }
               if o == 0 then (Empty.INSTANCE: FBase)
-              else if o == 1 then new RefOne(single)
+              else if o == 1 then new RefOne(if out == null then single else out(0))
               else if o == cap then new RefArr(out, o)
               else new RefArr(java.util.Arrays.copyOf(out, o), o)
             }.asTerm

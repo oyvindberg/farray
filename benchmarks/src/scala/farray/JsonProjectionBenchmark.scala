@@ -64,7 +64,7 @@ class JsonProjectionBenchmark:
   //      `key` and never touch the ~10 middle fields or the long payload string. ----
   val wideKeyThreshold = 90 // key in [0,100); keep > 90 → 10% pass
 
-  @Benchmark def wide_fuseMacro(): Int =
+  @Benchmark def farrayFuse_wide(): Int =
     Json
       .ndjson[JsonProjectionBenchmark.Wide](wideBuf)
       .fuse
@@ -73,7 +73,7 @@ class JsonProjectionBenchmark:
       .count
 
   /** jsoniter-narrow {key, payload}: must still byte-walk to find both, and decodes payload for survivors. */
-  @Benchmark def wide_jsoniterNarrow(): Int =
+  @Benchmark def jsoniterNarrow_wide(): Int =
     var c = 0; var start = 0
     while start < wideBuf.length do
       var end = start; while end < wideBuf.length && wideBuf(end) != '\n' do end += 1
@@ -85,14 +85,14 @@ class JsonProjectionBenchmark:
   // ---- AGGREGATE query: filter(amount > t).map(amount).sum ----
 
   /** the MACRO-DRIVEN path: the EXISTING fuse optimizer (filter→if, map, sink, DCE, fold) drives the byte scanner. */
-  @Benchmark def sum_fuseMacro(): Double =
+  @Benchmark def farrayFuse_sum(): Double =
     Json.ndjson[Rec](buf).fuse.filter(_.amount > threshold).map(_.amount).sum
 
   /** same query via foldLeft (avoids Numeric[Double].plus boxing that `.sum` incurs) — the true zero-alloc path. */
-  @Benchmark def sum_fuseMacroFold(): Double =
+  @Benchmark def farrayFuseFold_sum(): Double =
     Json.ndjson[Rec](buf).fuse.filter(_.amount > threshold).foldLeft(0.0)((a, r) => a + r.amount)
 
-  @Benchmark def sum_jsoniterFull(): Double =
+  @Benchmark def jsoniterFull_sum(): Double =
     var acc = 0.0; var start = 0
     while start < buf.length do
       var end = start; while end < buf.length && buf(end) != '\n' do end += 1
@@ -101,7 +101,7 @@ class JsonProjectionBenchmark:
       start = end + 1
     acc
 
-  @Benchmark def sum_jsoniterNarrow(): Double =
+  @Benchmark def jsoniterNarrow_sum(): Double =
     var acc = 0.0; var start = 0
     while start < buf.length do
       var end = start; while end < buf.length && buf(end) != '\n' do end += 1
@@ -113,7 +113,7 @@ class JsonProjectionBenchmark:
   /** jawn (typelevel's high-reputation parser): parse each line DIRECTLY FROM BYTES to a JValue AST, then extract the field. jawn is a fast tokenizer, but it
     * has no projection — it builds the whole AST (a JObject of all 20 fields, every value boxed into a JValue) per record before you can read one field.
     */
-  @Benchmark def sum_jawn(): Double =
+  @Benchmark def jawn_sum(): Double =
     var acc = 0.0; var start = 0
     while start < buf.length do
       var end = start; while end < buf.length && buf(end) != '\n' do end += 1
@@ -126,7 +126,7 @@ class JsonProjectionBenchmark:
   /** Jackson databind, tree model: build a JsonNode tree (all 20 fields) per line, then read one. The classic reflection-free-but-allocation-heavy path
     * everyone reaches for first. (Included for scale.)
     */
-  @Benchmark def sum_jackson(): Double =
+  @Benchmark def jackson_sum(): Double =
     var acc = 0.0; var start = 0
     while start < buf.length do
       var end = start; while end < buf.length && buf(end) != '\n' do end += 1
@@ -140,7 +140,7 @@ class JsonProjectionBenchmark:
     * other 19, and return the PRIMITIVE — no case-class object allocated. This is jsoniter at its absolute best for this projection: no codec object, folds
     * into a var. Beating (or honestly measuring against) this is the real proof the win is fuse's model.
     */
-  @Benchmark def sum_jsoniterReaderManual(): Double =
+  @Benchmark def jsoniterManual_sum(): Double =
     var acc = 0.0; var start = 0
     while start < buf.length do
       var end = start; while end < buf.length && buf(end) != '\n' do end += 1
@@ -152,10 +152,10 @@ class JsonProjectionBenchmark:
   // ---- PROJECTION query: filter(amount > t).map(category) ----
 
   /** macro-driven projection + LAZY string decode (the sink decodes category only for survivors). */
-  @Benchmark def cat_fuseMacro(): Int =
+  @Benchmark def farrayFuse_cat(): Int =
     Json.ndjson[Rec](buf).fuse.filter(_.amount > threshold).map(_.category).count
 
-  @Benchmark def cat_jsoniterNarrow(): Int =
+  @Benchmark def jsoniterNarrow_cat(): Int =
     var c = 0; var start = 0
     while start < buf.length do
       var end = start; while end < buf.length && buf(end) != '\n' do end += 1
@@ -168,11 +168,11 @@ class JsonProjectionBenchmark:
   // m0/m5 in [0,150); threshold 75 → ~50% selectivity so the compute-for-survivors win shows.
   val fatThreshold = 75.0
 
-  @Benchmark def fatM5_fuseMacro(): Double =
+  @Benchmark def farrayFuse_fatM5(): Double =
     Json.ndjson[FatRec](fatBuf).fuse.filter(_.m0 > fatThreshold).map(_.m5).sum
 
   /** jsoniter-narrow {m0, m5}: decodes BOTH doubles for every record + allocates the record. */
-  @Benchmark def fatM5_jsoniterNarrow(): Double =
+  @Benchmark def jsoniterNarrow_fatM5(): Double =
     var acc = 0.0; var start = 0
     while start < fatBuf.length do
       var end = start; while end < fatBuf.length && fatBuf(end) != '\n' do end += 1
@@ -181,11 +181,11 @@ class JsonProjectionBenchmark:
       start = end + 1
     acc
 
-  @Benchmark def fat3_fuseMacro(): Double =
+  @Benchmark def farrayFuse_fat3(): Double =
     Json.ndjson[FatRec](fatBuf).fuse.filter(_.m0 > fatThreshold).map(r => r.m1 + r.m2 + r.m3).sum
 
   /** jsoniter-narrow {m0,m1,m2,m3}: decodes ALL FOUR doubles for EVERY record (no compute-for-survivors). */
-  @Benchmark def fat3_jsoniterNarrow(): Double =
+  @Benchmark def jsoniterNarrow_fat3(): Double =
     var acc = 0.0; var start = 0
     while start < fatBuf.length do
       var end = start; while end < fatBuf.length && fatBuf(end) != '\n' do end += 1

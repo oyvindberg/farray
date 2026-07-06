@@ -2,28 +2,29 @@ import { useMemo } from "react";
 import { useStore } from "../data/store";
 import { Card } from "./BenchChart";
 import Scorecard from "./Scorecard";
-import { SECTIONS, type Section, type Chart } from "../data/bench";
+import RatioLegend from "./RatioLegend";
+import { SECTIONS, ours, type Section, type Chart } from "../data/bench";
 
 type SectionInfo = Partial<Record<Section, { title: string; blurb: string }>>;
 
 const FARRAY_SECTIONS: SectionInfo = {
   Primitive: {
     title: "Primitive elements",
-    blurb: "Int and Long payloads — where unboxing is the whole game and the gaps open widest.",
+    blurb: "Int and Long payloads, where unboxing is the whole game and the gaps open widest.",
   },
   String: {
     title: "Reference elements",
     blurb:
-      "String payloads. Nothing to unbox, so these isolate structure and dispatch alone — the honest half of the suite.",
+      "String payloads. Nothing to unbox, so these isolate structure and dispatch alone.",
   },
   ListLike: {
     title: "Cons-list workloads",
     blurb:
-      "FArray driven like a List — built with ::, torn down by head/tail recursion — against the structure built for exactly that.",
+      "FArray driven like a List (built with ::, torn down by head/tail recursion) against the structure built for exactly that.",
   },
   Diagnostics: {
     title: "Diagnostics & internals",
-    blurb: "Decompositions and micro-probes — including FArray-vs-itself variants that aren't a competing collection.",
+    blurb: "Decompositions and micro-probes, including FArray-vs-itself variants that aren't a competing collection.",
   },
 };
 
@@ -31,14 +32,14 @@ const FSET_SECTIONS: SectionInfo = {
   Primitive: {
     title: "Int elements",
     blurb:
-      "Unboxed Int payloads — the dense-bitmap and frozen-hash territory, against fastutil, HPPC, " +
+      "Unboxed Int payloads: the dense-bitmap and frozen-hash territory, against fastutil, HPPC, " +
       "Eclipse, Roaring, both BitSets and both Scala sets.",
   },
   String: {
     title: "String elements",
     blurb:
       "Reference payloads. Nothing to unbox, so these isolate the F14 table, the cached-hash merge " +
-      "algebra and the lazy nodes — against every JVM hash set that matters.",
+      "algebra and the lazy nodes, against every JVM hash set that matters.",
   },
 };
 
@@ -48,14 +49,22 @@ export default function BenchIndex({ suite = "farray" }: { suite?: "farray" | "f
   const { charts: faCharts, setCharts, ready } = useStore();
   const charts = suite === "fset" ? setCharts : faCharts;
   const info = suite === "fset" ? FSET_SECTIONS : FARRAY_SECTIONS;
-  const grouped = useMemo(() => {
+  const { grouped, selfRaces } = useMemo(() => {
     const g = new Map<Section, Chart[]>();
+    const self: Chart[] = [];
     for (const c of charts) {
+      const keys = Object.keys(c.series);
+      if (!keys.some((v) => !ours(v))) {
+        // no external competitor: fused-vs-eager (and similar FArray-vs-itself decompositions) get
+        // their own group below; single-series probes aren't a race at all and are dropped.
+        if (keys.length >= 2) self.push(c);
+        continue;
+      }
       const arr = g.get(c.section) ?? [];
       arr.push(c);
       g.set(c.section, arr);
     }
-    return g;
+    return { grouped: g, selfRaces: self };
   }, [charts]);
 
   if (!ready) return <p className="ref-loading">measuring…</p>;
@@ -68,6 +77,7 @@ export default function BenchIndex({ suite = "farray" }: { suite?: "farray" | "f
           One number per structure and section: the geometric mean of how far each sits behind the
           fastest-in-cell. 1.00 means fastest across the board; higher is slower.
         </p>
+        <RatioLegend />
         <Scorecard suite={suite} />
       </section>
 
@@ -82,6 +92,22 @@ export default function BenchIndex({ suite = "farray" }: { suite?: "farray" | "f
           </div>
         </section>
       ))}
+
+      {selfRaces.length > 0 && (
+        <section className="ref-section">
+          <h2>
+            Fusion: eager vs fused <span className="ref-count">{selfRaces.length} charts</span>
+          </h2>
+          <p className="ref-blurb">
+            FArray against itself: the same pipeline eager and through <code>.fuse</code>. These
+            measure what fusion adds, not how FArray compares to other collections; they are kept
+            out of the leaderboard.
+          </p>
+          <div className="bench-grid ref-grid">
+            {selfRaces.map((c) => <Card key={c.key} chart={c} />)}
+          </div>
+        </section>
+      )}
     </>
   );
 }

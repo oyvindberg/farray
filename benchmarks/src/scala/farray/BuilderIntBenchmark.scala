@@ -40,6 +40,12 @@ class BuilderIntBenchmark:
     while i < n do { b += src(i); i += 1 }
     b.result()
 
+  @Benchmark def iarray(): IArray[Int] =
+    val b = IArray.newBuilder[Int]
+    var i = 0; val n = size
+    while i < n do { b += src(i); i += 1 }
+    b.result()
+
   @Benchmark def vector(): Vector[Int] =
     val b = Vector.newBuilder[Int]
     var i = 0; val n = size
@@ -51,6 +57,8 @@ class BuilderIntBenchmark:
     var i = 0; val n = size
     while i < n do { b += src(i); i += 1 }
     b.result()
+
+  // fs2.Chunk has no element-wise builder (Collector.Builder appends whole Chunks only)
 
   // zio's specialized primitive builder (int[]-backed, held at the concrete type so += is unboxed).
   @Benchmark def ziochunk(): zio.Chunk[Int] =

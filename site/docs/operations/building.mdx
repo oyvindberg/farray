@@ -6,26 +6,32 @@ description: "Where FArrays come from: the varargs macro that unrolls to typed s
 
 import Link from "@docusaurus/Link";
 import BenchChart from "@site/src/components/BenchChart";
+import BenchPair from "@site/src/components/BenchPair";
 import Related from "@site/src/components/Related";
 
 <p className="lede">
   Construction is the one place this library starts a step behind by definition: a raw{" "}
-  <code>IArray(1, 2, 3)</code> is one array allocation, and an FArray is that array <em>plus</em> its
-  leaf node. That gap is accepted openly — the design principle says losing to a bare array on
-  inherently-allocating ops is fine, losing to the wrapper libraries is not. This page is how the
+  <code>IArray(1, 2, 3)</code> (an immutable raw array) is one array
+  allocation, and an FArray is that array <em>plus</em> its leaf node. That gap is accepted: the
+  design principle says losing to a bare array on inherently-allocating ops is fine, losing to the
+  wrapper libraries (Scala's <code>List</code> and <code>Vector</code>, plus the array-backed{" "}
+  <code>Chunk</code> types from the fs2 and ZIO streaming
+  libraries) is not. This page is how the
   entry points hold that line.
 </p>
 
 ## FArray(…) is a macro, and that matters
 
 `FArray(a, b, c)` looks like the varargs constructor every library has, and that's exactly the
-problem it avoids. A normal `apply(as: A*)` receives its arguments as a `Seq[A]` — which means the
+problem it avoids. A normal `apply(as: A*)` receives its arguments as a `Seq[A]` (Scala's generic
+read-only sequence interface): the
 compiler wraps your three literals into an array, boxes each one if it's a primitive, and hands the
 constructor a sequence to iterate. You pay a wrapper, N boxes, and a loop to build a three-element
 collection.
 
-FArray's `apply` is `inline`, and it forwards to a macro that never lets the `Seq` form. The macro
-reads the varargs literal straight off the syntax tree and **unrolls** it — it counts the arguments,
+FArray's `apply` is `inline` (the compiler is guaranteed to expand it at each call site; not a JIT
+hint), and it forwards to a macro that never lets the `Seq` form. The macro
+reads the varargs literal straight off the syntax tree and unrolls it: it counts the arguments,
 dispatches on the *static element type* to pick the concrete leaf kind, and emits the stores
 directly:
 
@@ -39,62 +45,71 @@ FArray(a, b, c)          // what you write, a, b, c: Int
   new IntArr(out, 3) }
 ```
 
-The element-type dispatch is the whole trick: `Int` args land in an `IntArr` over an `int[]`,
+The element-type dispatch does the work: `Int` args land in an `IntArr` over an `int[]`,
 `String` args in a `RefArr`, and the primitives are never boxed because they go straight into the
-typed array. The degenerate sizes are special-cased in the same pass — no args emit `Empty`, one arg
-emits `One(a)` — so there is no array or loop for the trivial cases either. Every `FArray(...)` call
+typed array. The degenerate sizes are special-cased in the same pass (no args emit `Empty`, one arg
+emits `One(a)`), so there is no array or loop for the trivial cases either. Every `FArray(...)` call
 site gets its own unrolled construction; there is no shared generic varargs path anywhere.
 
-That last point is where it shows against the field — a method constructing collections of *several
+That last point shows against the field in a method constructing collections of *several
 element kinds*. A shared generic varargs constructor sees `Int`, `Long`, `Double`, `String` flow
 through one call site and boxes them all; FArray emits four independent typed constructions, so
 there's no shared site to go megamorphic:
 
 <BenchChart
   cls="CreationMixedBenchmark"
-  caption="One method constructing a 4-element collection of four different element kinds per invocation. FArray: 2.3× over List, 3× over fs2.Chunk, 3.8× over Vector, 8.2× over zio.Chunk — and 0.79× of raw IArray, the honest inherent gap (they allocate an array; we allocate an array plus a node). Single-kind literals from 2 to 32 elements hold the same shape: behind IArray by 9–30% at the small end, closing to 0.91× by 32 as the fixed node cost amortizes; ahead of every wrapper throughout."
+  caption="One method constructing a 4-element collection of four different element kinds per invocation. FArray: 2.3× over List, 3× over fs2.Chunk, 3.8× over Vector, 8.2× over zio.Chunk, and 0.79× of raw IArray, the inherent gap (they allocate an array; we allocate an array plus a node). Single-kind literals from 2 to 32 elements hold the same shape: behind IArray by 9–30% at the small end, closing to 0.91× by 32 as the fixed node cost amortizes; ahead of every wrapper throughout."
 />
 
 ## The constructor family
 
-Beyond literals, the ways to make an FArray split into two groups. **From data you already have** —
+Beyond literals, the ways to make an FArray split into two groups. **From data you already have**:
 `from`/`fromIterable` (copy an existing collection into a leaf once), `fromArray` (wrap an `Array`
 kind-exactly), and `fromBoxedArray` (the escape hatch for an `Array[Object]` out of reflective
-code). **From a rule** — `fill(n)(elem)`, `tabulate(n)(i => …)` (element from its index),
+code). **From a rule**: `fill(n)(elem)`, `tabulate(n)(i => …)` (element from its index),
 `iterate(start, n)(f)`, and `unfold(seed)(f)`.
 
-`tabulate` and `fill` carry one narrow trick worth knowing. A reference FArray is normally backed by
+`tabulate` and `fill` carry one narrow trick. A reference FArray is normally backed by
 `Object[]`, which makes a later `toArray[String]` a *checked* per-element copy rather than a bulk
-`arraycopy`. So these two constructors summon a `ClassTag` **opportunistically**: when one is in
-scope for the element type, the backing array is allocated as the real `String[]` (`Trade[]`, …) —
-cast to `Object[]` only in the static type, still a `String[]` at runtime — so a later
+`arraycopy`. So these two constructors summon a `ClassTag` (a runtime class token that survives
+erasure) opportunistically: when one is in scope for the element type, the backing array is allocated as the real `String[]` (`Trade[]`, …),
+cast to `Object[]` only in the static type but still a `String[]` at runtime, so a later
 <Link to="/operations/getting-out">`toArray`</Link> is a straight `arraycopy`. When no tag is
 available nothing is demanded of the caller; you keep `Object[]` and the slower exit.
 
-Be clear about the boundary, because it's easy to over-read: this is an **island**. Every
-*transformation* — `map`, `filter`, `collect` — produces a plain `Object[]`-backed result, so
+The boundary is narrow, and easy to over-read: this trick is an island. Every
+*transformation* (`map`, `filter`, `collect`) produces a plain `Object[]`-backed result, so
 `xs.map(_.toString).toArray[String]` gets the checked copy regardless. The typed backing survives
 only from a `tabulate`/`fill` (or a `fromArray` you handed a typed array) straight to `toArray` with
-no transform in between. It's a real win on exactly that path and costs nothing elsewhere — not a
-general property of reference FArrays.
+no transform in between. It's a real win on exactly that path and costs nothing elsewhere; it is not
+a general property of reference FArrays.
+
+Construction is inherently allocating, so the honest baseline is `IArray` — a raw array, no wrapper.
+`fill` ties it; `tabulate` is the surprise:
+
+<BenchPair
+  int="ConstructIntBenchmark"
+  str="ConstructStrBenchmark"
+  caption="fill and tabulate, building `size` elements from a rule, Int beside String. `fill` on Int ties IArray and leaves the boxing collections behind (List 19–25×, Vector 6.6–7.9×). `tabulate` on Int is the standout: FArray pulls ~13.8× ahead of IArray at 100k, because `FArray.tabulate` takes its function `inline` and fills the `int[]` directly, while `Array.tabulate` is generic and boxes every `f(i)` through a `Function1` — the allocation profiler measures 2.0 MB/op for IArray against FArray's 0.40 MB (one `int[]`, nothing extra). On String every element allocates anyway, so the gap narrows to structure alone (1.5–2.2× over the field)."
+/>
 
 ## range is not a loop
 
-`FArray.range(0, n)` allocates nothing per element — it's a lazy `RangeNode`, the arithmetic
+`FArray.range(0, n)` allocates nothing per element: it's a lazy `RangeNode`, the arithmetic
 sequence *as a tree leaf*. Reads compute `start + i * step`; the range only becomes a real array if
 something forces it. A pipeline that maps over a range never pays for the range:
 
 <BenchChart
   cls="RangeMapIntBenchmark"
-  caption="range(0, n).map(f): ~1.6–1.9× over the best rival at every size — the range contributes reads, not an allocation, and map writes the only array that ever exists."
+  caption="range(0, n).map(f): ~1.6–1.9× over the best rival at every size. The range contributes reads, not an allocation, and map writes the only array that ever exists."
 />
 
 ## Accumulating element by element
 
-For the imperative case — pushing elements one at a time when you don't know the count up front —
+For the imperative case (pushing elements one at a time when you don't know the count up front),
 `scala.collection.mutable.Builder` is the wrong tool: its `addOne(elem: A)` is generic, so every
-primitive boxes at the interface, undoing the whole point. FArray has a dedicated
-<Link to="/operations/builder">unboxed builder</Link> that dodges that — and beats even the
+primitive boxes at the interface. FArray has a dedicated
+<Link to="/operations/builder">unboxed builder</Link> that avoids the boxing and beats even the
 standard library's specialized `int[]` builder.
 
 <Related

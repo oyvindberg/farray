@@ -33,20 +33,20 @@ export function Api({ label, ops }) {
   );
 }
 
-<p className="page__eyebrow">concept two of five</p>
+<p className="page__eyebrow">the stages</p>
 
 <p className="lede">
-  A stage is a method that does nothing. Literally: <code>def map[B](f: A => B): Fuse[B, S] = this</code>
-  — the body discards the lambda and returns the receiver. Stages exist so the terminal macro has
-  something to read off the syntax tree; at runtime they are not even a memory of themselves. That
-  one design decision is why you can chain fourteen of them and pay for none.
+  A stage is a method that does nothing: <code>def map[B](f: A => B): Fuse[B, S] = this</code>. The
+  body discards the lambda and returns the receiver. Stages exist so the terminal macro (code that
+  runs inside the compiler and rewrites the call from its typed syntax tree) has something to read
+  off the syntax tree; they have no runtime representation. That is why chaining
+  fourteen of them costs nothing.
 </p>
 
 ## The vocabulary
 
-You know most of these from every collection library you've used, and they mean what they always
-mean. What's different is what they cost — nothing — and where their lambdas end up — spliced into
-the one loop:
+These carry their usual collection-library meanings. What differs is the cost (none) and where the
+lambdas end up (spliced into the one loop):
 
 <Api
   label="transform"
@@ -69,27 +69,28 @@ the one loop:
   ops={["foldAdjacentBy", "groupAdjacentBy", "groupAdjacentReduceBy"]}
 />
 
-Footnotes for the reader who audits: `withFilter` means for-comprehension guards fuse. `grouped(n)`
-is a *stage* here, not a terminal — it emits `FArray[A]` chunks you can keep transforming, and it
+Details: `withFilter` means for-comprehension guards fuse (a for-comprehension is Scala's `for`
+syntax, which the compiler desugars into `map`/`flatMap`/`withFilter` calls). `grouped(n)`
+is a *stage* here, not a terminal: it emits `FArray[A]` chunks you can keep transforming, and it
 short-circuits under a downstream `take`. `takeRight` is the one stage that can't short-circuit its
 source (the last *n* aren't knowable until the end; it rides an O(n) ring buffer). `map2(that)(f)` is
 `zip(that).map(f)` that never forms the pair.
 
 ## The stage worth staring at: collect, unboxed
 
-`collect` is the sharpest demonstration of what "spliced into the loop" means, because on the
-standard library it's one of the most expensive innocent-looking calls: it allocates a
-`PartialFunction`, and runs every element through generic `applyOrElse` — boxing each primitive
-twice. Fused:
+`collect` shows what "spliced into the loop" means, because the standard-library version is
+expensive: it allocates a `PartialFunction` (a Scala function object that also reports whether it
+matches a given argument) and runs every element through generic `applyOrElse`, boxing each
+primitive twice. Fused:
 
 <FuseEx src="fuse-src-guide-collect" gen="fuse-guide-collect" />
 
-There is no `PartialFunction` object anywhere. The `case x if x % 2 == 0 => x * 2` became a pattern
-match on an unboxed `Int` inside the loop — the guard is the branch, the result goes straight into
-the output `int[]`. A partial function that compiles to an `if` is what you meant when you wrote it.
+The lowering contains no `PartialFunction` object: the `case x if x % 2 == 0 => x * 2` became a
+pattern match on an unboxed `Int` inside the loop, the guard is the branch, and the result goes
+straight into the output `int[]`.
 
-It composes. Here `zip` reads a second array in lock-step and `collect` destructures the pair right
-in the loop — both columns stay unboxed throughout:
+The stage composes: here `zip` reads a second array in lock-step, `collect` destructures the pair
+in the loop, and both columns stay unboxed throughout:
 
 <FuseEx src="fuse-src-guide-zipcollect" gen="fuse-guide-zipcollect" />
 
@@ -98,19 +99,19 @@ in the loop — both columns stay unboxed throughout:
 Because the whole chain is visible at compile time, adjacent stages simplify *algebraically* before
 any code is emitted. `take(n).take(m)` collapses to one clamped limit; `drop(n).drop(m)` to one skip
 counter; and a `take` slides left past a `map` (length- and position-preserving) to meet another
-`take` on the far side. Watch the two takes in this chain become a single `min(7, 3)`:
+`take` on the far side. In this chain the two takes become a single `min(7, 3)`:
 
 <FuseEx src="fuse-src-guide-taketake" gen="fuse-guide-taketake" />
 
-The practical meaning: compose freely. Helper methods that append a defensive `take`, guards layered
-by different call sites — none of it leaves residual loop machinery behind.
+In practice this means composition is free: helper methods that append a defensive `take`, or
+guards layered by different call sites, leave no residual loop machinery behind.
 
 ## The clustered-data family
 
 One family has no standard-library counterpart at all, and it exists because real data is so often
 *already ordered*: a time-clustered trade log, an access log grouped by request id, any sorted
 export. A hash `groupBy` would buffer the entire dataset to rediscover an order it already had. The
-adjacent stages exploit the order instead — and because they're stages, they compose downstream and
+adjacent stages exploit the order instead, and because they're stages, they compose downstream and
 short-circuit; over a <Link to="/fusion/sources">streaming source</Link> they process a file of any
 size in constant memory.
 
@@ -119,43 +120,41 @@ lowering on this page:
 
 <Snippet name="guide-trade" hideFull />
 
-**`foldAdjacentBy(key)(seed)(combine)`** — one `(key, acc)` pair per maximal run of equal keys, O(1)
-memory: the whole state is the current key and one accumulator. Per-day totals in one line, and the
-lowering to read it by — the emit happens on key *change*, with the final run flushed after the
-loop:
+**`foldAdjacentBy(key)(seed)(combine)`** emits one `(key, acc)` pair per maximal run of equal keys,
+in O(1) memory: the whole state is the current key and one accumulator. Per-day totals in one line;
+in the lowering, the emit happens on key *change*, with the final run flushed after the loop:
 
 <FuseEx src="fuse-src-guide-foldadj" gen="fuse-guide-foldadj" />
 
-**`groupAdjacentBy(key)`** — when you need the run's *rows*: each run becomes its own `FArray[A]`,
+**`groupAdjacentBy(key)`** is for when you need the run's *rows*: each run becomes its own `FArray[A]`,
 buffered one run at a time (O(largest run), never O(N)). Downstream stages see a stream of groups,
 so `take` stops the source after enough *runs*:
 
 <FuseEx src="fuse-src-guide-groupadj" gen="fuse-guide-groupadj" />
 
-**`groupAdjacentReduceBy(key)(prep)(agg)`** — nested fusion, the family's headline: a *fused
-sub-pipeline* runs over each group's rows and emits `(key, result)` per run. `prep` is ordinary
-stages over the group; `agg` its aggregate — and with a folding aggregate the rows are **never
-materialized**. Look at the lowering: the inner `map`/`filter` runs inline as each row streams past,
-the accumulator resets on key change, and no per-group collection ever exists:
+**`groupAdjacentReduceBy(key)(prep)(agg)`** is nested fusion: a *fused sub-pipeline* runs over each
+group's rows and emits `(key, result)` per run. `prep` is ordinary stages over the group; `agg` its
+aggregate; with a folding aggregate the rows are never materialized. In the lowering, the inner
+`map`/`filter` runs inline as each row streams past, the accumulator resets on key change, and no
+per-group collection ever exists:
 
 <FuseEx src="fuse-src-guide-nested" gen="fuse-guide-nested" />
 
-One honest precondition for all three: "clustered by key" is *your* declaration. On unordered input
-the result is per-run, not per-key — documented, not detected.
+One precondition for all three: "clustered by key" is the caller's declaration. On unordered input
+the result is per-run, not per-key; this is documented, not detected.
 
 ## Semantics: what laziness changes
 
 A fused pipeline is short-circuiting end to end. Under `take`, `find`, `exists`, a stage lambda runs
-*fewer* times than in the strict `List` version — `map(f).take(3)` calls `f` exactly three times over
+*fewer* times than in the strict `List` version: `map(f).take(3)` calls `f` exactly three times over
 a million elements. And when a `map` builds a product whose columns a later `filter` only partly
-reads, the unread columns are computed only for survivors — that story belongs to{" "}
+reads, the unread columns are computed only for survivors; that analysis belongs to{" "}
 <Link to="/fusion/optimizer">the optimizer</Link>. For pure lambdas the results are identical to the
-strict semantics; side-effecting lambdas can observe the difference. That's the trade, stated once
-and honestly.
+strict semantics; side-effecting lambdas can observe the difference.
 
 <Related
   links={[
-    { to: "/fusion/terminals", label: "Next: Terminals & lowerings", desc: "The call that ends the chain is the compiler invocation." },
+    { to: "/fusion/terminals", label: "Next: Terminals", desc: "The call that ends the chain is the compiler invocation." },
     { to: "/fusion/optimizer", label: "The optimizer", desc: "Columns, dead-column elimination, compute-for-survivors." },
   ]}
 />

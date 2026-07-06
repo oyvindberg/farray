@@ -38,7 +38,8 @@ bleep compile "$RUNNER" >/tmp/setbench-compile.log 2>&1 || { echo "compile faile
 
 # bleep's on-disk bloop configs are stale, so grab the real java+classpath from a live run.
 echo "▶ Capturing runtime java + classpath…"
-bleep run "$RUNNER" -- "IntSetContainsHitBenchmark.fset" -p size=16 -wi 5 -i 120 -f 0 -r 1s >/tmp/setcp-cap.log 2>&1 &
+# </dev/null: see bench-run.sh — a backgrounded bleep run from an interactive TTY fails its input reader.
+bleep run "$RUNNER" -- "IntSetContainsHitBenchmark.fset" -p size=16 -wi 5 -i 120 -f 0 -r 1s </dev/null >/tmp/setcp-cap.log 2>&1 &
 CAPPID=$!
 JAVA=""; CP=""
 for _ in $(seq 1 90); do
