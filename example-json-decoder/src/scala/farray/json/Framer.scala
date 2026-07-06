@@ -3,13 +3,10 @@ package farray.json
 import farray.{Framed, FramedByteSource}
 
 // start:ndjson-frame
-/** The NDJSON framer, in its entirety: with the carry/stitch machinery owned by
-  * [[farray.FramedByteSource]], a format's whole job is one function from a byte window to a
-  * [[farray.Framed]] verdict. For NDJSON that is a newline scan; the trailing record at end of
-  * stream is complete even without its `\n`.
+/** The NDJSON framer, in its entirety: with the carry/stitch machinery owned by [[farray.FramedByteSource]], a format's whole job is one function from a byte
+  * window to a [[farray.Framed]] verdict. For NDJSON that is a newline scan; the trailing record at end of stream is complete even without its `\n`.
   */
-private[json] class Framer(read: (Array[Byte], Int, Int) => Int, blockSize: Int, doClose: () => Unit)
-    extends FramedByteSource(read, blockSize, doClose):
+private[json] class Framer(read: (Array[Byte], Int, Int) => Int, blockSize: Int, doClose: () => Unit) extends FramedByteSource(read, blockSize, doClose):
 
   protected def frame(buf: Array[Byte], from: Int, limit: Int, atEof: Boolean): Framed =
     if from >= limit then (if atEof then Framed.End else Framed.NeedMore)

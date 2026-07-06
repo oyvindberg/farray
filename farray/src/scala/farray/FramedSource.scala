@@ -1,11 +1,9 @@
 package farray
 
 // start:framed-adt
-/** A framer's verdict when asked for the next record in the working buffer. Chunks (units of
-  * memory) and records (units of meaning) don't line up: a record can straddle two reads. Making
-  * that misalignment a first-class VALUE — instead of an offset somebody has to remember — is what
-  * keeps the boundary logic in exactly one place ([[FramedByteSource]]): the byte reader below
-  * knows nothing about records, and the engine above only ever sees complete frames.
+/** A framer's verdict when asked for the next record in the working buffer. Chunks (units of memory) and records (units of meaning) don't line up: a record can
+  * straddle two reads. Making that misalignment a first-class VALUE — instead of an offset somebody has to remember — is what keeps the boundary logic in
+  * exactly one place ([[FramedByteSource]]): the byte reader below knows nothing about records, and the engine above only ever sees complete frames.
   */
 enum Framed:
   /** a complete record occupies `[start, end)` in the working buffer. */
@@ -21,14 +19,11 @@ enum Framed:
   case End
 // stop:framed-adt
 
-/** The reusable half of a streaming byte source: owns the working buffer, the block reads, and the
-  * carry/stitch for records that straddle reads — the one genuinely fiddly job in implementing
-  * [[ByteRecordSource]], written once. A format plugs in by implementing [[frame]]: look at
-  * `[from, limit)` of `buf` and say what's there ([[Framed]]). NDJSON's implementation is a
-  * newline scan; a length-prefixed format would read a header.
+/** The reusable half of a streaming byte source: owns the working buffer, the block reads, and the carry/stitch for records that straddle reads — the one
+  * genuinely fiddly job in implementing [[ByteRecordSource]], written once. A format plugs in by implementing [[frame]]: look at `[from, limit)` of `buf` and
+  * say what's there ([[Framed]]). NDJSON's implementation is a newline scan; a length-prefixed format would read a header.
   *
-  * Working set = O(read block + the largest single record): the buffer grows only to hold one
-  * straddling record, never the stream.
+  * Working set = O(read block + the largest single record): the buffer grows only to hold one straddling record, never the stream.
   */
 abstract class FramedByteSource(read: (Array[Byte], Int, Int) => Int, blockSize: Int, doClose: () => Unit) extends ByteRecordSource:
   private val bs: Int = math.max(64, blockSize)
@@ -40,9 +35,8 @@ abstract class FramedByteSource(read: (Array[Byte], Int, Int) => Int, blockSize:
   private var eof: Boolean = false // the reader returned -1
   private var closed: Boolean = false
 
-  /** the format's whole job: frame the next record in `buf(from until limit)`, or say why not.
-    * Must not mutate anything; `atEof` is true once the underlying stream is exhausted (so a
-    * trailing record with no terminator can still be [[Framed.Record]]).
+  /** the format's whole job: frame the next record in `buf(from until limit)`, or say why not. Must not mutate anything; `atEof` is true once the underlying
+    * stream is exhausted (so a trailing record with no terminator can still be [[Framed.Record]]).
     */
   protected def frame(buf: Array[Byte], from: Int, limit: Int, atEof: Boolean): Framed
 
@@ -51,9 +45,8 @@ abstract class FramedByteSource(read: (Array[Byte], Int, Int) => Int, blockSize:
   def recordStart: Int = recStart
   def recordEnd: Int = recEnd
 
-  /** read one more block, FIRST compacting any pending tail (`[pos, dataEnd)`) to the front so an
-    * unfinished record becomes contiguous with the new bytes — growing `work` if a single record
-    * is larger than the buffer.
+  /** read one more block, FIRST compacting any pending tail (`[pos, dataEnd)`) to the front so an unfinished record becomes contiguous with the new bytes —
+    * growing `work` if a single record is larger than the buffer.
     */
   private def refill(): Unit =
     val tail = dataEnd - pos

@@ -4,8 +4,7 @@ import org.openjdk.jmh.annotations.*
 import java.util.concurrent.TimeUnit
 
 /** A LONG, mixed-stage pipeline — run the SAME logical transform across FArray (fused vs eager) and the standard immutable collections (List, Vector, IArray,
-  * zio.Chunk).
-  * This is the headline comparison: one fused unboxed pass vs N intermediate collections.
+  * zio.Chunk). This is the headline comparison: one fused unboxed pass vs N intermediate collections.
   *
   * The chains deliberately use a rich mix of stages fusion supports AND every collection has — `map`, `filter`, `collect` (a PartialFunction; fusion inlines
   * the match into one filter+map), `take`/`takeWhile`, `zipWithIndex`, `flatMap` — so it's apples-to-apples.
