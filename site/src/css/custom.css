@@ -364,7 +364,11 @@ table.cx td.cx-b { color: var(--ink-soft); }
 .bcard__tip .row { display: flex; align-items: center; gap: 6px; padding: 1.5px 0; }
 .bcard__tip .row--me { font-weight: 700; }
 .bcard__tip .row i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
-.bcard__tip .nm { flex: 1; white-space: nowrap; } .bcard__tip .vv { font-variant-numeric: tabular-nums; }
+/* .nm must be content-sized (flex:none), not flex:1: a grow item with flex-basis 0 makes the row's
+   intrinsic max-content width smaller than its real content, so the tip's width:max-content box
+   came out narrower than the nowrap text it holds. margin-right:auto does the push instead. */
+.bcard__tip .nm { flex: none; margin-right: auto; padding-right: 12px; white-space: nowrap; }
+.bcard__tip .vv { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .bcard__tip .rt { font-size: 9.5px; padding: 1px 5px; border-radius: 4px; font-weight: 700; }
 .bcard__tip .rt--up { background: #0c3d20; color: #86efac; } .bcard__tip .rt--dn { background: #4a1410; color: #fca5a5; }
 
