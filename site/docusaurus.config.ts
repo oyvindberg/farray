@@ -42,7 +42,7 @@ const config: Config = {
   themeConfig: {
     // Prism's default bundle has no Scala: every ```scala fence rendered unhighlighted until this.
     prism: {
-      additionalLanguages: ["scala", "java"],
+      additionalLanguages: ["java", "scala"], // order matters: prism-scala extends the java grammar
     },
     metadata: [
       {
