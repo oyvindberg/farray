@@ -10,7 +10,8 @@ import Related from "@site/src/components/Related";
 
 <p className="lede">
   The exits are boring, as they should be: turning an FArray back into an
-  array, a string, or a standard-library <code>Seq</code> is either a raw copy or no copy at all.
+  array, a string, or a standard-library <code>Seq</code> (Scala's read-only sequence interface,
+  the role <code>java.util.List</code> plays in Java) is either a raw copy or no copy at all.
   There's exactly one interesting decision here, how <code>toSeq</code> provides the collections
   interface without materializing anything, and it's the reason the conversions are cheap.
 </p>
@@ -22,7 +23,7 @@ cleverness available, everyone does the same `arraycopy` for the same n elements
 The one thing FArray can get wrong here is the *type* of the
 copy: a reference FArray backed by `Object[]` makes `toArray[String]` a *checked* per-element copy
 rather than a bulk `arraycopy`. Whether you dodge that depends on how the FArray was born:
-`tabulate`/`fill` (with a `ClassTag` in scope) and `fromArray` of a typed array give a real
+`tabulate`/`fill` (with a `ClassTag` in scope, Scala's runtime class token that survives erasure) and `fromArray` of a typed array give a real
 `String[]` backing, so `toArray` is a straight `arraycopy`; a result of `map`/`filter`/`collect` is
 `Object[]`-backed and pays the checked copy. It's an <Link to="/operations/building">island, not a
 guarantee</Link>, worth knowing because it's easy to assume it's always fast.
@@ -38,7 +39,7 @@ dominates).
 
 ## toSeq: the interface without the collection
 
-The interesting exit is the one that copies nothing. `List` and `Vector` *are* `Seq`s, so their
+The interesting exit is the one that copies nothing. `List` (Scala's immutable linked list) and `Vector` (its persistent-tree sequence) *are* `Seq`s, so their
 `toSeq` returns `this` for free, and an FArray that had to materialize a fresh `Seq` would lose that
 comparison by a whole allocation on every call. FArray materializes nothing.
 
@@ -53,7 +54,7 @@ final class FArraySeq[A](under: FBase) extends immutable.IndexedSeq[A]:
 ```
 
 That's the whole thing: O(1) to construct, no elements copied, and now you have the full
-standard-library `Seq` API (pattern matching, `for`-comprehensions, anything typed to `Seq[A]`)
+standard-library `Seq` API (pattern matching, Scala's `for`-comprehension loops, anything typed to `Seq[A]`)
 over your FArray's storage. The honest cost is in the signature: a `Seq[A]` hands back *boxed*
 `A`, so reads through the wrapper go via `applyBoxed` and a primitive re-boxes on the way out. The
 wrapper is for handing an FArray to code that speaks `Seq`; unboxed reads stay on the FArray

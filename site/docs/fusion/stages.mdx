@@ -37,8 +37,9 @@ export function Api({ label, ops }) {
 
 <p className="lede">
   A stage is a method that does nothing: <code>def map[B](f: A => B): Fuse[B, S] = this</code>. The
-  body discards the lambda and returns the receiver. Stages exist so the terminal macro has
-  something to read off the syntax tree; they have no runtime representation. That is why chaining
+  body discards the lambda and returns the receiver. Stages exist so the terminal macro (code that
+  runs inside the compiler and rewrites the call from its typed syntax tree) has something to read
+  off the syntax tree; they have no runtime representation. That is why chaining
   fourteen of them costs nothing.
 </p>
 
@@ -68,7 +69,8 @@ lambdas end up (spliced into the one loop):
   ops={["foldAdjacentBy", "groupAdjacentBy", "groupAdjacentReduceBy"]}
 />
 
-Details: `withFilter` means for-comprehension guards fuse. `grouped(n)`
+Details: `withFilter` means for-comprehension guards fuse (a for-comprehension is Scala's `for`
+syntax, which the compiler desugars into `map`/`flatMap`/`withFilter` calls). `grouped(n)`
 is a *stage* here, not a terminal: it emits `FArray[A]` chunks you can keep transforming, and it
 short-circuits under a downstream `take`. `takeRight` is the one stage that can't short-circuit its
 source (the last *n* aren't knowable until the end; it rides an O(n) ring buffer). `map2(that)(f)` is
@@ -77,8 +79,9 @@ source (the last *n* aren't knowable until the end; it rides an O(n) ring buffer
 ## The stage worth staring at: collect, unboxed
 
 `collect` shows what "spliced into the loop" means, because the standard-library version is
-expensive: it allocates a `PartialFunction` and runs every element through generic `applyOrElse`,
-boxing each primitive twice. Fused:
+expensive: it allocates a `PartialFunction` (a Scala function object that also reports whether it
+matches a given argument) and runs every element through generic `applyOrElse`, boxing each
+primitive twice. Fused:
 
 <FuseEx src="fuse-src-guide-collect" gen="fuse-guide-collect" />
 

@@ -11,8 +11,8 @@ import Related from "@site/src/components/Related";
 
 <p className="lede">
   The whole cost model hangs off the split between the flavours. The{" "}
-  <strong>structural combinators</strong> (<code>++</code>, <code>:+</code>, <code>take</code>,{" "}
-  <code>reverse</code>, <code>slice</code>) change the <em>shape</em>: each builds a lazy node in O(1)
+  <strong>structural combinators</strong> (<code>++</code> concatenates, <code>:+</code> appends
+  one element, plus <code>take</code>, <code>reverse</code>, <code>slice</code>) change the <em>shape</em>: each builds a lazy node in O(1)
   and copies nothing. The <strong>elementwise combinators</strong> (<code>map</code>,{" "}
   <code>filter</code>, <code>fold</code>, anything that takes a lambda) run it over every element,{" "}
   <em>eagerly</em>, and hand back a flat, array-backed <code>FArray</code> (or a single value, for a
@@ -21,7 +21,8 @@ import Related from "@site/src/components/Related";
 
 That laziness is the trade. A bare array would be a hair quicker at a single indexed read (one
 type-check that `int[]` doesn't carry), but it can't compare or print itself:
-`IArray(1, 2, 3).toString` is `[I@5a07e868` and `==` is identity. FArray wraps the array in an object,
+`IArray(1, 2, 3).toString` (IArray being Scala's immutable view of a raw array) is `[I@5a07e868`
+and `==` is identity. FArray wraps the array in an object,
 so it gives that hair back and gets value `equals`, `hashCode` and `toString`, plus a collection you
 can assemble any way you please, in constant time, paying for a flat array only when you ask for one.
 Here's the cost of each:
@@ -33,8 +34,9 @@ The reason that table is almost all `O(1)` is that the structural nodes are lazy
 you `++` twenty arrays together and then call `take(2)`, the traversal walks two elements into the
 tree and stops; the other nineteen concatenations never materialize.
 
-And what you do pay amortizes. Cons a million elements on one at a time and you've built a
-million-deep tree of O(1) nodes; the first elementwise combinator (a `map`, a `sum`, a `foldLeft`)
+And what you do pay amortizes. Cons a million elements on one at a time (prepend, linked-list
+style) and you've built a million-deep tree of O(1) nodes; the first elementwise combinator (a
+`map`, a `sum`, a `foldLeft`, which is Stream.reduce with a seed)
 flattens the whole thing into one contiguous primitive array in a single pass, and every read after
 that is array-speed. The flat array is the preferred shape, and computing restores it.
 
@@ -44,7 +46,8 @@ that is array-speed. The flat array is the preferred shape, and computing restor
 />
 
 One consequence gets [a page of its own](../operations/list-parity.mdx): driven as a
-literal cons-list, FArray keeps pace with `List` at `List`'s own game.
+literal cons-list, FArray keeps pace with `List` (Scala's immutable linked list, not
+`java.util.List`) at `List`'s own game.
 
 Two more ops belong to the O(1) family and rarely get counted: `updated(i, x)` is an `Updated`
 node (a view of the original with one slot overridden, no copy of the other n−1 elements) and
@@ -56,7 +59,8 @@ ordinary wins, no special mechanism.
 ## Sorting
 
 Sorting is where a raw array should win outright. FArray sorts directly on the
-materialized array, with a run-detecting mergesort, no boxed indices, and no `Ordering` ceremony:
+materialized array, with a run-detecting mergesort, no boxed indices, and no `Ordering` (Scala's
+`Comparator`) ceremony:
 
 <BenchPair
   int="SortIntBenchmark"

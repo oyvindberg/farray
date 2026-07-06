@@ -20,9 +20,10 @@ import Related from "@site/src/components/Related";
 ## The microbenchmark that can't tell anyone apart
 
 The honest baseline frames everything after it. A *lone* fold is the case
-every JIT handles: one call site, one lambda class, the shared generic `foldLeft` inlines and
-specializes, and everyone's loop ends up load-add-load-add. Measured that way, FArray and a bare
-`int[]` sit together at the hardware ceiling, within 1% at every size, and that tie is the correct
+every JIT handles: one call site, one lambda class, the shared generic `foldLeft` (`Stream.reduce`
+with a seed) inlines and specializes, and everyone's loop ends up load-add-load-add. Measured that
+way, FArray and a bare `int[]` (IArray, Scala's immutable view of one, in the charts) sit together
+at the hardware ceiling, within 1% at every size, and that tie is the correct
 result:
 
 <BenchPair
@@ -40,7 +41,8 @@ into the call site and specializes it; the tie above is paid for out of the meth
 inlining budget. With several folds in one method (an ordinary reporting or
 aggregation method), the budget runs out: the shared fold collapses back to its generic boxed
 signature, one call site at a time, as the method grows. We measured the collapse beginning at four
-folds per method on C2 and around twelve on Graal.
+folds per method on C2 and around twelve on Graal. The story applies verbatim to
+`java.util.stream`: a `Stream.reduce` runs unboxed only while the JIT keeps its Sink chain inlined.
 
 FArray's fold surface is a tiny call to a compiled-once leaf, not inlined, so the
 sixth fold in a method compiles exactly like the first. The benchmark runs six reference folds in one
@@ -66,7 +68,7 @@ fixed combiner. Same machinery, same result:
 
 <BenchChart
   cls="AggregateIntBenchmark"
-  caption="max / min / maxBy / minBy / sum / product on Int. The By-variants are where FArray stretches the lead: the projected key is computed once per element into a primitive local, versus an Ordering[B] call chain that boxes both the key and the comparison."
+  caption="max / min / maxBy / minBy / sum / product on Int. The By-variants are where FArray stretches the lead: the projected key is computed once per element into a primitive local, versus an Ordering[B] (Scala's Comparator) call chain that boxes both the key and the comparison."
 />
 
 ## scan: the op that taught us about loop shape

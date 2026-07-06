@@ -9,7 +9,8 @@ import BenchPair from "@site/src/components/BenchPair";
 import Related from "@site/src/components/Related";
 
 <p className="lede">
-  <code>collect</code> is filter and map in one pattern match. The first eager
+  <code>collect</code> is filter and map in one pattern match (a Scala <code>match</code>: a switch
+  whose cases can test, destructure and produce a value). The first eager
   implementation here kept the <code>PartialFunction</code> object and <em>measurably lost</em>. What
   ships instead picks the pattern match apart at compile time, the same move the fusion engine makes,
   done in the eager machinery.
@@ -17,9 +18,10 @@ import Related from "@site/src/components/Related";
 
 ## The tax, and where it isn't
 
-A `PartialFunction[A, B]` is a generic runtime object, and a collect loop consults it per element:
-the good implementations (fs2, zio) via one `applyOrElse` call with a sentinel default, the standard
-library via `isDefinedAt` + `apply`. Generic means erased: on `Int` elements every question and
+A `PartialFunction[A, B]` (Scala's reification of a pattern match: a lambda paired with an
+`isDefinedAt` test) is a generic runtime object, and a collect loop consults it per element:
+the good implementations (fs2 and zio, the two streaming libraries) via one `applyOrElse` call
+with a sentinel default, the standard library via `isDefinedAt` + `apply`. Generic means erased: on `Int` elements every question and
 answer crosses through `Integer`. That tax has nothing to do with *arrays*:
 our first implementation had unboxed storage on both sides of the PF boundary and still ran at
 **0.65×** of the best rival at 100k Int. The boundary itself was the whole cost.
@@ -31,7 +33,8 @@ compile-time information:
 xs.collect { case x if x % 2 == 0 => x * 2 }
 ```
 
-`collect` is an inline op, so a small macro sees that literal and splits it: the pattern and guard
+`collect` is an inline op, so a small macro (code that runs inside the compiler and rewrites the
+typed syntax tree) sees that literal and splits it: the pattern and guard
 become a predicate `x => x % 2 == 0`, the case body becomes a transform `x => x * 2`, and both feed
 a one-pass impl exactly the way <Link to="/operations/filter">filter's</Link> and{" "}
 <Link to="/operations/map">map's</Link> lambdas do: `inline` parameters, spliced into the

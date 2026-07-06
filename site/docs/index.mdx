@@ -17,8 +17,8 @@ import { FusionDiagram } from "@site/src/components/Diagrams";
 <header className="hero--farray">
   <h1 className="wordmark">FArray</h1>
   <p className="hero__lede">
-    An immutable, unboxed Scala 3 sequence with the whole collections API. Faster than
-    List, Vector and the Chunks, usually by a lot.
+    An immutable, unboxed Scala 3 sequence with the whole collections API. Faster than Scala's
+    List and Vector and the array-backed Chunks of the fs2 and ZIO libraries, usually by a lot.
   </p>
   <p className="hero__sub">
     Every number here is a JMH measurement you can hover; every snippet is extracted from source that
@@ -82,13 +82,19 @@ stages, identical code on every collection; the FArray version differs by one wo
 At 100k elements: **36× the fastest competitor**, **83× List**, and **15× the same pipeline run
 eagerly on FArray itself**.
 
-The reason is simple. Run those stages eagerly and each one allocates a collection whose only
+If you're coming from Java: the pipeline reads like a Stream, but the comparison ends there.
+A Stream fuses at runtime, pushing every element through a chain of virtual `Sink` calls;
+`.fuse` rewrites the chain at compile time, so at runtime there is no chain.
+
+The reason for the gap is simple. Run those stages eagerly and each one allocates a collection whose only
 purpose is to be consumed by the next. `.fuse` builds none of them:
 
 <FusionDiagram />
 
-It's a macro. At compile time the whole chain becomes one `while` loop, with no intermediate
-collections, no `Function1`, and no boxing. The lowering is checked into the repo as a golden test,
+It's a macro: compiler-executed code that reads the pipeline off the typed syntax tree and
+replaces it, the kind of rewrite an annotation processor could never do at expression level. The
+whole chain becomes one `while` loop, with no intermediate collections, no lambda objects, and no
+boxing. The lowering is checked into the repo as a golden test,
 so you can read exactly what those fourteen stages compiled to:
 
 <GeneratedCode name="fuse-generated" summary="The loop .fuse emitted: 14 stages, one pass" />
@@ -106,20 +112,21 @@ line. The chart above is really three speeds:
 <Ladder />
 
 **Today's speed.** `List` and `Vector` pay a box, an allocation and a virtual call per element, per
-stage. The Chunks keep arrays underneath but box at the stage boundaries. `IArray` doesn't box at
-all, but it copies the whole array at each of the thirteen seams, and the copies are what you end up
+stage. The Chunks keep arrays underneath but box at the stage boundaries. `IArray` (Scala's immutable
+view of a raw array) doesn't box at all, but it copies the whole array at each of the thirteen seams, and the copies are what you end up
 paying for. They are all really allocated; escape analysis doesn't remove intermediates at this
 depth.
 
 **The type swap.** The same code with `FArray` under it. Storage is a real `int[]`, structural steps
-like `take` and `reverse` are O(1) nodes instead of copies, and every lambda-taking op is `inline`,
-which puts the unboxing in the method signature. That last part matters: the rivals that tie us on a
+like `take` and `reverse` are O(1) nodes instead of copies, and every lambda-taking op is `inline`, which in
+Scala 3 is a guarantee performed by the compiler, not a hint to the JIT: the op's body and your
+lambda land in your method, with the unboxing fixed in the signature. That last part matters: the rivals that tie us on a
 single op lose that tie as the surrounding method grows, because their unboxing depends on the JIT's
 inlining budget and ours doesn't. No fusion involved, and it already beats the field.
 [The next page](./chains.mdx) scores every chained benchmark in the suite.
 
-**The word.** Views, iterators and LazyList attempt this at runtime and mostly add interpreter
-overhead. `.fuse` does it at compile time, and what it emits is the `while` loop you would have
+**The word.** Java Streams, Scala views and iterators all fuse at runtime and pay for it per
+element, per stage. `.fuse` does it at compile time, and what it emits is the `while` loop you would have
 written by hand. You just don't have to write it, or maintain it.
 
 In practice you swap the type everywhere and add `.fuse` on the paths that matter. The rest of the

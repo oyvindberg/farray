@@ -18,7 +18,8 @@ import Related from "@site/src/components/Related";
 
 ## The short-circuit engine
 
-`find`, `exists`, `forall`, `indexWhere`, `indexOf`, `contains` share one engine: a forward scan
+`find`, `exists`, `forall`, `indexWhere`, `indexOf`, `contains` (the findFirst / anyMatch /
+allMatch family, in java.util.stream terms) share one engine: a forward scan
 that must be able to stop at any element. It carries this library's founding loop-shape lesson.
 The first implementations ran at 0.2–0.4× of a raw array, and every intuitive suspect (virtual
 dispatch, the tree, the consumer object) was individually ruled out by measurement. The real cost
@@ -29,7 +30,7 @@ the loop *condition*, and it took the family from a 3–5× deficit to the raw a
 <BenchPair
   int="ShortCircuitIntBenchmark"
   str="ShortCircuitStrBenchmark"
-  caption="exists / find / indexWhere with the match near the start, the case where stopping matters, measured fully serialized. The verdict strip is honest: FArray runs at 0.87–0.99× of the RAW ARRAY (a stopped-at-element-5 scan is a nano-op; the bare array's loop with no type test is the floor) and ahead of the wrapped field: List and Vector pay per-element machinery even for a five-element scan; on String, find actually edges List at every size past 1k. The gap to IArray is the same wrapper tax the indexed-access page prices at a lone read; it does not compound: a real scan pays it once, not per element."
+  caption="exists / find / indexWhere with the match near the start, the case where stopping matters, measured fully serialized. The verdict strip is honest: FArray runs at 0.87–0.99× of the RAW ARRAY (a stopped-at-element-5 scan is a nano-op; the bare array's loop with no type test is the floor) and ahead of the wrapped field: List (Scala's immutable linked list) and Vector (its persistent-tree sequence) pay per-element machinery even for a five-element scan; on String, find actually edges List at every size past 1k. The gap to IArray (Scala's immutable view of a raw array) is the same wrapper tax the indexed-access page prices at a lone read; it does not compound: a real scan pays it once, not per element."
 />
 
 `contains` is the engine with equality instead of a predicate. On `Int` the compare is unboxed on

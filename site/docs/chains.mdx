@@ -18,6 +18,10 @@ import Related from "@site/src/components/Related";
   which wins come from unboxing and which come from structure.
 </p>
 
+The rivals throughout: Scala's `List` (an immutable linked list, not `java.util.List`), `Vector`
+(a persistent tree), `IArray` (an immutable view of a raw array), and the array-backed `Chunk`
+types from the fs2 and ZIO streaming libraries.
+
 First the totals. Every size of every chained-operation benchmark class in the suite, eager FArray
 only, no `.fuse`:
 
@@ -47,7 +51,9 @@ Three effects compound down a chain:
 
 ## The classic: map → filter → fold
 
-Transform, select, aggregate: the shape of half the collection code ever written. One boxed
+Transform, select, aggregate: the shape of half the collection code ever written. In
+java.util.stream terms this is map → filter → reduce, with `foldLeft` being the reduce with a
+seed. One boxed
 crossing per stage for the field; `int[]` end to end for FArray:
 
 <BenchPair
@@ -97,12 +103,12 @@ method, the profile any nontrivial method builds up:
 <BenchPair
   int="MapMegaIntBenchmark"
   str="MapMegaStrBenchmark"
-  caption="Eight distinct lambdas through map in one method. IArray's one shared Array.map site sees eight Function1 classes, goes megamorphic, and re-boxes on Int: at 10k its boxed intermediates are still cache-resident and it even leads (our one 0.85× cell), but at 100k the re-boxing becomes memory traffic and it falls 4.2× behind (List 12×, Vector 7×). FArray has no shared site to poison. On String there's no re-boxing to pay and the field stays close: the mechanism is megamorphic boxing."
+  caption="Eight distinct lambdas through map in one method. IArray's one shared Array.map site sees eight Function1 (Scala's lambda interface) classes, goes megamorphic, and re-boxes on Int: at 10k its boxed intermediates are still cache-resident and it even leads (our one 0.85× cell), but at 100k the re-boxing becomes memory traffic and it falls 4.2× behind (List 12×, Vector 7×). FArray has no shared site to poison. On String there's no re-boxing to pay and the field stays close: the mechanism is megamorphic boxing."
 />
 
 ## A long interleaved structural chain
 
-The last chain alternates `+:`, `:+`, `++` and
+The last chain alternates `+:`, `:+`, `++` (prepend, append, concat) and
 `reverse`, forced by one final `map`. For FArray that's a string of O(1) nodes and a single O(n)
 traversal; for array-copying structures it's a full copy *per op*:
 

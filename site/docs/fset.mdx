@@ -45,7 +45,8 @@ export function FinitenessTable() {
 
 <p className="lede">
   An immutable, unboxed set on the FArray playbook (a generated Java core, per-kind specialization,{" "}
-  <code>inline</code> dispatch), plus one contrarian bet. Every immutable set on the JVM pays
+  <code>inline</code> dispatch, where Scala's <code>inline</code> is a compiler guarantee rather
+  than a JIT hint), plus one contrarian bet. Every immutable set on the JVM pays
   the persistent-trie tax to make single-element updates cheap. FSet refuses to pay it, and builds an
   immutable set the way you actually use one: frozen flat leaves, queried hard, combined
   lazily. Everything on this page is a consequence of that one bet. And as everywhere on this site:
@@ -72,7 +73,8 @@ out for pure probe speed, and the algebra comes free.
 <Snippet name="set-node-tree" hideFull />
 
 Same construction as [FArray's core](./design/java-core.mdx): generated, `final`, fields-and-methods
-Java, one class per shape per element kind, all behind `opaque type FSet[A] <: AnyRef = SBase`: zero
+Java, one class per shape per element kind, all behind `opaque type FSet[A] <: AnyRef = SBase` (an
+opaque type is a compile-time-only alias, erased to bare `SBase` at runtime): zero
 wrapper allocation, primitives never boxed.
 
 ## A set is more than a HashSet
@@ -100,7 +102,7 @@ equality (`size`, `iterator`, `sameElements`) need the frozen leaf itself and si
 `FSetMaterialized`. The compiler enforces the split: `(a ++ b).size` doesn't compile until you
 `.materialize`, and `FSet.above(5).size` doesn't compile at all. `FSetInfinite` is the outlier:
 an infinite set *is* a predicate, so it's contravariant like one, kept out of the invariant chain
-and bridged in by a `Conversion`. Ranges round it out: `FSet.range(0, 1_000_000_000)` is a finite,
+and bridged in by a `Conversion` (a compiler-applied implicit conversion). Ranges round it out: `FSet.range(0, 1_000_000_000)` is a finite,
 materializable set that costs 16 bytes.
 
 Finiteness is never computed, only propagated. Whether an
@@ -149,7 +151,8 @@ collapses to Boolean logic), so membership in a combined set never materializes 
       Point-lookup hits, Int (left) and String (right), against every serious JVM set, mutable ones
       included. Int runs at the hardware floor (one mix, one load, one compare), and at 100k the
       frozen table is the fastest of the entire field. On String, FSet ties{" "}
-      <code>scala.mutable</code> outright at 1000 and 100k and leads everything immutable.
+      <code>scala.mutable</code> (Scala's mutable HashSet, a flat hash table) outright at 1000 and
+      100k and leads everything immutable.
     </>
   }
 />
@@ -187,7 +190,7 @@ The payoff compounds on bulk operations, because the algebra closes over the rep
 bitmap is a word-parallel OR, intersection an AND, difference an AND-NOT (64 elements per
 instruction, cardinality by `popcount`), and the merge kernels work region-split, so an intersection
 only touches the window where the two bitmaps overlap. That is why a general-purpose
-immutable set can stand next to `immutable.BitSet` and RoaringBitmap in their own niche while also
+immutable set can stand next to `immutable.BitSet` (Scala's built-in word-array bitmap set) and RoaringBitmap in their own niche while also
 being a set of Strings tomorrow.
 
 <GeneratedCode name="set-bitmap-merge" summary="The word-parallel bitmap merge: ∪ ∩ ∖ ⊕ at 64 elements per op" />

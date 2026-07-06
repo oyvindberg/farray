@@ -16,7 +16,8 @@ import Snippet from "@site/src/components/Snippet";
 
 An opaque type gives `FArray[A]` its own identity at compile time while *being* a plain `FBase` at
 runtime; there is no wrapper object to allocate or escape-analyze. The whole API then hangs off it as
-extension methods, and they come in two flavours. The next pages are organized around the difference
+extension methods (methods declared outside the type and resolved statically by the compiler, so
+each is an ordinary static call in the bytecode), and they come in two flavours. The next pages are organized around the difference
 between them:
 
 <Snippet name="surface" />
@@ -25,7 +26,8 @@ The **structural** ones (`reverse`, `++`) just call the matching `FBase` method.
 already *is* its core, that's a direct call into the lazy O(1) node-builders from
 [the Java core](./java-core.mdx), with no specialization involved.
 
-The **elementwise** ones are marked `inline`, and they take their lambda `inline` too:
+The **elementwise** ones are marked `inline` (a Scala 3 compiler guarantee, not a JIT hint), and
+they take their lambda `inline` too:
 `inline def map[B](inline f: A => B)`. At every concrete call site the method body is spliced in, your
 lambda with it, and the whole thing forwards to a generated `…Impl`. That forward is where the
 unboxing gets decided. The split those two flavours create comes first, because the cost model rests

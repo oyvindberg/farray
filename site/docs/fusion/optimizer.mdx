@@ -23,7 +23,8 @@ export function FuseEx({ src, gen }) {
 <p className="lede">
   Fusing stages into one loop removes the plumbing tax. This page is about the optimizer, the part
   that removes work you <em>wrote but never needed</em>. Its organizing idea: a product (a tuple, a
-  case class, later a JSON record) is treated as a set of independent <strong>columns</strong>, and
+  case class (Scala's record type), later a JSON record) is treated as a set of independent{" "}
+  <strong>columns</strong>, and
   each column is computed at its first read or not at all. Everything below falls out of that idea;
   every emitted block is a golden test.
 </p>
@@ -33,7 +34,8 @@ export function FuseEx({ src, gen }) {
 A tuple or case class is a set of independent **columns**. Here `map` builds three, then the pipeline
 reads only two of them. The optimizer never builds the tuple: column 2 (`x * 13`) is read by nobody,
 so it's dead and absent from the loop; column 0 (`x % 3`) is needed by the filter, so it's
-computed eagerly. A `View` allocates the 3-tuple (plus three boxed `Int`s) for every element, and
+computed eagerly. A `View` (Scala's runtime-lazy collection wrapper, its analogue of a
+`java.util.stream` pipeline) allocates the 3-tuple (plus three boxed `Int`s) for every element, and
 throws most of it away.
 
 <FuseEx src="fuse-src-dce" gen="fuse-opt-dce" />
@@ -57,7 +59,9 @@ model a product as independent lazy columns, and bind each at its first use.
 
 ## …and the decomposition reaches the fold's lambda
 
-The same column analysis reaches into a `foldLeft`/`reduce` lambda. Here the fold reads only
+The same column analysis reaches into a `foldLeft`/`reduce` lambda (`foldLeft` is a seeded reduce:
+it starts from an initial value and folds left to right, so the result type can differ from the
+element type). Here the fold reads only
 `s.score`, so the optimizer never builds the `Stat`: its other fields (and the object itself) are
 dead and absent, and the loop is just `acc = acc + (x * 100)`. Without this, the fold would rebuild
 the entire product per element just to read one field.

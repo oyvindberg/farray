@@ -11,7 +11,8 @@ import Related from "@site/src/components/Related";
 <p className="lede">
   A single read is the one place a wrapper can't hide: there's no loop to amortize into, no lambda to
   specialize, just "give me element <em>i</em>". This page is the honest accounting of what{" "}
-  <code>xs(i)</code>, <code>head</code> and <code>last</code> cost on a structure that is sometimes a
+  <code>xs(i)</code> (Scala's indexing syntax, a method named <code>apply</code>),{" "}
+  <code>head</code> and <code>last</code> cost on a structure that is sometimes a
   flat array and sometimes a lazy tree.
 </p>
 
@@ -29,16 +30,17 @@ On a **lazy tree**, a read is O(depth): a `Concat` of two leaves resolves one co
 recurses left or right; a `SliceNode` adds an offset; a `ReverseNode` flips the index. Nothing
 materializes: reading element 3 of a twenty-array concat touches one leaf. `head` and `last` are
 the special cases the nodes answer directly: `last` of an `Append` is the appended element, `head`
-of a `Prepend` likewise, O(1) even on trees built by a million-element cons chain.
+of a `Prepend` likewise, O(1) even on trees built by a million-element cons chain (one prepend at a
+time).
 
 <BenchChart
   cls="ApplyStrBenchmark"
-  caption="apply(size/2): a random-access read at a non-constant index, isolated re-measure. The honest number: FArray runs at ~0.72–0.75× of a raw IArray read; the type test is ~a quarter of a nano-op that is otherwise just bounds-check + load. That is the whole wrapper tax, visible only because nothing amortizes it. List is the designed outlier (O(n) walk); Vector pays its trie hops."
+  caption="apply(size/2): a random-access read at a non-constant index, isolated re-measure. The honest number: FArray runs at ~0.72–0.75× of a raw IArray read (IArray is Scala's immutable view of a raw array); the type test is ~a quarter of a nano-op that is otherwise just bounds-check + load. That is the whole wrapper tax, visible only because nothing amortizes it. List (Scala's immutable linked list, not java.util.List) is the designed outlier (O(n) walk); Vector (Scala's persistent-tree sequence) pays its trie hops."
 />
 
 <BenchChart
   cls="HeadStrBenchmark"
-  caption="head. Same shape as apply: ~0.65× of a bare IArray read (arr(0) with no type test is unbeatable), while the other wrapped structures (fs2.Chunk, zio.Chunk, Vector) land at or behind FArray. List's head is its one native O(1) op and is competitive here."
+  caption="head. Same shape as apply: ~0.65× of a bare IArray read (arr(0) with no type test is unbeatable), while the other wrapped structures (fs2.Chunk and zio.Chunk, the array-backed collections of the fs2 and ZIO streaming libraries, plus Vector) land at or behind FArray. List's head is its one native O(1) op and is competitive here."
 />
 
 <BenchChart
@@ -63,7 +65,8 @@ comparison against a directly-available length beats a wrapped one.
 
 One cell in the suite goes against us and is worth naming: at **size 1**, ops that *read before
 looping* (reduce, scan) sit measurably behind a bare array. That floor was hunted properly: an
-int-tag `tableswitch` instead of the sealed-trait match was built and measured (17–20% *slower* for
+int-tag `tableswitch` instead of the sealed-trait match (an instanceof chain over the closed node
+hierarchy) was built and measured (17–20% *slower* for
 monomorphic reads; HotSpot folds the match better), and a dedicated single-element fast path
 measured as a no-op. The conclusion stands as measured: the size-1 read floor is the irreducible
 price of being a data structure rather than a pointer, and it's paid only where n=1.

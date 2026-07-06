@@ -10,8 +10,9 @@ import BenchChart from "@site/src/components/BenchChart";
 import { DispatchDiagram } from "@site/src/components/Diagrams";
 
 <p className="lede">
-  An elementwise combinator is one <code>inline</code> hop to a generated <code>…Impl</code>, and the
-  impl is where the element kind gets resolved. <code>map</code>'s impl is one big{" "}
+  An elementwise combinator is one <code>inline</code> hop (Scala's guaranteed compile-time
+  inlining, not a JIT hint) to a generated <code>…Impl</code>, and the impl is where the element
+  kind gets resolved. <code>map</code>'s impl is one big{" "}
   <code>summonFrom</code>, a compile-time match on which <code>Repr</code> evidence exists for{" "}
   <code>A</code>, with an outer branch per input kind and, nested inside, one per result kind.
 </p>
@@ -27,7 +28,8 @@ That leaf method is where the loop lives:
 <Snippet name="map-leaf" hideFull />
 
 A genuine `while` loop over `int[]`, and `f` is an `IntToIntFn`, a specialized SAM rather than a boxed
-`Function1`. The `IntArr` case is the fast path; a tree input falls through the `case _` to the shared
+`Function1` (Scala's generic lambda interface, which boxes primitives like a `java.util.function`
+interface without the primitive specializations). The `IntArr` case is the fast path; a tree input falls through the `case _` to the shared
 traverser, the one direction-aware walk every op reuses. At a concrete
 `FArray[Int]` call site the compiler knows `A = Int`, so `summonFrom` keeps the `IntRepr` branch and
 deletes the other eighty. So this:
@@ -96,16 +98,19 @@ String. On its own, `map` is no rout:
 
 Measured against a bare array, those two charts are a wash: a few percent shy on
 `Int`, a dead tie on `String`. That's the texture of a *micro*-benchmark: one operation over one
-array, in isolation, where a lone `Array.map` is a call the JIT already inlines fully and the
+array, in isolation, where a lone `Array.map` (the one shared generic map Scala's standard library
+bolts onto raw arrays) is a call the JIT already inlines fully and the
 opaque wrapper plus the specialized SAM are pure overhead it doesn't carry. FArray isn't built to win
 those by a percent. It's built for what happens once the benchmark stops being a micro-benchmark,
 and it doesn't take much.
 
-Write eight of that very same `map`, with eight *distinct* lambdas, in one method. IArray
-funnels all of them into its one shared `Array.map`, and that call site now sees eight different
+Write eight of that very same `map`, with eight *distinct* lambdas, in one method. IArray (Scala's
+immutable view of a raw array) funnels all of them into its one shared `Array.map`, and that call site now sees eight different
 `Function1` classes, well past the JIT's ≥3-type megamorphic threshold, so it stops devirtualising:
 every element pays a real virtual `apply`, and on `Int` it re-boxes through `Integer` on the way out.
-The bigger the method, the more distinct lambdas crowd that one site. FArray has no
+The bigger the method, the more distinct lambdas crowd that one site. The same story applies
+verbatim to `java.util.stream`: a hot shared `Stream.map` feeds every lambda class through one
+Sink chain. FArray has no
 shared site to poison: each lambda was already bound to its own specialized loop at compile time, so
 eight maps are eight tight `int[]` loops, however many of them you write.
 

@@ -80,8 +80,9 @@ export const WIDE_BENCH = {
 
 <p className="lede">
   You have a few gigabytes of NDJSON and one question: total revenue where <code>amount > 150</code>.
-  Here is the entire program, a case class and a query. No codec, no <code>derives</code>, no
-  registration; the case class <em>is</em> the schema:
+  Here is the entire program, a case class (Scala's record type) and a query. No codec, no{" "}
+  <code>derives</code> clause (Scala's compile-time codec derivation), no registration; the case
+  class <em>is</em> the schema:
 </p>
 
 <Snippet name="json-event" hideFull />
@@ -107,7 +108,8 @@ worked example of how a format plugs in.
 
 A JSON object is a product whose fields are columns, sourced from byte ranges instead of
 tuple slots. That makes every trick from <Link to="/fusion/optimizer">the optimizer page</Link> apply
-verbatim, at the byte level: the macro computes the *live set* (the fields your filters, maps and
+verbatim, at the byte level: the macro (the code generator that runs inside the compiler, behind
+the terminal call) computes the *live set* (the fields your filters, maps and
 aggregates touch) and emits a per-record scanner where every live field gets a typed byte
 reader and every other field is skipped without being decoded. A 20-field record queried on one
 field costs one number-parse and nineteen byte-skips. No `Event` object is ever built.
@@ -120,12 +122,14 @@ best idiom for the same query.
 ## The whole integration, one file
 
 Before the demos, the part a library author should read closely. This is the whole plug-in,
-verbatim: the shape, the typeclass instance, and the hook.
+verbatim: the shape, the typeclass instance (an interface implementation the compiler selects by
+type, like a ServiceLoader resolved at compile time), and the hook.
 
 <Snippet name="json-integration" hideFull />
 
 Unpacking it against <Link to="/fusion/terminals">the lowerings page</Link>: `Ndjson` is the source
-shape; the given in its companion puts `JsonLowering`'s terminals on every `Fuse[A, Ndjson]`;
+shape; the given (Scala's keyword for publishing such a compiler-resolved instance) in its
+companion puts `JsonLowering`'s terminals on every `Fuse[A, Ndjson]`;
 `StandardTerminals` declares which families this shape supports (everything except element
 materialization, so `.sum` scans bytes while `.run` does not compile); and the five-line hook
 hands the engine `JsonDecode`, the decoder, as an ordinary argument at macro-expansion time.

@@ -42,9 +42,14 @@ mix of three taxes:
   </li>
   <li>
     <strong>The lambda tax.</strong> Lazy views and streams fix the intermediates by threading
-    elements through stored <code>Function1</code>s: an interface call per element per stage. One
-    call site serving ≥3 lambda classes goes megamorphic and stops devirtualizing; on primitives,
-    every crossing boxes.
+    elements through stored <code>Function1</code>s (Scala's function-object interface, like{" "}
+    <code>java.util.function.Function</code>): an interface call per element per stage. One call
+    site serving ≥3 lambda classes goes megamorphic and stops devirtualizing; on primitives, every
+    crossing boxes. <code>java.util.stream</code> is the Java face of the same trade: it fuses your
+    pipeline, but at <em>runtime</em>, by pushing each element through a chain of virtual{" "}
+    <code>Sink.accept</code> calls, one per stage, with the same megamorphic fate in real code, and
+    boxed outside the three primitive specializations. <code>.fuse</code> removes that chain at{" "}
+    <em>compile</em> time, so the runtime sees one loop.
   </li>
   <li>
     <strong>The JIT gamble.</strong> Escape analysis and inlining can sometimes claw both back, until
@@ -61,9 +66,10 @@ Writing it by hand trades away every abstraction collections provide.
 ## The move: compile the pipeline
 
 Fusion makes the *compiler* write that loop. The stages you chain are inert markers; the **terminal**
-call at the end is a macro that reads the entire chain off the typed syntax tree and emits the
-hand-written loop, with your lambdas spliced into the body, element types resolved, nothing boxed,
-and nothing allocated between stages:
+call at the end is a macro (code that runs inside the compiler and rewrites the typed syntax tree;
+javac has no counterpart at expression level, annotation processors only see declarations) that
+reads the entire chain off the typed syntax tree and emits the hand-written loop, with your lambdas
+spliced into the body, element types resolved, nothing boxed, and nothing allocated between stages:
 
 <FuseEx src="fuse-src-oneloop" gen="fuse-opt-oneloop" />
 
@@ -97,7 +103,8 @@ the ones before it:
   <li>
     <strong><Link to="/fusion/terminals">Terminals & lowerings</Link></strong>: the call that ends
     the chain <em>is</em> the compiler invocation. Which terminals a pipeline has is decided per
-    source shape by a typeclass, which is what makes the engine extensible.
+    source shape by a typeclass (an interface implementation the compiler selects by type, like a
+    ServiceLoader resolved at compile time), which is what makes the engine extensible.
   </li>
   <li>
     <strong><Link to="/fusion/optimizer">The optimizer</Link></strong>: the shared brain. Products

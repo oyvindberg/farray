@@ -54,8 +54,9 @@ reuse one read buffer across pulls:
 
 ## Streaming, measured
 
-Constant-memory processing on the JVM usually costs throughput: `Iterator` chains pay per-element
-virtual dispatch, `LazyList` allocates a cons per element, effect-system streams pay their runtime.
+Constant-memory processing on the JVM usually costs throughput: `Iterator` chains and
+`java.util.stream` pipelines pay per-element virtual dispatch, `LazyList` (Scala's lazily evaluated
+linked list) allocates a cons cell per element, effect-system streams pay their runtime.
 The chunk-granular design keeps fusion's loop shape over lazy data. The benchmark folds a generated
 sequence, and a file's lines, without holding either in memory:
 
@@ -70,8 +71,9 @@ The entry point stamps the pipeline: `xs.fuse` gives `Fuse[A, Chunks]`, and the 
 `.stream` gives `Fuse[T, Ndjson]`. That phantom parameter, the **source shape**, drives the rest of
 the machine: stages are shape-generic, but{" "}
 <Link to="/fusion/terminals">which terminals exist, and how they lower</Link>, is decided per shape
-by a typeclass. It has no runtime cost; it exists so that an unsupported operation is a compile
-error rather than a runtime surprise.
+by a typeclass (an interface implementation the compiler selects by type, like a ServiceLoader
+resolved at compile time). It has no runtime cost; it exists so that an unsupported operation is a
+compile error rather than a runtime surprise.
 
 <Related
   links={[

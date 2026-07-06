@@ -38,8 +38,8 @@ so they move with a plain loop.
 ## The chapter where the JIT writes the plot twist
 
 The first version of this op didn't look like that. It was *fully inline*: the whole node-or-flatten
-loop, both paths, spliced into your method at every `flatMap` call site, the way `.fuse` does by
-design. And in isolation it was excellent: with the loop and your lambda in one compilation
+loop, both paths, spliced into your method at every `flatMap` call site, the way `.fuse` (the
+library's whole-pipeline fusion macro) does by design. And in isolation it was excellent: with the loop and your lambda in one compilation
 unit, Graal's escape analysis deleted the per-element inner `FArray(a, b)` wrappers entirely.
 The benchmarks were good until we appended one method call.
 

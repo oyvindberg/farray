@@ -14,6 +14,11 @@ import BenchPair from "@site/src/components/BenchPair";
   exists for precisely that.
 </p>
 
+Terms first, for the Java reader: Scala's `List` is an immutable singly linked list (not
+`java.util.List`), and `::`, pronounced "cons", is its cell, a head plus a tail pointer, so
+`x :: xs` prepends in O(1) and `case h :: t` pattern-matches a list apart into head and tail.
+`+:` is the same prepend on FArray.
+
 <Snippet name="cons-list" hideFull />
 
 The code is character-for-character what you'd write for `List`. On pure tear-down recursion it's a

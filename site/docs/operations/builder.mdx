@@ -21,7 +21,7 @@ import Related from "@site/src/components/Related";
 
 `Builder[A, To]` has one append entry point: `def addOne(elem: A): this.type`. `A` is an ordinary
 erased type parameter, so at the bytecode level the descriptor is `addOne(Object)`. There is no
-`addOne(int)`; there can't be, the trait is generic. So when you write `b += anInt`, the compiler
+`addOne(int)`; there can't be, the trait (Scala's interface) is generic. So when you write `b += anInt`, the compiler
 must box the `int` to an `Integer` before the call, because the callee only accepts a reference:
 
 ```text
@@ -34,13 +34,16 @@ Specialized builders like `ArrayBuilder.ofInt` store a real `int[]` internally, 
 inherit `addOne(Object)` from the trait, so held at the trait's static type (which is how any generic
 code holds them), every append still round-trips through a box and an unbox. The only escape is to
 hold the *concrete* `ArrayBuilder.ofInt` type so the overloaded `addOne(Int)` is picked statically,
-which is brittle, and impossible through a generic signature.
+which is brittle, and impossible through a generic signature. It's the same wall that makes
+java.util.stream ship `IntStream.builder()` as its own type: a generic `Stream.Builder<Integer>`
+boxes.
 
 ## The design: the same dispatch, for appends
 
-There's no new machinery here: it's exactly the inline, compile-time kind dispatch from [map](/operations/map), pointed at an
+There's no new machinery here: it's exactly the inline, compile-time kind dispatch from [map](/operations/map)
+(Scala's `inline` is a compiler-guaranteed expansion at the call site, not a JIT hint), pointed at an
 append instead of a transform. `FBuilder[A]`
-is an opaque type over a generated `FBuilderBase` whose concrete subclasses are the per-kind
+is an opaque type (a compile-time-only wrapper, erased at runtime) over a generated `FBuilderBase` whose concrete subclasses are the per-kind
 `${K}Group` growable buffers that already back `groupBy` and `collect`. Only the hot append is
 kind-dispatched; everything else is a plain call on the base:
 
@@ -75,14 +78,14 @@ FArray, not a fast path.
 Every builder here grows from nothing: none is told the size up front, which is the whole reason you
 reach for a builder. Two things differ across the field, and both are real. **The append:** scala's
 `ArrayBuilder` held at its trait type boxes every `int` through `addOne(Object)`; zio's
-`ChunkBuilder.Int` held concretely is genuinely unboxed; FBuilder's inline `+=` is unboxed by
+`ChunkBuilder.Int` (from the ZIO streaming library) held concretely is genuinely unboxed; FBuilder's inline `+=` is unboxed by
 construction. **The finish:** `result()` on the array builders *trim-copies*: `ArrayBuilder.ofInt`
 allocates a right-sized array and copies whenever the buffer isn't exactly full (the normal case,
 since it doubles), and zio's builder delegates to it. They have no choice: a raw `int[]` can't carry
 slack, its length *is* its count. FBuilder's `result()` is an O(1) slack-wrap: a leaf stores a
 logical length distinct from the array length, so no trim is needed. So part of the win over the
 array builders is a cheaper finish, not just a cheaper append, a property of FArray's representation.
-Every builder here finalizes to an immutable (`ArrayBuffer` via `toArray`, like the
+Every builder here finalizes to an immutable (`ArrayBuffer`, Scala's ArrayList, via `toArray`, like the
 rest), so the comparison is honest end to end; the O(1)-slack-wrap-vs-O(n)-trim-copy gap is the whole
 story on refs, where nobody boxes.
 
@@ -109,7 +112,8 @@ means (FArray via the ctor, the rest via `sizeHint`):
   caption="Everyone pre-sized (FArray via the ctor, the rest via sizeHint) AND finalizing to an immutable. FBuilder wins across the board: Int 1.55–1.65× over a sized ArrayBuilder at scale (unboxed append plus a one-allocation ctor where sizeHint-after-construct pays two), String 1.17–1.43× (a 1.00× tie at 1k). An earlier draft showed ArrayBuffer taking String here; that was a benchmark bug: it returned its mutable buffer without finalizing, doing less work than everyone else. Forced to toArray like the rest, it falls 1.5–2× behind."
 />
 
-Two builders can't meaningfully pre-size (`Vector.newBuilder` and `List.newBuilder` have `sizeHint`
+Two builders can't meaningfully pre-size (`Vector.newBuilder` and `List.newBuilder`, for Scala's
+persistent-tree Vector and immutable linked List, have `sizeHint`
 but it's a no-op for their structures), so they look the same as unsized; that's honest, not a
 handicap. One caveat lives under the win: on the fill loop alone (reference elements),
 against a raw hand-written `Object[]` fill as the ceiling, `ArrayBuffer` reaches 0.95× while FBuilder

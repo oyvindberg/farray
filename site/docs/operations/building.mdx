@@ -10,21 +10,26 @@ import Related from "@site/src/components/Related";
 
 <p className="lede">
   Construction is the one place this library starts a step behind by definition: a raw{" "}
-  <code>IArray(1, 2, 3)</code> is one array allocation, and an FArray is that array <em>plus</em> its
-  leaf node. That gap is accepted: the design principle says losing to a bare array on
-  inherently-allocating ops is fine, losing to the wrapper libraries is not. This page is how the
+  <code>IArray(1, 2, 3)</code> (IArray is Scala's immutable view of a raw array) is one array
+  allocation, and an FArray is that array <em>plus</em> its leaf node. That gap is accepted: the
+  design principle says losing to a bare array on inherently-allocating ops is fine, losing to the
+  wrapper libraries (Scala's <code>List</code>, an immutable linked list, and <code>Vector</code>,
+  a persistent tree, plus the array-backed <code>Chunk</code> types from the fs2 and ZIO streaming
+  libraries) is not. This page is how the
   entry points hold that line.
 </p>
 
 ## FArray(…) is a macro, and that matters
 
 `FArray(a, b, c)` looks like the varargs constructor every library has, and that's exactly the
-problem it avoids. A normal `apply(as: A*)` receives its arguments as a `Seq[A]`: the
+problem it avoids. A normal `apply(as: A*)` receives its arguments as a `Seq[A]` (Scala's generic
+read-only sequence interface): the
 compiler wraps your three literals into an array, boxes each one if it's a primitive, and hands the
 constructor a sequence to iterate. You pay a wrapper, N boxes, and a loop to build a three-element
 collection.
 
-FArray's `apply` is `inline`, and it forwards to a macro that never lets the `Seq` form. The macro
+FArray's `apply` is `inline` (the compiler is guaranteed to expand it at each call site; not a JIT
+hint), and it forwards to a macro that never lets the `Seq` form. The macro
 reads the varargs literal straight off the syntax tree and unrolls it: it counts the arguments,
 dispatches on the *static element type* to pick the concrete leaf kind, and emits the stores
 directly:
@@ -65,8 +70,8 @@ code). **From a rule**: `fill(n)(elem)`, `tabulate(n)(i => …)` (element from i
 
 `tabulate` and `fill` carry one narrow trick. A reference FArray is normally backed by
 `Object[]`, which makes a later `toArray[String]` a *checked* per-element copy rather than a bulk
-`arraycopy`. So these two constructors summon a `ClassTag` opportunistically: when one is in
-scope for the element type, the backing array is allocated as the real `String[]` (`Trade[]`, …),
+`arraycopy`. So these two constructors summon a `ClassTag` (a runtime class token that survives
+erasure) opportunistically: when one is in scope for the element type, the backing array is allocated as the real `String[]` (`Trade[]`, …),
 cast to `Object[]` only in the static type but still a `String[]` at runtime, so a later
 <Link to="/operations/getting-out">`toArray`</Link> is a straight `arraycopy`. When no tag is
 available nothing is demanded of the caller; you keep `Object[]` and the slower exit.

@@ -21,8 +21,9 @@ import Related from "@site/src/components/Related";
 
 ## The headline: fourteen stages, warm
 
-The pipeline from the introduction: `flatMap`, `filter`, `map`, `zip`, `zipWithIndex`, `foldLeft`,
-twice over. Every collection runs the identical code; the FArray entry differs by the one word:
+The pipeline from the introduction: `flatMap`, `filter`, `map`, `zip`, `zipWithIndex`, `foldLeft`
+(a seeded reduce), twice over. Every collection runs the identical code; the FArray entry differs
+by the one word:
 
 <SideBySide
   snippet="fuse-pipeline"
@@ -56,7 +57,7 @@ processing data you don't want in memory:
 
 <BenchChart
   cls="StreamPipelineBenchmark"
-  caption="filter → map → sum over a lazily GENERATED sequence (vs Iterator, LazyList, fs2.Stream) and over an InputStream of lines (vs scala.io.Source and a hand-rolled BufferedReader loop). Chunks amortize the pull; the per-element cost is the fused loop."
+  caption="filter → map → sum over a lazily GENERATED sequence (vs Iterator, LazyList (Scala's lazy linked list), fs2.Stream) and over an InputStream of lines (vs scala.io.Source and a hand-rolled BufferedReader loop). Chunks amortize the pull; the per-element cost is the fused loop."
 />
 
 ## The chain that used to collapse

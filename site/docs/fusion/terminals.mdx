@@ -37,10 +37,12 @@ export function Api({ label, ops }) {
 
 <p className="lede">
   Stages are inert; the <strong>terminal</strong> is where everything happens. When you write{" "}
-  <code>.sum</code> or <code>.find(p)</code> or <code>.run</code>, that call (an inline macro)
-  receives the whole chain as a syntax tree and compiles it into one loop. The second half of this
-  page covers who decides which terminals a pipeline has: the answer is a typeclass, and it is the
-  engine's extension mechanism.
+  <code>.sum</code> or <code>.find(p)</code> or <code>.run</code>, that call (an inline macro:
+  code that runs inside the compiler, guaranteed-inlined at the call site, rewriting the typed
+  syntax tree) receives the whole chain as a syntax tree and compiles it into one loop. The second
+  half of this page covers who decides which terminals a pipeline has: the answer is a typeclass
+  (an interface implementation the compiler selects by type, like a ServiceLoader resolved at
+  compile time), and it is the engine's extension mechanism.
 </p>
 
 ## The families
@@ -109,9 +111,10 @@ a bounded size-*n* heap inside the pass (O(N log n) time, O(n) memory, best-firs
 This is the part of the design that concerns library authors. None of the methods above is
 defined on the pipeline class. `Fuse[A, S]` carries only the stage markers; `S` is the pipeline's
 source shape (<Link to="/fusion/sources">previous page</Link>), and the terminals are inline
-extension methods provided by the shape's `FuseLowering[S]` given, published in the shape's
-companion object, so it rides the implicit scope of every `Fuse[A, S]` with no imports at the use
-site.
+extension methods (methods bolted onto a type from outside it, resolved statically at compile time)
+provided by the shape's `FuseLowering[S]` given (Scala's keyword for publishing a typeclass
+instance the compiler locates by type), published in the shape's companion object, so it rides the
+implicit scope of every `Fuse[A, S]` with no imports at the use site.
 
 Three consequences:
 

@@ -22,7 +22,8 @@ and handed over with its logical length, with no trim copy, unless the filter ke
 input, in which case it trims rather than pin four hundred kilobytes behind a two-element result.
 
 Third, the write. There is no
-`if (p(e)) { out(o) = e; o += 1 }`. The element is stored *unconditionally*, and the predicate only
+`if (p(e)) { out(o) = e; o += 1 }` (Scala indexes arrays with parentheses; read it as
+`out[o] = e`). The element is stored *unconditionally*, and the predicate only
 decides whether the cursor moves; a rejected element is simply overwritten by the next one. That
 is extra work on paper. What it removes is the branch.
 

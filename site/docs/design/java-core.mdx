@@ -28,8 +28,9 @@ its children and records an intention. Building one is O(1) and copies nothing:
 
 <RepresentationDiagram />
 
-Every structural operation is one of these nodes: `Concat` for `++`, `Append`/`Prepend` for
-`:+`/`+:`, `SliceNode` for `take`/`drop`, `ReverseNode` for `reverse`. Here's the full set, collapsed
+Every structural operation is one of these nodes: `Concat` for `++` (Scala's concatenation
+operator), `Append`/`Prepend` for `:+`/`+:` (append/prepend one element), `SliceNode` for
+`take`/`drop`, `ReverseNode` for `reverse`. Here's the full set, collapsed
 across element kinds: every `Int…` class in the listing stands for nine generated variants (`IntArr`
 beside `LongArr`, `DoubleArr`, …, `RefArr`), while the pure-shape nodes exist once; 68 final Java
 classes in all:
