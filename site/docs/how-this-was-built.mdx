@@ -1,0 +1,60 @@
+---
+title: How this was built
+sidebar_label: How this was built
+description: "The division of labor between a human, a model, and a benchmark suite; where the model was wrong; and what the tests do and do not prove."
+---
+
+<p className="lede">
+  The front page says Claude did the heavy lifting, and it did: most of the code in this repository
+  was written by a model. That sentence should raise questions, not settle them. This page is the
+  answer to the right ones: who designed what, what the control system was, where the model was
+  confidently wrong, and what the tests actually prove.
+</p>
+
+## The division of labor
+
+**Designed by a human, rebuildable from memory:** the hybrid representation (flat primitive leaves
+under lazy structural nodes), the decision to put the core in generated Java, the opaque-type
+surface, the cost model the site keeps repeating (unboxing in signatures, not in JIT budgets), the
+fusion contract (unsupported means does not compile), and every acceptance decision on every
+benchmark number. Direction and taste stayed human throughout.
+
+**Written by the model, reviewed by a human:** nearly all implementation code: the code generator,
+the generated operations, the fusion macro and its optimizer, the benchmark suite itself. Review
+here means read, questioned, and frequently sent back, not line-by-line formal verification. It
+would be dishonest to claim otherwise about four hundred commits in seventeen days.
+
+**Gated by machines:** every operation is tested against the equivalent `List` operation across
+sizes and structural shapes (~480 parity tests). Every macro lowering is a golden file, regenerated
+and diffed on every build. Every performance claim is a checked-in JMH JSON the site renders
+directly. Nothing lands on the strength of an explanation.
+
+## Where the model was wrong
+
+The reason the referee exists. Three examples from the log, kept because they are instructive:
+
+- **The dispatch theory.** The model (and, honestly, the human) believed the sealed-hierarchy
+  `instanceof` dispatch in the node walk was a cost worth removing, and built an int-tag
+  `tableswitch` version. Measured: 17 to 20 percent *slower* for monomorphic reads. HotSpot folds
+  the sealed match better than the clever version. Reverted; the finding is now a comment that
+  stops anyone from rebuilding it.
+- **The refactor that did nothing.** A short-circuit scan gap was attributed to virtual dispatch
+  and refactored away with conviction. The gap didn't move; it was the per-element loop shape all
+  along. The commit was reverted and the loop-shape rule is now generator policy.
+- **The fix that broke something else.** A deferred allocation in the fusion sink fixed a size-1
+  cell and, two days later, the scorecard showed `groupMin` at 1000 elements running at half its
+  previous speed. Bisecting three commits under measurement pinned it; the fix was re-gated. The
+  model introduced the regression and also found it, but only because the whole suite is re-run and
+  the JSON is diffed.
+
+Several more live in the git log with their numbers. The pattern is consistent: plausible
+mechanical reasoning about the JVM is wrong often enough that no claim survives here without a
+measurement, whoever or whatever proposed it.
+
+## What the tests prove, and what they don't
+
+The parity suite samples behavior; it does not prove the optimizer's rewrite rules. Sinking a
+computation past a filter or eliminating a dead tuple column is a semantic claim that golden tests
+pin for the shapes we thought of. A shape nobody thought of can be wrong in a way nothing catches
+until you hit it. That is the boundary, it is why the version number starts with M, and it
+is why [Use it](./use.mdx) asks you to file the cliff instead of assuming we already know.

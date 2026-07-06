@@ -26,6 +26,13 @@ import { FusionDiagram } from "@site/src/components/Diagrams";
   </p>
 </header>
 
+:::info An experiment, stated plainly
+FArray is published as `com.olvind.farray::farray:1.0.0-M1` (MIT). It is an experiment: well
+benchmarked, parity-tested against `List` on every operation, and not yet something we can
+guarantee correct. There will also be performance cliffs the scorecard didn't think to measure.
+[What M1 means](./use.mdx) states the boundaries; when you find a cliff, we want the issue.
+:::
+
 ## Ten years of waiting for the JVM
 
 <p className="lede">
@@ -58,8 +65,9 @@ commits later:
     nothing between stages.
   </li>
   <li>
-    <strong>Claude is why.</strong> The redesign was years of evenings I didn't have. The benchmark
-    suite kept the pace honest: every optimization measured, several reverted.
+    <strong>Claude is why.</strong> The redesign was years of evenings I didn't have. Every
+    optimization was measured and several were reverted; <a href="./how-this-was-built">how that
+    worked, and where the model was wrong</a>, has its own page.
   </li>
 </ul>
 

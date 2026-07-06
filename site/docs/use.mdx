@@ -1,0 +1,70 @@
+---
+title: Use it
+sidebar_label: Use it
+description: "Coordinates, license, requirements, and a straight answer on maturity and Java/Kotlin interop."
+---
+
+import Link from "@docusaurus/Link";
+
+<p className="lede">
+  FArray is published as an experiment. The design is serious and the benchmarks are real, but a
+  collection library earns trust over years, not milestones. This page states exactly where it
+  stands.
+</p>
+
+## Coordinates
+
+MIT licensed. Source at [github.com/oyvindberg/farray](https://github.com/oyvindberg/farray).
+
+```scala
+// sbt
+libraryDependencies += "com.olvind.farray" %% "farray" % "1.0.0-M1"
+```
+
+```scala
+// scala-cli
+//> using dep com.olvind.farray::farray:1.0.0-M1
+```
+
+Requires Scala 3.8 or later. Built and benchmarked on JDK 25; the Java core uses sealed classes, so
+JDK 17 is the floor.
+
+## What M1 means
+
+:::warning Experiment status
+
+This is a milestone release of an experiment.
+
+- **Somewhat tested, not guaranteed.** Every operation is checked against the equivalent `List`
+  operation across sizes and structural shapes (~480 parity tests), and every macro lowering is a
+  golden test regenerated on each build. That catches a lot. It does not add up to a correctness
+  guarantee yet; that takes more work and more users.
+- **Expect performance cliffs.** The scorecard covers the shapes we thought to measure. Your
+  workload will contain shapes we didn't, and some of them will be slow in ways that surprise both
+  of us. When you hit one, [open an issue](https://github.com/oyvindberg/farray/issues) with a JMH
+  reproduction if you can; finding the cliffs is the point of this milestone.
+- **No binary compatibility between versions.** The API is `inline` end to end, which means library
+  internals expand into your compiled call sites. Pin an exact version and expect to recompile on
+  every upgrade. There is no MiMa story for an inline API and there won't be.
+
+:::
+
+## From Java or Kotlin
+
+The honest answer: no. The value proposition lives in the Scala 3 compiler: `inline` dispatch picks
+the unboxed loop at your call site, and `.fuse` is a macro. Java and Kotlin never run that
+machinery; what they can reach is the erased Java core, an untyped node soup that is deliberately
+not a public API. Using FArray means the code that touches it is Scala 3. If the benchmarks here
+make that trade interesting, that is the trade.
+
+## The two-line start
+
+```scala
+import farray.FArray
+
+val xs = FArray.tabulate(1_000_000)(identity) // an int[] underneath
+val hot = xs.fuse.map(_ * 2).filter(_ % 3 != 0).foldLeft(0L)(_ + _)
+```
+
+Swap the type where the profile says collections cost you; add `.fuse` where the chain is hot.
+<Link to="/fusion/farray">When to fuse (and when not to)</Link> covers the judgment calls.

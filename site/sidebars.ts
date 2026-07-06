@@ -9,7 +9,7 @@ const sidebars: SidebarsConfig = {
       type: "category",
       label: "The story",
       collapsed: false,
-      items: ["index"],
+      items: ["index", "use", "how-this-was-built"],
     },
     {
       type: "category",
@@ -17,6 +17,7 @@ const sidebars: SidebarsConfig = {
       collapsed: false,
       items: [
         "chains",
+        "semantics",
         "design/java-core",
         "design/scala-surface",
         "design/combinators",

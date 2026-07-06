@@ -121,6 +121,12 @@ the ones before it:
 
 ## The contract
 
+:::warning The purity rule is load-bearing
+Fused stage lambdas must be pure. The optimizer reorders, sinks and deletes computations on that
+assumption, and nothing checks it: a logger or counter inside a fused stage compiles fine and is a
+semantic bug. [Sharp edges](../semantics.mdx) spells out what can happen.
+:::
+
 Four rules:
 
 <ul className="points">
