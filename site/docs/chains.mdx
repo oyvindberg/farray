@@ -111,17 +111,28 @@ This chain exposes the shared-call-site problem: eight *different* lambdas throu
 method, the profile any nontrivial method builds up.
 
 💣 **A landmine hides in the primitive case.** Watch IArray on `Int` (left chart below): dead even
-with FArray through 1k, then it drops to a *third* of FArray's speed at 10k and never recovers.
-**What:** the same code, one input-size step, and a 3× loss appears from nowhere. **How:** IArray
-funnels all eight lambdas into its one shared `Array.map`; that call site now sees eight `Function1`
-(Scala's lambda interface) classes, past the JIT's ≥3-type megamorphic threshold, so it stops
-inlining them and, on `Int`, re-boxes through `Integer` at every stage boundary. Those boxed
-`Integer[]` intermediates fit in cache up to ~1k elements (so it ties), but they are far heavier than
-FArray's `int[]`, and the moment they spill the cache the re-boxing becomes pure memory traffic. The
-loss is latent in any hot method and detonates only at scale. FArray has no shared site to poison,
-each lambda is bound to its own compiled loop, so eight maps are eight tight `int[]` loops. On
-`String` there is no boxing to re-pay, so the field stays close: the mechanism is megamorphic
-*boxing*, not dispatch alone.
+with FArray through 1k, then it drops to a *third* of FArray's speed at 10k and never recovers. The
+same code, one input-size step, a 3× loss from nowhere.
+
+<details>
+<summary>Why it detonates, and only at scale</summary>
+
+**What:** the same eight-map method, run at one size larger, loses 3× against the identical FArray
+code, with no source change of any kind.
+
+**How:** IArray funnels all eight lambdas into its one shared `Array.map`. That call site now sees
+eight `Function1` (Scala's lambda interface) classes, past the JIT's ≥3-type megamorphic threshold,
+so it stops inlining them and, on `Int`, re-boxes through `Integer` at every stage boundary. Those
+boxed `Integer[]` intermediates fit in cache up to ~1k elements, which is why it ties there, but they
+are far heavier than FArray's `int[]`, and the moment they spill the cache the re-boxing becomes pure
+memory traffic. The loss is latent in any hot method and only surfaces once the data outgrows the
+cache.
+
+FArray has no shared site to poison: each lambda is bound to its own compiled loop, so eight maps are
+eight tight `int[]` loops. On `String` there is no boxing to re-pay, so the field stays close, which
+pins the mechanism as megamorphic *boxing*, not dispatch alone.
+
+</details>
 
 <BenchPair
   int="MapMegaIntBenchmark"
