@@ -72,6 +72,26 @@ failure mode cannot occur:
   caption="flatMap → filter → take on String elements. The trailing take is O(1) for FArray (a lazy SliceNode), and the fused pipeline leads at every size, with no dependence on the caller's method size or call-site history."
 />
 
+## The other JIT: Temurin/C2
+
+Everything above was measured on GraalVM CE, and fusion splices whole pipelines into single
+methods, exactly the shape where JIT inliners differ most. So the headline claims were re-run on
+the JVM most production fleets deploy: Temurin 25 (HotSpot C2), same machine, one fork per trial.
+
+| Temurin 25, C2 | eager FArray | fused FArray | best rival |
+| --- | --- | --- | --- |
+| 14-stage pipeline, 100k | 2.97× rival | **37.7× rival** (12.7× over eager) | zio.Chunk |
+| 14-stage pipeline, 1k | 2.90× rival | **22.6× rival** (7.8× over eager) | zio.Chunk |
+| map→filter→fold Int, 100k | 0.49× rival | **1.09× rival** (2.2× over eager) | IntStream |
+
+Two findings, both worth stating plainly. The 14-stage headline holds on C2: 37.7× against 36× on
+Graal; the speed genuinely lives in the emitted bytecode. And the short chain is where C2 tells a
+different story: HotSpot compiles `IntStream`'s three-stage sink chain extremely well in a small
+method, well enough to run *ahead of eager FArray* (which pays two intermediate arrays) and within
+9% of fused. Runtime fusion is a real competitor on its best JIT at its best method size; the gap
+that never closes is the one the megamorphic and method-growth pages measure, and the 14-stage
+column above.
+
 ## JSON projection queries
 
 The byte-source numbers live with their scanners and rivals on{" "}
@@ -84,6 +104,7 @@ records are abandoned mid-scan.
 Method: the checked-in `docs/bench-results.json`, produced by `scripts/bench-run.sh` (JMH, GraalVM
 CE 25, Apple Silicon; farray-only patch mode re-measures our methods against cached rival runs; see
 the repo's benchmarking notes). Cold numbers are SingleShotTime; allocation numbers are `-prof gc`.
+The Temurin/C2 table above is a separate forked run (`BENCH_JAVA` override in the same script).
 
 <Related
   links={[
