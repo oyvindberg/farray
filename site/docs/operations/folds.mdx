@@ -29,7 +29,7 @@ result:
 <BenchPair
   int="FoldLeftIntBenchmark"
   str="FoldLeftStrBenchmark"
-  caption="A lone foldLeft, Int beside String. On Int, FArray and IArray are within 1% at every size: both are the raw load-add loop, and a single fold is exactly the case the JIT specializes for everyone. On String the whole field sits within ~±20% and the small/mid cells jitter (fast in-loop ops are where the sweep's re-measure methodology is noisiest; documented in the repo, not hidden). If folds ended here, no library would have anything to sell."
+  caption="A lone foldLeft, Int beside String. On Int, FArray and IArray are within 1% at every size: both are the raw load-add loop, and a single fold is exactly the case the JIT specializes for the collections. The exception is java.util.stream: IntStream.reduce pushes every element through its Sink chain and lands ~5× behind at every size, the runtime-fusion tax with no boxing involved. On String the collection field sits within ~±20% and the small/mid cells jitter (fast in-loop ops are noise-sensitive); Stream trails ~3×. If folds ended here, no library would have anything to sell."
 />
 
 The tie does not hold once the fold sits in a real method.

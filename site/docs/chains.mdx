@@ -59,7 +59,7 @@ crossing per stage for the field; `int[]` end to end for FArray:
 <BenchPair
   int="MapFilterFoldIntBenchmark"
   str="MapFilterFoldStrBenchmark"
-  caption="map → filter → foldLeft, Int beside String. The identical chain on every structure. On Int the boxing collections pay per stage (5.6× over Vector, 8.5× over fs2.Chunk, 12× over List at 100k) while the two unboxed-array rivals hold closer: IArray and zio.Chunk pay only the intermediate allocations (1.3–1.5×). On String the elements never box, so what remains is the tighter loops and the fold's unboxed Int accumulator."
+  caption="map → filter → foldLeft, Int beside String. The identical chain on every structure, now including java.util.stream. On Int the boxing collections pay per stage (5.6× over Vector, 12× over List at 100k); IArray and zio.Chunk pay only the intermediate allocations; IntStream, the pipeline Java actually reaches for here, runs 3.3× behind eager FArray and ~4× behind fused. On String the honest cell flips: with nothing to unbox, Stream's runtime fusion beats our eager chain by 11%, and .fuse takes the lead back at 1.3–1.5×."
 />
 
 ## Structure in the middle: take → drop → fold
