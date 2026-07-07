@@ -10,14 +10,45 @@ description: "Coordinates, license, requirements, and a straight answer on matur
   stands.
 </p>
 
-## Coordinates
+<div className="factsheet">
+  <div className="factsheet__row">
+    <div className="factsheet__key">License</div>
+    <div className="factsheet__val">MIT</div>
+  </div>
+  <div className="factsheet__row">
+    <div className="factsheet__key">Source</div>
+    <div className="factsheet__val">
+      <a href="https://github.com/oyvindberg/farray">github.com/oyvindberg/farray</a>
+    </div>
+  </div>
+  <div className="factsheet__row">
+    <div className="factsheet__key">Scala</div>
+    <div className="factsheet__val">3.8 or later</div>
+  </div>
+  <div className="factsheet__row">
+    <div className="factsheet__key">Runtime</div>
+    <div className="factsheet__val">
+      JDK 25 — the M1 jar is compiled to Java 25 bytecode, and that's where it's built and
+      benchmarked.
+    </div>
+  </div>
+  <div className="factsheet__row">
+    <div className="factsheet__key">Platform</div>
+    <div className="factsheet__val">
+      JVM only, Scala 3 only — see <a href="#reach">Reach</a>.
+    </div>
+  </div>
+  <div className="factsheet__row">
+    <div className="factsheet__key">Memory</div>
+    <div className="factsheet__val">
+      A materialized <code>FArray[Int]</code> is its <code>int[]</code> plus one small leaf node (a
+      couple of object headers) and no per-element wrapper; lazy <code>take</code>/<code>++</code>/
+      <code>reverse</code> nodes add O(depth) small objects until something forces them flat.
+    </div>
+  </div>
+</div>
 
-MIT licensed. Source at [github.com/oyvindberg/farray](https://github.com/oyvindberg/farray).
-Requires Scala 3.8 or later. Built and benchmarked on JDK 25; the Java core uses sealed classes, so
-JDK 17 is the floor. JVM only — there is no Scala.js or Scala Native cross-build. On memory: a
-materialized `FArray[Int]` is its `int[]` plus one small leaf node (a couple of object headers) and
-no per-element wrapper; lazy `take`/`++`/`reverse` nodes add O(depth) small objects until something
-forces them flat.
+## Coordinates
 
 ```scala
 // sbt
@@ -28,6 +59,8 @@ libraryDependencies += "com.olvind.farray" %% "farray" % "1.0.0-M1"
 # bleep (bleep.build) — a complete minimal bleep.yaml
 $schema: https://raw.githubusercontent.com/oyvindberg/bleep/master/schema.json
 $version: 1.0.0-M10
+jvm:
+  name: temurin:25
 projects:
   myapp:
     dependencies: com.olvind.farray::farray:1.0.0-M1
@@ -41,10 +74,12 @@ Put code in `myapp/src/scala/`, run with `bleep run myapp`.
 
 ## Try it in thirty seconds
 
-Paste into `farray.sc`, run with `scala-cli farray.sc`:
+Paste into `example.sc`, run with `scala-cli example.sc` (don't name the file `farray.sc` — the
+script object would shadow the `farray` package):
 
 ```scala
 //> using dep com.olvind.farray::farray:1.0.0-M1
+//> using jvm 25
 import farray.FArray
 
 val xs = FArray.tabulate(1_000_000)(identity) // an int[] underneath
@@ -83,7 +118,14 @@ This is a milestone release of an experiment.
 
 :::
 
-## From Java or Kotlin
+## Reach
 
-No. The machinery lives in the Scala 3 compiler; the code that touches FArray is Scala 3.
+Today FArray runs on the JVM, from Scala 3, and nowhere else — but the two missing directions are
+not the same kind of "no."
+
+There is no Scala.js or Scala Native cross-build yet. Nothing structural stands in the way: the
+representation is plain arrays and the API is ordinary Scala 3, so cross-building is a matter of
+someone who cares doing the porting and CI work, not of a design that resists it.
+
+Java and Kotlin simply won't happen.
 

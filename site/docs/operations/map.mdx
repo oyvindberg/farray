@@ -97,32 +97,26 @@ String. On its own, `map` is no rout:
 
 ## Where it stops being a tie
 
-Measured against a bare array, those two charts are a wash: a few percent shy on
-`Int`, a dead tie on `String`. That's the texture of a *micro*-benchmark: one operation over one
-array, in isolation, where a lone `Array.map` (the one shared generic map Scala's standard library
-bolts onto raw arrays) is a call the JIT already inlines fully and the
-opaque wrapper plus the specialized SAM are pure overhead it doesn't carry. FArray isn't built to win
-those by a percent. It's built for what happens once the benchmark stops being a micro-benchmark,
-and it doesn't take much.
+Measured against a bare array, those two charts are a wash: a few percent shy on `Int`, a dead tie
+on `String`. That's the texture of a *micro*-benchmark — one op over one array, where a lone
+`Array.map` (the shared generic map Scala bolts onto raw arrays) is a call the JIT inlines fully,
+and FArray's opaque wrapper plus specialized SAM are pure overhead. FArray isn't built to win those
+by a percent; it's built for what happens once the benchmark stops being micro, and it doesn't take
+much.
 
-Write eight of that very same `map`, with eight *distinct* lambdas, in one method — the profile any
-nontrivial method builds up. On `Int` at 100k, IArray drops to a third of FArray's speed. First,
-what that is *not*: boxing. The allocation profiler shows IArray and FArray allocating byte-for-byte
-the same here, eight `int[]` per call, because an `Int => Int` lambda is specialized
-(`apply$mcII$sp`) and boxes nothing even when the map isn't inlined. The gap is pure compute.
+Write eight of that same `map` with eight *distinct* lambdas in one method — the profile any
+nontrivial method builds up — and on `Int` at 100k IArray drops to a third of FArray's speed. It
+isn't boxing: the allocator shows both at byte-for-byte the same eight `int[]` per call, because an
+`Int => Int` lambda is specialized (`apply$mcII$sp`). The gap is pure dispatch. IArray funnels all
+eight lambdas through its one shared `Array.map`, whose call site now sees eight `Function1` (Scala's
+lambda interface) classes — past the JIT's ≥3-type megamorphic threshold, so it can't inline the map,
+and every element runs one generic loop with a virtual `apply`. On trivial work (`_ + 1`) that
+overhead *is* the cost, so it shows as a multiple; on `String`, where each element already allocates,
+it's a rounding error — the tell that the cost is dispatch, not allocation. (It ties through 1k, where
+fixed per-call costs still dominate.)
 
-IArray funnels all eight lambdas through its one shared `Array.map`, and that call site now sees
-eight different `Function1` (Scala's lambda interface) classes, past the JIT's ≥3-type megamorphic
-threshold, so it can no longer inline the map. Instead of the eight tight, inlined `int[]` loops it
-would have produced, every element runs through one generic, unspecialized loop with a real virtual
-`apply`. On trivial `Int` work (`_ + 1`) that per-element overhead is the entire cost, so it shows
-as a multiple; on `String`, where each element already does real allocating work, the same overhead
-is a rounding error — which is the tell that the cost is dispatch, not allocation. It ties through 1k
-because small inputs stay near the fixed per-call costs; the penalty only takes over once there are
-enough elements to feel it.
-
-FArray has no shared site to poison: each lambda was already bound to its own specialized loop at
-compile time, so eight maps are eight tight `int[]` loops, however many of them you write.
+FArray has no shared site to poison: each lambda was bound to its own specialized loop at compile
+time, so eight maps are eight tight `int[]` loops, however many you write.
 
 <BenchPair
   int="MapMegaIntBenchmark"

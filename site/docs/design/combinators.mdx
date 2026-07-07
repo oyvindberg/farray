@@ -57,8 +57,10 @@ ordinary wins, no special mechanism.
 ## Sorting
 
 Sorting is where a raw array should win outright. FArray sorts directly on the
-materialized array, with a run-detecting mergesort, no boxed indices, and no `Ordering` (Scala's
-`Comparator`) ceremony:
+materialized array, with a run-detecting mergesort and no boxed indices. It still takes an
+`Ordering` (Scala's `Comparator`) like everything else — it just recognizes the standard primitive
+instances and routes them to a native unboxed array sort, so the common case skips the
+per-comparison `compare` call entirely:
 
 <BenchPair
   int="SortIntBenchmark"

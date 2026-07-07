@@ -8,6 +8,7 @@ import Link from "@docusaurus/Link";
 import BenchPair from "@site/src/components/BenchPair";
 import BenchChart from "@site/src/components/BenchChart";
 import ChainScore from "@site/src/components/ChainScore";
+import Scorecard from "@site/src/components/Scorecard";
 
 {/* This page is eager-only by construction. The fused/lazy pipelines belong with the fused
     comparison, not here: java.util.stream (a lazy fused pipeline) and FArray's own .fuse (the
@@ -24,9 +25,13 @@ export const fused = ["javastream", "farrayFused"];
   String on the right.
 </p>
 
-The rivals throughout: Scala's `List` (an immutable linked list, not `java.util.List`), `Vector`
-(a persistent tree), `IArray` (an immutable view of a raw array), and the array-backed `Chunk`
-types from the fs2 and ZIO streaming libraries.
+The rivals throughout:
+
+- `List` — Scala's immutable linked list, not `java.util.List`
+- `Vector` — a persistent tree
+- `IArray` — an immutable view of a raw array
+- `fs2.Chunk` — the array-backed chunk from the fs2 streaming library
+- `zio.Chunk` — the array-backed chunk from the ZIO streaming library
 
 First the totals. Every size of every chained-operation benchmark class in the suite, eager FArray
 only, no `.fuse`:
@@ -47,7 +52,7 @@ Three effects compound down a chain:
     every array-backed rival, a copy of data whose only purpose is to be consumed by the next stage.
   </li>
   <li>
-    <strong>Big methods slow the rivals down.</strong> The array-backed collections run every lambda
+    <strong>Big (calling) methods slow the rivals down.</strong> The array-backed collections run every lambda
     you pass to <code>map</code>/<code>filter</code> through one shared, generic copy of that method.
     Pack several different lambdas into one method and the JIT can no longer keep that shared copy
     specialized, so it deoptimizes and slows down. FArray compiles each lambda into its own loop, so
@@ -145,6 +150,14 @@ whole field, before anything is compiled:
   ignore={fused}
   caption="A long eager pipeline measured COLD: SingleShotTime, one uncompiled invocation at 100k elements (invocations/sec, higher is faster). Eager FArray leads before the JIT compiles anything: 1.7× past IArray, 3.4× past Vector, 4× past List, and 4–7× past the Chunks. The boxing collections gain little from warmup anyway — their cost is allocation, and the JIT does not eliminate a million Integers."
 />
+
+## The whole suite, one number per structure
+
+The charts above argue from selected benchmarks; this is the unselected version. Every operation at
+every size, boiled down per structure, losses included; [the benchmarks page](./benchmarks/farray.mdx)
+has every chart behind it.
+
+<Scorecard />
 
 ---
 
