@@ -7,11 +7,23 @@ projects:
   farray:
     dependencies: com.lihaoyi::fansi:0.3.1
     extends: template-common
-    platform:
-      mainClass: com.foo.App
     sourcegen:
       project: codegen
       main: farray.GenCores
+    publish:
+      groupId: com.olvind.farray
+      description: "An immutable, unboxed, Array-backed sequence for Scala 3 with the whole collections API"
+      url: https://github.com/oyvindberg/farray
+      organization: com.olvind
+      sonatypeProfileName: com.olvind
+      developers:
+        - id: oyvindberg
+          name: Øyvind Raddum Berg
+          url: https://github.com/oyvindberg
+      licenses:
+        - name: MIT
+          url: http://opensource.org/licenses/MIT
+          distribution: repo
   codegen:
     extends: template-common
     dependencies:
@@ -93,22 +105,6 @@ projects:
     sourcegen:
       project: setbenchmarks
       main: farray.GenSetJmh
-  scripts:
-    dependencies:
-      - build.bleep::bleep-plugin-ci-release:${BLEEP_VERSION}
-    platform:
-      name: jvm
-    scala:
-      options: -encoding utf8 -feature -unchecked
-      strict: true
-      version: 3.8.3
-scripts:
-  my-publish-local:
-    main: PublishLocal
-    project: scripts
-  publish:
-    main: Publish
-    project: scripts
 templates:
   template-common:
     platform:
