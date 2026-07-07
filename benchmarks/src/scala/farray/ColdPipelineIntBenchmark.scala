@@ -90,6 +90,41 @@ class ColdPipelineIntBenchmark extends CommonParams {
       .filter(_ > 0)
       .foldLeft(0)(_ + _)
 
+  // .view = the standard library's own lazy, single-pass forms — the fair comparison for .fuse, cold.
+  @Benchmark def listView(): Int =
+    listInput.view
+      .flatMap(x => List(x, x + 1))
+      .filter(_ % 3 != 0)
+      .map(_ * 2)
+      .flatMap(x => List(x, x ^ 5))
+      .filter(_ % 2 == 0)
+      .map(_ - 7)
+      .zip(listInput.view.map(_ + 100))
+      .map((a, b) => a + b)
+      .zipWithIndex
+      .filter((v, i) => (v + i) % 4 != 0)
+      .map((v, i) => v - i)
+      .flatMap(x => List(x, x + 3))
+      .filter(_ > 0)
+      .foldLeft(0)(_ + _)
+
+  @Benchmark def vectorView(): Int =
+    vectorInput.view
+      .flatMap(x => Vector(x, x + 1))
+      .filter(_ % 3 != 0)
+      .map(_ * 2)
+      .flatMap(x => Vector(x, x ^ 5))
+      .filter(_ % 2 == 0)
+      .map(_ - 7)
+      .zip(vectorInput.view.map(_ + 100))
+      .map((a, b) => a + b)
+      .zipWithIndex
+      .filter((v, i) => (v + i) % 4 != 0)
+      .map((v, i) => v - i)
+      .flatMap(x => Vector(x, x + 3))
+      .filter(_ > 0)
+      .foldLeft(0)(_ + _)
+
   @Benchmark def iarray(): Int =
     iarrayInput
       .flatMap(x => IArray(x, x + 1))

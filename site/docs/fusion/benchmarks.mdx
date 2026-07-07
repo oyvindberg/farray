@@ -33,9 +33,11 @@ by the one word:
     <>
       Swept from empty to 100k elements. At 100k: ~36× the quickest rival, ~83× List, and ~15× the
       same pipeline run eagerly on FArray itself (the gap between compiled-once ops and a compiled
-      pipeline). Hover any column for exact ratios; the fused
-      variant's allocation profile measures at inputs-only (4·N + 40 bytes per invocation, the
-      benchmark's own zip source), with the pipeline contributing zero.
+      pipeline). The lazy <code>List.view</code>/<code>Vector.view</code> forms don't rescue the
+      collections on a chain this flatMap- and zip-heavy — their per-stage View wrappers cost more
+      than the intermediates they remove, landing ~60–70× behind <code>.fuse</code>. Hover any column
+      for exact ratios; the fused variant's allocation profile measures at inputs-only (4·N + 40 bytes
+      per invocation, the benchmark's own zip source), with the pipeline contributing zero.
     </>
   }
 />
@@ -44,13 +46,15 @@ by the one word:
 
 `java.util.stream` is the JVM's own fused pipeline, which makes it the fair rival for `.fuse` and
 the wrong one for the eager chains on the <Link to="/chains">chains page</Link> (comparing a lazy
-pipeline against eager materialization would be a strawman, so it sits this one out there). Here is
-the classic map → filter → foldLeft with both sides collapsed to a single pass:
+pipeline against eager materialization would be a strawman, so it sits this one out there). The
+standard collections have their own lazy single-pass form too — `List.view` and `Vector.view` — so
+these charts include them as well; they too belong here rather than on the eager page. Here is the
+classic map → filter → foldLeft with every side collapsed to a single pass:
 
 <BenchPair
   int="MapFilterFoldIntBenchmark"
   str="MapFilterFoldStrBenchmark"
-  caption="map → filter → foldLeft. Eager FArray and every eager collection materialize two intermediate arrays across three passes; IntStream and FArray's .fuse both run it as one pass with none. On Int, IntStream leads the EAGER FArray chain ~1.5×, and .fuse retakes the lead at 1.1–1.2×. On String the per-element String allocation dwarfs the intermediate-array traffic, so eager already nearly ties and fusion changes little. The eager FArray bar is the same measurement shown on the chains page; the fused bar is the point of this chart."
+  caption="map → filter → foldLeft. Eager FArray and every eager collection materialize two intermediate arrays across three passes; IntStream, List.view/Vector.view, and FArray's .fuse all run it as one pass with none. On Int, IntStream leads the EAGER FArray chain ~1.5× and .fuse retakes the lead at 1.1×; the collection .view forms fuse the three stages but stay boxed, landing ~2.5–3× past their own eager selves yet ~7–9× behind .fuse. On String the per-element String allocation dominates, so the field compresses — Vector.view is the quickest rival and fusion leads it only ~1.1×. The eager FArray bar is the same measurement shown on the chains page."
 />
 
 ## Cold: no warmup lap
@@ -60,7 +64,7 @@ ahead:
 
 <BenchChart
   cls="ColdPipelineIntBenchmark"
-  caption="The same 14-stage pipeline measured COLD: SingleShotTime, zero warmup, one uncompiled invocation at 100k elements (invocations/sec). Fused FArray is ~3.8× past List and IArray, ~2.7× past the quickest rival, before the JIT compiles anything. Warmup only changes the size of the lead."
+  caption="The same 14-stage pipeline measured COLD: SingleShotTime, zero warmup, one uncompiled invocation at 100k elements (invocations/sec). Fused FArray is ~3.8× past List and IArray, ~2.7× past the quickest rival, before the JIT compiles anything. Cold is exactly where the lazy .view forms collapse — their View-wrapper allocation isn't compiled away yet, so List.view/Vector.view run ~4–5× slower than even eager List here; laziness is a warm-JIT bet, and .fuse doesn't make it. Warmup only changes the size of the lead."
 />
 
 ## Streaming: constant memory without the streaming tax
@@ -80,7 +84,7 @@ String:
 <BenchPair
   int="IntLongPipelineBench"
   str="StrLongPipelineBench"
-  caption="map · filter · collect · map · zipWithIndex · map · takeWhile · filter · map · sum. Fused FArray runs it in one unboxed pass with no intermediate collections: on Int at 100k, 22.6× the best rival and 4.9× over eager FArray. On String the per-element string work compresses the field, but fusion still leads eager 1.7× and the best rival 1.8×. Both bars are FArray — the bright one is .fuse, the darker one the same chain eager."
+  caption="map · filter · collect · map · zipWithIndex · map · takeWhile · filter · map · sum. Fused FArray runs it in one unboxed pass with no intermediate collections. The fairest rival is each collection's own lazy .view (single-pass, no intermediates) — and on Int at 100k the quickest of those is Vector.view, ~2× past eager Vector but still 16.7× behind .fuse (and 4.9× behind eager FArray). On String the per-element string work compresses the field, so Vector.view is the quickest rival there too, with fusion 1.7× ahead of it and 1.7× ahead of eager FArray. Both bright/dark bars are FArray — .fuse and the same chain eager."
 />
 
 ## JSON projection queries

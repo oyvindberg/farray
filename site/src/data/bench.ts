@@ -14,12 +14,12 @@ export const KNOWN: Record<string, [string, string]> = {
   farraySource: ["FArray fused", "#16a34a"], farrayLines: ["FArray fused", "#16a34a"],
   array: ["Array", "#a0a6ac"],
   arraybuffer: ["ArrayBuffer", "#8aa2b8"], arraybuilder: ["ArrayBuilder", "#c29a63"],
-  iarray: ["IArray", "#bf9d57"], list: ["List", "#9b8fb2"],
+  iarray: ["IArray", "#bf9d57"], list: ["List", "#9b8fb2"], listView: ["List.view", "#c3b7d6"],
   javastream: ["java.stream", "#5382a1"],
   farrayFuse: ["FArray .fuse", "#16a34a"], farrayFuseFold: ["FArray .fuse (fold)", "#6ee7a8"],
   jsoniterNarrow: ["jsoniter (narrow)", "#c58a4e"], jsoniterFull: ["jsoniter (full)", "#d8b184"],
   jsoniterManual: ["jsoniter (manual)", "#a9743d"], jawn: ["jawn", "#9b8fb2"], jackson: ["Jackson", "#7ea2bd"],
-  vector: ["Vector", "#7ea2bd"], fs2chunk: ["fs2.Chunk", "#c5876b"],
+  vector: ["Vector", "#7ea2bd"], vectorView: ["Vector.view", "#a6c3d9"], fs2chunk: ["fs2.Chunk", "#c5876b"],
   ziochunk: ["zio.Chunk", "#bd8aa6"], scalaRange: ["Range", "#8b9197"],
   farrayTree: ["FArray·tree", "#16a34a"], farrayMat: ["FArray·flat", "#6ee7a8"],
   ziochunkTree: ["zio·tree", "#bd8aa6"], ziochunkMat: ["zio·flat", "#d6b3c6"],
@@ -45,6 +45,9 @@ const SUBV = new Set([
   // comparison is against .fuse, so it stays out of the eager-collection leaderboard and is shown
   // only on the fusion-context charts (elsewhere hidden per-chart via the `ignore` prop).
   "javastream",
+  // List.view / Vector.view are the standard library's own lazy single-pass forms — same status as
+  // java.util.stream: compared against .fuse on the fusion pages, kept out of the eager leaderboard.
+  "listView", "vectorView",
 ]);
 // the actual contending structures — the leaderboard ranks only these (a benchmark method like
 // MapMega's `committed` is a scenario, not a collection, and must not show up as a "structure").

@@ -11,6 +11,9 @@ class MapFilterFoldStrBenchmark extends Inputs {
   // stop:bench-mapfilterfold
   @Benchmark def iarray(): Int = iarrayInput.map(_ + "x").filter(_.length > 1).foldLeft(0)(_ + _.length)
   @Benchmark def vector(): Int = vectorInput.map(_ + "x").filter(_.length > 1).foldLeft(0)(_ + _.length)
+  // .view = the standard library's own lazy, single-pass form — the fair comparison for .fuse
+  @Benchmark def listView(): Int = listInput.view.map(_ + "x").filter(_.length > 1).foldLeft(0)(_ + _.length)
+  @Benchmark def vectorView(): Int = vectorInput.view.map(_ + "x").filter(_.length > 1).foldLeft(0)(_ + _.length)
   @Benchmark def fs2chunk(): Int = fs2ChunkInput.map(_ + "x").filter(_.length > 1).foldLeft(0)(_ + _.length)
   @Benchmark def ziochunk(): Int = zioChunkInput.map(_ + "x").filter(_.length > 1).foldLeft(0)(_ + _.length)
   // java.util.stream: the foldLeft is expressed as the idiomatic mapToInt(...).sum
@@ -25,6 +28,9 @@ class MapFilterFoldIntBenchmark extends IntInputs {
   @Benchmark def farray(): Int = farrayInput.map(_ + 1).filter(_ % 2 == 0).foldLeft(0)(_ + _)
   @Benchmark def iarray(): Int = iarrayInput.map(_ + 1).filter(_ % 2 == 0).foldLeft(0)(_ + _)
   @Benchmark def vector(): Int = vectorInput.map(_ + 1).filter(_ % 2 == 0).foldLeft(0)(_ + _)
+  // .view = the standard library's own lazy, single-pass form — the fair comparison for .fuse
+  @Benchmark def listView(): Int = listInput.view.map(_ + 1).filter(_ % 2 == 0).foldLeft(0)(_ + _)
+  @Benchmark def vectorView(): Int = vectorInput.view.map(_ + 1).filter(_ % 2 == 0).foldLeft(0)(_ + _)
   @Benchmark def fs2chunk(): Int = fs2ChunkInput.map(_ + 1).filter(_ % 2 == 0).foldLeft(0)(_ + _)
   @Benchmark def ziochunk(): Int = zioChunkInput.map(_ + 1).filter(_ % 2 == 0).foldLeft(0)(_ + _)
   // java.util.stream: IntStream is the unboxed, fusing pipeline Java reaches for on exactly this shape

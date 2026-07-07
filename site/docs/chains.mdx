@@ -13,7 +13,7 @@ import Scorecard from "@site/src/components/Scorecard";
 {/* This page is eager-only by construction. The fused/lazy pipelines belong with the fused
     comparison, not here: java.util.stream (a lazy fused pipeline) and FArray's own .fuse (the
     `farrayFused` bar, e.g. on the cold-pipeline chart). Every chart drops them via ignore={fused}. */}
-export const fused = ["javastream", "farrayFused"];
+export const fused = ["javastream", "farrayFused", "listView", "vectorView"];
 
 <p className="page__eyebrow">what FArray buys</p>
 
@@ -85,7 +85,7 @@ crossing per stage for the field; `int[]` end to end for FArray:
   int="MapFilterFoldIntBenchmark"
   str="MapFilterFoldStrBenchmark"
   ignore={fused}
-  caption="map → filter → foldLeft, Int beside String. The boxing collections pay per stage (5.6× over Vector, 12× over List at 100k); IArray and zio.Chunk pay only the intermediate allocations. int[] end to end for FArray, and eager FArray beats eager IArray at every size — its filter is branchless and vectorizes. The lazy single-pass rivals (java.util.stream, and FArray's own .fuse, which both fuse the three stages into one loop with no intermediates) are compared on the fusion benchmarks page; here the field is eager."
+  caption="map → filter → foldLeft, Int beside String. The boxing collections pay per stage (5.6× over Vector, 12× over List at 100k); IArray and zio.Chunk pay only the intermediate allocations. int[] end to end for FArray, and eager FArray beats eager IArray at every size — its filter is branchless and vectorizes. The lazy single-pass rivals (java.util.stream, List.view/Vector.view, and FArray's own .fuse, which all fuse the three stages into one loop with no intermediates) are compared on the fusion benchmarks page; here the field is eager."
 />
 
 ## take → drop → map → fold
