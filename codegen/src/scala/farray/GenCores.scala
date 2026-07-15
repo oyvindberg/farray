@@ -2528,7 +2528,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // iarray on tabulate-built input). The store into the typed array is an exact-class check (cheap).
     val tabulate = dispatchA(k =>
       if k.name == "Ref" then
-        s"if (n <= 0) Empty.INSTANCE else if (n == 1) new RefOne(${wr(k, "r.unwrap(f(0))")}) else { val out = summonFrom { case ct: scala.reflect.ClassTag[A] => ct.newArray(n).asInstanceOf[Array[Object]]; case _ => new Array[Object](n) }; var i = 0; while (i < n) { out(i) = ${wr(k, "r.unwrap(f(i))")}; i += 1 }; new RefArr(out, n) }"
+        // A summonable ClassTag[A] can see THROUGH an opaque-over-primitive A (opaque type V = Long ->
+        // ClassTag.Long) even when kind dispatch could not (no LongRepr[V] given -> this Ref/boxed arm via
+        // anyRepr). Its `newArray` would then allocate a PRIMITIVE array (long[]) and the unconditional
+        // `.asInstanceOf[Array[Object]]` throws ClassCastException ([J cannot be cast to [Ljava.lang.Object;).
+        // Guard on `ct.runtimeClass.isPrimitive`: for a primitive-erased tag fall back to the boxed Object[]
+        // that this Ref arm already implies; only a genuine reference tag (A <: AnyRef) gets the typed array.
+        s"if (n <= 0) Empty.INSTANCE else if (n == 1) new RefOne(${wr(k, "r.unwrap(f(0))")}) else { val out = summonFrom { case ct: scala.reflect.ClassTag[A] => if (ct.runtimeClass.isPrimitive) new Array[Object](n) else ct.newArray(n).asInstanceOf[Array[Object]]; case _ => new Array[Object](n) }; var i = 0; while (i < n) { out(i) = ${wr(k, "r.unwrap(f(i))")}; i += 1 }; new RefArr(out, n) }"
       else
         s"if (n <= 0) Empty.INSTANCE else if (n == 1) new ${k.name}One(${wr(k, "r.unwrap(f(0))")}) else { val out = ${alloc(k, "r")}; var i = 0; while (i < n) { out(i) = ${wr(k, "r.unwrap(f(i))")}; i += 1 }; new ${k.name}Arr(out, n) }"
     )
