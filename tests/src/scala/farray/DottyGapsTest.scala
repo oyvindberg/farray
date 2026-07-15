@@ -265,6 +265,54 @@ class DottyGapsTest:
     assertEquals(List("APPLE"), (for s <- fa if s.startsWith("a") yield s.toUpperCase).toList)
     assertEquals(Nil, (for x <- FArray.empty[Int] if x > 0 yield x).toList)
 
+  // ---- Task 6: small ops ----
+  @Test def option_min_max: Unit =
+    val fa = FArray(3, 1, 2); val la = List(3, 1, 2)
+    assertEquals(la.minOption, fa.minOption)
+    assertEquals(la.maxOption, fa.maxOption)
+    assertEquals(None, FArray.empty[Int].minOption)
+    assertEquals(None, FArray.empty[Int].maxOption)
+    assertEquals(la.minByOption(x => -x), fa.minByOption(x => -x))
+    assertEquals(la.maxByOption(x => -x), fa.maxByOption(x => -x))
+    assertEquals(None, FArray.empty[String].maxByOption(_.length))
+
+  @Test def zipAll_parity: Unit =
+    val a = FArray(1, 2, 3); val b = FArray("a", "b", "c", "d", "e")
+    val la = List(1, 2, 3); val lb = List("a", "b", "c", "d", "e")
+    assertEquals(la.zipAll(lb, 0, "z"), a.zipAll(b, 0, "z").toList)
+    assertEquals(lb.zipAll(la, "z", 0), b.zipAll(a, "z", 0).toList)
+    assertEquals(la.zipAll(la, 0, 0), a.zipAll(a, 0, 0).toList)
+
+  @Test def sizeCompare_ops: Unit =
+    val fa = FArray(1, 2, 3)
+    assertTrue(fa.sizeCompare(5) < 0)
+    assertEquals(0, fa.sizeCompare(3))
+    assertTrue(fa.sizeCompare(1) > 0)
+    assertTrue(fa.sizeCompare(FArray(1, 2, 3, 4)) < 0)
+    assertEquals(0, fa.sizeCompare(FArray("a", "b", "c")))
+
+  @Test def copyToArray_overloads: Unit =
+    val fa = FArray(1, 2, 3, 4, 5)
+    val d1 = new Array[Int](3); assertEquals(3, fa.copyToArray(d1)); assertEquals(List(1, 2, 3), d1.toList)
+    val d2 = new Array[Int](10); val n = fa.copyToArray(d2, 2)
+    assertEquals(5, n); assertEquals(List(0, 0, 1, 2, 3, 4, 5, 0, 0, 0), d2.toList)
+    val d3 = new Array[Int](5); assertEquals(2, fa.copyToArray(d3, 3)); assertEquals(List(0, 0, 0, 1, 2), d3.toList) // only 2 slots left
+
+  @Test def groupMapReduce_parity: Unit =
+    val fa = FArray(1, 2, 3, 4, 5, 6, 7)
+    val la = List(1, 2, 3, 4, 5, 6, 7)
+    // sum of squares by parity
+    assertEquals(
+      la.groupMapReduce(_ % 2)(x => x * x)(_ + _),
+      fa.groupMapReduce(_ % 2)(x => x * x)(_ + _)
+    )
+    val ws = FArray("apple", "banana", "avocado", "cherry", "blueberry")
+    val lws = List("apple", "banana", "avocado", "cherry", "blueberry")
+    assertEquals(
+      lws.groupMapReduce(_.head)(_.length)(_ + _),
+      ws.groupMapReduce(_.head)(_.length)(_ + _)
+    )
+
   @Test def prepend_recursive_sum: Unit =
     import farray.`+:`
     def sum(xs: FArray[Int]): Int = xs match

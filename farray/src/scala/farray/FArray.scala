@@ -313,6 +313,40 @@ object FArray:
     inline def partitionMap[A1, A2](inline f: A => Either[A1, A2]): (FArray[A1], FArray[A2]) =
       FArrayOps.partitionMapImpl[A, A1, A2](xs)(f).asInstanceOf[(FArray[A1], FArray[A2])]
 
+    // ---- Task 6: small ops (empty-safe Option variants, zipAll, sizeCompare, copyToArray overloads, groupMapReduce) ----
+    inline def minOption[B >: A](using ord: Ordering[B]): Option[A] = if xs.length == 0 then None else Some(xs.min[B])
+    inline def maxOption[B >: A](using ord: Ordering[B]): Option[A] = if xs.length == 0 then None else Some(xs.max[B])
+    inline def minByOption[B](inline f: A => B)(using ord: Ordering[B]): Option[A] =
+      if xs.length == 0 then None else Some(xs.minBy[B](f))
+    inline def maxByOption[B](inline f: A => B)(using ord: Ordering[B]): Option[A] =
+      if xs.length == 0 then None else Some(xs.maxBy[B](f))
+
+    /** pair up to the LONGER length, padding the exhausted side with its default (like stdlib zipAll). */
+    inline def zipAll[B >: A, C](that: FArray[C], thisElem: B, thatElem: C): FArray[(B, C)] =
+      val n1 = xs.length; val n2 = that.length; val n = if n1 > n2 then n1 else n2
+      FArray.tabulate(n)(i => ((if i < n1 then xs(i) else thisElem): B, if i < n2 then that(i) else thatElem))
+
+    /** compare length to another FArray's / to a number without materializing (stdlib `sizeCompare`). */
+    def sizeCompare[B](that: FArray[B]): Int = Integer.compare(xs.length, that.length)
+    def sizeCompare(len: Int): Int = Integer.compare(xs.length, len)
+
+    /** copy into `dest` (whole array / from `start`); delegates to the clamped 3-arg form. */
+    inline def copyToArray[B >: A](dest: Array[B]): Int = FArrayOps.copyToArrayImpl[A, B](xs, dest, 0, dest.length)
+    inline def copyToArray[B >: A](dest: Array[B], start: Int): Int = FArrayOps.copyToArrayImpl[A, B](xs, dest, start, dest.length)
+
+    /** eager group-map-reduce: key each element, map with `f`, combine per-key with `reduce`
+      * (first value seeds). Returns an immutable `Map` (inherently boxed); the traversal is unboxed
+      * and `key`/`f`/`reduce` inline. */
+    inline def groupMapReduce[K, B](inline key: A => K)(inline f: A => B)(inline reduce: (B, B) => B): Map[K, B] =
+      val m = scala.collection.mutable.HashMap.empty[K, B]
+      xs.foreach { a =>
+        val k = key(a); val v = f(a)
+        m.get(k) match
+          case Some(old) => m.update(k, reduce(old, v))
+          case None      => m.update(k, v)
+      }
+      m.toMap
+
     // flattening cursor: O(n) over trees (not O(n·depth)), unboxed leaf reads, reports knownSize.
     inline def iterator: Iterator[A] = FArrayOps.iteratorImpl[A](xs)
     inline def reverseIterator: Iterator[A] = FArrayOps.iteratorImpl[A](xs.reverse)
