@@ -25,12 +25,12 @@
       case l: IntArr =>
         (l.arr: Array[Int])
       case _ =>
-        null
+        Array.emptyIntArray
     }
     val len: Int = s.length
     var i: Int = 0
     while (i.<(len).&&(done.unary_!)) {
-      val v: Int = if (`a₂`.ne(null)) `a₂`.apply(i) else FArrayOps.intAt(s, i)
+      val v: Int = if (`a₂`.ne(Array.emptyIntArray)) `a₂`.apply(i) else FArrayOps.intAt(s, i)
       if (c.>=(zn)) done = true else {
         val pos: Int = c
         c = c.+(1)

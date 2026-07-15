@@ -25,12 +25,12 @@
             case l: IntArr =>
               (l.arr: Array[Int])
             case t =>
-              if (t.length.>=(64)) FArrayOps.materializeInt(t) else null
+              if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
           }
           val len: Int = s.length
           var i: Int = 0
           while (i.<(len)) {
-            val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+            val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
             val `v₂`: Int = v.%(2)
             val `v₃`: Boolean = `v₂`.==(0)
             if (`v₃`) {

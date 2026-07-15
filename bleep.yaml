@@ -32,6 +32,17 @@ projects:
     dependsOn: fset
     extends: template-common
     isTestProject: true
+  # Compiles a representative set of `.fuse` pipelines + `distinctBy`/other inline-op call sites WITH
+  # `-Yexplicit-nulls` (the flag the Scala 3 compiler itself is built with). This is a COMPILE-ONLY gate:
+  # if the macro/inline-expanded code emits a bare `null` into a non-nullable type it fails to typecheck
+  # here, exactly as it did in dotty and blocked all `.fuse` adoption. `bleep compile nulls-tests` must be
+  # clean. strict:false isolates the gate to hard type errors (not unrelated warnings).
+  nulls-tests:
+    dependsOn: farray
+    extends: template-common
+    scala:
+      strict: false
+      options: -encoding utf8 -feature -unchecked -Yexplicit-nulls
   tests:
     dependencies:
       - junit:junit:4.13.2

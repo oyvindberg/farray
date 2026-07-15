@@ -80,12 +80,12 @@
           case l: IntArr =>
             (l.arr: Array[Int])
           case _ =>
-            null
+            Array.emptyIntArray
         }
         val len: Int = s.length
         var `i₃`: Int = 0
         while (`i₃`.<(len).&&(done.unary_!)) {
-          val `v₃`: Int = if (`a₂`.ne(null)) `a₂`.apply(`i₃`) else FArrayOps.intAt(s, `i₃`)
+          val `v₃`: Int = if (`a₂`.ne(Array.emptyIntArray)) `a₂`.apply(`i₃`) else FArrayOps.intAt(s, `i₃`)
           val `v₄`: Int = `v₃`.%(3)
           val `v₅`: Boolean = `v₄`.!=(0)
           if (`v₅`) {

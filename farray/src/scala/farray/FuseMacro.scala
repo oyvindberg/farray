@@ -1248,7 +1248,12 @@ object FuseMacro:
       // GenCores, a single-bound loop on the logical length ties `a.length` exactly (loop predication); the
       // compound `i < a.length && i < len` form is what kills vectorization — never that.
       val mat = outer && ctx.done.isEmpty
-      def skeleton[Arr <: AnyRef](arrOf: Expr[FBase] => Expr[Arr], read: (Expr[Arr], Expr[Int]) => Term)(using Type[Arr]): Expr[Unit] =
+      // `empty` is a cached, reference-unique empty array of `Arr`'s element type (Array.emptyIntArray /
+      // emptyObjectArray / …) used as the "not a flat leaf" sentinel INSTEAD of `null`. A bare `else null`
+      // where `Array[X]` is expected is `Found: Null, Required: Array[X]` under `-Yexplicit-nulls`, which
+      // blocked ALL `.fuse` adoption in dotty. The empties are shared singletons, so `a ne $empty` is the
+      // same single acmp `a ne null` was — identical hot-loop bytecode, no per-element cost.
+      def skeleton[Arr <: AnyRef](empty: Expr[Arr], arrOf: Expr[FBase] => Expr[Arr], read: (Expr[Arr], Expr[Int]) => Term)(using Type[Arr]): Expr[Unit] =
         elemTpe.asType match
           case '[se] =>
             '{
@@ -1257,71 +1262,80 @@ object FuseMacro:
               val len: Int = s.length
               var i: Int = 0
               while ${ cond('len, 'i) } do
-                ${ perElem('{ if a ne null then ${ read('a, 'i).asExprOf[se] } else ${ readAtKind(elemTpe, 's, 'i).asExprOf[se] } }.asTerm) }
+                ${ perElem('{ if a ne $empty then ${ read('a, 'i).asExprOf[se] } else ${ readAtKind(elemTpe, 's, 'i).asExprOf[se] } }.asTerm) }
                 i += 1
             }
       k match
         case Kind.KInt =>
           skeleton[Array[Int]](
+            '{ Array.emptyIntArray },
             s =>
-              if mat then '{ $s match { case l: IntArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeInt(t) else null } }
-              else '{ $s match { case l: IntArr => l.arr; case _ => null } },
+              if mat then '{ $s match { case l: IntArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeInt(t) else Array.emptyIntArray } }
+              else '{ $s match { case l: IntArr => l.arr; case _ => Array.emptyIntArray } },
             (a, i) => '{ $a($i) }.asTerm
           )
         case Kind.KLong =>
           skeleton[Array[Long]](
+            '{ Array.emptyLongArray },
             s =>
-              if mat then '{ $s match { case l: LongArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeLong(t) else null } }
-              else '{ $s match { case l: LongArr => l.arr; case _ => null } },
+              if mat then '{ $s match { case l: LongArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeLong(t) else Array.emptyLongArray } }
+              else '{ $s match { case l: LongArr => l.arr; case _ => Array.emptyLongArray } },
             (a, i) => '{ $a($i) }.asTerm
           )
         case Kind.KDouble =>
           skeleton[Array[Double]](
+            '{ Array.emptyDoubleArray },
             s =>
-              if mat then '{ $s match { case l: DoubleArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeDouble(t) else null } }
-              else '{ $s match { case l: DoubleArr => l.arr; case _ => null } },
+              if mat then '{ $s match { case l: DoubleArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeDouble(t) else Array.emptyDoubleArray } }
+              else '{ $s match { case l: DoubleArr => l.arr; case _ => Array.emptyDoubleArray } },
             (a, i) => '{ $a($i) }.asTerm
           )
         case Kind.KFloat =>
           skeleton[Array[Float]](
+            '{ Array.emptyFloatArray },
             s =>
-              if mat then '{ $s match { case l: FloatArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeFloat(t) else null } }
-              else '{ $s match { case l: FloatArr => l.arr; case _ => null } },
+              if mat then '{ $s match { case l: FloatArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeFloat(t) else Array.emptyFloatArray } }
+              else '{ $s match { case l: FloatArr => l.arr; case _ => Array.emptyFloatArray } },
             (a, i) => '{ $a($i) }.asTerm
           )
         case Kind.KShort =>
           skeleton[Array[Short]](
+            '{ Array.emptyShortArray },
             s =>
-              if mat then '{ $s match { case l: ShortArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeShort(t) else null } }
-              else '{ $s match { case l: ShortArr => l.arr; case _ => null } },
+              if mat then '{ $s match { case l: ShortArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeShort(t) else Array.emptyShortArray } }
+              else '{ $s match { case l: ShortArr => l.arr; case _ => Array.emptyShortArray } },
             (a, i) => '{ $a($i) }.asTerm
           )
         case Kind.KByte =>
           skeleton[Array[Byte]](
+            '{ Array.emptyByteArray },
             s =>
-              if mat then '{ $s match { case l: ByteArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeByte(t) else null } }
-              else '{ $s match { case l: ByteArr => l.arr; case _ => null } },
+              if mat then '{ $s match { case l: ByteArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeByte(t) else Array.emptyByteArray } }
+              else '{ $s match { case l: ByteArr => l.arr; case _ => Array.emptyByteArray } },
             (a, i) => '{ $a($i) }.asTerm
           )
         case Kind.KChar =>
           skeleton[Array[Char]](
+            '{ Array.emptyCharArray },
             s =>
-              if mat then '{ $s match { case l: CharArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeChar(t) else null } }
-              else '{ $s match { case l: CharArr => l.arr; case _ => null } },
+              if mat then '{ $s match { case l: CharArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeChar(t) else Array.emptyCharArray } }
+              else '{ $s match { case l: CharArr => l.arr; case _ => Array.emptyCharArray } },
             (a, i) => '{ $a($i) }.asTerm
           )
         case Kind.KBoolean =>
           skeleton[Array[Boolean]](
+            '{ Array.emptyBooleanArray },
             s =>
-              if mat then '{ $s match { case l: BooleanArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeBoolean(t) else null } }
-              else '{ $s match { case l: BooleanArr => l.arr; case _ => null } },
+              if mat then '{ $s match { case l: BooleanArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeBoolean(t) else Array.emptyBooleanArray } }
+              else '{ $s match { case l: BooleanArr => l.arr; case _ => Array.emptyBooleanArray } },
             (a, i) => '{ $a($i) }.asTerm
           )
         case Kind.KRef =>
           skeleton[Array[AnyRef]](
+            '{ Array.emptyObjectArray },
             s =>
-              if mat then '{ $s match { case l: RefArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeRef(t) else null } }
-              else '{ $s match { case l: RefArr => l.arr; case _ => null } },
+              if mat then '{ $s match { case l: RefArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeRef(t) else Array.emptyObjectArray } }
+              else '{ $s match { case l: RefArr => l.arr; case _ => Array.emptyObjectArray } },
             (a, i) => elemTpe.asType match { case '[b] => '{ $a($i).asInstanceOf[b] }.asTerm }
           )
 
@@ -2277,14 +2291,20 @@ object FuseMacro:
             // over a tiny input) then allocates NO array at all: just the RefOne (was 0.52-0.61x of List
             // @1 paying an up-front Array[Object](cap) for one tuple).
             '{
-              val cap = ${ capExpr(n0, counters) }; var out: Array[Object] = null; var single: Object = null; var o = 0
+              // explicit-nulls-clean: the `out` array is lazily allocated (only from the 2nd emit on). Use the
+              // cached empty-array singleton as the "not yet allocated" sentinel instead of a bare `null`
+              // (`var out: Array[Object] = null` is `Found: Null, Required: Array[Object]` under -Yexplicit-nulls);
+              // `out eq Array.emptyObjectArray` is a reference-unique test. `single` holds the first emit until a
+              // second arrives; its uninitialized slot uses the codebase's `null.asInstanceOf` idiom (never read
+              // before it is written — only reachable once o >= 1).
+              val cap = ${ capExpr(n0, counters) }; var out: Array[Object] = Array.emptyObjectArray; var single: Object = null.asInstanceOf[Object]; var o = 0
               ${
                 loop(v =>
                   '{
                     val _v = ${ v.asExpr }.asInstanceOf[Object]
                     if o == 0 then single = _v
                     else {
-                      if out == null then { out = new Array[Object](cap); out(0) = single }
+                      if out eq Array.emptyObjectArray then { out = new Array[Object](cap); out(0) = single }
                       out(o) = _v
                     }
                     o += 1

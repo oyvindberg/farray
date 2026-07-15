@@ -27,12 +27,12 @@
       case l: IntArr =>
         (l.arr: Array[Int])
       case t =>
-        if (t.length.>=(64)) FArrayOps.materializeInt(t) else null
+        if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
     }
     val len: Int = s.length
     var i: Int = 0
     while (i.<(len)) {
-      val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+      val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
       val `v₂`: Int = v.+(1)
       val `v₃`: Int = `v₂`.%(2)
       val `v₄`: Boolean = `v₃`.==(0)
@@ -77,12 +77,12 @@
       case l: IntArr =>
         (l.arr: Array[Int])
       case _ =>
-        null
+        Array.emptyIntArray
     }
     val len: Int = s.length
     var i: Int = 0
     while (i.<(len).&&(done.unary_!)) {
-      val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+      val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
       val `v₂`: Int = v.%(2)
       val `v₃`: Boolean = `v₂`.==(0)
       if (`v₃`) {
@@ -137,12 +137,12 @@
       case l: IntArr =>
         (l.arr: Array[Int])
       case _ =>
-        null
+        Array.emptyIntArray
     }
     val len: Int = s.length
     var i: Int = 0
     while (i.<(len).&&(done.unary_!)) {
-      val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+      val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
       if (c.<(lim)) c = c.+(1) else {
         val cv: Int = `c₂`
         if (cv.>=(`lim₂`)) done = true else {
@@ -184,12 +184,12 @@
           case l: IntArr =>
             (l.arr: Array[Int])
           case t =>
-            if (t.length.>=(64)) FArrayOps.materializeInt(t) else null
+            if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
         }
         val len: Int = s.length
         var i: Int = 0
         while (i.<(len)) {
-          val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+          val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
           val `v₂`: Int = v.+(1)
           acc = acc.+(`v₂`)
           i = i.+(1)
@@ -223,12 +223,12 @@
       case l: IntArr =>
         (l.arr: Array[Int])
       case t =>
-        if (t.length.>=(64)) FArrayOps.materializeInt(t) else null
+        if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
     }
     val len: Int = s.length
     var i: Int = 0
     while (i.<(len)) {
-      val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+      val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
       val `v₂`: Int = v.*(2)
       out.update(o, new Tuple2$mcII$sp(v, `v₂`).asInstanceOf[Tuple2[Int, Int]].asInstanceOf[Object])
       o = o.+(1)
@@ -264,12 +264,12 @@
           case l: IntArr =>
             (l.arr: Array[Int])
           case t =>
-            if (t.length.>=(64)) FArrayOps.materializeInt(t) else null
+            if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
         }
         val len: Int = s.length
         var i: Int = 0
         while (i.<(len)) {
-          val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+          val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
           val `v₂`: Int = v.%(2)
           val `v₃`: Boolean = `v₂`.==(0)
           if (`v₃`) {
@@ -307,12 +307,12 @@
       case l: RefArr =>
         (l.arr: Array[Object])
       case t =>
-        if (t.length.>=(64)) FArrayOps.materializeRef(t) else null
+        if (t.length.>=(64)) FArrayOps.materializeRef(t) else Array.emptyObjectArray
     }
     val len: Int = s.length
     var i: Int = 0
     while (i.<(len)) {
-      val v: String = if (a.ne(null)) a.apply(i).asInstanceOf[String] else FArrayOps.refAt(s, i).asInstanceOf[String]
+      val v: String = if (a.ne(Array.emptyObjectArray)) a.apply(i).asInstanceOf[String] else FArrayOps.refAt(s, i).asInstanceOf[String]
       val `v₂`: String = v.toUpperCase()
       out.update(o, `v₂`.asInstanceOf[Object])
       o = o.+(1)
@@ -345,12 +345,12 @@
         case l: RefArr =>
           (l.arr: Array[Object])
         case t =>
-          if (t.length.>=(64)) FArrayOps.materializeRef(t) else null
+          if (t.length.>=(64)) FArrayOps.materializeRef(t) else Array.emptyObjectArray
       }
       val len: Int = s.length
       var i: Int = 0
       while (i.<(len)) {
-        val v: String = if (a.ne(null)) a.apply(i).asInstanceOf[String] else FArrayOps.refAt(s, i).asInstanceOf[String]
+        val v: String = if (a.ne(Array.emptyObjectArray)) a.apply(i).asInstanceOf[String] else FArrayOps.refAt(s, i).asInstanceOf[String]
         val `v₂`: StringOps = augmentString(v)
         val `v₃`: Boolean = `v₂`.nonEmpty
         if (`v₃`) {
@@ -400,12 +400,12 @@
       case l: IntArr =>
         (l.arr: Array[Int])
       case t =>
-        if (t.length.>=(64)) FArrayOps.materializeInt(t) else null
+        if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
     }
     val len: Int = s.length
     var i: Int = 0
     while (i.<(len)) {
-      val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+      val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
       val `v₂`: Int = v.+(1)
       if (o.>=(`out₂`.length)) `out₂` = FArrayOps.ensureCapInt(`out₂`, o.+(1)) else ()
       `out₂`.update(o, `v₂`)
@@ -443,12 +443,12 @@
       case l: IntArr =>
         (l.arr: Array[Int])
       case _ =>
-        null
+        Array.emptyIntArray
     }
     val len: Int = s.length
     var i: Int = 0
     while (i.<(len).&&(done.unary_!)) {
-      val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+      val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
       val `v₂`: Int = v.+(1)
       if (`v₂`.%(3).==(0)) {
         res = Some.apply[Any](`v₂`)
@@ -485,12 +485,12 @@
       case l: IntArr =>
         (l.arr: Array[Int])
       case t =>
-        if (t.length.>=(64)) FArrayOps.materializeInt(t) else null
+        if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
     }
     val len: Int = s.length
     var i: Int = 0
     while (i.<(len)) {
-      val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+      val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
       val `v₂`: Int = c
       c = c.+(1)
       val `v₃`: Int = `v₂`.%(2)
@@ -570,12 +570,12 @@
       case l: IntArr =>
         (l.arr: Array[Int])
       case _ =>
-        null
+        Array.emptyIntArray
     }
     val len: Int = s.length
     var i: Int = 0
     while (i.<(len).&&(done.unary_!)) {
-      val v: Int = if (`a₂`.ne(null)) `a₂`.apply(i) else FArrayOps.intAt(s, i)
+      val v: Int = if (`a₂`.ne(Array.emptyIntArray)) `a₂`.apply(i) else FArrayOps.intAt(s, i)
       if (c.>=(zn)) done = true else {
         val pos: Int = c
         c = c.+(1)
@@ -613,12 +613,12 @@
       case l: IntArr =>
         (l.arr: Array[Int])
       case t =>
-        if (`t₂`.length.>=(64)) FArrayOps.materializeInt(`t₂`) else null
+        if (`t₂`.length.>=(64)) FArrayOps.materializeInt(`t₂`) else Array.emptyIntArray
     }
     val len: Int = s.length
     var i: Int = 0
     while (i.<(len)) {
-      val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+      val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
       val `v₂`: Int = v.*(v)
       val `v₃`: Int = `v₂`.+(1)
       val `v₄`: Int = `v₂`.+(2)
@@ -654,12 +654,12 @@
       case l: IntArr =>
         (l.arr: Array[Int])
       case t =>
-        if (t.length.>=(64)) FArrayOps.materializeInt(t) else null
+        if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
     }
     val len: Int = s.length
     var i: Int = 0
     while (i.<(len)) {
-      val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+      val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
       val `v₂`: Int = v.+(1)
       val `v₃`: Int = `v₂`.%(2)
       val `v₄`: Boolean = `v₃`.==(0)
@@ -700,12 +700,12 @@
       case l: IntArr =>
         (l.arr: Array[Int])
       case t =>
-        if (t.length.>=(64)) FArrayOps.materializeInt(t) else null
+        if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
     }
     val len: Int = s.length
     var i: Int = 0
     while (i.<(len)) {
-      val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+      val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
       v match {
         case x if `x₂`.%(2).==(0) =>
           {
@@ -746,12 +746,12 @@
       case l: IntArr =>
         (l.arr: Array[Int])
       case _ =>
-        null
+        Array.emptyIntArray
     }
     val len: Int = s.length
     var i: Int = 0
     while (i.<(len).&&(done.unary_!)) {
-      val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+      val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
       if (v.<(5)) {
         out.update(o, v)
         o = o.+(1)
@@ -788,12 +788,12 @@
       case l: IntArr =>
         (l.arr: Array[Int])
       case t =>
-        if (t.length.>=(64)) FArrayOps.materializeInt(t) else null
+        if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
     }
     val len: Int = s.length
     var i: Int = 0
     while (i.<(len)) {
-      val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+      val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
       acc0 = {
         val `_$₂`: Int = acc0
         `_$₂`.+(v)
@@ -831,12 +831,12 @@
       case l: IntArr =>
         (l.arr: Array[Int])
       case _ =>
-        null
+        Array.emptyIntArray
     }
     val len: Int = s.length
     var i: Int = 0
     while (i.<(len).&&(done.unary_!)) {
-      val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+      val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
       val `v₂`: Int = v.*(v)
       if (`v₂`.>(9)) {
         idx = c
@@ -878,12 +878,12 @@
           case l: IntArr =>
             (l.arr: Array[Int])
           case t =>
-            if (t.length.>=(64)) FArrayOps.materializeInt(t) else null
+            if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
         }
         val len: Int = s.length
         var i: Int = 0
         while (i.<(len)) {
-          val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+          val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
           val `v₂`: Int = v.%(2)
           val `v₃`: Boolean = `v₂`.==(0)
           if (`v₃`) {
@@ -934,12 +934,12 @@
           case l: IntArr =>
             (l.arr: Array[Int])
           case t =>
-            if (t.length.>=(64)) FArrayOps.materializeInt(t) else null
+            if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
         }
         val len: Int = s.length
         var i: Int = 0
         while (i.<(len)) {
-          val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+          val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
           val kk: Int = v.unary_-
           if (seeded.unary_!.||({
             val k2: Int = bestK
@@ -980,12 +980,12 @@
       case l: IntArr =>
         (l.arr: Array[Int])
       case t =>
-        if (t.length.>=(64)) FArrayOps.materializeInt(t) else null
+        if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
     }
     val len: Int = s.length
     var i: Int = 0
     while (i.<(len)) {
-      val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+      val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
       val `v₂`: Int = v.*(3)
       val `v₃`: Int = v.+(`v₂`)
       out.update(`o₂`, `v₃`)
@@ -1026,12 +1026,12 @@
             case l: IntArr =>
               (l.arr: Array[Int])
             case t =>
-              if (t.length.>=(64)) FArrayOps.materializeInt(t) else null
+              if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
           }
           val len: Int = s.length
           var i: Int = 0
           while (i.<(len)) {
-            val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+            val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
             val `v₂`: Int = v.%(2)
             val `v₃`: Boolean = `v₂`.==(0)
             if (`v₃`) {
@@ -1071,12 +1071,12 @@
       case l: IntArr =>
         (l.arr: Array[Int])
       case t =>
-        if (t.length.>=(64)) FArrayOps.materializeInt(t) else null
+        if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
     }
     val len: Int = s.length
     var i: Int = 0
     while (i.<(len)) {
-      val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+      val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
       val `v₂`: Int = v.+(1)
       out.update(o, `v₂`)
       o = o.+(1)
@@ -1149,12 +1149,12 @@
       case l: IntArr =>
         (l.arr: Array[Int])
       case _ =>
-        null
+        Array.emptyIntArray
     }
     val len: Int = s.length
     var i: Int = 0
     while (i.<(len).&&(done.unary_!)) {
-      val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+      val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
       if (c.>=(zn)) done = true else {
         val pos: Int = c
         c = c.+(1)
@@ -1234,12 +1234,12 @@
       case l: IntArr =>
         (l.arr: Array[Int])
       case _ =>
-        null
+        Array.emptyIntArray
     }
     val len: Int = s.length
     var i: Int = 0
     while (i.<(len).&&(done.unary_!)) {
-      val v: Int = if (`a₂`.ne(null)) `a₂`.apply(i) else FArrayOps.intAt(s, i)
+      val v: Int = if (`a₂`.ne(Array.emptyIntArray)) `a₂`.apply(i) else FArrayOps.intAt(s, i)
       if (c.>=(zn)) done = true else {
         val pos: Int = c
         c = c.+(1)
@@ -1282,12 +1282,12 @@
       case l: IntArr =>
         (l.arr: Array[Int])
       case t =>
-        if (t.length.>=(64)) FArrayOps.materializeInt(t) else null
+        if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
     }
     val len: Int = s.length
     var i: Int = 0
     while (i.<(len)) {
-      val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+      val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
       v match {
         case x if `x₂`.>(2) =>
           {
@@ -1326,12 +1326,12 @@
       case l: IntArr =>
         (l.arr: Array[Int])
       case t =>
-        if (t.length.>=(64)) FArrayOps.materializeInt(t) else null
+        if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
     }
     val len: Int = s.length
     var i: Int = 0
     while (i.<(len)) {
-      val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+      val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
       val `v₂`: Int = v.+(1)
       val `v₃`: Boolean = `v₂`.>(2)
       if (`v₃`) {
@@ -1381,12 +1381,12 @@
       case l: IntArr =>
         (l.arr: Array[Int])
       case t =>
-        if (t.length.>=(64)) FArrayOps.materializeInt(t) else null
+        if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
     }
     val len: Int = s.length
     var i: Int = 0
     while (i.<(len)) {
-      val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+      val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
       val `v₂`: Int = v.+(1)
       if (o.>=(`out₂`.length)) `out₂` = FArrayOps.ensureCapInt(`out₂`, o.+(1)) else ()
       `out₂`.update(o, `v₂`)
@@ -1447,12 +1447,12 @@
       case l: IntArr =>
         (l.arr: Array[Int])
       case t =>
-        if (t.length.>=(64)) FArrayOps.materializeInt(t) else null
+        if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
     }
     val len: Int = s.length
     var i: Int = 0
     while (i.<(len)) {
-      val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+      val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
       if (o.>=(`out₂`.length)) `out₂` = FArrayOps.ensureCapInt(`out₂`, o.+(1)) else ()
       `out₂`.update(o, v.*(100))
       o = o.+(1)
@@ -1476,12 +1476,12 @@
         case l: IntArr =>
           (`l₂`.arr: Array[Int])
         case _ =>
-          null
+          Array.emptyIntArray
       }
       val `len₂`: Int = `s₂`.length
       var `i₂`: Int = 0
       while (`i₂`.<(`len₂`)) {
-        val `v₂`: Int = if (`a₂`.ne(null)) `a₂`.apply(`i₂`) else FArrayOps.intAt(`s₂`, `i₂`)
+        val `v₂`: Int = if (`a₂`.ne(Array.emptyIntArray)) `a₂`.apply(`i₂`) else FArrayOps.intAt(`s₂`, `i₂`)
         if (o.>=(`out₂`.length)) `out₂` = FArrayOps.ensureCapInt(`out₂`, o.+(1)) else ()
         `out₂`.update(o, `v₂`)
         o = o.+(1)
@@ -1516,12 +1516,12 @@
       case l: IntArr =>
         (l.arr: Array[Int])
       case t =>
-        if (`t₂`.length.>=(64)) FArrayOps.materializeInt(`t₂`) else null
+        if (`t₂`.length.>=(64)) FArrayOps.materializeInt(`t₂`) else Array.emptyIntArray
     }
     val len: Int = s.length
     var i: Int = 0
     while (i.<(len)) {
-      val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+      val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
       val `v₂`: Int = v.+(3)
       val `v₃`: Int = v.+(`v₂`)
       out.update(o, `v₃`)
@@ -1568,12 +1568,12 @@
       case l: IntArr =>
         (l.arr: Array[Int])
       case t =>
-        if (t.length.>=(64)) FArrayOps.materializeInt(t) else null
+        if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
     }
     val len: Int = s.length
     var i: Int = 0
     while (i.<(len)) {
-      val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+      val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
       val `v₂`: Boolean = v.>(0)
       if (`v₂`) {
         val `v₃`: Int = v.%(2)
@@ -1625,12 +1625,12 @@
       case l: IntArr =>
         (l.arr: Array[Int])
       case t =>
-        if (t.length.>=(64)) FArrayOps.materializeInt(t) else null
+        if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
     }
     val len: Int = s.length
     var i: Int = 0
     while (i.<(len)) {
-      val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+      val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
       val `v₂`: Boolean = v.>(1)
       if (`v₂`) {
         val `v₃`: Boolean = v.<(7)
@@ -1672,12 +1672,12 @@
       case l: IntArr =>
         (l.arr: Array[Int])
       case t =>
-        if (t.length.>=(64)) FArrayOps.materializeInt(t) else null
+        if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
     }
     val len: Int = s.length
     var i: Int = 0
     while (i.<(len)) {
-      val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+      val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
       val `v₂`: Int = v.%(3)
       val `v₃`: Boolean = `v₂`.==(0)
       if (`v₃`) {
@@ -1721,12 +1721,12 @@
       case l: IntArr =>
         (l.arr: Array[Int])
       case _ =>
-        null
+        Array.emptyIntArray
     }
     val len: Int = s.length
     var i: Int = 0
     while (i.<(len).&&(done.unary_!)) {
-      val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+      val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
       val `v₂`: Int = v.%(2)
       val `v₃`: Boolean = `v₂`.==(0)
       if (`v₃`) {
@@ -1788,12 +1788,12 @@
       case l: IntArr =>
         (l.arr: Array[Int])
       case _ =>
-        null
+        Array.emptyIntArray
     }
     val len: Int = s.length
     var i: Int = 0
     while (i.<(len).&&(done.unary_!)) {
-      val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+      val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
       val cv: Int = c
       if (cv.>=(lim)) done = true else {
         if (o.>=(`out₂`.length)) `out₂` = FArrayOps.ensureCapInt(`out₂`, o.+(1)) else ()
@@ -1855,12 +1855,12 @@
       case l: IntArr =>
         (l.arr: Array[Int])
       case _ =>
-        null
+        Array.emptyIntArray
     }
     val len: Int = s.length
     var i: Int = 0
     while (i.<(len).&&(done.unary_!)) {
-      val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+      val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
       val `v₂`: Int = v.%(2)
       val `v₃`: Boolean = `v₂`.==(0)
       if (`v₃`) {
@@ -1911,12 +1911,12 @@
       case l: IntArr =>
         (l.arr: Array[Int])
       case _ =>
-        null
+        Array.emptyIntArray
     }
     val len: Int = s.length
     var i: Int = 0
     while (i.<(len).&&(done.unary_!)) {
-      val v: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+      val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
       val `v₂`: Int = c
       c = c.+(1)
       val `v₃`: Int = v.%(2)
