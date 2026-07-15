@@ -55,91 +55,106 @@ private inline def lazyZipCollect[T, C](len: Int, inline pair: Int => T, pf: Par
   * type) and inlining the user lambda — no intermediate collection, and no tuple is allocated unless
   * the user's own lambda takes one (`collect`'s `PartialFunction`, and the materializing
   * `zipWithIndex` / `toFArray`). The wrapper itself never escapes a call site.
-  */
-final class FLazyZip2[A, B](private[farray] val xs: FArray[A], private[farray] val ys: FArray[B]):
-  private inline def n: Int = math.min(xs.length, ys.length)
+  *
+  * The terminals are `extension` methods (in the companion), NOT instance methods, ON PURPOSE. When
+  * dotty inlines a direct `xs.lazyZip(ys).<terminal>(…)`, the receiver `new FLazyZip2(xs, ys)` is bound
+  * once at expansion. As an INSTANCE-method receiver that binding is a synthetic `this`-proxy val whose
+  * `FLazyZip2[A,B]` TypeTree is created from the class type with NO source position — tripping dotty's
+  * `-Ycheck:all` "position not set for farray.FLazyZip2[…]" assertion (Inliner.computeThisBindings:
+  * `ValDef(selfSym, …).withSpan(selfSym.span)`, and the synthetic this-proxy sym has no span). As an
+  * EXTENSION receiver the same value is bound through `Inliner.paramBindingDef` — a normal inline
+  * parameter proxy that carries the argument's span — so no positionless marker TypeTree is ever
+  * synthesized. (ycheck-tests reproduces the old assertion and gates the fix.) */
+final class FLazyZip2[A, B](private[farray] val xs: FArray[A], private[farray] val ys: FArray[B])
 
-  inline def map[C](inline f: (A, B) => C): FArray[C] =
-    FArray.tabulate(n)(i => f(xs(i), ys(i)))
+object FLazyZip2:
+  extension [A, B](inline self: FLazyZip2[A, B])
+    private inline def n: Int = math.min(self.xs.length, self.ys.length)
 
-  inline def foreach(inline f: (A, B) => Unit): Unit =
-    val len = n; var i = 0
-    while i < len do { f(xs(i), ys(i)); i += 1 }
+    inline def map[C](inline f: (A, B) => C): FArray[C] =
+      FArray.tabulate(self.n)(i => f(self.xs(i), self.ys(i)))
 
-  inline def forall(inline p: (A, B) => Boolean): Boolean =
-    val len = n; var i = 0; var r = true
-    while r && i < len do { r = p(xs(i), ys(i)); i += 1 }
-    r
+    inline def foreach(inline f: (A, B) => Unit): Unit =
+      val len = self.n; var i = 0
+      while i < len do { f(self.xs(i), self.ys(i)); i += 1 }
 
-  inline def exists(inline p: (A, B) => Boolean): Boolean =
-    val len = n; var i = 0; var r = false
-    while !r && i < len do { r = p(xs(i), ys(i)); i += 1 }
-    r
+    inline def forall(inline p: (A, B) => Boolean): Boolean =
+      val len = self.n; var i = 0; var r = true
+      while r && i < len do { r = p(self.xs(i), self.ys(i)); i += 1 }
+      r
 
-  inline def foldLeft[Z](z: Z)(inline op: (Z, A, B) => Z): Z =
-    val len = n; var acc = z; var i = 0
-    while i < len do { acc = op(acc, xs(i), ys(i)); i += 1 }
-    acc
+    inline def exists(inline p: (A, B) => Boolean): Boolean =
+      val len = self.n; var i = 0; var r = false
+      while !r && i < len do { r = p(self.xs(i), self.ys(i)); i += 1 }
+      r
 
-  inline def flatMap[C](inline f: (A, B) => FArray[C]): FArray[C] =
-    val len = n; var acc: FArray[C] = FArray.empty[C]; var i = 0
-    while i < len do { acc = acc ++ f(xs(i), ys(i)); i += 1 }
-    acc
+    inline def foldLeft[Z](z: Z)(inline op: (Z, A, B) => Z): Z =
+      val len = self.n; var acc = z; var i = 0
+      while i < len do { acc = op(acc, self.xs(i), self.ys(i)); i += 1 }
+      acc
 
-  /** ONE fused pass over the pairs — no intermediate tuple ARRAY. The `PartialFunction` inherently
-    * receives a per-element tuple `(A, B)` (acceptable); each is tested with `isDefinedAt` and, when
-    * matched, `apply`d into a kind-specialized builder (unboxed output for a primitive `C`). */
-  inline def collect[C](pf: PartialFunction[(A, B), C]): FArray[C] =
-    lazyZipCollect[(A, B), C](n, i => (xs(i), ys(i)), pf)
+    inline def flatMap[C](inline f: (A, B) => FArray[C]): FArray[C] =
+      val len = self.n; var acc: FArray[C] = FArray.empty[C]; var i = 0
+      while i < len do { acc = acc ++ f(self.xs(i), self.ys(i)); i += 1 }
+      acc
 
-  inline def zipWithIndex: FArray[(A, B, Int)] =
-    FArray.tabulate(n)(i => (xs(i), ys(i), i))
+    /** ONE fused pass over the pairs — no intermediate tuple ARRAY. The `PartialFunction` inherently
+      * receives a per-element tuple `(A, B)` (acceptable); each is tested with `isDefinedAt` and, when
+      * matched, `apply`d into a kind-specialized builder (unboxed output for a primitive `C`). */
+    inline def collect[C](pf: PartialFunction[(A, B), C]): FArray[C] =
+      lazyZipCollect[(A, B), C](self.n, i => (self.xs(i), self.ys(i)), pf)
 
-  inline def toFArray: FArray[(A, B)] =
-    FArray.tabulate(n)(i => (xs(i), ys(i)))
+    inline def zipWithIndex: FArray[(A, B, Int)] =
+      FArray.tabulate(self.n)(i => (self.xs(i), self.ys(i), i))
 
-  inline def lazyZip[C](zs: FArray[C]): FLazyZip3[A, B, C] = new FLazyZip3(xs, ys, zs)
+    inline def toFArray: FArray[(A, B)] =
+      FArray.tabulate(self.n)(i => (self.xs(i), self.ys(i)))
+
+    inline def lazyZip[C](zs: FArray[C]): FLazyZip3[A, B, C] = new FLazyZip3(self.xs, self.ys, zs)
 
 final class FLazyZip3[A, B, C](
     private[farray] val xs: FArray[A],
     private[farray] val ys: FArray[B],
     private[farray] val zs: FArray[C]
-):
-  private inline def n: Int = math.min(xs.length, math.min(ys.length, zs.length))
+)
 
-  inline def map[D](inline f: (A, B, C) => D): FArray[D] =
-    FArray.tabulate(n)(i => f(xs(i), ys(i), zs(i)))
+object FLazyZip3:
+  extension [A, B, C](inline self: FLazyZip3[A, B, C])
+    private inline def n: Int = math.min(self.xs.length, math.min(self.ys.length, self.zs.length))
 
-  inline def foreach(inline f: (A, B, C) => Unit): Unit =
-    val len = n; var i = 0
-    while i < len do { f(xs(i), ys(i), zs(i)); i += 1 }
+    inline def map[D](inline f: (A, B, C) => D): FArray[D] =
+      FArray.tabulate(self.n)(i => f(self.xs(i), self.ys(i), self.zs(i)))
 
-  inline def forall(inline p: (A, B, C) => Boolean): Boolean =
-    val len = n; var i = 0; var r = true
-    while r && i < len do { r = p(xs(i), ys(i), zs(i)); i += 1 }
-    r
+    inline def foreach(inline f: (A, B, C) => Unit): Unit =
+      val len = self.n; var i = 0
+      while i < len do { f(self.xs(i), self.ys(i), self.zs(i)); i += 1 }
 
-  inline def exists(inline p: (A, B, C) => Boolean): Boolean =
-    val len = n; var i = 0; var r = false
-    while !r && i < len do { r = p(xs(i), ys(i), zs(i)); i += 1 }
-    r
+    inline def forall(inline p: (A, B, C) => Boolean): Boolean =
+      val len = self.n; var i = 0; var r = true
+      while r && i < len do { r = p(self.xs(i), self.ys(i), self.zs(i)); i += 1 }
+      r
 
-  inline def foldLeft[Z](z: Z)(inline op: (Z, A, B, C) => Z): Z =
-    val len = n; var acc = z; var i = 0
-    while i < len do { acc = op(acc, xs(i), ys(i), zs(i)); i += 1 }
-    acc
+    inline def exists(inline p: (A, B, C) => Boolean): Boolean =
+      val len = self.n; var i = 0; var r = false
+      while !r && i < len do { r = p(self.xs(i), self.ys(i), self.zs(i)); i += 1 }
+      r
 
-  inline def flatMap[D](inline f: (A, B, C) => FArray[D]): FArray[D] =
-    val len = n; var acc: FArray[D] = FArray.empty[D]; var i = 0
-    while i < len do { acc = acc ++ f(xs(i), ys(i), zs(i)); i += 1 }
-    acc
+    inline def foldLeft[Z](z: Z)(inline op: (Z, A, B, C) => Z): Z =
+      val len = self.n; var acc = z; var i = 0
+      while i < len do { acc = op(acc, self.xs(i), self.ys(i), self.zs(i)); i += 1 }
+      acc
 
-  /** ONE fused pass over the triples — no intermediate tuple ARRAY (mirrors [[FLazyZip2.collect]]). */
-  inline def collect[D](pf: PartialFunction[(A, B, C), D]): FArray[D] =
-    lazyZipCollect[(A, B, C), D](n, i => (xs(i), ys(i), zs(i)), pf)
+    inline def flatMap[D](inline f: (A, B, C) => FArray[D]): FArray[D] =
+      val len = self.n; var acc: FArray[D] = FArray.empty[D]; var i = 0
+      while i < len do { acc = acc ++ f(self.xs(i), self.ys(i), self.zs(i)); i += 1 }
+      acc
 
-  inline def zipWithIndex: FArray[(A, B, C, Int)] =
-    FArray.tabulate(n)(i => (xs(i), ys(i), zs(i), i))
+    /** ONE fused pass over the triples — no intermediate tuple ARRAY (mirrors [[FLazyZip2.collect]]). */
+    inline def collect[D](pf: PartialFunction[(A, B, C), D]): FArray[D] =
+      lazyZipCollect[(A, B, C), D](self.n, i => (self.xs(i), self.ys(i), self.zs(i)), pf)
 
-  inline def toFArray: FArray[(A, B, C)] =
-    FArray.tabulate(n)(i => (xs(i), ys(i), zs(i)))
+    inline def zipWithIndex: FArray[(A, B, C, Int)] =
+      FArray.tabulate(self.n)(i => (self.xs(i), self.ys(i), self.zs(i), i))
+
+    inline def toFArray: FArray[(A, B, C)] =
+      FArray.tabulate(self.n)(i => (self.xs(i), self.ys(i), self.zs(i)))

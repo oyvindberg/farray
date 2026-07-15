@@ -43,6 +43,17 @@ projects:
     scala:
       strict: false
       options: -encoding utf8 -feature -unchecked -Yexplicit-nulls
+  # Compiles direct `xs.lazyZip(ys).<terminal>(…)` call sites WITH `-Ycheck:all` (the flag dotty runs
+  # its own bootstrap under). Inlining a lazyZip terminal used to lift the `FLazyZip2` marker receiver
+  # into a synthetic val whose TypeTree carried no position, tripping "position not set" under
+  # -Ycheck:all when the compiler's own sources were recompiled. This COMPILE-ONLY gate reproduces that
+  # exact shape; `bleep compile ycheck-tests` must be clean.
+  ycheck-tests:
+    dependsOn: farray
+    extends: template-common
+    scala:
+      strict: false
+      options: -encoding utf8 -feature -unchecked -Ycheck:all
   tests:
     dependencies:
       - junit:junit:4.13.2
