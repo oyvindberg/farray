@@ -379,3 +379,37 @@ class DottyGapsTest:
     assertEquals(Nil, FArray.empty[Int].mapNotNone(x => Some(x)).toList)
     assertEquals(List(7), FArray(7).mapNotNone(x => Some(x)).toList)
     assertEquals(Nil, FArray(7).mapNotNone[Int](_ => None).toList)
+
+  // ---- Item 2: FLazyZip single-pass collect (both arities) ----
+  @Test def lazyZip2_collect_parity: Unit =
+    val a = FArray(1, 2, 3, 4, 5); val b = FArray(10, 20, 30, 40, 50)
+    val la = List(1, 2, 3, 4, 5); val lb = List(10, 20, 30, 40, 50)
+    val exp = la.lazyZip(lb).collect { case (x, y) if x % 2 == 1 => x + y }.toList
+    assertEquals(exp, a.lazyZip(b).collect { case (x, y) if x % 2 == 1 => x + y }.toList) // primitive output stays Int
+
+  @Test def lazyZip2_collect_ref_and_min_length: Unit =
+    val a = FArray(1, 2, 3, 4); val b = FArray("a", "b", "c") // shorter -> min length 3
+    val exp = List(1, 2, 3).lazyZip(List("a", "b", "c")).collect { case (x, s) if x != 2 => s"$x$s" }.toList
+    assertEquals(exp, a.lazyZip(b).collect { case (x, s) if x != 2 => s"$x$s" }.toList)
+
+  @Test def lazyZip2_collect_empty_and_none_match: Unit =
+    assertEquals(Nil, FArray.empty[Int].lazyZip(FArray(1, 2)).collect { case (x, y) => x + y }.toList)
+    assertEquals(Nil, FArray(1, 2, 3).lazyZip(FArray(4, 5, 6)).collect { case (x, y) if x > 100 => x }.toList)
+
+  @Test def lazyZip3_collect_parity: Unit =
+    val a = FArray(1, 2, 3, 4); val b = FArray("a", "b", "c", "d"); val c = FArray(true, false, true, false)
+    val exp = List(1, 2, 3, 4).lazyZip(List("a", "b", "c", "d")).lazyZip(List(true, false, true, false))
+      .collect { case (x, s, flag) if flag => s"$x$s" }.toList
+    assertEquals(exp, a.lazyZip(b).lazyZip(c).collect { case (x, s, flag) if flag => s"$x$s" }.toList)
+
+  @Test def lazyZip3_collect_min_length_primitive: Unit =
+    val a = FArray(1, 2, 3, 4, 5); val b = FArray(10, 20); val c = FArray(100, 200, 300)
+    val exp = List(1, 2).lazyZip(List(10, 20)).lazyZip(List(100, 200)).collect { case (x, y, z) => x + y + z }.toList
+    assertEquals(exp, a.lazyZip(b).lazyZip(c).collect { case (x, y, z) => x + y + z }.toList)
+
+  @Test def lazyZip2_other_terminals_parity: Unit =
+    // regression guard on the audited terminals (map/foreach/forall/exists/foldLeft/flatMap/zipWithIndex/toFArray)
+    val a = FArray(1, 2, 3); val b = FArray(10, 20, 30, 40)
+    assertEquals(List(11, 22, 33), a.lazyZip(b).map(_ + _).toList)
+    assertEquals(List(1, 10, 2, 20, 3, 30), a.lazyZip(b).flatMap((x, y) => FArray(x, y)).toList)
+    assertEquals(List((1, 10, 0), (2, 20, 1), (3, 30, 2)), a.lazyZip(b).zipWithIndex.toList)
