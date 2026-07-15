@@ -42,8 +42,14 @@ object FArray:
     case _: ByteRepr[A]    => new ByteSeqView(xs.asInstanceOf[FArray[Byte]])
     case _: CharRepr[A]    => new CharSeqView(xs.asInstanceOf[FArray[Char]])
     case _: BooleanRepr[A] => new BooleanSeqView(xs.asInstanceOf[FArray[Boolean]])
-    case _: RefRepr[A]     => new RefSeqView[A](xs)
-    case _                 => new AnySeqView[A](xs)
+    // Reference AND unknown-kind (abstract `T` / wildcard / union) elements share the BOXED
+    // [[AnySeqView]]: its `apply(i)` reads via `applyBoxed`, which on a `RefArr` is just `arr(i)` (no box) so
+    // references lose nothing, and which works for ANY A. This is deliberately NOT a `RefSeqView[A]` arm — a
+    // value-class `RefSeqView[A]` over a non-AnyRef A ("Type argument T does not conform to upper bound
+    // AnyRef") is exactly the bound that broke `unapplySeq` on `FArray[Double]`/`FArray[T]`/unions. With the
+    // round-3 low-priority `anyRepr`, `RefRepr[A]` now resolves for every A, so this single boxed arm covers
+    // all non-primitive element types uniformly.
+    case _ => new AnySeqView[A](xs)
   }
   /** Kind-specialized growable builder (`b += x; b ++= xs; b.result()`). `transparent inline` so the
     * concrete per-kind builder type is kept at the call site — a primitive element type builds into a

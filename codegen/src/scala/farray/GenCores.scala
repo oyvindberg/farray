@@ -84,7 +84,25 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |}
        |$subtraits
        |
-       |object Repr {
+       |// BOXED-FALLBACK dispatch arm (the round-3 fix). For an element type A that is NOT a statically
+       |// known kind — an abstract type param `T`, a wildcard `?`, a primitive-containing union like
+       |// `Int | String`, `Any`/`AnyVal` — none of the `$${K}Repr` givens and not even `refRepr` (which
+       |// requires `A <: AnyRef`) resolves, so every kind-dispatched op used to fail to compile with
+       |// "no element-kind specialization for type parameter A". This lowest-priority given makes
+       |// `RefRepr[A]` resolve for EVERY such A, turning each op's existing `case r: RefRepr[A]` arm into a
+       |// generic BOXED implementation: elements are read boxed (via `applyBoxed`) and results are built into
+       |// Object-backed `RefArr` leaves — exactly the representation `List`/`Vector` always use, so generic
+       |// paths get stdlib-equivalent semantics while concrete-kind paths keep their unboxed specialization.
+       |// It sits in a parent trait so it ranks BELOW `refRepr` (no ambiguity for a real `A <: AnyRef`) and,
+       |// being an inherited `RefRepr`, is only ever reached AFTER the primitive `case r: $${K}Repr[A]` arms
+       |// (which are tried first per summonFrom) fail — so a primitive A stays unboxed. The Ref read paths in
+       |// GenCores (dfsBody / atDef / emitMainWalk / emitWindow / scTraverser) box any FOREIGN
+       |// (primitive-backed) leaf via `applyBoxed`, so a boxed op over primitive-backed storage — e.g. a real
+       |// `FArray[Int]` seen through an abstract `T` — reads correctly (see FListTest boxed-fallback suite).
+       |trait LowPriorityRepr {
+       |  given anyRepr[A]: RefRepr[A] with { inline def unwrap(a: A): A = a; inline def wrap(p: A): A = p }
+       |}
+       |object Repr extends LowPriorityRepr {
        |$givens
        |}
        |""".stripMargin
@@ -313,13 +331,24 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val cases = List(leafCase, oneCase, prependCase, appendCase, concatCase, reverseCase, padCase, updatedCase, sliceCase, flatMapCase)
       .map(c => s"        $c")
       .mkString("\n       |") + rngCase
+    // MIXED-STORAGE TOLERANCE (round-3): a FOREIGN leaf whose element-kind differs from this dfs's kind — a
+    // boxed `RefArr` inside a `FArray[Int]` (Int output built through the boxed fallback), or an `IntArr` inside
+    // a `FArray[Any]`. Read each element via `applyBoxed` and re-shape to this kind through `fromBoxedK` (unbox
+    // for a primitive, pass through for Ref), so `materialize`/iterator/flatMap/copyToArray over mismatched
+    // storage are correct. The fast arms above cover the homogeneous case, so a matching leaf never lands here.
+    // SCALA unbox (dfsBody emits Scala, not Java): `obj.asInstanceOf[Int]` on a boxed Integer unboxes via
+    // BoxesRunTime; a reference passes through. (`fromBoxedK` emits Java `((Integer) x).intValue()` — wrong here.)
+    val foreignRead = if k.isPrim then s"(cur.applyBoxed(fi)).asInstanceOf[${k.arr}]" else "cur.applyBoxed(fi)"
+    val boxedDefault =
+      if !backward then s"{ val fn = cur.length; var fi = 0; while (fi < fn) { ${onO(foreignRead)}; fi += 1 } }"
+      else s"{ var fi = cur.length - 1; while (fi >= 0) { ${onO(foreignRead)}; fi -= 1 } }"
     s"""    var cur: FBase = root
        |    var stack: Array[FBase] = null; var tail: Array[${k.arr}] = null; var isTail: Array[Boolean] = null; var sp = 0
        |    while (cur != null) {
        |      var cont: FBase = null
        |      cur match {
        |$cases
-       |        case _ => ()
+       |        case _ => $boxedDefault
        |      }
        |      if (cont != null) cur = cont
        |      else { cur = null; while (sp > 0 && cur == null) { sp -= 1; if (isTail != null && isTail(sp)) ${onO("tail(sp)")} else cur = stack(sp) } }
@@ -487,6 +516,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
   private def atDef(k: Kind): String = {
     val rngCase = if k.name == "Int" then "\n       |    case rng: RangeNode => rng.start + i * rng.step" else ""
     val padBase = if k.name == "Ref" then "pad.base.applyBoxed(i)" else s"${k.lc}At(pad.base, i)"
+    // MIXED-STORAGE TOLERANCE (round-3): `${k.lc}At` may be handed a FOREIGN leaf (element-kind != k) — a boxed
+    // `RefArr` inside a `FArray[Int]` (built through the boxed fallback), or a primitive leaf inside a
+    // `FArray[Any]`. Read it via `applyBoxed` and re-shape to this kind through `fromBoxedK` (unbox for a
+    // primitive, pass through for Ref) instead of returning the zero/null default, so apply/head/last/unapplySeq
+    // are correct on mismatched storage. The typed arms above cover the homogeneous case. (Scala unbox via
+    // `asInstanceOf`, since `${k.lc}At` emits Scala — not `fromBoxedK`'s Java cast.)
+    val defaultAt = if k.isPrim then s"(node.applyBoxed(i)).asInstanceOf[${k.arr}]" else "node.applyBoxed(i)"
     s"""  def ${k.lc}At(node: FBase, i: Int): ${k.arr} = node match {
        |    case leaf: ${k.name}Arr => leaf.arr(i)
        |    case o: ${k.name}One => o.elem
@@ -500,7 +536,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       }
        |    case s: SliceNode => ${k.lc}At(s.base, s.offset + i)
        |    case fm: ${k.name}FlatMap => { var lo = 0; var hi = fm.segs.length - 1; while (lo < hi) { val mid = (lo + hi + 1) >>> 1; if (fm.offs(mid) <= i) lo = mid else hi = mid - 1 }; fm.segs(lo)(i - fm.offs(lo)) }$rngCase
-       |    case _ => ${k.dflt}
+       |    case _ => $defaultAt
        |  }""".stripMargin
   }
 
@@ -728,6 +764,15 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // start:kind-dispatch
     // emit a Scala-3 `summonFrom` that picks the per-kind unboxed body at the concrete call site:
     // a `case r: ${K}Repr[A]` per element kind (Int/Long/Double/Ref), resolved at COMPILE time.
+    //
+    // BOXED FALLBACK (round-3): the trailing `case _ => noReprErr` is now DEAD for element types the compiler
+    // can't specialize (abstract `T` / wildcard / `Int | String` / `Any`). The lowest-priority `Repr.anyRepr`
+    // given (see reprSrc) makes `RefRepr[A]` resolve for EVERY A, so the `case r: RefRepr[A]` arm ALWAYS
+    // matches first and doubles as the generic BOXED implementation — the same representation `List`/`Vector`
+    // always use. The dead error arm is kept only as defence-in-depth. This is where the fallback "lives": one
+    // given flips every generated summonFrom from specialize-or-fail to specialize-or-box, uniformly. The Ref
+    // read paths (dfsBody/atDef/emitMainWalk/emitWindow/scTraverser) tolerate mixed storage so a boxed
+    // `FArray[Int]` (RefArr) and a specialized one (IntArr) interoperate; see those sites and reprSrc.
     def dispatchA(body: Kind => String): String =
       "summonFrom {\n" + opKinds.map(k => s"      case r: ${k.name}Repr[A] => ${body(k)}").mkString("\n") + s"\n      case _ => ${noReprErr("A")}\n    }"
     def dispatchB(body: Kind => String): String =
@@ -3106,6 +3151,33 @@ object GenCores extends BleepCodegenScript("GenCores") {
       }
       e.close()
     }
+    // MIXED-STORAGE TOLERANCE (round-3): a FOREIGN leaf (element-kind != K) windowed through the boxed dispatch.
+    // Treat it as a flat [0, cur.length) sequence read via `applyBoxed` and re-shaped to K by `fromBoxedK`
+    // (unbox for a primitive K, pass through for Ref), acting only on the in-window slice [skip, skip+take) in
+    // this direction (mirrors the `${K}Arr leaf` arm). A whole node is terminal, so no skip/take bookkeeping.
+    val kk = opKinds.find(_.name == K).get
+    val foreignRead = fromBoxedK(kk, "cur.applyBoxed(wi)")
+    e.closeOpen("else")
+    e.line("int wc = cur.length;")
+    e.open("if (skip < wc)")
+    e.line("int avail = wc - skip;")
+    e.line("int n = take < avail ? take : avail;")
+    if !backward then {
+      e.line("int wi = skip;")
+      e.line("int we = skip + n;")
+      e.open("while (wi < we)")
+      s.act(foreignRead)
+      e.line("wi += 1;")
+      e.close()
+    } else {
+      e.line("int wi = wc - 1 - skip;")
+      e.line("int we = wi - n;")
+      e.open("while (wi > we)")
+      s.act(foreignRead)
+      e.line("wi -= 1;")
+      e.close()
+    }
+    e.close()
     e.close() // node-kind dispatch
     if !voidRet then e.line(s"return ${s.retState};")
     e.close() // method
@@ -3356,6 +3428,34 @@ object GenCores extends BleepCodegenScript("GenCores") {
         e.line("ri -= 1;")
         e.close()
       }
+    }
+    // MIXED-STORAGE TOLERANCE (round-3): a FOREIGN leaf whose element-kind differs from this walk's kind K.
+    // The boxed-fallback WRITE path may build a `FArray[Int]` backed by a boxed `RefArr` (an abstract `T`
+    // instantiated to Int, output through the RefRepr arm) — and, symmetrically, a genuine `FArray[Int]`
+    // (IntArr) traversed through the Ref boxed arm. So EVERY kind's walk must tolerate a foreign leaf:
+    // read each element through `applyBoxed` and re-shape it to K via `fromBoxedK` — unbox for a primitive K
+    // (`((Integer) applyBoxed(i)).intValue()`), pass through for Ref. This is the read-side mirror of the boxed
+    // write: storage kind and static element kind may legitimately differ, and every reader copes (equality &
+    // hashCode already do, via applyBoxed). The fast arms above handle the homogeneous case, so a genuine
+    // IntArr never reaches here — no specialized-path regression. `earlyStopAfterAct` is honoured.
+    val kk = opKinds.find(_.name == K).get
+    val foreignRead = fromBoxedK(kk, "cur.applyBoxed(fi)")
+    e.closeOpen("else")
+    e.line("int fn = cur.length;")
+    if !backward then {
+      e.line("int fi = 0;")
+      e.open("while (fi < fn)")
+      spec.act(foreignRead)
+      spec.earlyStopAfterAct()
+      e.line("fi += 1;")
+      e.close()
+    } else {
+      e.line("int fi = cur.length - 1;")
+      e.open("while (fi >= 0)")
+      spec.act(foreignRead)
+      spec.earlyStopAfterAct()
+      e.line("fi -= 1;")
+      e.close()
     }
     e.close()
     // advance: descend into `next`, else pop the explicit stack (a flagged tail slot acts its raw
@@ -4369,6 +4469,14 @@ object GenCores extends BleepCodegenScript("GenCores") {
         e.line("cum -= rn;")
       }
     }
+    // MIXED-STORAGE TOLERANCE (round-3): a FOREIGN leaf (element-kind != K) short-circuit-scanned through the
+    // boxed dispatch. `runScanBoxed` reads the whole node's [0, cur.length) run per-element via `applyBoxed`,
+    // re-shaping to K through `fromBoxedK` (unbox for a primitive, pass through for Ref), with the same
+    // clamp/`cum` bookkeeping and returning the global index on a hit — so exists/forall/find/indexWhere/
+    // segmentLength over mismatched storage (a boxed `FArray[Int]`, or an `FArray[Any]` over a primitive leaf)
+    // are correct. The typed arms above cover the homogeneous case.
+    e.closeOpen("else")
+    runScanBoxed("cur", "0", "cur.length")
     e.close()
     // advance: descend into `next`, else pop the explicit stack (a flagged tail slot tests the deferred
     // element in place — oneScan may `return` the hit index, abandoning the walk).
