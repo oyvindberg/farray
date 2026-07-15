@@ -2081,7 +2081,11 @@ object GenCores extends BleepCodegenScript("GenCores") {
           // (measured: the pure mix+probe fused cut regressed by-length 20-40% vs the bitmap); wide keys
           // pay one branch and fall to the table, which is only allocated (and zeroed) if actually reached.
           "var cap = 16; while (cap.toLong < (n.toLong << 1) && cap != (1 << 30)) cap <<= 1; " +
-            "val mask = cap - 1; var ctrl: Array[Byte] = null; var kv: Array[Int] = null; " +
+            // explicit-nulls-clean lazy ctrl/kv (allocated only for out-of-window Int keys): cached empty-array
+            // singletons as the "not yet allocated" sentinel instead of bare `null` locals (this body inlines at
+            // the caller, where `var ctrl: Array[Byte] = null` is `Found: Null, Required: Array[Byte]` under
+            // -Yexplicit-nulls).
+            "val mask = cap - 1; var ctrl: Array[Byte] = Array.emptyByteArray; var kv: Array[Int] = Array.emptyIntArray; " +
             "val bmSpan = if (n >= 1024) 65536 else { var s = 4096; while (s < (n << 6)) s <<= 1; s }; " +
             "val words = new Array[Long](bmSpan >>> 6); var bmBase = 0; var bmInit = false"
         case _ =>
@@ -2102,7 +2106,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
         case "Int" =>
           "{ if (!bmInit) { bmInit = true; bmBase = k - (bmSpan >>> 1) }; val off = k - bmBase; " +
             "if (off >= 0 && off < bmSpan) { isNew = (words(off >>> 6) & (1L << off)) == 0L; words(off >>> 6) |= (1L << off) } " +
-            "else { if (ctrl == null) { ctrl = new Array[Byte](cap); kv = new Array[Int](cap) }; " +
+            "else { if (ctrl eq Array.emptyByteArray) { ctrl = new Array[Byte](cap); kv = new Array[Int](cap) }; " +
             "val m = Mixers.mixInt(k); val fp = (((m >>> 24) & 0x7f) | 0x80).toByte; var h = m & mask; " +
             "var probing = true; while (probing) { val c = ctrl(h); " +
             "if (c == 0) { ctrl(h) = fp; kv(h) = k; isNew = true; probing = false } " +
@@ -2126,14 +2130,19 @@ object GenCores extends BleepCodegenScript("GenCores") {
         val key = if kb.name == "Ref" then s"(f($readA)).asInstanceOf[Object]" else s"rb.unwrap(f($readA))"
         // survivor buffer: sized 2i+16 at the FIRST dup and grown geometrically (capped at n) — a full
         // Array(n) here measured as the by-length bottleneck (800KB zeroed to keep 6 survivors at n=100k).
+        // explicit-nulls-clean survivor buffer: `emptyA` (a cached, reference-unique empty array) is the "no
+        // buffer yet" sentinel instead of a bare `null` local. This inline body expands at the CALLER, so a
+        // `var out: Array[X] = null` would be `Found: Null, Required: Array[X]` in a -Yexplicit-nulls codebase
+        // (dotty worked around this with `.toSeq.distinctBy(...).toFArray`). `out ne emptyA` is the same acmp.
+        val emptyA = if ka.name == "Ref" then "Array.emptyObjectArray" else s"Array.empty${ka.name}Array"
         s"{ val src = (xs match { case lf: ${ka.name}Arr => lf.arr; case _ => materialize${ka.name}(xs) }); " +
-          s"var out: Array[${ka.arr}] = null; var w = 0; ${setup(kb)}; var i = 0; " +
+          s"var out: Array[${ka.arr}] = $emptyA; var w = 0; ${setup(kb)}; var i = 0; " +
           s"while (i < n) { val v = src(i); val k = $key; var isNew = false; ${probe(kb)}; " +
-          "if (isNew) { if (out != null) { " +
+          s"if (isNew) { if (out ne $emptyA) { " +
           "if (w == out.length) { var nc = out.length << 1; if (nc > n) nc = n; out = java.util.Arrays.copyOf(out, nc) }; " +
           "out(w) = v; w += 1 } } " +
-          s"else if (out == null) { var c0 = (i << 1) + 16; if (c0 > n) c0 = n; out = new Array[${ka.arr}](c0); System.arraycopy(src, 0, out, 0, i); w = i }; i += 1 }; " +
-          s"if (out == null) xs else if (w == 1) new ${ka.name}One(out(0)) else new ${ka.name}Arr(out, w) }"
+          s"else if (out eq $emptyA) { var c0 = (i << 1) + 16; if (c0 > n) c0 = n; out = new Array[${ka.arr}](c0); System.arraycopy(src, 0, out, 0, i); w = i }; i += 1 }; " +
+          s"if (out eq $emptyA) xs else if (w == 1) new ${ka.name}One(out(0)) else new ${ka.name}Arr(out, w) }"
       }
       "summonFrom {\n" + opKinds
         .map { ka =>
