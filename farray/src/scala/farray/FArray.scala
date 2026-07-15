@@ -365,6 +365,11 @@ object FArray:
         val keep = scala.collection.mutable.HashMap.empty[Any, Int]
         that.foreach(b => keep.update(b, keep.getOrElse(b, 0) + 1))
         xs.filter { a => keep.getOrElse(a, 0) match { case 0 => false; case c => keep.update(a, c - 1); true } }
+    /** stdlib-shape `lazyZip`: `xs.lazyZip(ys)` returns an inline-only [[FLazyZip2]] whose terminals
+      * (`map`/`foreach`/`forall`/`exists`/`collect`/`foldLeft`/`flatMap`/`zipWithIndex`/`toFArray`)
+      * each fuse to one loop over the min length; `.lazyZip(zs)` chains to [[FLazyZip3]]. */
+    inline def lazyZip[B](ys: FArray[B]): FLazyZip2[A, B] = new FLazyZip2[A, B](xs, ys)
+    // the eager 3-ary tuple-building form (farray-specific) stays for compat; distinct arity.
     inline def lazyZip[B, C](ys: FArray[B], zs: FArray[C]): FArray[(A, B, C)] =
       val n = math.min(xs.length, math.min(ys.length, zs.length))
       FArray.tabulate(n)(i => (FArrayOps.applyAtImpl[A](xs, i), FArrayOps.applyAtImpl[B](ys, i), FArrayOps.applyAtImpl[C](zs, i)))

@@ -192,6 +192,47 @@ class DottyGapsTest:
     lb += "x"; lb += "y"
     assertEquals(List("x", "y"), lb.toFArray.toList)
 
+  // ---- Task 4: lazyZip (2-ary + 3-ary) ----
+  @Test def lazyZip2_map_parity: Unit =
+    val a = FArray(1, 2, 3, 4); val b = FArray("a", "b", "c")
+    val la = List(1, 2, 3, 4); val lb = List("a", "b", "c")
+    assertEquals(la.lazyZip(lb).map((i, s) => s"$i$s"), a.lazyZip(b).map((i, s) => s"$i$s").toList)
+
+  @Test def lazyZip2_foreach_forall_exists: Unit =
+    val a = FArray(1, 2, 3); val b = FArray(10, 20, 30)
+    val sb = scala.collection.mutable.ArrayBuffer.empty[Int]
+    a.lazyZip(b).foreach((x, y) => sb += (x + y))
+    assertEquals(List(11, 22, 33), sb.toList)
+    assertTrue(a.lazyZip(b).forall((x, y) => y > x))
+    assertFalse(a.lazyZip(b).forall((x, y) => x > 1))
+    assertTrue(a.lazyZip(b).exists((x, y) => x == 2 && y == 20))
+    assertFalse(a.lazyZip(b).exists((x, y) => x == 9))
+
+  @Test def lazyZip2_foldLeft_flatMap_collect: Unit =
+    val a = FArray(1, 2, 3); val b = FArray(4, 5, 6)
+    assertEquals(1 * 4 + 2 * 5 + 3 * 6, a.lazyZip(b).foldLeft(0)((acc, x, y) => acc + x * y))
+    assertEquals(List(1, 4, 2, 5, 3, 6), a.lazyZip(b).flatMap((x, y) => FArray(x, y)).toList)
+    val c = a.lazyZip(b).collect { case (x, y) if x % 2 == 1 => x + y }
+    assertEquals(List(5, 9), c.toList)
+
+  @Test def lazyZip2_min_length_and_index_and_toFArray: Unit =
+    val a = FArray(1, 2, 3, 4, 5); val b = FArray("a", "b")
+    assertEquals(List((1, "a"), (2, "b")), a.lazyZip(b).toFArray.toList)
+    assertEquals(List((1, "a", 0), (2, "b", 1)), a.lazyZip(b).zipWithIndex.toList)
+
+  @Test def lazyZip3_parity: Unit =
+    val a = FArray(1, 2, 3, 4); val b = FArray("a", "b", "c"); val c = FArray(true, false, true, false, true)
+    val la = List(1, 2, 3, 4); val lb = List("a", "b", "c"); val lc = List(true, false, true, false, true)
+    assertEquals(
+      la.lazyZip(lb).lazyZip(lc).map((i, s, z) => s"$i$s$z"),
+      a.lazyZip(b).lazyZip(c).map((i, s, z) => s"$i$s$z").toList
+    )
+    assertEquals(6, a.lazyZip(b).lazyZip(c).foldLeft(0)((acc, i, _, _) => acc + i)) // min len 3: 1+2+3
+    assertTrue(a.lazyZip(b).lazyZip(c).exists((i, s, z) => i == 2 && s == "b" && !z))
+
+  @Test def lazyZip2_empty: Unit =
+    assertEquals(Nil, FArray.empty[Int].lazyZip(FArray(1, 2)).map((x, y) => x + y).toList)
+
   @Test def prepend_recursive_sum: Unit =
     import farray.`+:`
     def sum(xs: FArray[Int]): Int = xs match
