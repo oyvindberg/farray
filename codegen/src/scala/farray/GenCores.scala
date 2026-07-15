@@ -2716,7 +2716,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def scanRightImpl[A, B](xs: FBase, z: B)(inline op: (A, B) => B): FBase = { val n = xs.length; if (n == 0) fromValues1[B](z) else if (n == 1) fromValues2[B](op(applyAtImpl[A](xs, 0), z), z) else $scanRightV }
        |  inline def combinationsImpl[A](xs: FBase, k: Int): Iterator[FBase] = ($combinationsV).asInstanceOf[Iterator[FBase]]
        |  inline def permutationsImpl[A](xs: FBase): Iterator[FBase] = ($permutationsV).asInstanceOf[Iterator[FBase]]
-       |  inline def groupByImpl[A, K](xs: FBase)(inline f: A => K): Map[K, FBase] = if (xs.length == 0) Map.empty[K, FBase] else if (xs.length == 1) Map(f(applyAtImpl[A](xs, 0)) -> xs) else $groupBy
+       |  inline def groupByImpl[A, K](xs: FBase)(inline f: A => K): Map[K, FBase] = if (xs.length == 0) Map.empty[K, FBase] else if (xs.length == 1) Map(scala.Tuple2(f(applyAtImpl[A](xs, 0)), xs)) else $groupBy
        |  inline def groupMapAcc[K, B]: GroupMapAcc[K, B] = $groupMapAcc
        |}
        |""".stripMargin

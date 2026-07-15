@@ -331,7 +331,7 @@ object FArray:
     inline def groupMap[K, B](inline key: A => K)(inline f: A => B): Map[K, FArray[B]] =
       if xs.length == 1 then
         val e = FArrayOps.applyAtImpl[A](xs, 0)
-        Map(key(e) -> (FArrayOps.fromValues1[B](f(e)): FArray[B]))
+        Map(scala.Tuple2(key(e), (FArrayOps.fromValues1[B](f(e)): FArray[B])))
       else
         val acc = FArrayOps.groupMapAcc[K, B]
         xs.foreach(a => acc.add(key(a), f(a)))

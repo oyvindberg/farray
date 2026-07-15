@@ -54,6 +54,18 @@ projects:
     scala:
       strict: false
       options: -encoding utf8 -feature -unchecked -Ycheck:all
+  # Compiles inline-op call sites (groupBy/groupMap/…) WITH `-Werror -deprecation`. An inline body that
+  # expands `a -> b` (Predef.ArrowAssoc, deprecated under recent dotty) becomes a hard error at the call
+  # site of a `-Werror` codebase (the Scala 3 compiler itself). This COMPILE-ONLY gate catches any such
+  # deprecated construct in an inline expansion; `bleep compile werror-tests` must be clean. (Scala 3.8.3
+  # does not yet deprecate ArrowAssoc, so this gate only bites once farray is re-pinned to 3.10+; it stays
+  # as a general -Werror inline-expansion gate meanwhile.)
+  werror-tests:
+    dependsOn: farray
+    extends: template-common
+    scala:
+      strict: false
+      options: -encoding utf8 -feature -unchecked -deprecation -Werror
   tests:
     dependencies:
       - junit:junit:4.13.2
