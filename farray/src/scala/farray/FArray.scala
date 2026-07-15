@@ -13,6 +13,12 @@ opaque type FArray[+A] <: AnyRef = FBase
 
 object FArray:
 
+  /** Every `FArray` — whatever its element type — is backed by the sealed runtime class [[FBase]], so a
+    * single `ClassTag` (runtime class `classOf[FBase]`) serves them all. Living in the companion it is in
+    * implicit scope, so `summon[ClassTag[FArray[A]]]`, `Array.ofDim[FArray[A]]`, and building an
+    * `Array[FArray[A]]` all resolve it with no import. */
+  given classTag[A]: ClassTag[FArray[A]] = ClassTag[FArray[A]](classOf[FBase])
+
   inline def empty[A]: FArray[A] = FArrayOps.emptyImpl[A]
   // ONE varargs apply: the macro pattern-matches the literal argument list at compile time and emits
   // the construction directly for EVERY arity — Empty / ${K}One / a typed array filled with unrolled

@@ -439,3 +439,22 @@ class DottyGapsTest:
     assertEquals(List(4, 3, 2, 1, 0), xs.indices.reverse.toList)
     assertEquals(Nil, FArray.empty[String].indices.toList) // empty
     assertEquals(List(0), FArray("only").indices.toList) // single
+
+  // ---- Item 4: given ClassTag[FArray[A]] (found via implicit scope, no import) ----
+  @Test def classTag_summon: Unit =
+    import scala.reflect.ClassTag
+    val ct = summon[ClassTag[FArray[String]]]
+    assertNotNull(ct)
+    assertEquals(classOf[FBase], ct.runtimeClass)
+
+  @Test def classTag_ofDim_and_roundtrip: Unit =
+    // Array.ofDim-style use relies on the ClassTag being in implicit scope
+    val arr: Array[FArray[Int]] = Array.ofDim[FArray[Int]](3)
+    arr(0) = FArray(1, 2); arr(1) = FArray(3); arr(2) = FArray.empty[Int]
+    assertEquals(List(1, 2), arr(0).toList)
+    assertEquals(List(3), arr(1).toList)
+    assertTrue(arr(2).isEmpty)
+    // round-trips through an Array[FArray[Int]]
+    val back: Array[FArray[Int]] = arr.clone()
+    assertEquals(3, back.length)
+    assertEquals(List(1, 2, 3), back.toList.flatMap(_.toList))
