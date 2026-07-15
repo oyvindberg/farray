@@ -1,5 +1,6 @@
 package farray
 
+import scala.compiletime.summonFrom
 import scala.reflect.ClassTag
 
 //start:opaque-type
@@ -20,6 +21,24 @@ object FArray:
   // the literal list from the macro — and from the fuse macro's flatMap splat). A non-literal spread
   // (`FArray(xs*)`) falls back to the runtime applyImpl.
   inline def apply[A](inline as: A*): FArray[A] = ${ FArrayMacros.applyMacro[A]('as) }
+
+  /** Name-based sequence extractor so `case FArray()`, `case FArray(a, b)`, `case FArray(x, rest*)`
+    * work. `transparent inline` + kind dispatch (the `${K}Repr` machinery) picks a value-class view
+    * whose `apply(i)` hands back a RAW element for a primitive `FArray` — positional bindings do not
+    * box. The vararg suffix goes through `drop(n): Seq[A]`, which boxes (a `Seq` erases its element);
+    * that box is inherent to the `_*` binding (a `Vector(x, rest*)` suffix boxes too). */
+  transparent inline def unapplySeq[A](xs: FArray[A]) = summonFrom {
+    case _: IntRepr[A]     => new IntSeqView(xs.asInstanceOf[FArray[Int]])
+    case _: LongRepr[A]    => new LongSeqView(xs.asInstanceOf[FArray[Long]])
+    case _: DoubleRepr[A]  => new DoubleSeqView(xs.asInstanceOf[FArray[Double]])
+    case _: FloatRepr[A]   => new FloatSeqView(xs.asInstanceOf[FArray[Float]])
+    case _: ShortRepr[A]   => new ShortSeqView(xs.asInstanceOf[FArray[Short]])
+    case _: ByteRepr[A]    => new ByteSeqView(xs.asInstanceOf[FArray[Byte]])
+    case _: CharRepr[A]    => new CharSeqView(xs.asInstanceOf[FArray[Char]])
+    case _: BooleanRepr[A] => new BooleanSeqView(xs.asInstanceOf[FArray[Boolean]])
+    case _: RefRepr[A]     => new RefSeqView[A](xs)
+    case _                 => new AnySeqView[A](xs)
+  }
   inline def tabulate[A](n: Int)(inline f: Int => A): FArray[A] = FArrayOps.tabulateImpl[A](n)(f)
   inline def fromArray[A](as: Array[A]): FArray[A] = FArrayOps.fromArrayImpl[A](as)
   inline def fromIterable[A](it: Iterable[A]): FArray[A] = FArrayOps.applyImpl[A](it.toSeq)
