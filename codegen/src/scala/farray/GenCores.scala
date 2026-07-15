@@ -2241,21 +2241,32 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // A and compares to elem). One leaf-method call; hit -> index < length.
     val contains = dispatchA(k => s"scFwdLeaf${k.name}(xs, 0, ${predSAM(k, s"${eqVal(k)} == elem")}) < length")
     val applyAt = dispatchA(k => if k.name == "Ref" then s"r.wrap(${k.lc}At(xs, i).asInstanceOf[A])" else s"r.wrap(${k.lc}At(xs, i))")
-    // mapConserve: I == O == k (always a COVERED pair — prim-self + Ref->Ref). SAME slim surface as map, plus
-    // the identity-check: scan for the first element f actually changes (reference !eq); if NONE, return xs with
-    // NO allocation. On a change, build the result through the SHARED leaf method mapLeaf${K}${K} (re-applying f
-    // over the whole array — the conserve optimisation is the no-change fast path, not prefix-sharing). NO
-    // inlined leaf build loop here. (Prims always "change" — boxed eq — so they always rebuild like map, which
-    // is correct: a primitive can't be conserved.)
+    // mapConserve: I == O == k (always a COVERED pair — prim-self + Ref->Ref). List.mapConserve semantics with
+    // f applied EXACTLY ONCE per element. Single pass: SCAN while unchanged, comparing f(x) `ne` x and calling f
+    // once per scanned element (result kept in `fa` so we NEVER re-apply it). If the scan reaches the end with no
+    // change, return xs with NO allocation (identity). On the FIRST change (at index i, its f-result in `fa`),
+    // allocate the output, copy the unchanged PREFIX [0, i) straight from the source array (the ORIGINALS — and
+    // since f(x) eq x on the prefix those ARE f's results), write `fa` at i, then fill the SUFFIX (i+1, n) by
+    // applying f once each. Total f-calls == n. (Prims always "change" — boxed eq is false — so they change at
+    // i=0 and rebuild like map, which is correct: a primitive can't be conserved.) Leaf: source array is
+    // `leaf.arr` directly; node: materialize ONCE (tolerant of foreign leaves) only AFTER a change is detected,
+    // so an unchanged node also stays zero-alloc.
     val mapConserve = dispatchA { k =>
-      val readEl = if k.name == "Ref" then "sa(i).asInstanceOf[A]" else "sa(i)"
-      val readElNode = if k.name == "Ref" then s"${k.lc}At(xs, i).asInstanceOf[A]" else s"${k.lc}At(xs, i)"
-      val build = mapLeafCall(k, k, "A", "r")
-      val scanLeaf =
-        s"{ val sa = leaf.arr; val n = leaf.length; var i = 0; var changed = false; while (i < n && !changed) { val a = ${readVal(k, readEl)}; if (!(f(a).asInstanceOf[AnyRef] eq a.asInstanceOf[AnyRef])) changed = true; i += 1 }; if (!changed) xs else $build }"
-      val scanNode =
-        s"{ val n = xs.length; var i = 0; var changed = false; while (i < n && !changed) { val a = ${readVal(k, readElNode)}; if (!(f(a).asInstanceOf[AnyRef] eq a.asInstanceOf[AnyRef])) changed = true; i += 1 }; if (!changed) xs else $build }"
-      s"xs match { case leaf: ${k.name}Arr => $scanLeaf; case _ => $scanNode }"
+      val saReadI = if k.name == "Ref" then "sa(i).asInstanceOf[A]" else "sa(i)"
+      val saReadJ = if k.name == "Ref" then "sa(j).asInstanceOf[A]" else "sa(j)"
+      val nodeReadI = if k.name == "Ref" then s"${k.lc}At(xs, i).asInstanceOf[A]" else s"${k.lc}At(xs, i)"
+      val writeChanged = wr(k, "r.unwrap(fa)")
+      val writeSuffix = wr(k, s"r.unwrap(f(${readVal(k, saReadJ)}))")
+      // rebuild given a flat source array `sa`, the first-change index `i`, and its f-result `fa`.
+      val rebuild =
+        s"{ val out = new Array[${k.arr}](n); System.arraycopy(sa, 0, out, 0, i); out(i) = $writeChanged; var j = i + 1; while (j < n) { out(j) = $writeSuffix; j += 1 }; ${leaf(k, "out", "n")} }"
+      val scan = (read: String) =>
+        s"var i = 0; var changed = false; var fa: A = null.asInstanceOf[A]; while (i < n && !changed) { val a = $read; fa = f(a); if (fa.asInstanceOf[AnyRef] eq a.asInstanceOf[AnyRef]) i += 1 else changed = true }"
+      val bodyLeaf =
+        s"{ val sa = leaf.arr; val n = leaf.length; ${scan(readVal(k, saReadI))}; if (!changed) xs else $rebuild }"
+      val bodyNode =
+        s"{ val n = xs.length; ${scan(readVal(k, nodeReadI))}; if (!changed) xs else { val sa = materialize${k.name}(xs); $rebuild } }"
+      s"xs match { case leaf: ${k.name}Arr => $bodyLeaf; case _ => $bodyNode }"
     }
     // ONE pass, no inner buffer: dfs the source, and for each element append f(x)'s elements straight into a
     // growing output array (inline grow). The inner FArray is created, matched, and arraycopied within the
