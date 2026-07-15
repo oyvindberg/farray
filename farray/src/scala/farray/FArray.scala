@@ -285,6 +285,11 @@ object FArray:
     inline def partition(inline p: A => Boolean): (FArray[A], FArray[A]) =
       FArrayOps.partitionImpl[A](xs)(p).asInstanceOf[(FArray[A], FArray[A])]
     inline def collect[B](pf: PartialFunction[A, B]): FArray[B] = FArrayOps.collectImpl[A, B](xs)(pf).asInstanceOf[FArray[B]]
+    /** apply `f` once per element, keep the contents of the `Some`s, drop the `None`s — one fused pass,
+      * no intermediate collection (equivalent to `xs.flatMap(f)` where `f: A => Option[B]`). The `Option`
+      * is allocated by the caller's lambda (unavoidable); the op adds nothing on top and the output is
+      * built unboxed per element kind. */
+    inline def mapNotNone[B](inline f: A => Option[B]): FArray[B] = FArrayOps.mapNotNoneImpl[A, B](xs)(f).asInstanceOf[FArray[B]]
     // unboxed per-kind seen-tables (domain/offset bitmaps, position-index probes, F14 ctrl bytes for refs),
     // Scala `==` semantics preserved exactly (NaN never collapses, ±0.0 does), identity return when nothing
     // was duplicated. Replaces the boxed mutable.HashSet[Any] + filter pass.

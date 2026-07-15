@@ -342,3 +342,40 @@ class DottyGapsTest:
       case _      => 0
     assertEquals(15, sum(FArray(1, 2, 3, 4, 5)))
     assertEquals(15, sum(FArray(1, 2, 3, 4, 5).map(_ + 0))) // leaf, not Prepend
+
+  // ==== Round 2 ====
+
+  // ---- Item 1: mapNotNone (parity vs List.flatMap(f: A => Option[B])) ----
+  @Test def mapNotNone_int_to_int: Unit =
+    val f: Int => Option[Int] = x => if x % 2 == 0 then Some(x * 10) else None
+    for xs <- List(List.empty[Int], List(1), List(2), List(1, 2, 3, 4, 5, 6), (1 to 1000).toList) do
+      assertEquals(xs.flatMap(f), xs.toFArray.mapNotNone(f).toList)
+
+  @Test def mapNotNone_int_to_string: Unit =
+    val f: Int => Option[String] = x => if x > 0 then Some(s"v$x") else None
+    val xs = List(-1, 2, -3, 4, 5, -6)
+    assertEquals(xs.flatMap(f), xs.toFArray.mapNotNone(f).toList)
+
+  @Test def mapNotNone_string_to_int: Unit =
+    val f: String => Option[Int] = s => s.toIntOption
+    val xs = List("1", "x", "3", "", "55")
+    assertEquals(xs.flatMap(f), xs.toFArray.mapNotNone(f).toList)
+
+  @Test def mapNotNone_all_none_all_some: Unit =
+    val xs = (1 to 50).toList
+    // all None -> empty
+    assertEquals(Nil, xs.toFArray.mapNotNone[Int](_ => None).toList)
+    assertTrue(xs.toFArray.mapNotNone[Int](_ => None).isEmpty)
+    // all Some -> identity-mapped
+    assertEquals(xs.map(_ + 1), xs.toFArray.mapNotNone(x => Some(x + 1)).toList)
+
+  @Test def mapNotNone_evaluated_once_per_element: Unit =
+    var calls = 0
+    val r = FArray(1, 2, 3, 4).mapNotNone { x => calls += 1; if x % 2 == 0 then Some(x) else None }
+    assertEquals(4, calls) // exactly once per element
+    assertEquals(List(2, 4), r.toList)
+
+  @Test def mapNotNone_empty_and_single: Unit =
+    assertEquals(Nil, FArray.empty[Int].mapNotNone(x => Some(x)).toList)
+    assertEquals(List(7), FArray(7).mapNotNone(x => Some(x)).toList)
+    assertEquals(Nil, FArray(7).mapNotNone[Int](_ => None).toList)
