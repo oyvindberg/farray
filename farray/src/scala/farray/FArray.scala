@@ -39,6 +39,22 @@ object FArray:
     case _: RefRepr[A]     => new RefSeqView[A](xs)
     case _                 => new AnySeqView[A](xs)
   }
+  /** Kind-specialized growable builder (`b += x; b ++= xs; b.result()`). `transparent inline` so the
+    * concrete per-kind builder type is kept at the call site — a primitive element type builds into a
+    * primitive backing array with no per-element boxing. Reference / abstract element types use the
+    * Object-backed `RefFArrayBuilder` (no `RefRepr` summon, so no inline-proxy hazard). */
+  transparent inline def newBuilder[A] = summonFrom {
+    case _: IntRepr[A]     => new IntFArrayBuilder
+    case _: LongRepr[A]    => new LongFArrayBuilder
+    case _: DoubleRepr[A]  => new DoubleFArrayBuilder
+    case _: FloatRepr[A]   => new FloatFArrayBuilder
+    case _: ShortRepr[A]   => new ShortFArrayBuilder
+    case _: ByteRepr[A]    => new ByteFArrayBuilder
+    case _: CharRepr[A]    => new CharFArrayBuilder
+    case _: BooleanRepr[A] => new BooleanFArrayBuilder
+    case _                 => new RefFArrayBuilder[A]
+  }
+
   inline def tabulate[A](n: Int)(inline f: Int => A): FArray[A] = FArrayOps.tabulateImpl[A](n)(f)
   inline def fromArray[A](as: Array[A]): FArray[A] = FArrayOps.fromArrayImpl[A](as)
   inline def fromIterable[A](it: Iterable[A]): FArray[A] = FArrayOps.applyImpl[A](it.toSeq)

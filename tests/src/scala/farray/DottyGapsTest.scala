@@ -110,6 +110,54 @@ class DottyGapsTest:
       case _            => (Nil, "?")
     assertEquals((List("a", "b"), "c"), r)
 
+  // ---- Task 2: newBuilder ----
+  @Test def builder_int: Unit =
+    val b = FArray.newBuilder[Int]
+    b += 1; b += 2; b += 3
+    assertEquals(List(1, 2, 3), b.result().toList)
+
+  @Test def builder_empty: Unit =
+    assertEquals(Nil, FArray.newBuilder[Int].result().toList)
+    assertTrue(FArray.newBuilder[String].result().isEmpty)
+
+  @Test def builder_single: Unit =
+    val b = FArray.newBuilder[String]; b += "x"
+    assertEquals(List("x"), b.result().toList)
+
+  @Test def builder_sizeHint_and_grow: Unit =
+    val b = FArray.newBuilder[Int]
+    b.sizeHint(1000)
+    var i = 0; while i < 1000 do { b += i; i += 1 }
+    val r = b.result()
+    assertEquals(1000, r.length)
+    assertEquals((0 until 1000).toList, r.toList)
+
+  @Test def builder_addAll_farray_and_iterable: Unit =
+    val b = FArray.newBuilder[Int]
+    b ++= FArray(1, 2, 3)
+    b ++= List(4, 5)
+    b ++= Iterator(6, 7)
+    assertEquals((1 to 7).toList, b.result().toList)
+
+  @Test def builder_ref_addAll: Unit =
+    val b = FArray.newBuilder[String]
+    b ++= FArray("a", "b")
+    b ++= List("c")
+    b += "d"
+    assertEquals(List("a", "b", "c", "d"), b.result().toList)
+
+  @Test def builder_clear: Unit =
+    val b = FArray.newBuilder[Int]
+    b += 1; b += 2; b.clear(); b += 9
+    assertEquals(List(9), b.result().toList)
+
+  @Test def builder_parity_vs_vector: Unit =
+    // build the same sequence with Vector.newBuilder and FArray.newBuilder, compare
+    def build[B](add: (Int => Unit)): Unit = { var i = 0; while i < 257 do { add(i * 3); i += 1 } }
+    val vb = Vector.newBuilder[Int]; build(vb += _)
+    val fb = FArray.newBuilder[Int]; build(fb += _)
+    assertEquals(vb.result().toList, fb.result().toList)
+
   @Test def prepend_recursive_sum: Unit =
     import farray.`+:`
     def sum(xs: FArray[Int]): Int = xs match
