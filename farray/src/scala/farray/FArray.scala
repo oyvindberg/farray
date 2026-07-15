@@ -170,6 +170,13 @@ object FArray:
     FArray.fromIterable(b)
   }
 
+  /** one-pass filtered map (predicate then map), no intermediate FArray. Backs `FWithFilter.map`.
+    * Delegates to the generated, kind-specialized `FArrayOps.filterMapImpl` (the fused `collect`
+    * engine: A read x B write over the shared `foreachLeaf` traverser into an unboxed `${B}Group`),
+    * with the map body `f` inlined and the predicate `p` evaluated once per element. */
+  inline def filterMapImpl[A, B](xs: FArray[A], inline p: A => Boolean)(inline f: A => B): FArray[B] =
+    FArrayOps.filterMapImpl[A, B](xs)(p)(f)
+
   extension [A](xs: FArray[A])
     // ---- shape ----
     def length: Int = xs.length
@@ -215,6 +222,9 @@ object FArray:
     inline def foreachWhile(inline f: A => Boolean): Unit = FArrayOps.foreachWhileImpl[A](xs)(f)
     inline def map[B](inline f: A => B): FArray[B] = FArrayOps.mapImpl[A, B](xs)(f)
     inline def filter(inline p: A => Boolean): FArray[A] = FArrayOps.filterImpl[A](xs)(p)
+    /** guarded-for-comprehension entry: `for x <- xs if p yield e` fuses the predicate into the
+      * result loop with no intermediate FArray. See [[FWithFilter]]. */
+    def withFilter(p: A => Boolean): FWithFilter[A] = new FWithFilter[A](xs, p)
     inline def filterNot(inline p: A => Boolean): FArray[A] = FArrayOps.filterNotImpl[A](xs)(p)
     inline def contains(elem: A): Boolean = FArrayOps.containsImpl[A](xs, elem)
     inline def flatMap[B](inline f: A => FArray[B]): FArray[B] = FArrayOps.flatMapImpl[A, B](xs)(a => f(a).asInstanceOf[FBase])

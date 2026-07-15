@@ -2124,6 +2124,27 @@ object GenCores extends BleepCodegenScript("GenCores") {
         .mkString("\n") + "\n    }",
       "A"
     )
+    // filterMap: filter (inline p) THEN map (inline f), FUSED in ONE pass — the engine behind
+    // withFilter(p).map(f) and a guarded for-comprehension (`for x <- xs if p yield f(x)`). Same shape
+    // as `collect` (double kind dispatch: A read x B write, over the shared foreachLeaf${I} traverser
+    // into an unboxed ${O}Group buffer), but p and f are INLINE lambdas — the map body fully inlines —
+    // and the predicate is evaluated EXACTLY ONCE per element (collect pays isDefinedAt + apply). No
+    // intermediate FArray. The A/B handoff boxes (same NOTED limitation as collect); the OUTPUT stays
+    // unboxed via the ${O}Group.
+    val filterMap = withErr(
+      "summonFrom {\n" + opKinds
+        .map { ka =>
+          val inner = "summonFrom {\n" + opKinds
+            .map { kb =>
+              val add = s"buf.add(${wr(kb, "rb.unwrap(f(a))")})"
+              s"          case rb: ${kb.name}Repr[B] => { val buf = new ${kb.name}Group(); foreachLeaf${ka.name}(xs, (v) => { val a = ${wrapV(ka)}; if (p(a)) $add }); buf.toLeaf }"
+            }
+            .mkString("\n") + "\n        }"
+          s"      case r: ${ka.name}Repr[A] => $inner"
+        }
+        .mkString("\n") + "\n    }",
+      "A"
+    )
     // partitionMap: ONE pass, TWO outputs of (possibly) DIFFERENT kinds — Lefts of B's kind to _1, Rights of C's
     // kind to _2. Like collect this is a BOXED-but-SHARED path (NOTED): f returns Either[A1, A2] (an allocated
     // Either, the values boxed), so the per-element handoff boxes regardless of the output kinds; we keep the
@@ -2579,6 +2600,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       )}
        |  inline def partitionImpl[A](xs: FBase)(inline p: A => Boolean): scala.Tuple2[FBase, FBase] = if (xs.length == 0) emptyPair else $partition
        |  inline def collectImpl[A, B](xs: FBase)(pf: PartialFunction[A, B]): FBase = $collect
+       |  inline def filterMapImpl[A, B](xs: FBase)(inline p: A => Boolean)(inline f: A => B): FBase = $filterMap
        |  inline def partitionMapImpl[A, A1, A2](xs: FBase)(inline f: A => Either[A1, A2]): scala.Tuple2[FBase, FBase] = $partitionMap
        |  inline def containsImpl[A](xs: FBase, elem: A): Boolean = { val length = xs.length; $contains }
        |  inline def mapConserveImpl[A](xs: FBase)(inline f: A => A): FBase = { val n = xs.length; if (n == 0) xs else if (n == 1) { val e = applyAtImpl[A](xs, 0); val r = f(e); if (r.asInstanceOf[AnyRef] eq e.asInstanceOf[AnyRef]) xs else fromValues1[A](r) } else $mapConserve }

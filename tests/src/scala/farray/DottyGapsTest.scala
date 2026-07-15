@@ -233,6 +233,38 @@ class DottyGapsTest:
   @Test def lazyZip2_empty: Unit =
     assertEquals(Nil, FArray.empty[Int].lazyZip(FArray(1, 2)).map((x, y) => x + y).toList)
 
+  // ---- Task 5: withFilter ----
+  @Test def withFilter_forcomp_map_parity: Unit =
+    val fa = FArray(1, 2, 3, 4, 5, 6)
+    val la = List(1, 2, 3, 4, 5, 6)
+    val f = for x <- fa if x % 2 == 0 yield x * 10
+    val l = for x <- la if x % 2 == 0 yield x * 10
+    assertEquals(l, f.toList)
+
+  @Test def withFilter_double_guard: Unit =
+    val fa = FArray(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+    val la = (1 to 10).toList
+    val f = for x <- fa if x % 2 == 0 if x > 4 yield x
+    val l = for x <- la if x % 2 == 0 if x > 4 yield x
+    assertEquals(l, f.toList)
+
+  @Test def withFilter_foreach: Unit =
+    val fa = FArray(1, 2, 3, 4, 5)
+    val sb = scala.collection.mutable.ArrayBuffer.empty[Int]
+    for x <- fa if x > 2 do sb += x
+    assertEquals(List(3, 4, 5), sb.toList)
+
+  @Test def withFilter_flatMap_forcomp: Unit =
+    val xs = FArray(1, 2, 3); val ys = FArray(10, 20)
+    val f = for x <- xs if x != 2; y <- ys yield x + y
+    val lf = for x <- List(1, 2, 3) if x != 2; y <- List(10, 20) yield x + y
+    assertEquals(lf, f.toList)
+
+  @Test def withFilter_ref_and_empty: Unit =
+    val fa = FArray("apple", "banana", "cherry")
+    assertEquals(List("APPLE"), (for s <- fa if s.startsWith("a") yield s.toUpperCase).toList)
+    assertEquals(Nil, (for x <- FArray.empty[Int] if x > 0 yield x).toList)
+
   @Test def prepend_recursive_sum: Unit =
     import farray.`+:`
     def sum(xs: FArray[Int]): Int = xs match
