@@ -112,6 +112,22 @@ class BoxedFallbackTest:
     assertEquals(List(100, 200, 300), gBuilder[Int](Seq(100, 200, 300)).toList)
     assertEquals(List(1, 2, 3, 4), gToFArray[Int](List(1, 2, 3, 4)).toList)
 
+  // withFilter (guarded for-comprehension) and flatMap-for-comprehension in a generic[T] context
+  private def gForCompMap[T, U](xs: FArray[T], p: T => Boolean, f: T => U): List[U] =
+    (for x <- xs if p(x) yield f(x)).toList
+  private def gForCompFlat[T, U](xs: FArray[T], ys: FArray[U], p: T => Boolean): List[(T, U)] =
+    (for x <- xs if p(x); y <- ys yield (x, y)).toList
+
+  @Test def generic_withFilter_forcomp: Unit =
+    val fa = FArray(1, 2, 3, 4, 5, 6); val la = List(1, 2, 3, 4, 5, 6)
+    assertEquals(la.withFilter(_ % 2 == 0).map(_ * 10), gForCompMap[Int, Int](fa, _ % 2 == 0, _ * 10))
+    val fs = FArray("apple", "banana", "cherry"); val ls = List("apple", "banana", "cherry")
+    assertEquals(ls.withFilter(_.startsWith("b")).map(_.toUpperCase), gForCompMap[String, String](fs, _.startsWith("b"), _.toUpperCase))
+    // guarded flatMap for-comprehension over abstract T, primitive-backed
+    val xs = FArray(1, 2, 3); val ys = FArray(10, 20)
+    val exp = for x <- List(1, 2, 3) if x != 2; y <- List(10, 20) yield (x, y)
+    assertEquals(exp, gForCompFlat[Int, Int](xs, ys, _ != 2))
+
   // ---- 1b. generic[T] over reference storage ----
   @Test def generic_ref_parity: Unit =
     val fa = FArray("apple", "banana", "cherry")
