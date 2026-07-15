@@ -81,6 +81,65 @@ object FArray:
   /** build from any IterableOnce (Iterator / View / Iterable), like List.from. */
   inline def from[A](it: IterableOnce[A]): FArray[A] = FArrayOps.applyImpl[A](it.iterator.toSeq)
 
+  /** drive `add` over an IterableOnce, indexed when it is an IndexedSeq (no iterator alloc), else via
+    * its iterator. `add` is inline, so the per-element unbox/store fuses into one loop. */
+  private inline def drainInto[A](it: IterableOnce[A])(inline add: A => Unit): Unit =
+    it match
+      case xs: scala.collection.IndexedSeq[A @unchecked] =>
+        val n = xs.length; var i = 0
+        while i < n do { add(xs(i)); i += 1 }
+      case _ =>
+        val ir = it.iterator
+        while ir.hasNext do add(ir.next())
+
+  /** the engine behind `IterableOnce#toFArray`. Defined here (inside the opaque type's transparent
+    * scope, so a core `FBase` returns as `FArray[A]` with no cast) and dispatched on element kind via
+    * the `Repr` typeclass: each primitive arm feeds the growable builder through `r.unwrap` (unboxed,
+    * proven by the evidence — no cast), references/abstract go through the genuinely-typed
+    * `RefFArrayBuilder[A]`. An `FArraySeq` short-circuits to its backing core in O(1). */
+  inline def fromIterableOnce[A](it: IterableOnce[A]): FArray[A] =
+    it match
+      case s: FArraySeq[?] => s.fbase
+      case other =>
+        summonFrom {
+          case r: IntRepr[A] =>
+            val b = new IntFArrayBuilder
+            val ks = other.knownSize; if ks > 0 then b.sizeHint(ks)
+            drainInto(other)(a => b.addOne(r.unwrap(a))); b.result()
+          case r: LongRepr[A] =>
+            val b = new LongFArrayBuilder
+            val ks = other.knownSize; if ks > 0 then b.sizeHint(ks)
+            drainInto(other)(a => b.addOne(r.unwrap(a))); b.result()
+          case r: DoubleRepr[A] =>
+            val b = new DoubleFArrayBuilder
+            val ks = other.knownSize; if ks > 0 then b.sizeHint(ks)
+            drainInto(other)(a => b.addOne(r.unwrap(a))); b.result()
+          case r: FloatRepr[A] =>
+            val b = new FloatFArrayBuilder
+            val ks = other.knownSize; if ks > 0 then b.sizeHint(ks)
+            drainInto(other)(a => b.addOne(r.unwrap(a))); b.result()
+          case r: ShortRepr[A] =>
+            val b = new ShortFArrayBuilder
+            val ks = other.knownSize; if ks > 0 then b.sizeHint(ks)
+            drainInto(other)(a => b.addOne(r.unwrap(a))); b.result()
+          case r: ByteRepr[A] =>
+            val b = new ByteFArrayBuilder
+            val ks = other.knownSize; if ks > 0 then b.sizeHint(ks)
+            drainInto(other)(a => b.addOne(r.unwrap(a))); b.result()
+          case r: CharRepr[A] =>
+            val b = new CharFArrayBuilder
+            val ks = other.knownSize; if ks > 0 then b.sizeHint(ks)
+            drainInto(other)(a => b.addOne(r.unwrap(a))); b.result()
+          case r: BooleanRepr[A] =>
+            val b = new BooleanFArrayBuilder
+            val ks = other.knownSize; if ks > 0 then b.sizeHint(ks)
+            drainInto(other)(a => b.addOne(r.unwrap(a))); b.result()
+          case _ =>
+            val b = new RefFArrayBuilder[A]
+            val ks = other.knownSize; if ks > 0 then b.sizeHint(ks)
+            drainInto(other)(a => b.addOne(a)); b.result()
+        }
+
   /** n copies of elem; elem is re-evaluated per element (like List.fill). */
   inline def fill[A](n: Int)(inline elem: A): FArray[A] = FArray.tabulate(n)(_ => elem)
 

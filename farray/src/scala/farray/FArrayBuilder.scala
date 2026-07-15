@@ -50,15 +50,15 @@ final class IntFArrayBuilder extends FArrayBuilder[Int]:
   private var arr: Array[Int] = FArrayBuilder.emptyInt
   private var n: Int = 0
   def knownSize: Int = n
-  def sizeHint(size: Int): Unit = if size > arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, size))
+  def sizeHint(size: Int): Unit = if size > arr.length then arr = java.util.Arrays.copyOf(arr, size)
   def addOne(elem: Int): this.type =
     if n == arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, n + 1))
     arr(n) = elem; n += 1; this
   def addAll(xs: FArray[Int]): this.type =
-    val need = n + xs.length; if need > arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, need))
+    sizeHint(n + xs.length)
     xs.foreach(v => { arr(n) = v; n += 1 }); this
   def addAll(it: IterableOnce[Int]): this.type =
-    val ks = it.knownSize; if ks > 0 && n + ks > arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, n + ks))
+    val ks = it.knownSize; if ks > 0 then sizeHint(n + ks)
     val i = it.iterator; while i.hasNext do addOne(i.next()); this
   def clear(): Unit = n = 0
   def result(): FArray[Int] =
@@ -71,15 +71,15 @@ final class LongFArrayBuilder extends FArrayBuilder[Long]:
   private var arr: Array[Long] = FArrayBuilder.emptyLong
   private var n: Int = 0
   def knownSize: Int = n
-  def sizeHint(size: Int): Unit = if size > arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, size))
+  def sizeHint(size: Int): Unit = if size > arr.length then arr = java.util.Arrays.copyOf(arr, size)
   def addOne(elem: Long): this.type =
     if n == arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, n + 1))
     arr(n) = elem; n += 1; this
   def addAll(xs: FArray[Long]): this.type =
-    val need = n + xs.length; if need > arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, need))
+    sizeHint(n + xs.length)
     xs.foreach(v => { arr(n) = v; n += 1 }); this
   def addAll(it: IterableOnce[Long]): this.type =
-    val ks = it.knownSize; if ks > 0 && n + ks > arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, n + ks))
+    val ks = it.knownSize; if ks > 0 then sizeHint(n + ks)
     val i = it.iterator; while i.hasNext do addOne(i.next()); this
   def clear(): Unit = n = 0
   def result(): FArray[Long] =
@@ -92,15 +92,15 @@ final class DoubleFArrayBuilder extends FArrayBuilder[Double]:
   private var arr: Array[Double] = FArrayBuilder.emptyDouble
   private var n: Int = 0
   def knownSize: Int = n
-  def sizeHint(size: Int): Unit = if size > arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, size))
+  def sizeHint(size: Int): Unit = if size > arr.length then arr = java.util.Arrays.copyOf(arr, size)
   def addOne(elem: Double): this.type =
     if n == arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, n + 1))
     arr(n) = elem; n += 1; this
   def addAll(xs: FArray[Double]): this.type =
-    val need = n + xs.length; if need > arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, need))
+    sizeHint(n + xs.length)
     xs.foreach(v => { arr(n) = v; n += 1 }); this
   def addAll(it: IterableOnce[Double]): this.type =
-    val ks = it.knownSize; if ks > 0 && n + ks > arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, n + ks))
+    val ks = it.knownSize; if ks > 0 then sizeHint(n + ks)
     val i = it.iterator; while i.hasNext do addOne(i.next()); this
   def clear(): Unit = n = 0
   def result(): FArray[Double] =
@@ -113,15 +113,15 @@ final class FloatFArrayBuilder extends FArrayBuilder[Float]:
   private var arr: Array[Float] = FArrayBuilder.emptyFloat
   private var n: Int = 0
   def knownSize: Int = n
-  def sizeHint(size: Int): Unit = if size > arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, size))
+  def sizeHint(size: Int): Unit = if size > arr.length then arr = java.util.Arrays.copyOf(arr, size)
   def addOne(elem: Float): this.type =
     if n == arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, n + 1))
     arr(n) = elem; n += 1; this
   def addAll(xs: FArray[Float]): this.type =
-    val need = n + xs.length; if need > arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, need))
+    sizeHint(n + xs.length)
     xs.foreach(v => { arr(n) = v; n += 1 }); this
   def addAll(it: IterableOnce[Float]): this.type =
-    val ks = it.knownSize; if ks > 0 && n + ks > arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, n + ks))
+    val ks = it.knownSize; if ks > 0 then sizeHint(n + ks)
     val i = it.iterator; while i.hasNext do addOne(i.next()); this
   def clear(): Unit = n = 0
   def result(): FArray[Float] =
@@ -134,15 +134,15 @@ final class ShortFArrayBuilder extends FArrayBuilder[Short]:
   private var arr: Array[Short] = FArrayBuilder.emptyShort
   private var n: Int = 0
   def knownSize: Int = n
-  def sizeHint(size: Int): Unit = if size > arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, size))
+  def sizeHint(size: Int): Unit = if size > arr.length then arr = java.util.Arrays.copyOf(arr, size)
   def addOne(elem: Short): this.type =
     if n == arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, n + 1))
     arr(n) = elem; n += 1; this
   def addAll(xs: FArray[Short]): this.type =
-    val need = n + xs.length; if need > arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, need))
+    sizeHint(n + xs.length)
     xs.foreach(v => { arr(n) = v; n += 1 }); this
   def addAll(it: IterableOnce[Short]): this.type =
-    val ks = it.knownSize; if ks > 0 && n + ks > arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, n + ks))
+    val ks = it.knownSize; if ks > 0 then sizeHint(n + ks)
     val i = it.iterator; while i.hasNext do addOne(i.next()); this
   def clear(): Unit = n = 0
   def result(): FArray[Short] =
@@ -155,15 +155,15 @@ final class ByteFArrayBuilder extends FArrayBuilder[Byte]:
   private var arr: Array[Byte] = FArrayBuilder.emptyByte
   private var n: Int = 0
   def knownSize: Int = n
-  def sizeHint(size: Int): Unit = if size > arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, size))
+  def sizeHint(size: Int): Unit = if size > arr.length then arr = java.util.Arrays.copyOf(arr, size)
   def addOne(elem: Byte): this.type =
     if n == arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, n + 1))
     arr(n) = elem; n += 1; this
   def addAll(xs: FArray[Byte]): this.type =
-    val need = n + xs.length; if need > arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, need))
+    sizeHint(n + xs.length)
     xs.foreach(v => { arr(n) = v; n += 1 }); this
   def addAll(it: IterableOnce[Byte]): this.type =
-    val ks = it.knownSize; if ks > 0 && n + ks > arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, n + ks))
+    val ks = it.knownSize; if ks > 0 then sizeHint(n + ks)
     val i = it.iterator; while i.hasNext do addOne(i.next()); this
   def clear(): Unit = n = 0
   def result(): FArray[Byte] =
@@ -176,15 +176,15 @@ final class CharFArrayBuilder extends FArrayBuilder[Char]:
   private var arr: Array[Char] = FArrayBuilder.emptyChar
   private var n: Int = 0
   def knownSize: Int = n
-  def sizeHint(size: Int): Unit = if size > arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, size))
+  def sizeHint(size: Int): Unit = if size > arr.length then arr = java.util.Arrays.copyOf(arr, size)
   def addOne(elem: Char): this.type =
     if n == arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, n + 1))
     arr(n) = elem; n += 1; this
   def addAll(xs: FArray[Char]): this.type =
-    val need = n + xs.length; if need > arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, need))
+    sizeHint(n + xs.length)
     xs.foreach(v => { arr(n) = v; n += 1 }); this
   def addAll(it: IterableOnce[Char]): this.type =
-    val ks = it.knownSize; if ks > 0 && n + ks > arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, n + ks))
+    val ks = it.knownSize; if ks > 0 then sizeHint(n + ks)
     val i = it.iterator; while i.hasNext do addOne(i.next()); this
   def clear(): Unit = n = 0
   def result(): FArray[Char] =
@@ -197,15 +197,15 @@ final class BooleanFArrayBuilder extends FArrayBuilder[Boolean]:
   private var arr: Array[Boolean] = FArrayBuilder.emptyBoolean
   private var n: Int = 0
   def knownSize: Int = n
-  def sizeHint(size: Int): Unit = if size > arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, size))
+  def sizeHint(size: Int): Unit = if size > arr.length then arr = java.util.Arrays.copyOf(arr, size)
   def addOne(elem: Boolean): this.type =
     if n == arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, n + 1))
     arr(n) = elem; n += 1; this
   def addAll(xs: FArray[Boolean]): this.type =
-    val need = n + xs.length; if need > arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, need))
+    sizeHint(n + xs.length)
     xs.foreach(v => { arr(n) = v; n += 1 }); this
   def addAll(it: IterableOnce[Boolean]): this.type =
-    val ks = it.knownSize; if ks > 0 && n + ks > arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, n + ks))
+    val ks = it.knownSize; if ks > 0 then sizeHint(n + ks)
     val i = it.iterator; while i.hasNext do addOne(i.next()); this
   def clear(): Unit = n = 0
   def result(): FArray[Boolean] =
@@ -220,16 +220,16 @@ final class RefFArrayBuilder[A] extends FArrayBuilder[A]:
   private var arr: Array[Object] = FArrayBuilder.emptyRef
   private var n: Int = 0
   def knownSize: Int = n
-  def sizeHint(size: Int): Unit = if size > arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, size))
+  def sizeHint(size: Int): Unit = if size > arr.length then arr = java.util.Arrays.copyOf(arr, size)
   def addOne(elem: A): this.type =
     if n == arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, n + 1))
     arr(n) = elem.asInstanceOf[Object]; n += 1; this
   def addAll(xs: FArray[A]): this.type =
     val base = xs.asInstanceOf[FBase]; val len = base.length
-    if n + len > arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, n + len))
+    sizeHint(n + len)
     var i = 0; while i < len do { arr(n) = base.applyBoxed(i); n += 1; i += 1 }; this
   def addAll(it: IterableOnce[A]): this.type =
-    val ks = it.knownSize; if ks > 0 && n + ks > arr.length then arr = java.util.Arrays.copyOf(arr, FArrayBuilder.grownCap(arr.length, n + ks))
+    val ks = it.knownSize; if ks > 0 then sizeHint(n + ks)
     val i = it.iterator; while i.hasNext do addOne(i.next()); this
   def clear(): Unit = n = 0
   def result(): FArray[A] =

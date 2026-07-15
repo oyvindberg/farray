@@ -158,6 +158,40 @@ class DottyGapsTest:
     val fb = FArray.newBuilder[Int]; build(fb += _)
     assertEquals(vb.result().toList, fb.result().toList)
 
+  // ---- Task 3: toFArray ----
+  @Test def toFArray_list_int: Unit =
+    val r = List(1, 2, 3).toFArray
+    assertEquals(List(1, 2, 3), r.toList)
+    // must be a real Int leaf so Int-specialized ops work (not a boxed RefArr mistyped as FArray[Int])
+    assertEquals(List(2, 3, 4), r.map(_ + 1).toList)
+    assertEquals(6, r.sum)
+
+  @Test def toFArray_list_ref: Unit =
+    assertEquals(List("a", "b"), List("a", "b").toFArray.toList)
+
+  @Test def toFArray_empty: Unit =
+    assertTrue(List.empty[Int].toFArray.isEmpty)
+    assertTrue(Iterator.empty[String].toFArray.isEmpty)
+
+  @Test def toFArray_arraybuffer_and_arrayseq: Unit =
+    assertEquals(List(1, 2, 3), scala.collection.mutable.ArrayBuffer(1, 2, 3).toFArray.toList)
+    assertEquals(List(4, 5), scala.collection.immutable.ArraySeq(4, 5).toFArray.toList)
+
+  @Test def toFArray_iterator_and_vector: Unit =
+    assertEquals((0 until 100).toList, (0 until 100).iterator.toFArray.toList)
+    assertEquals(Vector(7, 8, 9).toList, Vector(7, 8, 9).toFArray.toList)
+
+  @Test def toFArray_farrayseq_roundtrip_o1: Unit =
+    val orig = FArray(1, 2, 3, 4)
+    val back = orig.toSeq.toFArray // FArraySeq unwrap — same backing core
+    assertEquals(orig.toList, back.toList)
+    assertSame(orig.asInstanceOf[FBase], back.asInstanceOf[FBase])
+
+  @Test def toFArray_listbuffer: Unit =
+    val lb = scala.collection.mutable.ListBuffer.empty[String]
+    lb += "x"; lb += "y"
+    assertEquals(List("x", "y"), lb.toFArray.toList)
+
   @Test def prepend_recursive_sum: Unit =
     import farray.`+:`
     def sum(xs: FArray[Int]): Int = xs match
