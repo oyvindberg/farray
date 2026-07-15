@@ -260,7 +260,7 @@ class FListTest:
   @Test def test_headOption: Unit = test1(_.headOption)(_.headOption)
   @Test def test_indexOf: Unit = test1(_.indexOf("a"))(_.indexOf("a"))
   @Test def test_indexWhere: Unit = test1(_.indexWhere(_ == "a"))(_.indexWhere(_ == "a"))
-  @Test def test_indices: Unit = test1(_.indices)(_.indices)
+  @Test def test_indices: Unit = test1(_.indices.toList)(_.indices.toList) // indices is now FArray[Int]; compare as List
   @Test def test_init: Unit = test1NonEmpty(_.init)(_.init)
   @Test def test_intersect: Unit = test2(_ intersect _)(_ intersect _)
   @Test def test_isDefinedAt: Unit = test1(_.isDefinedAt(1))(_.isDefinedAt(1))

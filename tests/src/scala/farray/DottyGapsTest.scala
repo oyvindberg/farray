@@ -413,3 +413,29 @@ class DottyGapsTest:
     assertEquals(List(11, 22, 33), a.lazyZip(b).map(_ + _).toList)
     assertEquals(List(1, 10, 2, 20, 3, 30), a.lazyZip(b).flatMap((x, y) => FArray(x, y)).toList)
     assertEquals(List((1, 10, 0), (2, 20, 1), (3, 30, 2)), a.lazyZip(b).zipWithIndex.toList)
+
+  // ---- Item 3: indices: FArray[Int] ----
+  @Test def indices_foreach_and_type: Unit =
+    val xs = FArray("a", "b", "c")
+    val idx: FArray[Int] = xs.indices // must be FArray[Int], not Range
+    val sb = new StringBuilder
+    for i <- xs.indices do sb ++= i.toString // foreach over FArray[Int]
+    assertEquals("012", sb.toString)
+    assertEquals(List(0, 1, 2), idx.toList)
+
+  @Test def indices_map_and_guarded_forcomp: Unit =
+    val xs = FArray(10, 20, 30, 40)
+    assertEquals(List(0, 2, 4, 6), xs.indices.map(_ * 2).toList)
+    // guarded for-comprehension over indices exercises the round-1 withFilter
+    val evens = for i <- xs.indices if i % 2 == 0 yield xs(i)
+    assertEquals(List(10, 30), evens.toList)
+
+  @Test def indices_contains_reverse_empty_single: Unit =
+    val xs = FArray(1, 2, 3, 4, 5)
+    assertTrue(xs.indices.contains(0))
+    assertTrue(xs.indices.contains(4))
+    assertFalse(xs.indices.contains(5))
+    assertFalse(xs.indices.contains(-1))
+    assertEquals(List(4, 3, 2, 1, 0), xs.indices.reverse.toList)
+    assertEquals(Nil, FArray.empty[String].indices.toList) // empty
+    assertEquals(List(0), FArray("only").indices.toList) // single

@@ -186,7 +186,8 @@ object FArray:
     def lengthCompare(len: Int): Int = Integer.compare(xs.length, len)
     def lengthIs: Int = xs.length
     def sizeIs: Int = xs.length
-    def indices: Range = 0 until xs.length
+    // O(1) RangeNode-backed (unboxed traversal); FArray.range handles length 0/1. Was `0 until length: Range`.
+    def indices: FArray[Int] = FArray.range(0, xs.length)
     def isDefinedAt(i: Int): Boolean = i >= 0 && i < xs.length
 
     // ---- structural (tree-aware FBase virtuals) ----
