@@ -313,6 +313,28 @@ class DottyGapsTest:
       ws.groupMapReduce(_.head)(_.length)(_ + _)
     )
 
+  // ---- Task 7: ref-element sort stability (determinism for dotty) ----
+  @Test def sort_stability: Unit =
+    // (key, tag) pairs with DUPLICATE keys; a stable sort by key preserves tag order within a key.
+    // Compare against List's sort (documented stable) as the oracle, for sorted/sortBy/sortWith.
+    val data = List((3, "a"), (1, "b"), (2, "c"), (1, "d"), (3, "e"), (2, "f"), (1, "g"), (3, "h"))
+    val fa: FArray[(Int, String)] = data.toFArray
+    given Ordering[(Int, String)] = Ordering.by(_._1) // order ONLY by key, so ties are order-sensitive
+
+    assertEquals(data.sorted, fa.sorted.toList)
+    assertEquals(data.sortBy(_._1), fa.sortBy(_._1).toList)
+    assertEquals(data.sortWith((x, y) => x._1 < y._1), fa.sortWith((x, y) => x._1 < y._1).toList)
+
+    // explicit expectation: within each key, tags stay in first-seen order
+    assertEquals(
+      List((1, "b"), (1, "d"), (1, "g"), (2, "c"), (2, "f"), (3, "a"), (3, "e"), (3, "h")),
+      fa.sortBy(_._1).toList
+    )
+
+    // larger, forces the merge path (> 32) — still stable
+    val big = (0 until 500).map(i => (i % 7, i)).toList
+    assertEquals(big.sortBy(_._1), big.toFArray.sortBy(_._1).toList)
+
   @Test def prepend_recursive_sum: Unit =
     import farray.`+:`
     def sum(xs: FArray[Int]): Int = xs match

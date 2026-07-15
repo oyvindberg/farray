@@ -5,7 +5,6 @@ jvm:
   name: graalvm-community:25.0.1
 projects:
   farray:
-    dependencies: com.lihaoyi::fansi:0.3.1
     extends: template-common
     platform:
       mainClass: com.foo.App

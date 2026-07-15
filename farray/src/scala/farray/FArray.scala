@@ -294,6 +294,14 @@ object FArray:
     inline def distinctBy[B](inline f: A => B): FArray[A] = FArrayOps.distinctByImpl[A, B](xs)(f)
     inline def zip[B](that: FArray[B]): FArray[(A, B)] = FArrayOps.zipImpl[A, B](xs, that)
     inline def zipWithIndex: FArray[(A, Int)] = FArrayOps.zipWithIndexImpl[A](xs)
+    // STABLE for reference elements (equal / equal-key elements keep their input order), so results
+    // are deterministic — the property dotty relies on. `sorted`/`sortWith` on refs go through
+    // `java.util.Arrays.sort(Object[], Comparator)` (TimSort, a stable merge sort; `sortWith`'s
+    // comparator returns 0 on ties so their order is preserved); `sortBy` sorts an index array with a
+    // stable merge sort (`sortInt`: insertion sort ≤32, else run-detecting bottom-up merge that
+    // reverses only STRICTLY-descending runs and breaks merge ties toward the left/earlier index) —
+    // or, on the standard-Ordering fast path, packs the original index into the sort key as the
+    // tiebreak. See DottyGapsTest.sort_stability.
     inline def sortWith(inline lt: (A, A) => Boolean): FArray[A] = FArrayOps.sortWithImpl[A](xs)(lt)
     inline def sortBy[B](inline f: A => B)(using ord: Ordering[B]): FArray[A] = FArrayOps.sortByImpl[A, B](xs)(f)
     inline def sorted[B >: A](using ord: Ordering[B]): FArray[A] = FArrayOps.sortedImpl[A, B](xs)
