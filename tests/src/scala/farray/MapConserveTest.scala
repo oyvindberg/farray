@@ -3,12 +3,13 @@ package farray
 import org.junit.Test
 import org.junit.Assert.*
 
-/** Round-4 Bug 1 acceptance suite: `mapConserve` applies `f` EXACTLY ONCE per element (the dotty compiler
-  * passes side-effecting `f`s — symbol creation, position mutation — so a double invocation corrupts state),
-  * AND returns the receiver IDENTICALLY (no allocation) when nothing changed (per-element reference `ne`).
+/** Round-4 Bug 1 acceptance suite: `mapConserve` applies `f` EXACTLY ONCE per element (the dotty compiler passes side-effecting `f`s — symbol creation,
+  * position mutation — so a double invocation corrupts state), AND returns the receiver IDENTICALLY (no allocation) when nothing changed (per-element reference
+  * `ne`).
   *
-  * List.mapConserve semantics: unchanged elements keep their ORIGINALS; the result equals mapping f over all
-  * (since f(x) eq x on the unchanged prefix, the original IS f's result). */
+  * List.mapConserve semantics: unchanged elements keep their ORIGINALS; the result equals mapping f over all (since f(x) eq x on the unchanged prefix, the
+  * original IS f's result).
+  */
 class MapConserveTest:
 
   // ---------- reference elements: identity conserve + change positions ----------

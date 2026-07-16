@@ -1,11 +1,10 @@
 package farray
 
-/** COMPILE-ONLY gate (project `ycheck-tests`, built with `-Ycheck:all`). Each def below is a DIRECT
-  * `xs.lazyZip(ys).<terminal>(…)` (and 3-ary chained) call site whose inline expansion previously lifted
-  * the `FLazyZip2`/`FLazyZip3` marker receiver into a synthetic val with a positionless TypeTree, tripping
-  * dotty's "position not set for farray.FLazyZip2[…]" assertion under -Ycheck:all when the compiler's own
-  * sources were recompiled. If this project compiles clean, the marker no longer materializes as a val at
-  * inline expansion, so direct lazyZip terminals are safe to use inside a codebase built with -Ycheck. */
+/** COMPILE-ONLY gate (project `ycheck-tests`, built with `-Ycheck:all`). Each def below is a DIRECT `xs.lazyZip(ys).<terminal>(…)` (and 3-ary chained) call
+  * site whose inline expansion previously lifted the `FLazyZip2`/`FLazyZip3` marker receiver into a synthetic val with a positionless TypeTree, tripping
+  * dotty's "position not set for farray.FLazyZip2[…]" assertion under -Ycheck:all when the compiler's own sources were recompiled. If this project compiles
+  * clean, the marker no longer materializes as a val at inline expansion, so direct lazyZip terminals are safe to use inside a codebase built with -Ycheck.
+  */
 object YCheckCompile:
 
   // ---- 2-ary terminals (mirror the known dotty repro sites: foreach/forall/map/foldLeft/…) ----

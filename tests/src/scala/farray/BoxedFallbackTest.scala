@@ -5,17 +5,16 @@ import org.junit.Assert.*
 
 /** Round-3 acceptance suite: the BOXED FALLBACK for kind dispatch.
   *
-  * Every op below is invoked in a context where the element kind is NOT statically resolvable, so the
-  * `summonFrom` dispatch used to fail to compile ("no element-kind specialization for type parameter A").
-  * Three real categories from the Scala-3 migration are covered:
+  * Every op below is invoked in a context where the element kind is NOT statically resolvable, so the `summonFrom` dispatch used to fail to compile ("no
+  * element-kind specialization for type parameter A"). Three real categories from the Scala-3 migration are covered:
   *   1. `def generic[T](xs: FArray[T])` — an abstract type param with NO bound.
   *   2. `FArray[?]` wildcard contexts.
   *   3. A primitive-containing union `type IS = Int | String; FArray[IS]`.
   *
-  * The bar is behaviour PARITY with `List` (which is always boxed), including the hard case where the
-  * abstract-`T` FArray is backed by genuinely PRIMITIVE storage at runtime (a real `FArray[Int]` passed to
-  * `generic[Int]`) — the boxed read paths must box the primitive leaves via `applyBoxed`. Cross-kind
-  * equality/hashCode (a boxed-built result vs a kind-specialized equivalent) is asserted too. */
+  * The bar is behaviour PARITY with `List` (which is always boxed), including the hard case where the abstract-`T` FArray is backed by genuinely PRIMITIVE
+  * storage at runtime (a real `FArray[Int]` passed to `generic[Int]`) — the boxed read paths must box the primitive leaves via `applyBoxed`. Cross-kind
+  * equality/hashCode (a boxed-built result vs a kind-specialized equivalent) is asserted too.
+  */
 class BoxedFallbackTest:
 
   // ===== generic[T] helpers (abstract T, no bound) — each forces the boxed dispatch at the generic def site =====

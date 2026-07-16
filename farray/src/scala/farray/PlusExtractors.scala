@@ -2,21 +2,18 @@ package farray
 
 import scala.compiletime.summonFrom
 
-/** Top-level name-based extractors so `import farray.{`+:`, `:+`}` enables
-  * `case h +: t` / `case init :+ last` on an `FArray`, shadowing `scala.+:` / `scala.:+`.
+/** Top-level name-based extractors so `import farray.{`+:`, `:+`}` enables `case h +: t` / `case init :+ last` on an `FArray`, shadowing `scala.+:` /
+  * `scala.:+`.
   *
-  * Both mirror `ListSyntax.::`: a `transparent inline unapply` dispatches on the element kind (the
-  * `${K}Repr` machinery) to a per-kind `value class` view whose `isEmpty` / `_1` / `_2` the matcher
-  * reads — zero allocation, and on a primitive `FArray` the decomposed element binds RAW (no box).
+  * Both mirror `ListSyntax.::`: a `transparent inline unapply` dispatches on the element kind (the `${K}Repr` machinery) to a per-kind `value class` view whose
+  * `isEmpty` / `_1` / `_2` the matcher reads — zero allocation, and on a primitive `FArray` the decomposed element binds RAW (no box).
   *
-  *   - `+:` decomposes head / tail: `_1: A` (element 0 — O(1) `${K}Prepend.elem` when the array was
-  *     built by prepend, else an element read), `_2: FArray[A]` (O(1) `Prepend.base`, else `tail`).
-  *     Reuses `ListSyntax`'s cons views (identical head/tail shape).
-  *   - `:+` decomposes init / last: `_1: FArray[A]` (O(1) `${K}Append.base`, else `init`),
-  *     `_2: A` (O(1) `${K}Append.elem`, else the last element read).
+  *   - `+:` decomposes head / tail: `_1: A` (element 0 — O(1) `${K}Prepend.elem` when the array was built by prepend, else an element read), `_2: FArray[A]`
+  *     (O(1) `Prepend.base`, else `tail`). Reuses `ListSyntax`'s cons views (identical head/tail shape).
+  *   - `:+` decomposes init / last: `_1: FArray[A]` (O(1) `${K}Append.base`, else `init`), `_2: A` (O(1) `${K}Append.elem`, else the last element read).
   *
-  * Nested/deep patterns (`case a +: b +: rest`, `case xs :+ y :+ z`) work by recursion through the
-  * O(1) tail/init. The empty `FArray` matches neither (`isEmpty`).
+  * Nested/deep patterns (`case a +: b +: rest`, `case xs :+ y :+ z`) work by recursion through the O(1) tail/init. The empty `FArray` matches neither
+  * (`isEmpty`).
   */
 object `+:`:
   transparent inline def unapply[A](xs: FArray[A]) = summonFrom {
@@ -34,7 +31,7 @@ object `+:`:
     // extractor makes dotty's LambdaLift fail to proxy it when an inline op (e.g. `t.map`, `t.toList`)
     // is then called on the bound tail — the pervasive `case h +: t => t.<inlineOp>` shape. The
     // concrete primitive givens (intRepr, …) don't take a type param, so they don't hit the bug.
-    case _                 => new Head[A](xs)
+    case _ => new Head[A](xs)
   }
 
 final class IntHead(private val xs: FArray[Int]) extends AnyVal:
@@ -117,8 +114,9 @@ final class BooleanHead(private val xs: FArray[Boolean]) extends AnyVal:
     case p: BooleanPrepend => p.base.asInstanceOf[FArray[Boolean]]
     case _                 => xs.tail
 
-/** Reference / abstract element head-tail view (also the primitive fallback). Handles every prepend
-  * node kind; refs hit the `RefPrepend` arm first. Reads box only for a genuinely abstract `A`. */
+/** Reference / abstract element head-tail view (also the primitive fallback). Handles every prepend node kind; refs hit the `RefPrepend` arm first. Reads box
+  * only for a genuinely abstract `A`.
+  */
 final class Head[A](private val xs: FArray[A]) extends AnyVal:
   def isEmpty: Boolean = xs.length == 0
   def get: Head[A] = this
@@ -156,7 +154,7 @@ object `:+`:
     case _: CharRepr[A]    => new CharSnoc(xs.asInstanceOf[FArray[Char]])
     case _: BooleanRepr[A] => new BooleanSnoc(xs.asInstanceOf[FArray[Boolean]])
     // NB: no `RefRepr[A]` arm — see the note on `+:`. Refs/abstract fall through to `Snoc[A]`.
-    case _                 => new Snoc[A](xs)
+    case _ => new Snoc[A](xs)
   }
 
 final class IntSnoc(private val xs: FArray[Int]) extends AnyVal:
@@ -239,8 +237,9 @@ final class BooleanSnoc(private val xs: FArray[Boolean]) extends AnyVal:
     case a: BooleanAppend => a.elem
     case node             => FArrayOps.booleanAt(node, node.length - 1)
 
-/** Reference / abstract element init-last view (also the primitive fallback). Handles every append
-  * node kind; refs hit the `RefAppend` arm first. Reads box only for a genuinely abstract `A`. */
+/** Reference / abstract element init-last view (also the primitive fallback). Handles every append node kind; refs hit the `RefAppend` arm first. Reads box
+  * only for a genuinely abstract `A`.
+  */
 final class Snoc[A](private val xs: FArray[A]) extends AnyVal:
   def isEmpty: Boolean = xs.length == 0
   def get: Snoc[A] = this

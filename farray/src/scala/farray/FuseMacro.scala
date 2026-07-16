@@ -1413,7 +1413,8 @@ object FuseMacro:
           skeleton[Array[Double]](
             '{ Array.emptyDoubleArray },
             s =>
-              if mat then '{ $s match { case l: DoubleArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeDouble(t) else Array.emptyDoubleArray } }
+              if mat then
+                '{ $s match { case l: DoubleArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeDouble(t) else Array.emptyDoubleArray } }
               else '{ $s match { case l: DoubleArr => l.arr; case _ => Array.emptyDoubleArray } },
             (a, i) => '{ $a($i) }.asTerm
           )
@@ -1453,7 +1454,8 @@ object FuseMacro:
           skeleton[Array[Boolean]](
             '{ Array.emptyBooleanArray },
             s =>
-              if mat then '{ $s match { case l: BooleanArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeBoolean(t) else Array.emptyBooleanArray } }
+              if mat then
+                '{ $s match { case l: BooleanArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeBoolean(t) else Array.emptyBooleanArray } }
               else '{ $s match { case l: BooleanArr => l.arr; case _ => Array.emptyBooleanArray } },
             (a, i) => '{ $a($i) }.asTerm
           )

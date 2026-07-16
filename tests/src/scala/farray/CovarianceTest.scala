@@ -96,7 +96,11 @@ class CovarianceTest:
     assertEquals(lc, c.toList)
     assertEquals(lc.filter(_.isInstanceOf[String]), c.filter(_.isInstanceOf[String]).toList)
     // compile-time witness that the specialized API is now OPEN for the primitive union:
-    assertTrue(typeChecks("""val c: FArray[Int | String] = FArray(1,2,3) ++ FArray("x","y"); val _ = c(0); val _ = c.map(_.toString); val _ = c.foldLeft(0)((n,_) => n); val _ = c.iterator; val _ = c.toList; val _ = c.filter(_ => true)"""))
+    assertTrue(
+      typeChecks(
+        """val c: FArray[Int | String] = FArray(1,2,3) ++ FArray("x","y"); val _ = c(0); val _ = c.map(_.toString); val _ = c.foldLeft(0)((n,_) => n); val _ = c.iterator; val _ = c.toList; val _ = c.filter(_ => true)"""
+      )
+    )
     // homogeneous primitive + reference-union paths still compile (unchanged, unboxed):
     assertTrue(typeChecks("""val c = FArray(1,2,3); val _ = c(0); val _ = c.map(_+1); val _ = c.toList"""))
     assertTrue(typeChecks("""val c = FArray("a","b"); val _ = c(0); val _ = c.map(_.length); val _ = c.toList"""))

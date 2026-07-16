@@ -3,13 +3,11 @@ package farray
 import org.openjdk.jmh.annotations._
 import java.util.concurrent.TimeUnit
 
-/** Mirrors the dotc hot shape driving `FArrayOps.refAt` (+1.44pp self-time in the migrated-compiler JFR):
-  * a TIGHT while-loop indexing a small ref sequence — `Hashable.finishHash` (`tps(idx)`), `Types.mapArgs`
-  * (`args(i)`/`tparams(i)`). The workload traverses millions of tiny (0-3 element) `RefArr` leaves, indexing
-  * each. This bench sums `xs(i).length` in a `while (i < n) …` loop over the whole sequence, at the small
-  * sizes the compiler actually sees. Target: FArray parity with IArray/raw array on the RefArr case, beating
-  * Vector.apply at all small sizes. NOT a scorecard entry (each impl sums identically; it is an A/B validator
-  * for the item-1 inline-leaf fast path).
+/** Mirrors the dotc hot shape driving `FArrayOps.refAt` (+1.44pp self-time in the migrated-compiler JFR): a TIGHT while-loop indexing a small ref sequence —
+  * `Hashable.finishHash` (`tps(idx)`), `Types.mapArgs` (`args(i)`/`tparams(i)`). The workload traverses millions of tiny (0-3 element) `RefArr` leaves,
+  * indexing each. This bench sums `xs(i).length` in a `while (i < n) …` loop over the whole sequence, at the small sizes the compiler actually sees. Target:
+  * FArray parity with IArray/raw array on the RefArr case, beating Vector.apply at all small sizes. NOT a scorecard entry (each impl sums identically; it is an
+  * A/B validator for the item-1 inline-leaf fast path).
   */
 @State(Scope.Thread)
 @Warmup(iterations = 5, time = 1, timeUnit = TimeUnit.SECONDS)

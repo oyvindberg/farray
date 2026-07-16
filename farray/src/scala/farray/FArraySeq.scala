@@ -7,5 +7,6 @@ final class FArraySeq[A] private[farray] (private val under: FBase) extends scal
   def apply(i: Int): A = under.applyBoxed(i).asInstanceOf[A]
   def length: Int = under.length
   override def knownSize: Int = under.length
+
   /** the wrapped core — lets `toFArray` unwrap an `FArraySeq` back to its `FArray` in O(1). */
   private[farray] def fbase: FBase = under

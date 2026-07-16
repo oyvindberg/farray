@@ -1,14 +1,11 @@
 package farray
 
-/** Kind-specialized value-class views backing `FArray.unapplySeq`, so `case FArray(a, b)` /
-  * `case FArray(x, rest*)` / `case FArray()` compile through the name-based sequence-extractor
-  * protocol. The matcher reads the real members `lengthCompare` / `apply` / `drop` / `toSeq`.
+/** Kind-specialized value-class views backing `FArray.unapplySeq`, so `case FArray(a, b)` / `case FArray(x, rest*)` / `case FArray()` compile through the
+  * name-based sequence-extractor protocol. The matcher reads the real members `lengthCompare` / `apply` / `drop` / `toSeq`.
   *
-  * `unapplySeq` is `transparent inline` and dispatches on the element kind (the `${K}Repr`
-  * machinery), so on `FArray[Int]` the positional bindings (`apply(i)`) hand back a raw `Int` — no
-  * box per bound variable. The vararg suffix (`rest*`) is materialized through `drop(n): Seq[A]`,
-  * which DOES box (a `Seq` erases its element) — that boxing is inherent to the `_*` binding and
-  * matches how a `Vector(x, rest*)` suffix boxes too, so it is acceptable.
+  * `unapplySeq` is `transparent inline` and dispatches on the element kind (the `${K}Repr` machinery), so on `FArray[Int]` the positional bindings (`apply(i)`)
+  * hand back a raw `Int` — no box per bound variable. The vararg suffix (`rest*`) is materialized through `drop(n): Seq[A]`, which DOES box (a `Seq` erases its
+  * element) — that boxing is inherent to the `_*` binding and matches how a `Vector(x, rest*)` suffix boxes too, so it is acceptable.
   */
 object SeqSyntax
 

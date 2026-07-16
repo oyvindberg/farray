@@ -3,16 +3,15 @@ package farray
 import org.junit.Test
 import org.junit.Assert.*
 
-/** Round-4 Bug 2 acceptance suite: an opaque type over a PRIMITIVE (`opaque type V = Long`) — the exact
-  * dotty shape (`opaque type FlagSet = Long; type Variance = FlagSet`, cf. `HKTypeLambda.variances`).
+/** Round-4 Bug 2 acceptance suite: an opaque type over a PRIMITIVE (`opaque type V = Long`) — the exact dotty shape (`opaque type FlagSet = Long; type Variance =
+  * FlagSet`, cf. `HKTypeLambda.variances`).
   *
-  * INSIDE the defining scope `V =:= Long`, so `FArray.fill/tabulate/apply/newBuilder/map` dispatch on the
-  * dealiased `Long` and build genuine `LongArr` (long[]) storage. OUTSIDE the scope `V` is abstract, so every
-  * kind-dispatched op resolves through the boxed `anyRepr` fallback (the Ref arms). The invariant under test:
-  * a genuine long[]-backed leaf must be readable through EVERY Ref-arm read path (apply/head/last/iterator/
-  * fold/map/equality/mkString/toArray/sort/zip/distinct/pattern-match) — no `[J cannot be cast to
-  * [Ljava.lang.Object;` CCE — AND, symmetrically, a boxed-built `FArray[V]` must be readable by the
-  * Long-specialized consumers inside the scope. */
+  * INSIDE the defining scope `V =:= Long`, so `FArray.fill/tabulate/apply/newBuilder/map` dispatch on the dealiased `Long` and build genuine `LongArr` (long[])
+  * storage. OUTSIDE the scope `V` is abstract, so every kind-dispatched op resolves through the boxed `anyRepr` fallback (the Ref arms). The invariant under
+  * test: a genuine long[]-backed leaf must be readable through EVERY Ref-arm read path (apply/head/last/iterator/
+  * fold/map/equality/mkString/toArray/sort/zip/distinct/pattern-match) — no `[J cannot be cast to [Ljava.lang.Object;` CCE — AND, symmetrically, a boxed-built
+  * `FArray[V]` must be readable by the Long-specialized consumers inside the scope.
+  */
 object VarianceModule:
   opaque type V = Long
   object V:
@@ -57,8 +56,9 @@ object VarianceModule:
     (xs.exists(v => v.toLong == 30L), xs.find(v => v.toLong > 20L).map(_.toLong))
   def buildAppendPrependInside(base: FArray[V]): FArray[V] = (V(-1L) +: base) :+ V(99L)
 
-/** The exact dotty shape: a class holding an FArray[V] populated transparently (inside the scope), later
-  * read from GENERIC code that only knows the abstract V (another compilation unit). */
+/** The exact dotty shape: a class holding an FArray[V] populated transparently (inside the scope), later read from GENERIC code that only knows the abstract V
+  * (another compilation unit).
+  */
 final class TypeLambdaLike(val variances: FArray[VarianceModule.V]):
   def variance(i: Int): VarianceModule.V = variances(i) // read from the holder (still abstract V here)
 
@@ -194,8 +194,8 @@ class OpaquePrimTest:
   // ===== mixed concat: LongArr ++ RefArr(boxed longs), read both ways =====
 
   @Test def mixed_concat_read_both_ways: Unit =
-    val long: FArray[V] = tabulateInside(3)             // LongArr 0,1,2
-    val boxed: FArray[V] = buildBoxed(List(3L, 4L))  // RefArr 3,4
+    val long: FArray[V] = tabulateInside(3) // LongArr 0,1,2
+    val boxed: FArray[V] = buildBoxed(List(3L, 4L)) // RefArr 3,4
     val cat: FArray[V] = long ++ boxed
     // read OUTSIDE (boxed Ref arms)
     assertEquals(List(0L, 1L, 2L, 3L, 4L), asLongs(cat))
@@ -238,8 +238,8 @@ class OpaquePrimTest:
     assertEquals(List(10L, 20L, 30L), copyToArrayInside(buildBoxed(List(10L, 20L, 30L))))
 
   @Test def lazyZip_both_directions: Unit =
-    val long = tabulateInside(3)                  // LongArr
-    val boxed = buildBoxed(List(10L, 20L, 30L))   // RefArr
+    val long = tabulateInside(3) // LongArr
+    val boxed = buildBoxed(List(10L, 20L, 30L)) // RefArr
     // lazyZip reads both operands element-wise; long-leaf paired with boxed-leaf
     assertEquals(List(10L, 21L, 32L), long.lazyZip(boxed).map((a, b) => a.toLong + b.toLong).toList)
     // outside generic map over the pair
@@ -272,9 +272,9 @@ class OpaquePrimTest:
   // extractor Prepend/Append fast paths: a Long-specialized head/init view over a boxed RefPrepend/RefAppend
   @Test def extractor_fast_paths_over_boxed_nodes: Unit =
     val boxed = buildBoxed(List(1L, 2L, 3L)) // RefArr
-    val prep: FArray[V] = V(0L) +: boxed     // node prepending onto a boxed base
+    val prep: FArray[V] = V(0L) +: boxed // node prepending onto a boxed base
     assertEquals((0L, List(1L, 2L, 3L)), prependReadInside(prep))
-    val app: FArray[V] = boxed :+ V(4L)      // node appending onto a boxed base
+    val app: FArray[V] = boxed :+ V(4L) // node appending onto a boxed base
     assertEquals((List(1L, 2L, 3L), 4L), snocReadInside(app))
     // and the specialized-storage counterpart (LongArr base)
     val long = applyInside(1L, 2L, 3L)

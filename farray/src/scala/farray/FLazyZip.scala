@@ -1,23 +1,19 @@
 package farray
 
-/** Inline-only markers behind `xs.lazyZip(ys)` / `xs.lazyZip(ys).lazyZip(zs)` (stdlib `lazyZip`
-  * shape: the operation lambdas are multi-parameter — `(a, b) => c`, `(a, b, c) => d` — NOT tuple).
+/** Inline-only markers behind `xs.lazyZip(ys)` / `xs.lazyZip(ys).lazyZip(zs)` (stdlib `lazyZip` shape: the operation lambdas are multi-parameter —
+  * `(a, b) => c`, `(a, b, c) => d` — NOT tuple).
   *
-  * Every terminal is `inline` and compiles to ONE `while`/`tabulate` loop over the MIN length of the
-  * inputs, reading each side through the kind-specialized `apply` (unboxed for a primitive element
-  * type) and inlining the user lambda — no intermediate collection, and no tuple is allocated unless
-  * the user's own lambda takes one (`collect`'s `PartialFunction`, and the materializing
-  * `zipWithIndex` / `toFArray`). The wrapper itself never escapes a call site.
+  * Every terminal is `inline` and compiles to ONE `while`/`tabulate` loop over the MIN length of the inputs, reading each side through the kind-specialized
+  * `apply` (unboxed for a primitive element type) and inlining the user lambda — no intermediate collection, and no tuple is allocated unless the user's own
+  * lambda takes one (`collect`'s `PartialFunction`, and the materializing `zipWithIndex` / `toFArray`). The wrapper itself never escapes a call site.
   *
-  * The terminals are `extension` methods (in the companion), NOT instance methods, ON PURPOSE. When
-  * dotty inlines a direct `xs.lazyZip(ys).<terminal>(…)`, the receiver `new FLazyZip2(xs, ys)` is bound
-  * once at expansion. As an INSTANCE-method receiver that binding is a synthetic `this`-proxy val whose
-  * `FLazyZip2[A,B]` TypeTree is created from the class type with NO source position — tripping dotty's
-  * `-Ycheck:all` "position not set for farray.FLazyZip2[…]" assertion (Inliner.computeThisBindings:
-  * `ValDef(selfSym, …).withSpan(selfSym.span)`, and the synthetic this-proxy sym has no span). As an
-  * EXTENSION receiver the same value is bound through `Inliner.paramBindingDef` — a normal inline
-  * parameter proxy that carries the argument's span — so no positionless marker TypeTree is ever
-  * synthesized. (ycheck-tests reproduces the old assertion and gates the fix.) */
+  * The terminals are `extension` methods (in the companion), NOT instance methods, ON PURPOSE. When dotty inlines a direct `xs.lazyZip(ys).<terminal>(…)`, the
+  * receiver `new FLazyZip2(xs, ys)` is bound once at expansion. As an INSTANCE-method receiver that binding is a synthetic `this`-proxy val whose
+  * `FLazyZip2[A,B]` TypeTree is created from the class type with NO source position — tripping dotty's `-Ycheck:all` "position not set for farray.FLazyZip2[…]"
+  * assertion (Inliner.computeThisBindings: `ValDef(selfSym, …).withSpan(selfSym.span)`, and the synthetic this-proxy sym has no span). As an EXTENSION receiver
+  * the same value is bound through `Inliner.paramBindingDef` — a normal inline parameter proxy that carries the argument's span — so no positionless marker
+  * TypeTree is ever synthesized. (ycheck-tests reproduces the old assertion and gates the fix.)
+  */
 final class FLazyZip2[A, B](private[farray] val xs: FArray[A], private[farray] val ys: FArray[B])
 
 object FLazyZip2:
@@ -51,10 +47,10 @@ object FLazyZip2:
       while i < len do { acc = acc ++ f(self.xs(i), self.ys(i)); i += 1 }
       acc
 
-    /** ONE fused pass over the pairs — no intermediate tuple ARRAY. Fuses over the O(1) `RangeNode` of
-      * indices (no backing int[]): each index maps to its per-element tuple `(A, B)` (acceptable — the
-      * `PartialFunction` inherently receives one), and `fuse.collect` filters+applies straight into the
-      * unboxed result (primitive output `C` lands in a primitive leaf). */
+    /** ONE fused pass over the pairs — no intermediate tuple ARRAY. Fuses over the O(1) `RangeNode` of indices (no backing int[]): each index maps to its
+      * per-element tuple `(A, B)` (acceptable — the `PartialFunction` inherently receives one), and `fuse.collect` filters+applies straight into the unboxed
+      * result (primitive output `C` lands in a primitive leaf).
+      */
     inline def collect[C](inline pf: PartialFunction[(A, B), C]): FArray[C] =
       // ONE fused lock-step pass: `fuse.zip` pairs the two sources without building the pair array, and
       // `inline pf` splices the PartialFunction LITERAL into `fuse.collect`, so the macro picks its
@@ -108,11 +104,10 @@ object FLazyZip3:
       while i < len do { acc = acc ++ f(self.xs(i), self.ys(i), self.zs(i)); i += 1 }
       acc
 
-    /** Fused `collect` over the triples. A 3-way lock-step needs the intermediate element type `(A, B, C)`
-      * to survive a second fuse stage, but `Fuse[+A]`'s covariance widens it to `Any` there (the element
-      * sits contravariantly in a stage lambda). So we materialize the triples once via `toFArray` and fuse
-      * the single `collect` stage, whose `inline pf` literal pins the element type and is picked apart by
-      * the macro (no runtime PF, no boxing). */
+    /** Fused `collect` over the triples. A 3-way lock-step needs the intermediate element type `(A, B, C)` to survive a second fuse stage, but `Fuse[+A]`'s
+      * covariance widens it to `Any` there (the element sits contravariantly in a stage lambda). So we materialize the triples once via `toFArray` and fuse the
+      * single `collect` stage, whose `inline pf` literal pins the element type and is picked apart by the macro (no runtime PF, no boxing).
+      */
     inline def collect[D](inline pf: PartialFunction[(A, B, C), D]): FArray[D] =
       self.toFArray.fuse.collect(pf).run
 

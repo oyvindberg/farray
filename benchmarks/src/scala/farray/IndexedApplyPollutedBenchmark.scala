@@ -6,17 +6,15 @@ import java.util.concurrent.TimeUnit
 
 /** Megamorphic-node indexed access — the honest test for the item-1 inline-leaf fast path.
   *
-  * `FArrayOps.refAt` is a SHARED non-inline method whose body is an 11-case node `instanceof` chain. In the
-  * migrated compiler (JFR: refAt +1.44pp self-time) it is called from hundreds of `xs(i)`/`head`/`last` sites
-  * with EVERY node shape (RefArr, RefOne, SliceNode, Concat, Prepend, ReverseNode…) flowing through it, so its
-  * type profile is polluted and it stays out-of-line: a tight `while (i < n) xs(i)` loop over a flat `RefArr`
-  * leaf pays a full megamorphic dispatch per element. A monomorphic microbenchmark CANNOT reproduce this —
-  * HotSpot inlines refAt and predicts the first branch — so this bench first POLLUTES refAt's profile with
-  * five other node shapes, then measures the dominant hot loop: an indexed sum over a flat `RefArr`.
+  * `FArrayOps.refAt` is a SHARED non-inline method whose body is an 11-case node `instanceof` chain. In the migrated compiler (JFR: refAt +1.44pp self-time) it
+  * is called from hundreds of `xs(i)`/`head`/`last` sites with EVERY node shape (RefArr, RefOne, SliceNode, Concat, Prepend, ReverseNode…) flowing through it,
+  * so its type profile is polluted and it stays out-of-line: a tight `while (i < n) xs(i)` loop over a flat `RefArr` leaf pays a full megamorphic dispatch per
+  * element. A monomorphic microbenchmark CANNOT reproduce this — HotSpot inlines refAt and predicts the first branch — so this bench first POLLUTES refAt's
+  * profile with five other node shapes, then measures the dominant hot loop: an indexed sum over a flat `RefArr`.
   *
-  * Item 1 peels the `if (xs.isInstanceOf[RefArr]) leaf.arr(i) else refAt(xs, i)` test OUT to the (per-site
-  * monomorphic) inlined `applyAtImpl` body, so the RefArr loop reads directly and refAt handles only the tail.
-  * `refArrHot` is the number that should move; `mixedShapes` is the pollution driver kept as a control.
+  * Item 1 peels the `if (xs.isInstanceOf[RefArr]) leaf.arr(i) else refAt(xs, i)` test OUT to the (per-site monomorphic) inlined `applyAtImpl` body, so the
+  * RefArr loop reads directly and refAt handles only the tail. `refArrHot` is the number that should move; `mixedShapes` is the pollution driver kept as a
+  * control.
   */
 @State(Scope.Thread)
 @Warmup(iterations = 5, time = 1, timeUnit = TimeUnit.SECONDS)
@@ -46,10 +44,10 @@ class IndexedApplyPollutedBenchmark {
   // The hot, flat RefArr leaf whose indexed loop should benefit.
   var fArr: FArray[String] = _
   // Five other node shapes to pollute the shared refAt's type profile (all FArray[String]).
-  var fSlice: FArray[String] = _   // SliceNode over a RefArr
-  var fConcat: FArray[String] = _  // Concat tree
+  var fSlice: FArray[String] = _ // SliceNode over a RefArr
+  var fConcat: FArray[String] = _ // Concat tree
   var fPrepend: FArray[String] = _ // RefPrepend
-  var fAppend: FArray[String] = _  // RefAppend
+  var fAppend: FArray[String] = _ // RefAppend
   var fReverse: FArray[String] = _ // ReverseNode
 
   @Setup def setup(): Unit = {

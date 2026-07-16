@@ -5,15 +5,14 @@ import org.junit.Assert.*
 
 /** Round-5 Item 1: the ClassTag-allocation CCE in `tabulate`'s Ref/boxed-fallback arm.
   *
-  * `opaque type Flag = Long` with NO given Repr forwarder. Called from OUTSIDE the defining scope with an
-  * explicit `[Flag]`, kind dispatch cannot see through the opaque (no `LongRepr[Flag]` given) -> the Ref/boxed
-  * arm via `anyRepr`. But a synthesized `ClassTag[Flag]` DOES see through erasure -> `ClassTag.Long`, whose
-  * `newArray` allocates a `long[]`; the old unconditional `.asInstanceOf[Array[Object]]` then threw
+  * `opaque type Flag = Long` with NO given Repr forwarder. Called from OUTSIDE the defining scope with an explicit `[Flag]`, kind dispatch cannot see through
+  * the opaque (no `LongRepr[Flag]` given) -> the Ref/boxed arm via `anyRepr`. But a synthesized `ClassTag[Flag]` DOES see through erasure -> `ClassTag.Long`,
+  * whose `newArray` allocates a `long[]`; the old unconditional `.asInstanceOf[Array[Object]]` then threw
   * `ClassCastException: [J cannot be cast to [Ljava.lang.Object;` (this took down the scala3 bootstrap).
   *
-  * The fix: in the Ref arm, if the summoned ClassTag's runtimeClass is primitive, allocate the boxed
-  * `Object[]` this arm already implies instead of the primitive array; a genuine reference tag still gets the
-  * typed array (no regression for `A <: AnyRef`). */
+  * The fix: in the Ref arm, if the summoned ClassTag's runtimeClass is primitive, allocate the boxed `Object[]` this arm already implies instead of the
+  * primitive array; a genuine reference tag still gets the typed array (no regression for `A <: AnyRef`).
+  */
 object FlagModule:
   opaque type Flag = Long
   object Flag:

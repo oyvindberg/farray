@@ -3,9 +3,9 @@ package farray
 import org.junit.Test
 import org.junit.Assert.*
 
-/** Parity + pattern-match tests for the dotty-migration gap-fill surface (Phase 0):
-  * `unapplySeq`, the `+:` / `:+` name-based extractors, `newBuilder`, `toFArray`, `lazyZip`,
-  * `withFilter`, and the small ops. */
+/** Parity + pattern-match tests for the dotty-migration gap-fill surface (Phase 0): `unapplySeq`, the `+:` / `:+` name-based extractors, `newBuilder`,
+  * `toFArray`, `lazyZip`, `withFilter`, and the small ops.
+  */
 class DottyGapsTest:
   @Test def arity0_int: Unit =
     assertTrue(FArray.empty[Int] match { case FArray() => true; case _ => false })
@@ -240,8 +240,14 @@ class DottyGapsTest:
   @Test def withFilter_double_guard: Unit =
     val fa = FArray(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
     val la = (1 to 10).toList
-    val f = for x <- fa if x % 2 == 0 if x > 4 yield x
-    val l = for x <- la if x % 2 == 0 if x > 4 yield x
+    val f = for
+      x <- fa if x % 2 == 0
+      if x > 4
+    yield x
+    val l = for
+      x <- la if x % 2 == 0
+      if x > 4
+    yield x
     assertEquals(l, f.toList)
 
   @Test def withFilter_foreach: Unit =
@@ -394,8 +400,7 @@ class DottyGapsTest:
 
   @Test def lazyZip3_collect_parity: Unit =
     val a = FArray(1, 2, 3, 4); val b = FArray("a", "b", "c", "d"); val c = FArray(true, false, true, false)
-    val exp = List(1, 2, 3, 4).lazyZip(List("a", "b", "c", "d")).lazyZip(List(true, false, true, false))
-      .collect { case (x, s, flag) if flag => s"$x$s" }.toList
+    val exp = List(1, 2, 3, 4).lazyZip(List("a", "b", "c", "d")).lazyZip(List(true, false, true, false)).collect { case (x, s, flag) if flag => s"$x$s" }.toList
     assertEquals(exp, a.lazyZip(b).lazyZip(c).collect { case (x, s, flag) if flag => s"$x$s" }.toList)
 
   @Test def lazyZip3_collect_min_length_primitive: Unit =
