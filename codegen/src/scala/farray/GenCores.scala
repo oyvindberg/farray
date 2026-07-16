@@ -2280,7 +2280,19 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // contains: a short-circuit forward scan for the first element == elem (the ${I}Pred wraps the raw element to
     // A and compares to elem). One leaf-method call; hit -> index < length.
     val contains = dispatchA(k => s"scFwdLeaf${k.name}(xs, 0, ${predSAM(k, s"${eqVal(k)} == elem")}) < length")
-    val applyAt = dispatchA(k => if k.name == "Ref" then s"r.wrap(${k.lc}At(xs, i).asInstanceOf[A])" else s"r.wrap(${k.lc}At(xs, i))")
+    // INDEXED-ACCESS FAST PATH (item 1). `applyAtImpl` is `inline`, so this body splices at every `xs(i)`/
+    // `head`/`last` call site. The dominant runtime shape is a tight while-loop indexing a flat `${k.name}Arr`
+    // leaf (dotc's `tps(idx)` in `finishHash`, `args(i)` in `mapArgs`). Peeling the leaf test OUT to the call
+    // site — `if (xs.isInstanceOf[${k.name}Arr]) leaf.arr(i) else <kind>At(xs, i)` — lets HotSpot inline the
+    // monomorphic instanceof + array load (matching a raw array / Vector's inline trie), leaving the 11-case
+    // `${k.lc}At` node match as a COLD, out-of-line call for the structural-node tail. Reading the leaf here is
+    // exactly the first arm of `${k.lc}At` (`case leaf: ${k.name}Arr => leaf.arr(i)`), so semantics are identical,
+    // including mixed-storage: a foreign leaf fails the instanceof and routes through `${k.lc}At`'s applyBoxed tail.
+    val applyAt = dispatchA { k =>
+      val leaf = s"${k.name}Arr"
+      val fast = s"(if (xs.isInstanceOf[$leaf]) xs.asInstanceOf[$leaf].arr(i) else ${k.lc}At(xs, i))"
+      if k.name == "Ref" then s"r.wrap($fast.asInstanceOf[A])" else s"r.wrap($fast)"
+    }
     // mapConserve: I == O == k (always a COVERED pair — prim-self + Ref->Ref). List.mapConserve semantics with
     // f applied EXACTLY ONCE per element. Single pass: SCAN while unchanged, comparing f(x) `ne` x and calling f
     // once per scanned element (result kept in `fa` so we NEVER re-apply it). If the scan reaches the end with no
