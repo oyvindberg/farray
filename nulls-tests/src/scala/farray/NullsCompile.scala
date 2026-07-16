@@ -51,3 +51,13 @@ object NullsCompile:
   def distinctByRef(xs: FArray[String]): FArray[String] = xs.distinctBy(_.length)
   def distinctByLong(xs: FArray[Long]): FArray[Long] = xs.distinctBy(_ % 5L)
   def distinctPlain(xs: FArray[Int]): FArray[Int] = xs.distinct
+
+  // ---- sorted: the RefRepr arm materializes into `var src: Array[Object]` (was a bare `null`) ----
+  def sortedRef(xs: FArray[String]): FArray[String] = xs.sorted
+  def sortedInt(xs: FArray[Int]): FArray[Int] = xs.sorted
+  def sortByRef(xs: FArray[String]): FArray[String] = xs.sortBy(_.length)
+
+  // ---- groupBy: the Int-key arm uses a `${K}Group` sentinel (was a bare `null`) ----
+  def groupByIntKeyRefVal(xs: FArray[String]): Map[Int, FArray[String]] = xs.groupBy(_.length)
+  def groupByIntKeyIntVal(xs: FArray[Int]): Map[Int, FArray[Int]] = xs.groupBy(_ % 4)
+  def groupByRefKey(xs: FArray[String]): Map[Char, FArray[String]] = xs.groupBy(_.charAt(0))

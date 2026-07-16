@@ -2676,8 +2676,10 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // place, no second copy). `unsorted` consumes `vals` (owned, exact length) and `n`.
     def sortPeel(k: Kind, lt: (String, String) => String, unsorted: String): String =
       s"{ val n = xs.length; if (n < 2) xs else { " +
-        s"var src: Array[${k.arr}] = null; var owned = false; " +
-        s"xs match { case leaf: ${k.name}Arr => src = leaf.arr; case _ => { src = materialize${k.name}(xs); owned = true } }; " +
+        // explicit-nulls-clean: initialize `src` directly from the match (never a bare `var src: Array[X] = null`,
+        // which is `Found: Null, Required: Array[X]` when this inline body expands at a -Yexplicit-nulls caller).
+        s"var owned = false; " +
+        s"val src: Array[${k.arr}] = (xs match { case leaf: ${k.name}Arr => leaf.arr; case _ => { owned = true; materialize${k.name}(xs) } }); " +
         s"var q = 1; while (q < n && !(${lt("src(q)", "src(q - 1)")})) q += 1; " +
         s"if (q == n) xs else { var isRev = false; " +
         s"if (q == 1) { var dq = 2; var rising = false; while (dq < n && !rising) { if (${lt("src(dq)", "src(dq - 1)")}) dq += 1 else rising = true }; if (!rising) isRev = true }; " +
@@ -2814,13 +2816,18 @@ object GenCores extends BleepCodegenScript("GenCores") {
       // doubling + reinsert at 3/4 load (group counts are usually tiny, so rehash is rare and cheap).
       // `gt` (group table) uses null group slot = empty; keys boxed only once per GROUP at finalization.
       def perElemInt(e0: String) =
-        s"val e = $e0; val key = rk.unwrap(f(e)); var h = Mixers.mixInt(key) & gmask; var g: ${K}Group = null; " +
+        // explicit-nulls-clean: `g` is a "not-found-yet" sentinel var, so it must be `${K}Group | Null` (a bare
+        // `var g: ${K}Group = null` is `Found: Null, Required: ${K}Group` when this inline expands at a
+        // -Yexplicit-nulls caller). `g` is provably non-null at the terminal `.add` (it was either found in the
+        // table or freshly created just above), but flow typing cannot see through the intervening rehash loop,
+        // so the assertion is explicit via `asInstanceOf` (mode-independent — farray itself is not -Yexplicit-nulls).
+        s"val e = $e0; val key = rk.unwrap(f(e)); var h = Mixers.mixInt(key) & gmask; var g: ${K}Group | Null = null; " +
           "var probing = true; while (probing) { val gg = gt(h); if (gg == null) probing = false else if (gk(h) == key) { g = gg; probing = false } else h = (h + 1) & gmask }; " +
-          s"if (g == null) { g = new ${K}Group(); gk(h) = key; gt(h) = g; gcnt += 1; " +
+          s"if (g == null) { val ng = new ${K}Group(); g = ng; gk(h) = key; gt(h) = ng; gcnt += 1; " +
           "if ((gcnt << 2) > (gcap * 3)) { val ncap = gcap << 1; val nmask = ncap - 1; val nk = new Array[Int](ncap); " +
           s"val nt = new Array[${K}Group](ncap); var t = 0; while (t < gcap) { val og = gt(t); if (og != null) { val ok = gk(t); " +
           "var h2 = Mixers.mixInt(ok) & nmask; while (nt(h2) != null) h2 = (h2 + 1) & nmask; nk(h2) = ok; nt(h2) = og }; t += 1 }; " +
-          s"gk = nk; gt = nt; gcap = ncap; gmask = nmask } }; g.add(${wr(k, "r.unwrap(e)")})"
+          s"gk = nk; gt = nt; gcap = ncap; gmask = nmask } }; g.asInstanceOf[${K}Group].add(${wr(k, "r.unwrap(e)")})"
       val intKeyed =
         s"{ var gcap = 16; var gmask = gcap - 1; var gcnt = 0; var gk = new Array[Int](gcap); var gt = new Array[${K}Group](gcap); ${walk(perElemInt)}; " +
           "val b = Map.newBuilder[K, FBase]; var t = 0; while (t < gcap) { val og = gt(t); if (og != null) b += ((rk.wrap(gk(t)), og.toLeaf)); t += 1 }; b.result() }"
