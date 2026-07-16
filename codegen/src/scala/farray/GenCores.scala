@@ -4962,7 +4962,16 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    public final int length;
        |    protected FBase(int length) { this.length = length; }
        |
-       |    public abstract Object applyBoxed(int i);
+       |    // Boxed element read. Bounds-checked ONCE here (Seq contract: an out-of-range index throws
+       |    // IndexOutOfBoundsException, parity with List) against the LOGICAL length — the per-node unchecked
+       |    // impls ignore the index (singleton/structural) or read raw array slots (slack-tolerant leaves), so
+       |    // the check must live at this single entry that every boxed reader (FArraySeq view, headOption,
+       |    // boxedAt, deep-base traversal reads) funnels through.
+       |    public final Object applyBoxed(int i) {
+       |        if (i < 0 || i >= length) throw new IndexOutOfBoundsException(Integer.toString(i));
+       |        return applyBoxedUnchecked(i);
+       |    }
+       |    protected abstract Object applyBoxedUnchecked(int i);
        |    public abstract FBase take(int n);
        |    public abstract FBase drop(int n);
        |    public abstract FBase slice(int from, int until);
@@ -5000,7 +5009,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    public final ${p.jt}[] arr;
        |    public $cls(${p.jt}[] arr, int length) { super(length); this.arr = arr; }
        |
-       |    @Override public Object applyBoxed(int i) { return ${p.boxed}.valueOf(arr[i]); }
+       |    @Override protected Object applyBoxedUnchecked(int i) { return ${p.boxed}.valueOf(arr[i]); }
        |
        |    @Override public FBase take(int n) { int m = n < 0 ? 0 : (n > length ? length : n); return m == 0 ? Empty.INSTANCE : (m == 1 ? ${one1(
         "0"
@@ -5037,7 +5046,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    public final Object[] arr;
        |    public RefArr(Object[] arr, int length) { super(length); this.arr = arr; }
        |
-       |    @Override public Object applyBoxed(int i) { return arr[i]; }
+       |    @Override protected Object applyBoxedUnchecked(int i) { return arr[i]; }
        |
        |    @Override public FBase take(int n) { int m = n < 0 ? 0 : (n > length ? length : n); return m == 0 ? Empty.INSTANCE : (m == 1 ? new RefOne(arr[0]) : (m == length ? this : new SliceNode(this, 0, m))); }
        |    @Override public FBase drop(int n) { int d = n < 0 ? 0 : (n > length ? length : n); int m = length - d; return m == 0 ? Empty.INSTANCE : (m == 1 ? new RefOne(arr[d]) : (d == 0 ? this : new SliceNode(this, d, m))); }
@@ -5100,7 +5109,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |        this.right = right;
        |    }
        |
-       |    @Override public Object applyBoxed(int i) {
+       |    @Override protected Object applyBoxedUnchecked(int i) {
        |        return i < left.length ? left.applyBoxed(i) : right.applyBoxed(i - left.length);
        |    }
        |    @Override public FBase take(int n) {
@@ -5175,7 +5184,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    public final int start;
        |    public final int step;
        |    public RangeNode(int start, int step, int length) { super(length); this.start = start; this.step = step; }
-       |    @Override public Object applyBoxed(int i) { return Integer.valueOf(start + i * step); }
+       |    @Override protected Object applyBoxedUnchecked(int i) { return Integer.valueOf(start + i * step); }
        |    @Override public FBase take(int n) {
        |        int m = n < 0 ? 0 : (n > length ? length : n);
        |        return m == length ? this : (m == 0 ? Empty.INSTANCE : (m == 1 ? new IntOne(start) : new RangeNode(start, step, m)));
@@ -5206,7 +5215,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |public final class ReverseNode extends FBase {
        |    public final FBase base;
        |    public ReverseNode(FBase base) { super(base.length); this.base = base; }
-       |    @Override public Object applyBoxed(int i) { return base.applyBoxed(length - 1 - i); }
+       |    @Override protected Object applyBoxedUnchecked(int i) { return base.applyBoxed(length - 1 - i); }
        |    @Override public FBase take(int n) {
        |        int m = n < 0 ? 0 : (n > length ? length : n);
        |        if (m == 0) return Empty.INSTANCE;
@@ -5241,7 +5250,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    public final FBase base;
        |    public final int offset;
        |    public SliceNode(FBase base, int offset, int length) { super(length); this.base = base; this.offset = offset; }
-       |    @Override public Object applyBoxed(int i) { return base.applyBoxed(offset + i); }
+       |    @Override protected Object applyBoxedUnchecked(int i) { return base.applyBoxed(offset + i); }
        |    @Override public FBase take(int n) { int m = n < 0 ? 0 : (n > length ? length : n); return m == length ? this : (m == 0 ? Empty.INSTANCE : (m == 1 ? Concat.one(base, offset) : new SliceNode(base, offset, m))); }
        |    @Override public FBase drop(int n) { int d = n < 0 ? 0 : (n > length ? length : n); int m = length - d; return d == 0 ? this : (m == 0 ? Empty.INSTANCE : (m == 1 ? Concat.one(base, offset + d) : new SliceNode(base, offset + d, m))); }
        |    @Override public FBase slice(int from, int until) { int lo = from < 0 ? 0 : from, hi = until > length ? length : until; int m = hi - lo; if (m <= 0) return Empty.INSTANCE; if (m == 1) return Concat.one(base, offset + lo); return (lo == 0 && hi == length) ? this : new SliceNode(base, offset + lo, m); }
@@ -5273,7 +5282,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    public final FBase base;
        |    public final $jt filler;
        |    public ${name}Pad(FBase base, int targetLen, $jt filler) { super(targetLen); this.base = base; this.filler = filler; }
-       |    @Override public Object applyBoxed(int i) { return i < base.length ? base.applyBoxed(i) : $boxedFiller; }
+       |    @Override protected Object applyBoxedUnchecked(int i) { return i < base.length ? base.applyBoxed(i) : $boxedFiller; }
        |    @Override public FBase take(int n) { int m = n < 0 ? 0 : (n > length ? length : n); if (m <= base.length) return base.take(m); if (m == 1) return new ${name}One(filler); return new ${name}Pad(base, m, filler); }
        |    @Override public FBase drop(int n) {
        |        int d = n < 0 ? 0 : (n > length ? length : n); int m = length - d;
@@ -5303,7 +5312,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |    public final int index;
        |    public final $jt elem;
        |    public ${name}Updated(FBase base, int index, $jt elem) { super(base.length); this.base = base; this.index = index; this.elem = elem; }
-       |    @Override public Object applyBoxed(int i) { return i == index ? $boxedElem : base.applyBoxed(i); }
+       |    @Override protected Object applyBoxedUnchecked(int i) { return i == index ? $boxedElem : base.applyBoxed(i); }
        |    @Override public FBase take(int n) { int m = n < 0 ? 0 : (n > length ? length : n); if (m <= index) return base.take(m); if (m == 1) return new ${name}One(elem); return new ${name}Updated(base.take(m), index, elem); }
        |    @Override public FBase drop(int n) { int d = n < 0 ? 0 : (n > length ? length : n); int m = length - d; if (m == 0) return Empty.INSTANCE; if (d > index) return base.drop(d); if (m == 1) return new ${name}One(elem); return new ${name}Updated(base.drop(d), index - d, elem); }
        |    @Override public FBase slice(int from, int until) { int lo = from < 0 ? 0 : from, hi = until > length ? length : until; return lo >= hi ? Empty.INSTANCE : drop(lo).take(hi - lo); }
@@ -5324,7 +5333,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |public final class ${name}One extends FBase {
        |    public final $jt elem;
        |    public ${name}One($jt elem) { super(1); this.elem = elem; }
-       |    @Override public Object applyBoxed(int i) { return $boxedElem; }
+       |    @Override protected Object applyBoxedUnchecked(int i) { return $boxedElem; }
        |    @Override public FBase take(int n) { return n <= 0 ? Empty.INSTANCE : this; }
        |    @Override public FBase drop(int n) { return n <= 0 ? this : Empty.INSTANCE; }
        |    @Override public FBase slice(int from, int until) { return (from <= 0 && until >= 1) ? this : Empty.INSTANCE; }
@@ -5370,7 +5379,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |        return f;
        |    }
        |
-       |    @Override public Object applyBoxed(int i) {
+       |    @Override protected Object applyBoxedUnchecked(int i) {
        |        int lo = 0, hi = segs.length - 1;
        |        while (lo < hi) { int mid = (lo + hi + 1) >>> 1; if (offs[mid] <= i) lo = mid; else hi = mid - 1; }
        |        return $readSeg;
@@ -5394,7 +5403,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |public final class Empty extends FBase {
        |    public static final Empty INSTANCE = new Empty();
        |    private Empty() { super(0); }
-       |    @Override public Object applyBoxed(int i) { throw new IndexOutOfBoundsException(Integer.toString(i)); }
+       |    @Override protected Object applyBoxedUnchecked(int i) { throw new IndexOutOfBoundsException(Integer.toString(i)); }
        |    @Override public FBase take(int n) { return this; }
        |    @Override public FBase drop(int n) { return this; }
        |    @Override public FBase slice(int from, int until) { return this; }
@@ -5593,7 +5602,7 @@ $flatMapFill
        |    public final FBase base;
        |    public final ${p.jt} elem;
        |    public $cls(FBase base, ${p.jt} elem) { super(base.length + 1); this.base = base; this.elem = elem; }
-       |    @Override public Object applyBoxed(int i) { return i < base.length ? base.applyBoxed(i) : ${p.boxed}.valueOf(elem); }
+       |    @Override protected Object applyBoxedUnchecked(int i) { return i < base.length ? base.applyBoxed(i) : ${p.boxed}.valueOf(elem); }
        |    @Override public FBase take(int n) { return n >= length ? this : base.take(n); }
        |    @Override public FBase drop(int n) {
        |        if (n <= 0) return this;
@@ -5625,7 +5634,7 @@ $flatMapFill
        |    public final ${p.jt} elem;
        |    public final FBase base;
        |    public $cls(${p.jt} elem, FBase base) { super(base.length + 1); this.elem = elem; this.base = base; }
-       |    @Override public Object applyBoxed(int i) { return i == 0 ? ${p.boxed}.valueOf(elem) : base.applyBoxed(i - 1); }
+       |    @Override protected Object applyBoxedUnchecked(int i) { return i == 0 ? ${p.boxed}.valueOf(elem) : base.applyBoxed(i - 1); }
        |    @Override public FBase take(int n) {
        |        if (n <= 0) return Empty.INSTANCE;
        |        if (n >= length) return this;
@@ -5672,7 +5681,7 @@ $flatMapFill
        |public final class $cls extends FBase {
        |    $fields
        |    public $cls($ctorArgs) { super(base.length + 1); $ctorBody }
-       |    @Override public Object applyBoxed(int i) { return $applyB; }
+       |    @Override protected Object applyBoxedUnchecked(int i) { return $applyB; }
        |    @Override public FBase take(int n) { $take }
        |    @Override public FBase drop(int n) { $drop }
        |    @Override public FBase slice(int from, int until) {

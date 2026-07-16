@@ -4,12 +4,9 @@ package farray
   * into a fresh collection. A `Seq` hands back boxed `A` regardless, so element reads go through the (non-specialised) boxed `applyBoxed`; length is direct.
   */
 final class FArraySeq[A] private[farray] (private val under: FBase) extends scala.collection.immutable.IndexedSeq[A]:
-  // IndexedSeq contract: out-of-range index throws IndexOutOfBoundsException (parity with List). `applyBoxed`
-  // arms for singleton/structural nodes ignore `i`, and a slack-backed leaf has array capacity beyond its
-  // logical length, so the bounds check must be here, against the logical length.
-  def apply(i: Int): A =
-    if i < 0 || i >= under.length then throw new IndexOutOfBoundsException(java.lang.Integer.toString(i))
-    else under.applyBoxed(i).asInstanceOf[A]
+  // `applyBoxed` bounds-checks against the logical length (IndexedSeq contract: OOB throws
+  // IndexOutOfBoundsException, parity with List), so this view needs no check of its own.
+  def apply(i: Int): A = under.applyBoxed(i).asInstanceOf[A]
   def length: Int = under.length
   override def knownSize: Int = under.length
 

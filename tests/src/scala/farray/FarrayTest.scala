@@ -2042,25 +2042,42 @@ class FListTest:
     )
   }
 
-  // apply(i) out-of-range throws IndexOutOfBoundsException, exactly like List — across the shapes whose
-  // `applyAtImpl`/`applyBoxed` arm ignores the index (singleton, prepend, slack-backed leaf) and would
-  // otherwise silently return a stale/valid slot. Covers the specialized `apply` and the boxed Seq view.
+  // apply(i) out-of-range throws IndexOutOfBoundsException, exactly like List — across EVERY node shape,
+  // through BOTH the specialized `apply` (surface bounds check vs logical length) and the boxed Seq view
+  // (`applyBoxed` is a final, bounds-checked entry that structural nodes recurse through, so the logical-length
+  // check re-runs at every level INCLUDING when recursion lands on a leaf — a slack-backed leaf reached via a
+  // Slice/Concat is validated against its logical length, never the array capacity). Regression: singleton and
+  // structural arms ignore the index, and slack leaves have array capacity past the logical length, so all of
+  // these silently returned a stale/valid slot before.
   @Test def testApplyOutOfBoundsThrows: Unit = {
     val ioobe = classOf[IndexOutOfBoundsException]
-    val one = FArray("x") // RefOne — the shape whose arm ignores i
+    // (shape, sequence of length 3) — each read at index 3 (== length) and -1 must throw on both paths.
+    val slack = FArray("a", "b", "c", "d").filterConserve(_ != "b") // logical length 3, backing capacity 4
+    assert(slack.length == 3)
+    val shapes: List[(String, FArray[String])] = List(
+      "RefArr" -> FArray("a", "b", "c"),
+      "slack-RefArr" -> slack,
+      "RefPrepend" -> ("a" +: FArray("b", "c")),
+      "RefAppend" -> (FArray("a", "b") :+ "c"),
+      "Concat" -> FArray.concat(FArray("a", "b"), FArray("c")),
+      "SliceNode" -> FArray("z", "a", "b", "c").drop(1),
+      "ReverseNode" -> FArray("c", "b", "a").reverse
+    )
+    shapes.foreach { case (name, xs) =>
+      assert(xs.length == 3, s"$name length")
+      org.junit.Assert.assertThrows(s"$name specialized apply(3)", ioobe, () => xs(3))
+      org.junit.Assert.assertThrows(s"$name specialized apply(-1)", ioobe, () => xs(-1))
+      org.junit.Assert.assertThrows(s"$name boxed view apply(3)", ioobe, () => xs.toIndexedSeq.apply(3))
+      org.junit.Assert.assertThrows(s"$name boxed view apply(-1)", ioobe, () => xs.toIndexedSeq.apply(-1))
+    }
+    // singletons and empty (the arms that most blatantly ignore the index).
+    val one = FArray("x") // RefOne
     org.junit.Assert.assertThrows(ioobe, () => one(5))
     org.junit.Assert.assertThrows(ioobe, () => one(1))
     org.junit.Assert.assertThrows(ioobe, () => one(-1))
-    org.junit.Assert.assertThrows(ioobe, () => FArray.empty[String](0))
-    val prep = "a" +: FArray("b") // RefPrepend
-    org.junit.Assert.assertThrows(ioobe, () => prep(2))
-    // slack-backed leaf: filterConserve drops an element, leaving array capacity past the logical length.
-    val slack = FArray("a", "b", "c").filterConserve(_ != "b") // logical length 2, backing capacity 3
-    assert(slack.length == 2)
-    org.junit.Assert.assertThrows(ioobe, () => slack(2))
-    // the O(1) IndexedSeq view must obey the same contract.
     org.junit.Assert.assertThrows(ioobe, () => one.toIndexedSeq.apply(5))
-    org.junit.Assert.assertThrows(ioobe, () => slack.toSeq.apply(2))
+    org.junit.Assert.assertThrows(ioobe, () => FArray.empty[String](0))
+    org.junit.Assert.assertThrows(ioobe, () => FArray.empty[String].toIndexedSeq.apply(0))
   }
 
   // ---- size-0/1 canonicalization invariant: every length-0 FArray is the Empty singleton, every length-1
