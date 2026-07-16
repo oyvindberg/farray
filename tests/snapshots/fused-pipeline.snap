@@ -19,8 +19,8 @@
   var o: Int = 0
   val s: FBase = src0
   val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
+    case l: IntArr if l.offset.==(0) =>
+      (l.data: Array[Int])
     case t =>
       if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
   }
@@ -63,8 +63,8 @@
   var o: Int = 0
   val s: FBase = src0
   val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
+    case l: IntArr if l.offset.==(0) =>
+      (l.data: Array[Int])
     case _ =>
       Array.emptyIntArray
   }
@@ -117,8 +117,8 @@
   var o: Int = 0
   val s: FBase = src0
   val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
+    case l: IntArr if l.offset.==(0) =>
+      (l.data: Array[Int])
     case _ =>
       Array.emptyIntArray
   }
@@ -155,8 +155,8 @@
   ({
     val s: FBase = src0
     val a: Array[Int] = s match {
-      case l: IntArr =>
-        (l.arr: Array[Int])
+      case l: IntArr if l.offset.==(0) =>
+        (l.data: Array[Int])
       case t =>
         if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
     }
@@ -187,8 +187,8 @@
   var o: Int = 0
   val s: FBase = src0
   val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
+    case l: IntArr if l.offset.==(0) =>
+      (l.data: Array[Int])
     case t =>
       if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
   }
@@ -219,8 +219,8 @@
   ({
     val s: FBase = src0
     val a: Array[Int] = s match {
-      case l: IntArr =>
-        (l.arr: Array[Int])
+      case l: IntArr if l.offset.==(0) =>
+        (l.data: Array[Int])
       case t =>
         if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
     }
@@ -255,8 +255,8 @@
   var o: Int = 0
   val s: FBase = src0
   val a: Array[Object] = s match {
-    case l: RefArr =>
-      (l.arr: Array[Object])
+    case l: RefArr if l.offset.==(0) =>
+      (l.data: Array[Object])
     case t =>
       if (t.length.>=(64)) FArrayOps.materializeRef(t) else Array.emptyObjectArray
   }
@@ -284,8 +284,8 @@
   val n0: Int = src0.length
   val s: FBase = src0
   val a: Array[Object] = s match {
-    case l: RefArr =>
-      (l.arr: Array[Object])
+    case l: RefArr if l.offset.==(0) =>
+      (l.data: Array[Object])
     case t =>
       if (t.length.>=(64)) FArrayOps.materializeRef(t) else Array.emptyObjectArray
   }
@@ -318,8 +318,8 @@
   var o: Int = 0
   val s: FBase = src0
   val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
+    case l: IntArr if l.offset.==(0) =>
+      (l.data: Array[Int])
     case t =>
       if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
   }
@@ -355,8 +355,8 @@
   var res: Option[Any] = None
   val s: FBase = src0
   val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
+    case l: IntArr if l.offset.==(0) =>
+      (l.data: Array[Int])
     case _ =>
       Array.emptyIntArray
   }
@@ -391,8 +391,8 @@
   var o: Int = 0
   val s: FBase = src0
   val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
+    case l: IntArr if l.offset.==(0) =>
+      (l.data: Array[Int])
     case t =>
       if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
   }
@@ -448,8 +448,8 @@
   var o: Int = 0
   val s: FBase = src0
   val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
+    case l: IntArr if l.offset.==(0) =>
+      (l.data: Array[Int])
     case _ =>
       Array.emptyIntArray
   }
@@ -485,8 +485,8 @@
   var o: Int = 0
   val s: FBase = src0
   val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
+    case l: IntArr if l.offset.==(0) =>
+      (l.data: Array[Int])
     case t =>
       if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
   }
@@ -520,8 +520,8 @@
   var o: Int = 0
   val s: FBase = src0
   val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
+    case l: IntArr if l.offset.==(0) =>
+      (l.data: Array[Int])
     case t =>
       if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
   }
@@ -557,8 +557,8 @@
   var o: Int = 0
   val s: FBase = src0
   val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
+    case l: IntArr if l.offset.==(0) =>
+      (l.data: Array[Int])
     case t =>
       if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
   }
@@ -597,8 +597,8 @@
   var o: Int = 0
   val s: FBase = src0
   val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
+    case l: IntArr if l.offset.==(0) =>
+      (l.data: Array[Int])
     case _ =>
       Array.emptyIntArray
   }
@@ -633,8 +633,8 @@
   o = o.+(1)
   val s: FBase = src0
   val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
+    case l: IntArr if l.offset.==(0) =>
+      (l.data: Array[Int])
     case t =>
       if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
   }
@@ -670,8 +670,8 @@
   var c: Int = 0
   val s: FBase = src0
   val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
+    case l: IntArr if l.offset.==(0) =>
+      (l.data: Array[Int])
     case _ =>
       Array.emptyIntArray
   }
@@ -705,8 +705,8 @@
   var acc: Int = null.asInstanceOf[Int]
   val s: FBase = src0
   val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
+    case l: IntArr if l.offset.==(0) =>
+      (l.data: Array[Int])
     case t =>
       if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
   }
@@ -747,8 +747,8 @@
   var bestK: Int = null.asInstanceOf[Int]
   val s: FBase = src0
   val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
+    case l: IntArr if l.offset.==(0) =>
+      (l.data: Array[Int])
     case t =>
       if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
   }
@@ -785,8 +785,8 @@
   var o: Int = 0
   val s: FBase = src0
   val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
+    case l: IntArr if l.offset.==(0) =>
+      (l.data: Array[Int])
     case t =>
       if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
   }
@@ -821,8 +821,8 @@
     ({
       val s: FBase = src0
       val a: Array[Int] = s match {
-        case l: IntArr =>
-          (l.arr: Array[Int])
+        case l: IntArr if l.offset.==(0) =>
+          (l.data: Array[Int])
         case t =>
           if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
       }
@@ -859,8 +859,8 @@
   var o: Int = 0
   val s: FBase = src0
   val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
+    case l: IntArr if l.offset.==(0) =>
+      (l.data: Array[Int])
     case t =>
       if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
   }
@@ -912,8 +912,8 @@
   var o: Int = 0
   val s: FBase = src0
   val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
+    case l: IntArr if l.offset.==(0) =>
+      (l.data: Array[Int])
     case _ =>
       Array.emptyIntArray
   }
@@ -968,8 +968,8 @@
   var o: Int = 0
   val s: FBase = src0
   val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
+    case l: IntArr if l.offset.==(0) =>
+      (l.data: Array[Int])
     case _ =>
       Array.emptyIntArray
   }
@@ -1007,8 +1007,8 @@
   var o: Int = 0
   val s: FBase = src0
   val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
+    case l: IntArr if l.offset.==(0) =>
+      (l.data: Array[Int])
     case t =>
       if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
   }
@@ -1045,8 +1045,8 @@
   var o: Int = 0
   val s: FBase = src0
   val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
+    case l: IntArr if l.offset.==(0) =>
+      (l.data: Array[Int])
     case t =>
       if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
   }
@@ -1080,8 +1080,8 @@
   var o: Int = 0
   val s: FBase = src0
   val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
+    case l: IntArr if l.offset.==(0) =>
+      (l.data: Array[Int])
     case t =>
       if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
   }
@@ -1117,8 +1117,8 @@
   var o: Int = 0
   val s: FBase = src0
   val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
+    case l: IntArr if l.offset.==(0) =>
+      (l.data: Array[Int])
     case t =>
       if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
   }
@@ -1144,8 +1144,8 @@
       }.$asInstanceOf$[FArray[Int]]
     }.asInstanceOf[FBase]
     val `a₂`: Array[Int] = `s₂` match {
-      case l: IntArr =>
-        (`l₂`.arr: Array[Int])
+      case l: IntArr if `l₂`.offset.==(0) =>
+        (`l₂`.data: Array[Int])
       case _ =>
         Array.emptyIntArray
     }
@@ -1178,8 +1178,8 @@
   var o: Int = 0
   val s: FBase = src0
   val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
+    case l: IntArr if l.offset.==(0) =>
+      (l.data: Array[Int])
     case t =>
       if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
   }
@@ -1210,8 +1210,8 @@
   var o: Int = 0
   val s: FBase = src0
   val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
+    case l: IntArr if l.offset.==(0) =>
+      (l.data: Array[Int])
     case t =>
       if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
   }
@@ -1261,8 +1261,8 @@
   var o: Int = 0
   val s: FBase = src0
   val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
+    case l: IntArr if l.offset.==(0) =>
+      (l.data: Array[Int])
     case t =>
       if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
   }
@@ -1302,8 +1302,8 @@
   var o: Int = 0
   val s: FBase = src0
   val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
+    case l: IntArr if l.offset.==(0) =>
+      (l.data: Array[Int])
     case t =>
       if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
   }
@@ -1345,8 +1345,8 @@
   var o: Int = 0
   val s: FBase = src0
   val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
+    case l: IntArr if l.offset.==(0) =>
+      (l.data: Array[Int])
     case _ =>
       Array.emptyIntArray
   }
@@ -1391,8 +1391,8 @@
   var o: Int = 0
   val s: FBase = src0
   val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
+    case l: IntArr if l.offset.==(0) =>
+      (l.data: Array[Int])
     case _ =>
       Array.emptyIntArray
   }
@@ -1452,8 +1452,8 @@
   var o: Int = 0
   val s: FBase = src0
   val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
+    case l: IntArr if l.offset.==(0) =>
+      (l.data: Array[Int])
     case _ =>
       Array.emptyIntArray
   }
@@ -1502,8 +1502,8 @@
   var o: Int = 0
   val s: FBase = src0
   val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
+    case l: IntArr if l.offset.==(0) =>
+      (l.data: Array[Int])
     case _ =>
       Array.emptyIntArray
   }

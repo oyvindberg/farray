@@ -1397,16 +1397,24 @@ object FuseMacro:
           skeleton[Array[Int]](
             '{ Array.emptyIntArray },
             s =>
-              if mat then '{ $s match { case l: IntArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeInt(t) else Array.emptyIntArray } }
-              else '{ $s match { case l: IntArr => l.arr; case _ => Array.emptyIntArray } },
+              if mat then
+                '{
+                  $s match { case l: IntArr if l.offset == 0 => l.data; case t => if t.length >= 64 then FArrayOps.materializeInt(t) else Array.emptyIntArray }
+                }
+              else '{ $s match { case l: IntArr if l.offset == 0 => l.data; case _ => Array.emptyIntArray } },
             (a, i) => '{ $a($i) }.asTerm
           )
         case Kind.KLong =>
           skeleton[Array[Long]](
             '{ Array.emptyLongArray },
             s =>
-              if mat then '{ $s match { case l: LongArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeLong(t) else Array.emptyLongArray } }
-              else '{ $s match { case l: LongArr => l.arr; case _ => Array.emptyLongArray } },
+              if mat then
+                '{
+                  $s match {
+                    case l: LongArr if l.offset == 0 => l.data; case t => if t.length >= 64 then FArrayOps.materializeLong(t) else Array.emptyLongArray
+                  }
+                }
+              else '{ $s match { case l: LongArr if l.offset == 0 => l.data; case _ => Array.emptyLongArray } },
             (a, i) => '{ $a($i) }.asTerm
           )
         case Kind.KDouble =>
@@ -1414,40 +1422,64 @@ object FuseMacro:
             '{ Array.emptyDoubleArray },
             s =>
               if mat then
-                '{ $s match { case l: DoubleArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeDouble(t) else Array.emptyDoubleArray } }
-              else '{ $s match { case l: DoubleArr => l.arr; case _ => Array.emptyDoubleArray } },
+                '{
+                  $s match {
+                    case l: DoubleArr if l.offset == 0 => l.data; case t => if t.length >= 64 then FArrayOps.materializeDouble(t) else Array.emptyDoubleArray
+                  }
+                }
+              else '{ $s match { case l: DoubleArr if l.offset == 0 => l.data; case _ => Array.emptyDoubleArray } },
             (a, i) => '{ $a($i) }.asTerm
           )
         case Kind.KFloat =>
           skeleton[Array[Float]](
             '{ Array.emptyFloatArray },
             s =>
-              if mat then '{ $s match { case l: FloatArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeFloat(t) else Array.emptyFloatArray } }
-              else '{ $s match { case l: FloatArr => l.arr; case _ => Array.emptyFloatArray } },
+              if mat then
+                '{
+                  $s match {
+                    case l: FloatArr if l.offset == 0 => l.data; case t => if t.length >= 64 then FArrayOps.materializeFloat(t) else Array.emptyFloatArray
+                  }
+                }
+              else '{ $s match { case l: FloatArr if l.offset == 0 => l.data; case _ => Array.emptyFloatArray } },
             (a, i) => '{ $a($i) }.asTerm
           )
         case Kind.KShort =>
           skeleton[Array[Short]](
             '{ Array.emptyShortArray },
             s =>
-              if mat then '{ $s match { case l: ShortArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeShort(t) else Array.emptyShortArray } }
-              else '{ $s match { case l: ShortArr => l.arr; case _ => Array.emptyShortArray } },
+              if mat then
+                '{
+                  $s match {
+                    case l: ShortArr if l.offset == 0 => l.data; case t => if t.length >= 64 then FArrayOps.materializeShort(t) else Array.emptyShortArray
+                  }
+                }
+              else '{ $s match { case l: ShortArr if l.offset == 0 => l.data; case _ => Array.emptyShortArray } },
             (a, i) => '{ $a($i) }.asTerm
           )
         case Kind.KByte =>
           skeleton[Array[Byte]](
             '{ Array.emptyByteArray },
             s =>
-              if mat then '{ $s match { case l: ByteArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeByte(t) else Array.emptyByteArray } }
-              else '{ $s match { case l: ByteArr => l.arr; case _ => Array.emptyByteArray } },
+              if mat then
+                '{
+                  $s match {
+                    case l: ByteArr if l.offset == 0 => l.data; case t => if t.length >= 64 then FArrayOps.materializeByte(t) else Array.emptyByteArray
+                  }
+                }
+              else '{ $s match { case l: ByteArr if l.offset == 0 => l.data; case _ => Array.emptyByteArray } },
             (a, i) => '{ $a($i) }.asTerm
           )
         case Kind.KChar =>
           skeleton[Array[Char]](
             '{ Array.emptyCharArray },
             s =>
-              if mat then '{ $s match { case l: CharArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeChar(t) else Array.emptyCharArray } }
-              else '{ $s match { case l: CharArr => l.arr; case _ => Array.emptyCharArray } },
+              if mat then
+                '{
+                  $s match {
+                    case l: CharArr if l.offset == 0 => l.data; case t => if t.length >= 64 then FArrayOps.materializeChar(t) else Array.emptyCharArray
+                  }
+                }
+              else '{ $s match { case l: CharArr if l.offset == 0 => l.data; case _ => Array.emptyCharArray } },
             (a, i) => '{ $a($i) }.asTerm
           )
         case Kind.KBoolean =>
@@ -1455,16 +1487,25 @@ object FuseMacro:
             '{ Array.emptyBooleanArray },
             s =>
               if mat then
-                '{ $s match { case l: BooleanArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeBoolean(t) else Array.emptyBooleanArray } }
-              else '{ $s match { case l: BooleanArr => l.arr; case _ => Array.emptyBooleanArray } },
+                '{
+                  $s match {
+                    case l: BooleanArr if l.offset == 0 => l.data; case t => if t.length >= 64 then FArrayOps.materializeBoolean(t) else Array.emptyBooleanArray
+                  }
+                }
+              else '{ $s match { case l: BooleanArr if l.offset == 0 => l.data; case _ => Array.emptyBooleanArray } },
             (a, i) => '{ $a($i) }.asTerm
           )
         case Kind.KRef =>
           skeleton[Array[AnyRef]](
             '{ Array.emptyObjectArray },
             s =>
-              if mat then '{ $s match { case l: RefArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeRef(t) else Array.emptyObjectArray } }
-              else '{ $s match { case l: RefArr => l.arr; case _ => Array.emptyObjectArray } },
+              if mat then
+                '{
+                  $s match {
+                    case l: RefArr if l.offset == 0 => l.data; case t => if t.length >= 64 then FArrayOps.materializeRef(t) else Array.emptyObjectArray
+                  }
+                }
+              else '{ $s match { case l: RefArr if l.offset == 0 => l.data; case _ => Array.emptyObjectArray } },
             (a, i) => elemTpe.asType match { case '[b] => '{ $a($i).asInstanceOf[b] }.asTerm }
           )
 

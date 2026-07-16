@@ -24,7 +24,7 @@ class OpaquePrimAllocTest:
 
   // white-box: the RefArr backing-array component class distinguishes boxed Object[] from a typed String[].
   private def backingComponent[A](xs: FArray[A]): Class[?] =
-    xs.asInstanceOf[RefArr].arr.getClass.getComponentType
+    xs.asInstanceOf[RefArr].data.getClass.getComponentType
 
   // ---- the CCE repros: build OUTSIDE the scope with an explicit [Flag] (abstract -> Ref arm; ClassTag -> Long) ----
 

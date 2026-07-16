@@ -186,6 +186,45 @@ feeds back into D2.
 | 4 | D4 refRepr singleton | bytecode-size study + JMH |
 | each | publish → re-pin scala3 → clean rebuild → `bench.sh` trio → isolation A/B if within noise | keep if ≥0.3pp end-to-end or neutral-with-simplification; revert otherwise |
 
+## 4.1 Phase 2 (D2b offset-leaf) — design decisions (IMPLEMENTED, branch `dotty-gaps`)
+
+Slicing is folded into the flat leaf: `${K}Arr`/`RefArr` gain a `final int offset` — logical element
+`i` lives at `data(offset + i)`. `tail`/`drop`/`take`/`slice`/`init` of a LEAF return a NEW same-class
+leaf (one small alloc, still flat), never a `SliceNode`. `Empty`/`One` results are unchanged.
+
+Decisions made (evaluated against implementation cost + the gates):
+
+- **Kind scope: UNIFORM across all kinds (not ref-only).** The engines are kind-generic — every leaf
+  arm is emitted from one `${k.name}Arr` template that already threads a *start index* (the SliceNode
+  arms passed `so`). Adding the offset to the shared template was free (offset just replaces the `0`
+  start); a ref-only path would have forced per-kind branches into every engine. So Int/Long/Double/
+  Float/Short/Byte/Char/Boolean/Ref all carry the offset. No per-kind special-casing anywhere.
+- **Backing-field RENAME (`arr` → `data`) as the blast-radius net.** Every stale `leaf.arr` (assumes
+  offset 0) now fails to compile; each of the ~70 generated + hand-written sites was made offset-aware
+  deliberately (`grep '\.arr'` over `farray/` + `codegen/` is zero unaudited hits). Leaf constructors
+  kept a 2-arg `(data, length)` (offset 0) so every construction site (map/fromValues/builders/the apply
+  macro) is untouched and free; a 3-arg `(data, offset, length)` is the slice path only.
+- **Two site classes.** (a) Sites that iterate through a parameterized start (traversal engines, dfs
+  walkers, scan/hash runners, foldLoop/collectLoop) simply pass `leaf.offset` as the start — the loop
+  read `a(i)`/`a[i]` is unchanged, so the offset-0 hot path is byte-identical. (b) Sites that hand the
+  raw backing array out for 0-based `sa(i)` iteration or in-place `Arrays.sort`/arraycopy-from-0 (zip/
+  unzip/matchAll2 `flatOf`, sort/sortBy, distinct, mapConserve/filterConserve, iterator cursor, flatMap
+  segments, the FuseMacro fused-loop leaf arms) take a `if leaf.offset == 0` guard: offset-0 hands
+  `leaf.data` directly (fast path preserved), a sliced leaf materializes a fresh 0-based copy (correct,
+  and rare). `materialize` became `copyOfRange(data, offset, offset+length)`.
+- **SliceNode kept for non-leaf bases only.** Post-D2b nothing constructs a `SliceNode` over a leaf
+  (leaf `take/drop/slice` return leaves), so the `SliceNode`-over-leaf engine arms are dead but were
+  still made offset-correct (base offset composes: `slf.offset + s.offset`). SliceNode itself is
+  retained for the (currently-unreachable) non-leaf-base case per the plan.
+- **Slack composes.** A builder leaf has `data.length > offset + length`; slicing only moves
+  `offset`/`length` within the shared array, and Phase-1's OOB check validates against the LOGICAL
+  length — verified under offset (`offsetOverSlackBackedLeaf` test).
+- **Memory retention: unchanged tradeoff, documented not fixed.** A tiny slice pins the whole backing
+  array — exactly what `SliceNode` already did. `data` is shared (asserted in the test).
+
+Audited sites: **~62 generated (GenCores.scala) + ~9 hand-written (FuseMacro.scala 9 leaf arms; plus
+OpaquePrimAllocTest white-box)**. No site class could NOT be made offset-aware.
+
 ## 5. Targets
 
 - **Realistic**: close half of the ~6pp stdlib/compiler-src gap (→ ~+3% vs main), keep

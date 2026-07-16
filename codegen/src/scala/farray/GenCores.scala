@@ -339,25 +339,27 @@ object GenCores extends BleepCodegenScript("GenCores") {
       else s"case rev: ReverseNode => { ${onRev(onRF, onRB, onO)} }"
     // leaf / slice / pad-base / updated-segments: array-backed runs (forward asc, backward desc).
     val leafCase =
-      if !backward then s"case leaf: ${k.name}Arr => ${runFwd("leaf.arr", "0", "leaf.length")}"
-      else s"case leaf: ${k.name}Arr => ${runBwd("leaf.arr", "leaf.length - 1", "leaf.length")}"
+      if !backward then s"case leaf: ${k.name}Arr => ${runFwd("leaf.data", "leaf.offset", "leaf.length")}"
+      else s"case leaf: ${k.name}Arr => ${runBwd("leaf.data", "leaf.offset + leaf.length - 1", "leaf.length")}"
+    // SliceNode-over-leaf is unreachable post-D2b (leaf slicing returns a leaf), but keep the arm offset-correct:
+    // base leaf logical index j lives at lf.data(lf.offset + j).
     val sliceCase =
       if !backward then
-        s"case s: SliceNode => { val sn = s.length; val so = s.offset; s.base match { case lf: ${k.name}Arr => ${runFwd("lf.arr", "so", "sn")}; case _ => { var si = 0; while (si < sn) { ${onO(s"${k.lc}At(s.base, so + si)")}; si += 1 } } } }"
+        s"case s: SliceNode => { val sn = s.length; val so = s.offset; s.base match { case lf: ${k.name}Arr => ${runFwd("lf.data", "lf.offset + so", "sn")}; case _ => { var si = 0; while (si < sn) { ${onO(s"${k.lc}At(s.base, so + si)")}; si += 1 } } } }"
       else
-        s"case s: SliceNode => { val sn = s.length; val so = s.offset; s.base match { case lf: ${k.name}Arr => ${runBwd("lf.arr", "so + sn - 1", "sn")}; case _ => { var si = sn - 1; while (si >= 0) { ${onO(s"${k.lc}At(s.base, so + si)")}; si -= 1 } } } }"
+        s"case s: SliceNode => { val sn = s.length; val so = s.offset; s.base match { case lf: ${k.name}Arr => ${runBwd("lf.data", "lf.offset + so + sn - 1", "sn")}; case _ => { var si = sn - 1; while (si >= 0) { ${onO(s"${k.lc}At(s.base, so + si)")}; si -= 1 } } } }"
     // Pad: forward = base then fillers; backward = fillers then base.
     val padCase =
       if !backward then
-        s"case pad: ${k.name}Pad => { val bl = pad.base.length; pad.base match { case lf: ${k.name}Arr => ${runFwd("lf.arr", "0", "bl")}; case _ => { var pi = 0; while (pi < bl) { ${onO(padRead)}; pi += 1 } } }; val pf = pad.filler; var pj = bl; val pn = pad.length; while (pj < pn) { ${onO("pf")}; pj += 1 } }"
+        s"case pad: ${k.name}Pad => { val bl = pad.base.length; pad.base match { case lf: ${k.name}Arr => ${runFwd("lf.data", "lf.offset", "bl")}; case _ => { var pi = 0; while (pi < bl) { ${onO(padRead)}; pi += 1 } } }; val pf = pad.filler; var pj = bl; val pn = pad.length; while (pj < pn) { ${onO("pf")}; pj += 1 } }"
       else
-        s"case pad: ${k.name}Pad => { val bl = pad.base.length; val pf = pad.filler; var pj = pad.length; while (pj > bl) { ${onO("pf")}; pj -= 1 }; pad.base match { case lf: ${k.name}Arr => ${runBwd("lf.arr", "bl - 1", "bl")}; case _ => { var pi = bl - 1; while (pi >= 0) { ${onO(padRead)}; pi -= 1 } } } }"
-    // Updated: forward = [0,ui) , elem , (ui,len) ; backward mirrors.
+        s"case pad: ${k.name}Pad => { val bl = pad.base.length; val pf = pad.filler; var pj = pad.length; while (pj > bl) { ${onO("pf")}; pj -= 1 }; pad.base match { case lf: ${k.name}Arr => ${runBwd("lf.data", "lf.offset + bl - 1", "bl")}; case _ => { var pi = bl - 1; while (pi >= 0) { ${onO(padRead)}; pi -= 1 } } } }"
+    // Updated: forward = [0,ui) , elem , (ui,len) ; backward mirrors. Base leaf logical j at la(lo + j).
     val updatedCase =
       if !backward then
-        s"case u: ${k.name}Updated => { u.base match { case lf: ${k.name}Arr => { val la = lf.arr; val ui = u.index; ${runFwd("la", "0", "ui")}; ${onO("u.elem")}; ${runFwd("la", "ui + 1", "u.length - ui - 1")} }; case _ => { val mout = materialize${k.name}(u); ${runFwd("mout", "0", "mout.length")} } } }"
+        s"case u: ${k.name}Updated => { u.base match { case lf: ${k.name}Arr => { val la = lf.data; val lo = lf.offset; val ui = u.index; ${runFwd("la", "lo", "ui")}; ${onO("u.elem")}; ${runFwd("la", "lo + ui + 1", "u.length - ui - 1")} }; case _ => { val mout = materialize${k.name}(u); ${runFwd("mout", "0", "mout.length")} } } }"
       else
-        s"case u: ${k.name}Updated => { u.base match { case lf: ${k.name}Arr => { val la = lf.arr; val ui = u.index; ${runBwd("la", "u.length - 1", "u.length - ui - 1")}; ${onO("u.elem")}; ${runBwd("la", "ui - 1", "ui")} }; case _ => { val mout = materialize${k.name}(u); ${runBwd("mout", "mout.length - 1", "mout.length")} } } }"
+        s"case u: ${k.name}Updated => { u.base match { case lf: ${k.name}Arr => { val la = lf.data; val lo = lf.offset; val ui = u.index; ${runBwd("la", "lo + u.length - 1", "u.length - ui - 1")}; ${onO("u.elem")}; ${runBwd("la", "lo + ui - 1", "ui")} }; case _ => { val mout = materialize${k.name}(u); ${runBwd("mout", "mout.length - 1", "mout.length")} } } }"
     // flatMap node: run each inner segment as a leaf window (forward: seg 0..; backward: seg last.. each descending).
     // `offs(i+1)-offs(i)` is segment i's LOGICAL length (segs(i) may carry slack). A run may short-circuit (onRF's
     // `if (c.stop) return`), which bails the whole walk — correct across segments.
@@ -461,7 +463,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  def addNode(node: FBase): Unit = node match {
        |    case e: Empty => ()
        |    case o: ${K}One => add(o.elem)
-       |    case leaf: ${K}Arr => { val ll = leaf.length; ensureCap(size + ll); System.arraycopy(leaf.arr, 0, arr, size, ll); size += ll }
+       |    case leaf: ${K}Arr => { val ll = leaf.length; ensureCap(size + ll); System.arraycopy(leaf.data, leaf.offset, arr, size, ll); size += ll }
        |    case _ => { val m = FArrayOps.materialize${K}(node); val ml = m.length; ensureCap(size + ml); System.arraycopy(m, 0, arr, size, ml); size += ml }
        |  }
        |  def sizeHint(n: Int): Unit = if (n > arr.length) arr = java.util.Arrays.copyOf(arr, n)
@@ -588,7 +590,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // `asInstanceOf`, since `${k.lc}At` emits Scala — not `fromBoxedK`'s Java cast.)
     val defaultAt = if k.isPrim then s"(node.applyBoxed(i)).asInstanceOf[${k.arr}]" else "node.applyBoxed(i)"
     s"""  def ${k.lc}At(node: FBase, i: Int): ${k.arr} = node match {
-       |    case leaf: ${k.name}Arr => leaf.arr(i)
+       |    case leaf: ${k.name}Arr => leaf.data(leaf.offset + i)
        |    case o: ${k.name}One => o.elem
        |    case c: Concat => if (i < c.left.length) ${k.lc}At(c.left, i) else ${k.lc}At(c.right, i - c.left.length)
        |    case a: ${k.name}Append => if (i < a.base.length) ${k.lc}At(a.base, i) else a.elem
@@ -636,9 +638,10 @@ object GenCores extends BleepCodegenScript("GenCores") {
         // toArray[Object] — a caller storing a non-String into their "Object[]" then hits ArrayStoreException.
         // Force a genuine Object[] with the 3-arg copyOf (still a widening bulk memcpy, same speed). Prim
         // leaves are exact (Int[] IS Int[]), so they keep the cheap 2-arg form.
+        // offset-aware: copy the LOGICAL window [offset, offset+length) to a fresh 0-based array.
         val leafCopy =
-          if k.name == "Ref" then "java.util.Arrays.copyOf(leaf.arr, leaf.length, classOf[Array[Object]])"
-          else s"java.util.Arrays.copyOf(leaf.arr, leaf.length)"
+          if k.name == "Ref" then "java.util.Arrays.copyOfRange(leaf.data, leaf.offset, leaf.offset + leaf.length, classOf[Array[Object]])"
+          else s"java.util.Arrays.copyOfRange(leaf.data, leaf.offset, leaf.offset + leaf.length)"
         s"""  def materialize${k.name}(node: FBase): Array[${k.arr}] = node match {
          |    case leaf: ${k.name}Arr => $leafCopy
          |    case u: ${k.name}Updated => { val out = materialize${k.name}(u.base); out(u.index) = u.elem; out }
@@ -690,14 +693,15 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.open(s"def flatMapSegs${KB}(cnt: Int, inr0: FBase, l0: Int, fi: Traversers.IntToRefFn[FBase]): FBase =")
         ee.line(s"val segs = new Array[$segT](cnt)")
         ee.line("val offs = new Array[Int](cnt + 1)")
-        ee.line(s"inr0 match { case lf: ${KB}Arr => segs(0) = lf.arr; case _ => segs(0) = materialize${KB}(inr0) }")
+        // segments are read 0-based via `offs`; hand a leaf's array directly ONLY when offset==0, else materialize a 0-based copy.
+        ee.line(s"inr0 match { case lf: ${KB}Arr if lf.offset == 0 => segs(0) = lf.data; case _ => segs(0) = materialize${KB}(inr0) }")
         ee.line("var total = l0")
         ee.line("var i = 1")
         ee.open("while (i < cnt)")
         ee.line("offs(i) = total")
         ee.line("val inr = fi.apply(i)")
         ee.line(
-          s"inr match { case lf: ${KB}Arr => { segs(i) = lf.arr; total += lf.length }; case _ => { val m = materialize${KB}(inr); segs(i) = m; total += m.length } }"
+          s"inr match { case lf: ${KB}Arr if lf.offset == 0 => { segs(i) = lf.data; total += lf.length }; case _ => { val m = materialize${KB}(inr); segs(i) = m; total += m.length } }"
         )
         ee.line("i += 1")
         ee.close()
@@ -714,7 +718,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line("val est = { val e = cnt * l0; if (e < 8) 8 else e }")
         ee.line(s"var out: $segT = new $segT(est)")
         ee.line(
-          s"inr0 match { case lf: ${KB}Arr => System.arraycopy(lf.arr, 0, out, 0, l0); case o: ${KB}One => out(0) = o.elem; case _ => flatMapCopyOne${KB}(inr0, out, 0) }"
+          s"inr0 match { case lf: ${KB}Arr => System.arraycopy(lf.data, lf.offset, out, 0, l0); case o: ${KB}One => out(0) = o.elem; case _ => flatMapCopyOne${KB}(inr0, out, 0) }"
         )
         ee.line("var off = l0")
         ee.line("var i = 1")
@@ -724,8 +728,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line(s"out = ensureCap${KB}(out, off + ln)")
         ee.open("inr match")
         ee.open(s"case lf: ${KB}Arr =>")
-        ee.line("if (ln <= 8) { val ia = lf.arr; var c = 0; while (c < ln) { out(off + c) = ia(c); c += 1 } }")
-        ee.line("else System.arraycopy(lf.arr, 0, out, off, ln)")
+        ee.line("if (ln <= 8) { val ia = lf.data; val io = lf.offset; var c = 0; while (c < ln) { out(off + c) = ia(io + c); c += 1 } }")
+        ee.line("else System.arraycopy(lf.data, lf.offset, out, off, ln)")
         ee.close()
         ee.line(s"case o: ${KB}One => out(off) = o.elem")
         ee.line(s"case _ => flatMapCopyOne${KB}(inr, out, off)")
@@ -903,9 +907,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
           //   walk dir Bwd  -> base Fwd: reverse-of-leaf = an ascending window;  else materialize then run Fwd.
           val onRev = (rf: (String, String, String) => String, rb: (String, String, String) => String, _o: String => String) =>
             if !backward then
-              s"rev.base match { case lf: ${k.name}Arr => ${rb("lf.arr", "lf.length - 1", "lf.length")}; case _ => { val mout = materialize${k.name}(rev.base); ${rb("mout", "mout.length - 1", "mout.length")} } }"
+              s"rev.base match { case lf: ${k.name}Arr => ${rb("lf.data", "lf.offset + lf.length - 1", "lf.length")}; case _ => { val mout = materialize${k.name}(rev.base); ${rb("mout", "mout.length - 1", "mout.length")} } }"
             else
-              s"rev.base match { case lf: ${k.name}Arr => ${rf("lf.arr", "0", "lf.length")}; case _ => { val mout = materialize${k.name}(rev.base); ${rf("mout", "0", "mout.length")} } }"
+              s"rev.base match { case lf: ${k.name}Arr => ${rf("lf.data", "lf.offset", "lf.length")}; case _ => { val mout = materialize${k.name}(rev.base); ${rf("mout", "0", "mout.length")} } }"
           val walk = dfsBody(k, backward, onRF, onRB, onO, onRev)
           // (3) accumulators as plain `var` locals, declared OUTSIDE the walk; (4) the Out epilogue.
           val accDecls = spec.acc.map(a => s"var ${a.name}: ${a.tpe} = ${a.init}").mkString("; ")
@@ -950,8 +954,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
           // still flow through the walk's own leaf arm, so trees stay correct + consumer-free.
           val leafFast =
             if !backward then
-              s"case leaf: ${k.name}Arr => { val a = leaf.arr; var i = 0; val e = leaf.length; while (i < e) { ${spec.body.perElem(rd)}; i += 1 } }"
-            else s"case leaf: ${k.name}Arr => { val a = leaf.arr; var i = leaf.length - 1; while (i >= 0) { ${spec.body.perElem(rd)}; i -= 1 } }"
+              s"case leaf: ${k.name}Arr => { val a = leaf.data; val lo = leaf.offset; var i = lo; val e = lo + leaf.length; while (i < e) { ${spec.body.perElem(rd)}; i += 1 } }"
+            else
+              s"case leaf: ${k.name}Arr => { val a = leaf.data; val lo = leaf.offset; var i = lo + leaf.length - 1; while (i >= lo) { ${spec.body.perElem(rd)}; i -= 1 } }"
           s"{ $outDecl$accPart" + s"xs match { $leafFast; case _ => { val root: FBase = xs\n$walk } }" + s"$epilogue }"
         case other => sys.error(s"lower: Wave 1 does not support Exit $other")
       }
@@ -1075,8 +1080,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line(
           s"rz.wrap({ def foldLoop(a: Array[Object], off: Int, n: Int, z0: $P): $P = { var acc0 = z0; $loopBody; acc0 }; " +
             s"xs match { " +
-            s"case leaf: RefArr => foldLoop(leaf.arr, 0, leaf.length, rz.unwrap(z)); " +
-            s"case s: SliceNode if s.base.isInstanceOf[RefArr] => foldLoop(s.base.asInstanceOf[RefArr].arr, s.offset, s.length, rz.unwrap(z)); " +
+            s"case leaf: RefArr => foldLoop(leaf.data, leaf.offset, leaf.length, rz.unwrap(z)); " +
+            s"case s: SliceNode if s.base.isInstanceOf[RefArr] => { val slf = s.base.asInstanceOf[RefArr]; foldLoop(slf.data, slf.offset + s.offset, s.length, rz.unwrap(z)) }; " +
             s"case _ => reduceLeaf${dir}Ref${p.name}(xs, rz.unwrap(z), (acc, v) => rz.unwrap(${comb("rz.wrap(acc)", wrapV(k))})) } })"
         )
       }
@@ -1138,18 +1143,21 @@ object GenCores extends BleepCodegenScript("GenCores") {
         // `a` ties the `a.length` baseline exactly — HotSpot loop-predication hoists the `leaf.length <= a.length`
         // check out once and the body stays a vectorized counted loop. (The compound `i < a.length && i < len`
         // form is what BREAKS vectorization — 0.48× on GraalVM — never use it.)
-        ee.line("val a = leaf.arr")
-        ee.line("val n = leaf.length")
+        // offset-leaf (D2b): read the logical window [offset, offset+length) — same shape as the SliceNode arm.
+        ee.line("val a = leaf.data")
+        ee.line("val so = leaf.offset")
+        ee.line("val sn = leaf.length")
         ee.line(s"var acc: $accT = z")
         if !backward then {
-          ee.line("var i = 0")
-          ee.open("while (i < n)")
+          ee.line("var i = so")
+          ee.line("val e = so + sn")
+          ee.open("while (i < e)")
           ee.line("acc = f.apply(acc, a(i))")
           ee.line("i += 1")
           ee.close()
         } else {
-          ee.line("var i = n - 1")
-          ee.open("while (i >= 0)")
+          ee.line("var i = so + sn - 1")
+          ee.open("while (i >= so)")
           ee.line("acc = f.apply(acc, a(i))")
           ee.line("i -= 1")
           ee.close()
@@ -1161,8 +1169,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
         // collapses to one such SliceNode, so a fold over a sliced array stays a flat lifted loop. Slices whose
         // base is NOT this leaf kind (nested trees) still route through the tree call below.
         ee.closeOpen(s"case s: SliceNode if s.base.isInstanceOf[${k.name}Arr] =>")
-        ee.line(s"val a = s.base.asInstanceOf[${k.name}Arr].arr")
-        ee.line("val so = s.offset")
+        ee.line(s"val slf = s.base.asInstanceOf[${k.name}Arr]")
+        ee.line("val a = slf.data")
+        ee.line("val so = slf.offset + s.offset")
         ee.line("val sn = s.length")
         ee.line(s"var acc: $accT = z")
         if !backward then {
@@ -1257,27 +1266,30 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.open(s"def reduceSeed${dir}${K}$tparam(xs: FBase, f: $foldT): $accT = xs match")
         ee.line(s"case o: ${K}One => ${cast("o.elem")}")
         ee.open(s"case leaf: ${K}Arr =>")
-        ee.line("val a = leaf.arr")
-        ee.line("val n = leaf.length")
+        ee.line("val a = leaf.data")
+        ee.line("val so = leaf.offset")
+        ee.line("val sn = leaf.length")
         if !backward then {
-          ee.line(s"var acc: $accT = ${cast("a(0)")}")
-          ee.line("var i = 1")
-          ee.open("while (i < n)")
+          ee.line(s"var acc: $accT = ${cast("a(so)")}")
+          ee.line("var i = so + 1")
+          ee.line("val e = so + sn")
+          ee.open("while (i < e)")
           ee.line("acc = f.apply(acc, a(i))")
           ee.line("i += 1")
           ee.close()
         } else {
-          ee.line(s"var acc: $accT = ${cast("a(n - 1)")}")
-          ee.line("var i = n - 2")
-          ee.open("while (i >= 0)")
+          ee.line(s"var acc: $accT = ${cast("a(so + sn - 1)")}")
+          ee.line("var i = so + sn - 2")
+          ee.open("while (i >= so)")
           ee.line("acc = f.apply(acc, a(i))")
           ee.line("i -= 1")
           ee.close()
         }
         ee.line("acc")
         ee.closeOpen(s"case s: SliceNode if s.base.isInstanceOf[${K}Arr] =>")
-        ee.line(s"val a = s.base.asInstanceOf[${K}Arr].arr")
-        ee.line("val so = s.offset")
+        ee.line(s"val slf = s.base.asInstanceOf[${K}Arr]")
+        ee.line("val a = slf.data")
+        ee.line("val so = slf.offset + s.offset")
         ee.line("val sn = s.length")
         if !backward then {
           ee.line(s"var acc: $accT = ${cast("a(so)")}")
@@ -1358,12 +1370,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line("case e: Empty => Empty.INSTANCE")
         ee.line(s"case o: ${KI}One => new ${KO}One($oneArg)")
         ee.open(s"case leaf: ${KI}Arr =>")
-        ee.line("val a = leaf.arr")
+        ee.line("val a = leaf.data")
+        ee.line("val so = leaf.offset")
         ee.line("val n = leaf.length")
         ee.line(s"val out = $outAlloc")
         ee.line("var i = 0")
         ee.open("while (i < n)")
-        ee.line(writeOut.replace("_RD_", readElem))
+        ee.line(writeOut.replace("_RD_", "a(so + i)"))
         ee.line("i += 1")
         ee.close()
         ee.line(s"new ${KO}Arr(out, n)")
@@ -1371,8 +1384,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
         // over a matching leaf (the take/drop/tail result shape) runs a standalone lifted loop instead
         // of the Traversers walk. SliceNode length >= 2 by construction, so no One canonicalisation.
         ee.closeOpen(s"case s: SliceNode if s.base.isInstanceOf[${KI}Arr] =>")
-        ee.line(s"val a = s.base.asInstanceOf[${KI}Arr].arr")
-        ee.line("val so = s.offset")
+        ee.line(s"val slf = s.base.asInstanceOf[${KI}Arr]")
+        ee.line("val a = slf.data")
+        ee.line("val so = slf.offset + s.offset")
         ee.line("val n = s.length")
         ee.line(s"val out = $outAlloc")
         ee.line("var i = 0")
@@ -1470,13 +1484,15 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line("case e: Empty => Empty.INSTANCE")
         ee.line(s"case o: ${K}One => if (p.apply(o.elem)) xs else Empty.INSTANCE")
         ee.open(s"case leaf: ${K}Arr =>")
-        ee.line("val a = leaf.arr")
+        ee.line("val a = leaf.data")
+        ee.line("val so = leaf.offset")
         ee.line("val n = leaf.length")
-        loopBody(i => s"a($i)")
+        loopBody(i => s"a(so + $i)")
         // SLICE FAST-PATH: same standalone lifted loop over the leaf window (take/drop results).
         ee.closeOpen(s"case s: SliceNode if s.base.isInstanceOf[${K}Arr] =>")
-        ee.line(s"val a = s.base.asInstanceOf[${K}Arr].arr")
-        ee.line("val so = s.offset")
+        ee.line(s"val slf = s.base.asInstanceOf[${K}Arr]")
+        ee.line("val a = slf.data")
+        ee.line("val so = slf.offset + s.offset")
         ee.line("val n = s.length")
         loopBody(i => s"a(so + $i)")
         ee.closeOpen("case _ =>")
@@ -1529,12 +1545,14 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line("case e: Empty => Empty.INSTANCE")
         ee.line(s"case one: ${KI}One => if (p.apply(one.elem)) new ${KO}One($oneArg) else Empty.INSTANCE")
         ee.open(s"case leaf: ${KI}Arr =>")
-        ee.line("val a = leaf.arr")
+        ee.line("val a = leaf.data")
+        ee.line("val so = leaf.offset")
         ee.line("val n = leaf.length")
-        loopBody(i => s"a($i)")
+        loopBody(i => s"a(so + $i)")
         ee.closeOpen(s"case s: SliceNode if s.base.isInstanceOf[${KI}Arr] =>")
-        ee.line(s"val a = s.base.asInstanceOf[${KI}Arr].arr")
-        ee.line("val so = s.offset")
+        ee.line(s"val slf = s.base.asInstanceOf[${KI}Arr]")
+        ee.line("val a = slf.data")
+        ee.line("val so = slf.offset + s.offset")
         ee.line("val n = s.length")
         loopBody(i => s"a(so + $i)")
         ee.closeOpen("case _ =>")
@@ -1608,7 +1626,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.open(s"def distinctLeaf$K(xs: FBase): FBase =")
         ee.line("val n = xs.length")
         // a leaf hands its backing array straight in (index only [0,n) — slack!), trees materialize once
-        ee.line(s"val src = (xs match { case lf: ${K}Arr => lf.arr; case _ => materialize$K(xs) })")
+        ee.line(s"val src = (xs match { case lf: ${K}Arr if lf.offset == 0 => lf.data; case _ => materialize$K(xs) })")
         ee.line(s"var out: Array[${k.arr}] = null")
         ee.line("var w = 0")
         K match {
@@ -1758,7 +1776,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line("case e: Empty => emptyPair")
         ee.line(s"case o: ${K}One => if (p.apply(o.elem)) new scala.Tuple2(xs, Empty.INSTANCE) else new scala.Tuple2(Empty.INSTANCE, xs)")
         ee.open(s"case leaf: ${K}Arr =>")
-        ee.line("val a = leaf.arr")
+        ee.line("val a = leaf.data")
+        ee.line("val so = leaf.offset")
         ee.line("val n = leaf.length")
         ee.line(s"val outA = new Array[${k.arr}](n)")
         ee.line(s"val outB = new Array[${k.arr}](n)")
@@ -1766,7 +1785,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line("var oa = 0")
         ee.line("var ob = 0")
         ee.open("while (i < n)")
-        ee.line("val e = a(i)")
+        ee.line("val e = a(so + i)")
         ee.line("if (p.apply(e)) { outA(oa) = e; oa += 1 } else { outB(ob) = e; ob += 1 }")
         ee.line("i += 1")
         ee.close()
@@ -1802,17 +1821,19 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line("case e: Empty => ()")
         ee.line(s"case o: ${K}One => f.apply(o.elem)")
         ee.open(s"case leaf: ${K}Arr =>")
-        ee.line("val a = leaf.arr")
+        ee.line("val a = leaf.data")
+        ee.line("val so = leaf.offset")
         ee.line("val n = leaf.length")
         ee.line("var i = 0")
         ee.open("while (i < n)")
-        ee.line("f.apply(a(i))")
+        ee.line("f.apply(a(so + i))")
         ee.line("i += 1")
         ee.close()
         // SLICE FAST-PATH: standalone lifted loop over the leaf window (take/drop results).
         ee.closeOpen(s"case s: SliceNode if s.base.isInstanceOf[${K}Arr] =>")
-        ee.line(s"val a = s.base.asInstanceOf[${K}Arr].arr")
-        ee.line("val so = s.offset")
+        ee.line(s"val slf = s.base.asInstanceOf[${K}Arr]")
+        ee.line("val a = slf.data")
+        ee.line("val so = slf.offset + s.offset")
         ee.line("val n = s.length")
         ee.line("var i = 0")
         ee.open("while (i < n)")
@@ -1865,19 +1886,20 @@ object GenCores extends BleepCodegenScript("GenCores") {
         }
         ee.line(s"new ${if refAcc then "Ref" else K}Arr(out, 2)")
         ee.closeOpen(s"case leaf: ${K}Arr =>")
-        ee.line("val a = leaf.arr")
+        ee.line("val a = leaf.data")
+        ee.line("val so = leaf.offset")
         ee.line("val n = leaf.length")
         ee.line(s"val out = new Array[$outArr](n + 1)")
         // The running acc is a REGISTER local, not a reload of out(i): scan is a serial dependency
         // chain, so `acc = f(out(i), a(i))` pays a store->load forward (~4-5 cycles) per element
         // where the register form pays the op alone (ScanIntBenchmark measured 0.22-0.40x of iarray
-        // with the out(i) reload).
+        // with the out(i) reload). `i` is the LOGICAL index (drives out(i)); the source read offsets by `so`.
         if !backward then {
           ee.line(s"out(0) = ${store("z")}")
           ee.line(s"var acc: $zT = z")
           ee.line("var i = 0")
           ee.open("while (i < n)")
-          ee.line("acc = f.apply(acc, a(i))")
+          ee.line("acc = f.apply(acc, a(so + i))")
           ee.line(s"out(i + 1) = ${store("acc")}")
           ee.line("i += 1")
           ee.close()
@@ -1886,7 +1908,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
           ee.line(s"var acc: $zT = z")
           ee.line("var i = n - 1")
           ee.open("while (i >= 0)")
-          ee.line("acc = f.apply(acc, a(i))")
+          ee.line("acc = f.apply(acc, a(so + i))")
           ee.line(s"out(i) = ${store("acc")}")
           ee.line("i -= 1")
           ee.close()
@@ -1930,15 +1952,17 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line("case e: Empty => 0")
         ee.line(s"case o: ${K}One => if (from <= 0 && p.apply(o.elem)) 0 else 1")
         ee.open(s"case leaf: ${K}Arr =>")
-        ee.line("val a = leaf.arr")
+        ee.line("val a = leaf.data")
+        ee.line("val so = leaf.offset")
         ee.line("val n = leaf.length")
         ee.line("var i = if (from < 0) 0 else from")
-        ee.line("while (i < n && !p.apply(a(i))) i += 1")
+        ee.line("while (i < n && !p.apply(a(so + i))) i += 1")
         ee.line("i")
         // SLICE FAST-PATH: the same clamped empty-body scan over the leaf window; returns LOGICAL index.
         ee.closeOpen(s"case s: SliceNode if s.base.isInstanceOf[${K}Arr] =>")
-        ee.line(s"val a = s.base.asInstanceOf[${K}Arr].arr")
-        ee.line("val so = s.offset")
+        ee.line(s"val slf = s.base.asInstanceOf[${K}Arr]")
+        ee.line("val a = slf.data")
+        ee.line("val so = slf.offset + s.offset")
         ee.line("val n = s.length")
         ee.line("var i = if (from < 0) 0 else from")
         ee.line("while (i < n && !p.apply(a(so + i))) i += 1")
@@ -1953,14 +1977,16 @@ object GenCores extends BleepCodegenScript("GenCores") {
         ee.line("case e: Empty => -1")
         ee.line(s"case o: ${K}One => if (end >= 0 && p.apply(o.elem)) 0 else -1")
         ee.open(s"case leaf: ${K}Arr =>")
-        ee.line("val a = leaf.arr")
+        ee.line("val a = leaf.data")
+        ee.line("val so = leaf.offset")
         ee.line("var i = if (end > leaf.length - 1) leaf.length - 1 else end")
-        ee.line("while (i >= 0 && !p.apply(a(i))) i -= 1")
+        ee.line("while (i >= 0 && !p.apply(a(so + i))) i -= 1")
         ee.line("if (i < 0) -1 else i")
         // SLICE FAST-PATH: descending clamped scan over the leaf window; returns LOGICAL index.
         ee.closeOpen(s"case s: SliceNode if s.base.isInstanceOf[${K}Arr] =>")
-        ee.line(s"val a = s.base.asInstanceOf[${K}Arr].arr")
-        ee.line("val so = s.offset")
+        ee.line(s"val slf = s.base.asInstanceOf[${K}Arr]")
+        ee.line("val a = slf.data")
+        ee.line("val so = slf.offset + s.offset")
         ee.line("var i = if (end > s.length - 1) s.length - 1 else end")
         ee.line("while (i >= 0 && !p.apply(a(so + i))) i -= 1")
         ee.line("if (i < 0) -1 else i")
@@ -2011,8 +2037,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
     def scFwdPeel(k: Kind, from0: String, cond: String => String): String = {
       val K = k.name
       s"{ val from0 = $from0; xs match { " +
-        s"case leaf: ${K}Arr => { val a = leaf.arr; val n = leaf.length; var j = from0; while (j < n && !(${cond("a(j)")})) j += 1; j }; " +
-        s"case sl: SliceNode if sl.base.isInstanceOf[${K}Arr] => { val a = sl.base.asInstanceOf[${K}Arr].arr; val so = sl.offset; val n = sl.length; var j = from0; while (j < n && !(${cond("a(so + j)")})) j += 1; j }; " +
+        s"case leaf: ${K}Arr => { val a = leaf.data; val so = leaf.offset; val n = leaf.length; var j = from0; while (j < n && !(${cond("a(so + j)")})) j += 1; j }; " +
+        s"case sl: SliceNode if sl.base.isInstanceOf[${K}Arr] => { val slf = sl.base.asInstanceOf[${K}Arr]; val a = slf.data; val so = slf.offset + sl.offset; val n = sl.length; var j = from0; while (j < n && !(${cond("a(so + j)")})) j += 1; j }; " +
         s"case o: ${K}One => if (from0 <= 0 && (${cond("o.elem")})) 0 else 1; " +
         s"case _: Empty => 0; " +
         s"case _ => scFwdLeaf${K}(xs, from0, (v) => ${cond("v")}) } }"
@@ -2021,8 +2047,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
     def scBwdPeel(k: Kind, end0: String, cond: String => String): String = {
       val K = k.name
       s"{ val end0 = $end0; xs match { " +
-        s"case leaf: ${K}Arr => { val a = leaf.arr; var j = end0; while (j >= 0 && !(${cond("a(j)")})) j -= 1; if (j < 0) -1 else j }; " +
-        s"case sl: SliceNode if sl.base.isInstanceOf[${K}Arr] => { val a = sl.base.asInstanceOf[${K}Arr].arr; val so = sl.offset; var j = end0; while (j >= 0 && !(${cond("a(so + j)")})) j -= 1; if (j < 0) -1 else j }; " +
+        s"case leaf: ${K}Arr => { val a = leaf.data; val so = leaf.offset; var j = end0; while (j >= 0 && !(${cond("a(so + j)")})) j -= 1; if (j < 0) -1 else j }; " +
+        s"case sl: SliceNode if sl.base.isInstanceOf[${K}Arr] => { val slf = sl.base.asInstanceOf[${K}Arr]; val a = slf.data; val so = slf.offset + sl.offset; var j = end0; while (j >= 0 && !(${cond("a(so + j)")})) j -= 1; if (j < 0) -1 else j }; " +
         s"case o: ${K}One => if (end0 >= 0 && (${cond("o.elem")})) 0 else -1; " +
         s"case _: Empty => -1; " +
         s"case _ => scBwdLeaf${K}(xs, end0, (v) => ${cond("v")}) } }"
@@ -2175,7 +2201,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // ${K}Dfs + a full DFS + the cursor for zero/one elements (measured 0.31-0.35x of the shared
     // empty-iterator / one-field-iterator the competitors return).
     val iteratorV = dispatchA(k =>
-      s"xs match { case leaf: ${k.name}Arr => new ${k.name}Cursor(leaf.arr, leaf.length); case o: ${k.name}One => scala.collection.Iterator.single(${
+      s"xs match { case leaf: ${k.name}Arr if leaf.offset == 0 => new ${k.name}Cursor(leaf.data, leaf.length); case o: ${k.name}One => scala.collection.Iterator.single(${
           if k.name == "Ref" then "o.elem" else k.box("o.elem")
         }); case _: Empty => scala.collection.Iterator.empty; case _ => new ${k.name}Cursor(materialize${k.name}(xs), xs.length) }"
     )
@@ -2331,7 +2357,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
         // `var out: Array[X] = null` would be `Found: Null, Required: Array[X]` in a -Yexplicit-nulls codebase
         // (dotty worked around this with `.toSeq.distinctBy(...).toFArray`). `out ne emptyA` is the same acmp.
         val emptyA = if ka.name == "Ref" then "Array.emptyObjectArray" else s"Array.empty${ka.name}Array"
-        s"{ val src = (xs match { case lf: ${ka.name}Arr => lf.arr; case _ => materialize${ka.name}(xs) }); " +
+        s"{ val src = (xs match { case lf: ${ka.name}Arr if lf.offset == 0 => lf.data; case _ => materialize${ka.name}(xs) }); " +
           s"var out: Array[${ka.arr}] = $emptyA; var w = 0; ${setup(kb)}; var i = 0; " +
           s"while (i < n) { val v = src(i); val k = $key; var isNew = false; ${probe(kb)}; " +
           s"if (isNew) { if (out ne $emptyA) { " +
@@ -2388,8 +2414,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
       s"{ def collectLoop(a: Array[${ka.arr}], off: Int, n: Int): FBase = { val out = new Array[${kb.arr}](n); var i = 0; var o = 0; " +
         s"while (i < n) { val v = a(off + i); if (p($toA)) { out(o) = $fWrite; o += 1 }; i += 1 }; trimLeaf${kb.name}(out, o, n) }; " +
         s"xs match { " +
-        s"case leaf: ${ka.name}Arr => collectLoop(leaf.arr, 0, leaf.length); " +
-        s"case s: SliceNode if s.base.isInstanceOf[${ka.name}Arr] => collectLoop(s.base.asInstanceOf[${ka.name}Arr].arr, s.offset, s.length); " +
+        s"case leaf: ${ka.name}Arr => collectLoop(leaf.data, leaf.offset, leaf.length); " +
+        s"case s: SliceNode if s.base.isInstanceOf[${ka.name}Arr] => { val slf = s.base.asInstanceOf[${ka.name}Arr]; collectLoop(slf.data, slf.offset + s.offset, s.length) }; " +
         s"case _ => collectLeaf${ka.name}${kb.name}$tpClause(xs, (v) => p($toA), (v) => $fBody) } }"
     }
     def collectGroupFallback(ka: Kind, kb: Kind): String =
@@ -2511,7 +2537,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       val leaf = s"${k.name}Arr"
       val one = s"${k.name}One"
       val fast =
-        s"(if (xs.isInstanceOf[$leaf]) xs.asInstanceOf[$leaf].arr(i) else if (xs.isInstanceOf[$one]) xs.asInstanceOf[$one].elem else ${k.lc}At(xs, i))"
+        s"(if (xs.isInstanceOf[$leaf]) { val lf = xs.asInstanceOf[$leaf]; lf.data(lf.offset + i) } else if (xs.isInstanceOf[$one]) xs.asInstanceOf[$one].elem else ${k.lc}At(xs, i))"
       if k.name == "Ref" then s"r.wrap($fast.asInstanceOf[A])" else s"r.wrap($fast)"
     }
     // mapConserve: I == O == k (always a COVERED pair — prim-self + Ref->Ref). List.mapConserve semantics with
@@ -2536,10 +2562,10 @@ object GenCores extends BleepCodegenScript("GenCores") {
       val scan = (read: String) =>
         s"var i = 0; var changed = false; var fa: A = null.asInstanceOf[A]; while (i < n && !changed) { val a = $read; fa = f(a); if (fa.asInstanceOf[AnyRef] eq a.asInstanceOf[AnyRef]) i += 1 else changed = true }"
       val bodyLeaf =
-        s"{ val sa = leaf.arr; val n = leaf.length; ${scan(readVal(k, saReadI))}; if (!changed) xs else $rebuild }"
+        s"{ val sa = leaf.data; val n = leaf.length; ${scan(readVal(k, saReadI))}; if (!changed) xs else $rebuild }"
       val bodyNode =
         s"{ val n = xs.length; ${scan(readVal(k, nodeReadI))}; if (!changed) xs else { val sa = materialize${k.name}(xs); $rebuild } }"
-      s"xs match { case leaf: ${k.name}Arr => $bodyLeaf; case _ => $bodyNode }"
+      s"xs match { case leaf: ${k.name}Arr if leaf.offset == 0 => $bodyLeaf; case _ => $bodyNode }"
     }
     // filterConserve: List.filterConserve semantics with p applied EXACTLY ONCE per element, identity-preserving.
     // Single pass: SCAN while every element is KEPT (p true), calling p once per scanned element. If the scan
@@ -2559,10 +2585,10 @@ object GenCores extends BleepCodegenScript("GenCores") {
         s"{ val out = new Array[${k.arr}](n); System.arraycopy(sa, 0, out, 0, i); var o = i; var j = i + 1; while (j < n) { if (p(${readVal(k, saReadJ)})) { out(o) = sa(j); o += 1 }; j += 1 }; ${leaf(k, "out", "o")} }"
       val scan = (read: String) => s"var i = 0; var dropped = false; while (i < n && !dropped) { if (p($read)) i += 1 else dropped = true }"
       val bodyLeaf =
-        s"{ val sa = leaf.arr; val n = leaf.length; ${scan(readVal(k, saReadI))}; if (!dropped) xs else $rebuild }"
+        s"{ val sa = leaf.data; val n = leaf.length; ${scan(readVal(k, saReadI))}; if (!dropped) xs else $rebuild }"
       val bodyNode =
         s"{ val n = xs.length; ${scan(readVal(k, nodeReadI))}; if (!dropped) xs else { val sa = materialize${k.name}(xs); $rebuild } }"
-      s"xs match { case leaf: ${k.name}Arr => $bodyLeaf; case _ => $bodyNode }"
+      s"xs match { case leaf: ${k.name}Arr if leaf.offset == 0 => $bodyLeaf; case _ => $bodyNode }"
     }
     // ONE pass, no inner buffer: dfs the source, and for each element append f(x)'s elements straight into a
     // growing output array (inline grow). The inner FArray is created, matched, and arraycopied within the
@@ -2583,7 +2609,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
             val inner = "summonFrom {\n" + opKinds
               .map { kb =>
                 val body =
-                  s"{ val sa = (xs match { case leaf: ${ka.name}Arr => leaf.arr; case _ => materialize${ka.name}(xs) }); " +
+                  s"{ val sa = (xs match { case leaf: ${ka.name}Arr if leaf.offset == 0 => leaf.data; case _ => materialize${ka.name}(xs) }); " +
                     s"flatMapShared${kb.name}(cnt, (i) => f(${readVal(ka, "sa(i)")})) }"
                 s"          case rb: ${kb.name}Repr[B] => { if (cnt == 0) Empty.INSTANCE else $body }"
               }
@@ -2600,7 +2626,9 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val refK = opKinds.find(_.name == "Ref").get
     // a node's contents as ONE flat backing array: a leaf hands its array straight in, anything else materializes
     // via the single dfs ONCE. Lets zip/unzip/matchAll2 loop over a flat array on every shape — never kindAt.
-    def flatOf(k: Kind, node: String): String = s"($node match { case lf: ${k.name}Arr => lf.arr; case _ => materialize${k.name}($node) })"
+    // Hand a leaf's backing array straight in for 0-based [0,n) iteration ONLY when offset==0; a sliced leaf
+    // (offset>0) materializes a fresh 0-based copy so downstream `sa(i)` reads stay correct.
+    def flatOf(k: Kind, node: String): String = s"($node match { case lf: ${k.name}Arr if lf.offset == 0 => lf.data; case _ => materialize${k.name}($node) })"
     val unzipV = withErr(
       "summonFrom {\n" + opKinds
         .map { k1 =>
@@ -2684,18 +2712,21 @@ object GenCores extends BleepCodegenScript("GenCores") {
           val inner = "summonFrom {\n" + opKinds
             .map { kb =>
               val rdB = (e: String) => if kb.name == "Ref" then s"r2.wrap($e.asInstanceOf[B])" else s"r2.wrap($e)"
-              // Read xs[i+xsOff] either from a hoisted leaf array `xa` (fast) or via ${ka}At (spine walk, no alloc).
-              val xLeafRd = readVal(ka, "xa(i + xsOff)")
+              // Read xs[i+xsOff] either from a hoisted leaf array `xa` at its own `xao` offset (fast) or via
+              // ${ka}At (spine walk, no alloc). D2b: a leaf's logical j lives at xa(xao + j).
+              val xLeafRd = readVal(ka, "xa(xao + i + xsOff)")
               val xNodeRd = readVal(ka, s"${ka.lc}At(xs, i + xsOff)")
-              val tLeafRd = rdB("ta(i)")
+              val tLeafRd = rdB("ta(tao + i)")
               val tNodeRd = rdB(s"${kb.lc}At(that, i)")
               def loop(xr: String, tr: String) = s"var i = 0; while (i < m && pred($xr, $tr)) i += 1; i == m"
-              // 4-way split so EACH operand that IS a leaf keeps its backing array hoisted once (a tight unboxed
-              // read), and only a genuinely non-leaf operand pays the per-index ${k}At — with NO materialization
-              // of either side (the old flatOf allocated an Object[] per non-leaf operand; see the comment above).
-              val bothLeaf = s"{ val xa = xs.asInstanceOf[${ka.name}Arr].arr; val ta = that.asInstanceOf[${kb.name}Arr].arr; ${loop(xLeafRd, tLeafRd)} }"
-              val xLeafOnly = s"{ val xa = xs.asInstanceOf[${ka.name}Arr].arr; ${loop(xLeafRd, tNodeRd)} }"
-              val tLeafOnly = s"{ val ta = that.asInstanceOf[${kb.name}Arr].arr; ${loop(xNodeRd, tLeafRd)} }"
+              // 4-way split so EACH operand that IS a leaf keeps its backing array + offset hoisted once (a tight
+              // unboxed read), and only a genuinely non-leaf operand pays the per-index ${k}At — with NO
+              // materialization of either side (the old flatOf allocated an Object[] per non-leaf operand).
+              val xBind = s"val xl0 = xs.asInstanceOf[${ka.name}Arr]; val xa = xl0.data; val xao = xl0.offset;"
+              val tBind = s"val tl0 = that.asInstanceOf[${kb.name}Arr]; val ta = tl0.data; val tao = tl0.offset;"
+              val bothLeaf = s"{ $xBind $tBind ${loop(xLeafRd, tLeafRd)} }"
+              val xLeafOnly = s"{ $xBind ${loop(xLeafRd, tNodeRd)} }"
+              val tLeafOnly = s"{ $tBind ${loop(xNodeRd, tLeafRd)} }"
               val neither = s"{ ${loop(xNodeRd, tNodeRd)} }"
               val body =
                 s"{ val xl = xs.isInstanceOf[${ka.name}Arr]; val tl = that.isInstanceOf[${kb.name}Arr]; " +
@@ -2732,7 +2763,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
         // explicit-nulls-clean: initialize `src` directly from the match (never a bare `var src: Array[X] = null`,
         // which is `Found: Null, Required: Array[X]` when this inline body expands at a -Yexplicit-nulls caller).
         s"var owned = false; " +
-        s"val src: Array[${k.arr}] = (xs match { case leaf: ${k.name}Arr => leaf.arr; case _ => { owned = true; materialize${k.name}(xs) } }); " +
+        s"val src: Array[${k.arr}] = (xs match { case leaf: ${k.name}Arr if leaf.offset == 0 => leaf.data; case _ => { owned = true; materialize${k.name}(xs) } }); " +
         s"var q = 1; while (q < n && !(${lt("src(q)", "src(q - 1)")})) q += 1; " +
         s"if (q == n) xs else { var isRev = false; " +
         s"if (q == 1) { var dq = 2; var rising = false; while (dq < n && !rising) { if (${lt("src(dq)", "src(dq - 1)")}) dq += 1 else rising = true }; if (!rising) isRev = true }; " +
@@ -2837,7 +2868,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       // sortBy only READS `vals` (keys derive from it, the permute copies out of it) — unlike
       // sorted/sortWith nothing is mutated in place, so a leaf input hands its backing array straight
       // in and skips the materialize copy. `n` must be the LOGICAL length (leaves carry slack).
-      s"{ val vals = (xs match { case leaf: ${ka.name}Arr => leaf.arr; case _ => materialize${ka.name}(xs) }); val n = xs.length; if (n < 2) xs else { $fast } }"
+      s"{ val vals = (xs match { case leaf: ${ka.name}Arr if leaf.offset == 0 => leaf.data; case _ => materialize${ka.name}(xs) }); val n = xs.length; if (n < 2) xs else { $fast } }"
     }
     val sortByV = dispatchA(ka => dispatchBmap(kb => sortByBody(ka, kb)))
     // groupBy/groupMap: ONE unboxed pass. Each element's key picks (or creates) a per-group `${Kind}Group`
@@ -2853,8 +2884,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
       def walk(perElem: String => String): String = {
         val leafLoop = (arr: String, off: String) => s"val a = $arr; var i = 0; while (i < n) { ${perElem(readVal(k, s"a($off)"))}; i += 1 }"
         s"xs match { " +
-          s"case leaf: ${K}Arr => { val n = leaf.length; ${leafLoop("leaf.arr", "i")} }; " +
-          s"case s: SliceNode if s.base.isInstanceOf[${K}Arr] => { val n = s.length; val so = s.offset; ${leafLoop(s"s.base.asInstanceOf[${K}Arr].arr", "so + i")} }; " +
+          s"case leaf: ${K}Arr => { val n = leaf.length; val lo = leaf.offset; ${leafLoop("leaf.data", "lo + i")} }; " +
+          s"case s: SliceNode if s.base.isInstanceOf[${K}Arr] => { val n = s.length; val slf = s.base.asInstanceOf[${K}Arr]; val so = slf.offset + s.offset; ${leafLoop("slf.data", "so + i")} }; " +
           s"case _ => { val c = new ${K}Dfs { ${runMethods(k, e0 => perElem(e0))}; def onOne(v: ${k.arr}): Unit = { ${perElem(readOne(k))} } }; dfsC${K}(xs, c) } }"
       }
       // generic keys: boxed K in a java.util.HashMap (no encounter-order promise — matches List/Vector).
@@ -2967,7 +2998,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val toArrayV = dispatchA { k =>
       if k.name == "Ref" then
         s"""if (ct.runtimeClass eq classOf[Object]) materializeRef(xs).asInstanceOf[Array[B]]
-           |    else { val n = xs.length; val out = ct.newArray(n); xs match { case leaf: RefArr => System.arraycopy(leaf.arr, 0, out, 0, n); case _ => System.arraycopy(materializeRef(xs), 0, out.asInstanceOf[Array[Object]], 0, n) }; out }""".stripMargin
+           |    else { val n = xs.length; val out = ct.newArray(n); xs match { case leaf: RefArr => System.arraycopy(leaf.data, leaf.offset, out, 0, n); case _ => System.arraycopy(materializeRef(xs), 0, out.asInstanceOf[Array[Object]], 0, n) }; out }""".stripMargin
       else
         s"""if (ct.runtimeClass eq classOf[${k.arr}]) materialize${k.name}(xs).asInstanceOf[Array[B]]
            |    else { val n = xs.length; val out = ct.newArray(n); var o0 = 0; val c = new ${k.name}Dfs { def onRunF(a: Array[${k.arr}], start: Int, count: Int): Unit = { var j = start; val e = start + count; while (j < e) { out(o0) = a(j).asInstanceOf[B]; o0 += 1; j += 1 } }; def onRunB(a: Array[${k.arr}], start: Int, count: Int): Unit = { var j = start; val e = start - count; while (j > e) { out(o0) = a(j).asInstanceOf[B]; o0 += 1; j -= 1 } }; def onOne(v: ${k.arr}): Unit = { out(o0) = v.asInstanceOf[B]; o0 += 1 } }; dfsC${k.name}(xs, c); out }""".stripMargin
@@ -2977,8 +3008,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
     val copyToArrayV = dispatchA { k =>
       // dest is Array[B]; for the matching kind the run arrays are Array[k.arr] = Array[B] at runtime.
       val leafFast =
-        if k.name == "Ref" then "case leaf: RefArr => System.arraycopy(leaf.arr, 0, dest.asInstanceOf[Array[Object]], start, n)"
-        else s"case leaf: ${k.name}Arr => System.arraycopy(leaf.arr, 0, dest.asInstanceOf[Array[${k.arr}]], start, n)"
+        if k.name == "Ref" then "case leaf: RefArr => System.arraycopy(leaf.data, leaf.offset, dest.asInstanceOf[Array[Object]], start, n)"
+        else s"case leaf: ${k.name}Arr => System.arraycopy(leaf.data, leaf.offset, dest.asInstanceOf[Array[${k.arr}]], start, n)"
       val store = if k.name == "Ref" then "dest(start + w) = a(j).asInstanceOf[B]" else "dest(start + w) = a(j).asInstanceOf[B]"
       val storeOne = "dest(start + w) = v.asInstanceOf[B]"
       s"""{ val avail = dest.length - start; val n = if (len < xs.length) (if (len < avail) len else avail) else (if (xs.length < avail) xs.length else avail)
@@ -3424,24 +3455,26 @@ object GenCores extends BleepCodegenScript("GenCores") {
     e.line("FBase cur = node;")
     // leaf
     e.open(s"if (cur instanceof ${K}Arr leaf)")
-    e.line(s"$je[] wa = leaf.arr;")
+    e.line(s"$je[] wa = leaf.data;")
+    e.line("int lo = leaf.offset;")
     e.line("int c = leaf.length;")
     e.open("if (skip < c)")
     e.line("int avail = c - skip;")
     e.line("int n = take < avail ? take : avail;")
-    if !backward then s.actRun("wa", "skip", "n")
-    else s.actRun("wa", "c - 1 - skip", "n")
+    if !backward then s.actRun("wa", "lo + skip", "n")
+    else s.actRun("wa", "lo + c - 1 - skip", "n")
     e.close()
     // flatMap node: flatten to one contiguous leaf, then the SAME windowed leaf run (a window may span segments).
     e.closeOpen(s"else if (cur instanceof ${K}FlatMap fm)")
     e.line(s"${K}Arr ffl = fm.flat();")
-    e.line(s"$je[] wa = ffl.arr;")
+    e.line(s"$je[] wa = ffl.data;")
+    e.line("int lo = ffl.offset;")
     e.line("int c = ffl.length;")
     e.open("if (skip < c)")
     e.line("int avail = c - skip;")
     e.line("int n = take < avail ? take : avail;")
-    if !backward then s.actRun("wa", "skip", "n")
-    else s.actRun("wa", "c - 1 - skip", "n")
+    if !backward then s.actRun("wa", "lo + skip", "n")
+    else s.actRun("wa", "lo + c - 1 - skip", "n")
     e.close()
     // one
     e.closeOpen(s"else if (cur instanceof ${K}One one)")
@@ -3485,12 +3518,13 @@ object GenCores extends BleepCodegenScript("GenCores") {
     e.line("int so = sl.offset;")
     e.line("int sn = sl.length;")
     e.open(s"if (sl.base instanceof ${K}Arr lf)")
-    e.line(s"$je[] wa = lf.arr;")
+    e.line(s"$je[] wa = lf.data;")
+    e.line("int lo = lf.offset;")
     e.open("if (skip < sn)")
     e.line("int avail = sn - skip;")
     e.line("int n = take < avail ? take : avail;")
-    if !backward then s.actRun("wa", "so + skip", "n")
-    else s.actRun("wa", "so + sn - 1 - skip", "n")
+    if !backward then s.actRun("wa", "lo + so + skip", "n")
+    else s.actRun("wa", "lo + so + sn - 1 - skip", "n")
     e.close()
     e.closeOpen("else")
     sliceDeep(e, s, "sl.base", "so", "sn")
@@ -3513,15 +3547,16 @@ object GenCores extends BleepCodegenScript("GenCores") {
     e.line("int ui = u.index;")
     e.line("int ul = u.length;")
     e.open(s"if (u.base instanceof ${K}Arr lf2)")
-    e.line(s"$je[] la = lf2.arr;")
+    e.line(s"$je[] la = lf2.data;")
+    e.line("int lo = lf2.offset;")
     if !backward then {
-      updLeafRun(e, s, "la", "0", "ui"); stop()
+      updLeafRun(e, s, "la", "lo", "ui"); stop()
       elemSeg("u.elem"); stop()
-      updLeafRun(e, s, "la", "ui + 1", "ul - ui - 1")
+      updLeafRun(e, s, "la", "lo + ui + 1", "ul - ui - 1")
     } else {
-      updLeafRun(e, s, "la", "ui + 1", "ul - ui - 1"); stop()
+      updLeafRun(e, s, "la", "lo + ui + 1", "ul - ui - 1"); stop()
       elemSeg("u.elem"); stop()
-      updLeafRun(e, s, "la", "0", "ui")
+      updLeafRun(e, s, "la", "lo", "ui")
     }
     e.closeOpen("else")
     if !backward then {
@@ -3707,9 +3742,10 @@ object GenCores extends BleepCodegenScript("GenCores") {
     spec.prelude()
     e.open("while (cur != null)")
     e.line("FBase next = null;")
-    // leaf
+    // leaf (D2b offset-leaf): run the logical window [offset, offset+length) via the direction-aware `run`.
     e.open(s"if (cur instanceof ${K}Arr leaf)")
-    spec.runLeaf("leaf.arr", "leaf.length")
+    if !backward then spec.run("leaf.data", "leaf.offset", "leaf.length")
+    else spec.run("leaf.data", "leaf.offset + leaf.length - 1", "leaf.length")
     // flatMap node: run each inner segment as a whole-leaf run. runLeaf emits the per-segment loop in `backward`
     // direction; only the segment iteration order flips. `foffs[i+1]-foffs[i]` = segment i's LOGICAL length.
     e.closeOpen(s"else if (cur instanceof ${K}FlatMap fm)")
@@ -3749,7 +3785,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     e.closeOpen("else if (cur instanceof Concat c)")
     if !backward then {
       e.open(s"if (c.left instanceof ${K}Arr clf)")
-      spec.runLeaf("clf.arr", "clf.length")
+      spec.run("clf.data", "clf.offset", "clf.length")
       e.line("next = c.right;")
       e.closeOpen(s"else if (c.left instanceof ${K}One clo)")
       spec.act("clo.elem")
@@ -3760,7 +3796,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       e.close()
     } else {
       e.open(s"if (c.right instanceof ${K}Arr crf)")
-      spec.runLeaf("crf.arr", "crf.length")
+      spec.run("crf.data", "crf.offset + crf.length - 1", "crf.length")
       e.line("next = c.left;")
       e.closeOpen(s"else if (c.right instanceof ${K}One cro)")
       spec.act("cro.elem")
@@ -3778,8 +3814,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
     e.line("int so = s.offset;")
     e.line("int sn = s.length;")
     e.open(s"if (s.base instanceof ${K}Arr lf)")
-    if !backward then spec.run("lf.arr", "so", "sn")
-    else spec.run("lf.arr", "so + sn - 1", "sn")
+    if !backward then spec.run("lf.data", "lf.offset + so", "sn")
+    else spec.run("lf.data", "lf.offset + so + sn - 1", "sn")
     e.closeOpen("else")
     spec.winCall("s.base", "so", "sn")
     e.close()
@@ -3790,7 +3826,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     e.line("int pn = pad.length;")
     if !backward then {
       e.open(s"if (pad.base instanceof ${K}Arr lf)")
-      spec.run("lf.arr", "0", "bl")
+      spec.run("lf.data", "lf.offset", "bl")
       e.closeOpen("else")
       spec.winCall("pad.base", "0", "bl")
       e.close()
@@ -3806,7 +3842,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       e.line("pj -= 1;")
       e.close()
       e.open(s"if (pad.base instanceof ${K}Arr lf)")
-      spec.run("lf.arr", "bl - 1", "bl")
+      spec.run("lf.data", "lf.offset + bl - 1", "bl")
       e.closeOpen("else")
       spec.winCall("pad.base", "0", "bl")
       e.close()
@@ -3816,15 +3852,16 @@ object GenCores extends BleepCodegenScript("GenCores") {
     e.line("int ui = u.index;")
     e.line("int ul = u.length;")
     e.open(s"if (u.base instanceof ${K}Arr lf)")
-    e.line(s"$je[] la = lf.arr;")
+    e.line(s"$je[] la = lf.data;")
+    e.line("int lo = lf.offset;")
     if !backward then {
-      spec.run("la", "0", "ui")
+      spec.run("la", "lo", "ui")
       spec.act("u.elem")
-      spec.run("la", "ui + 1", "ul - ui - 1")
+      spec.run("la", "lo + ui + 1", "ul - ui - 1")
     } else {
-      spec.run("la", "ul - 1", "ul - ui - 1")
+      spec.run("la", "lo + ul - 1", "ul - ui - 1")
       spec.act("u.elem")
-      spec.run("la", "ui - 1", "ui")
+      spec.run("la", "lo + ui - 1", "ui")
     }
     e.closeOpen("else")
     if !backward then {
@@ -4757,7 +4794,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     e.line("FBase next = null;")
     // leaf: a whole-leaf run starting at array index 0.
     e.open(s"if (cur instanceof ${K}Arr leaf)")
-    runScan("leaf.arr", "0", "leaf.length")
+    runScan("leaf.data", "leaf.offset", "leaf.length")
     // flatMap node: scan each inner segment as a run (cum advances across segments; runScan returns on a hit).
     e.closeOpen(s"else if (cur instanceof ${K}FlatMap fm)")
     e.line(s"$je[][] fsegs = fm.segs;")
@@ -4795,7 +4832,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     e.closeOpen("else if (cur instanceof Concat cc)")
     if !backward then {
       e.open(s"if (cc.left instanceof ${K}Arr clf)")
-      runScan("clf.arr", "0", "clf.length")
+      runScan("clf.data", "clf.offset", "clf.length")
       e.line("next = cc.right;")
       e.closeOpen(s"else if (cc.left instanceof ${K}One clo)")
       oneScan("clo.elem")
@@ -4806,7 +4843,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       e.close()
     } else {
       e.open(s"if (cc.right instanceof ${K}Arr crf)")
-      runScan("crf.arr", "0", "crf.length")
+      runScan("crf.data", "crf.offset", "crf.length")
       e.line("next = cc.left;")
       e.closeOpen(s"else if (cc.right instanceof ${K}One cro)")
       oneScan("cro.elem")
@@ -4838,7 +4875,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     e.line("int so = s.offset;")
     e.line("int sn = s.length;")
     e.open(s"if (s.base instanceof ${K}Arr lf)")
-    runScan("lf.arr", "so", "sn")
+    runScan("lf.data", "lf.offset + so", "sn")
     e.closeOpen("else")
     runScanBoxed("s.base", "so", "sn")
     e.close()
@@ -4849,7 +4886,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     if !backward then {
       e.line("int padBaseLo = cum;")
       e.open(s"if (pad.base instanceof ${K}Arr lf)")
-      runScan("lf.arr", "0", "bl")
+      runScan("lf.data", "lf.offset", "bl")
       e.closeOpen("else")
       runScanBoxed("pad.base", "0", "bl")
       e.close()
@@ -4860,7 +4897,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
       e.line("int padBaseLo = cum - (pn - 1);")
       fillerScan("pad.filler", "pn - bl", "padBaseLo + bl")
       e.open(s"if (pad.base instanceof ${K}Arr lf)")
-      runScan("lf.arr", "0", "bl")
+      runScan("lf.data", "lf.offset", "bl")
       e.closeOpen("else")
       runScanBoxed("pad.base", "0", "bl")
       e.close()
@@ -4870,15 +4907,16 @@ object GenCores extends BleepCodegenScript("GenCores") {
     e.line("int ui = u.index;")
     e.line("int ul = u.length;")
     e.open(s"if (u.base instanceof ${K}Arr lf)")
-    e.line(s"$je[] la = lf.arr;")
+    e.line(s"$je[] la = lf.data;")
+    e.line("int ulo = lf.offset;")
     if !backward then {
-      runScan("la", "0", "ui")
+      runScan("la", "ulo", "ui")
       oneScan("u.elem")
-      runScan("la", "ui + 1", "ul - ui - 1")
+      runScan("la", "ulo + ui + 1", "ul - ui - 1")
     } else {
-      runScan("la", "ui + 1", "ul - ui - 1")
+      runScan("la", "ulo + ui + 1", "ul - ui - 1")
       oneScan("u.elem")
-      runScan("la", "0", "ui")
+      runScan("la", "ulo", "ui")
     }
     e.closeOpen("else")
     if !backward then {
@@ -4990,36 +5028,42 @@ object GenCores extends BleepCodegenScript("GenCores") {
 
   private def primCore(p: Prim): String = {
     val cls = s"${p.name}Arr"
-    def one1(idx: String): String = s"new ${p.name}One(arr[$idx])"
+    // D2b offset-leaf: logical element i lives at `data[offset + i]`. `take`/`drop`/`slice`/`init` of a leaf
+    // return a NEW leaf (one small alloc, same class, no SliceNode wrapper) — the offset composes with the
+    // existing logical-length slack (data.length >= offset + length). A 2-arg ctor keeps offset=0 for the hot
+    // construction paths (map/fromValues/builders); the 3-arg ctor is the slice path only.
+    def one1(idx: String): String = s"new ${p.name}One(data[offset + $idx])"
     // equals: the range Arrays.equals is a vectorized intrinsic — use it for every prim EXCEPT
     // float/double, whose Arrays.equals uses BIT equality (NaN == NaN true, +0 != -0) while Scala ==
-    // is IEEE; those keep the manual != loop for List parity.
+    // is IEEE; those keep the manual != loop for List parity. Offset-aware on BOTH operands.
     val eqBody = p.name match {
       case "Float" | "Double" =>
-        "for (int i = 0; i < length; i++) if (arr[i] != other.arr[i]) return false;\n        return true;"
+        "for (int i = 0; i < length; i++) if (data[offset + i] != other.data[other.offset + i]) return false;\n        return true;"
       case _ =>
-        "return Arrays.equals(arr, 0, length, other.arr, 0, other.length);"
+        "return Arrays.equals(data, offset, offset + length, other.data, other.offset, other.offset + other.length);"
     }
     s"""package farray;
        |
        |import java.util.Arrays;
        |
-       |// GENERATED by GenCores — do not edit. ${p.jt}[]-backed specialized leaf.
+       |// GENERATED by GenCores — do not edit. ${p.jt}[]-backed specialized leaf. `data[offset + i]` = logical i (D2b).
        |public final class $cls extends FBase {
-       |    public final ${p.jt}[] arr;
-       |    public $cls(${p.jt}[] arr, int length) { super(length); this.arr = arr; }
+       |    public final ${p.jt}[] data;
+       |    public final int offset;
+       |    public $cls(${p.jt}[] data, int length) { super(length); this.data = data; this.offset = 0; }
+       |    public $cls(${p.jt}[] data, int offset, int length) { super(length); this.data = data; this.offset = offset; }
        |
-       |    @Override protected Object applyBoxedUnchecked(int i) { return ${p.boxed}.valueOf(arr[i]); }
+       |    @Override protected Object applyBoxedUnchecked(int i) { return ${p.boxed}.valueOf(data[offset + i]); }
        |
        |    @Override public FBase take(int n) { int m = n < 0 ? 0 : (n > length ? length : n); return m == 0 ? Empty.INSTANCE : (m == 1 ? ${one1(
         "0"
-      )} : (m == length ? this : new SliceNode(this, 0, m))); }
+      )} : (m == length ? this : new $cls(data, offset, m))); }
        |    @Override public FBase drop(int n) { int d = n < 0 ? 0 : (n > length ? length : n); int m = length - d; return m == 0 ? Empty.INSTANCE : (m == 1 ? ${one1(
         "d"
-      )} : (d == 0 ? this : new SliceNode(this, d, m))); }
+      )} : (d == 0 ? this : new $cls(data, offset + d, m))); }
        |    @Override public FBase slice(int from, int until) { int lo = from < 0 ? 0 : from, hi = until > length ? length : until; int m = hi - lo; if (m <= 0) return Empty.INSTANCE; if (m == 1) return ${one1(
         "lo"
-      )}; return (lo == 0 && hi == length) ? this : new SliceNode(this, lo, m); }
+      )}; return (lo == 0 && hi == length) ? this : new $cls(data, offset + lo, m); }
        |    @Override public FBase reverse() { return length < 2 ? this : new ReverseNode(this); }
        |    @Override public FBase init() { return take(length - 1); }
        |
@@ -5042,15 +5086,18 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |import java.util.Arrays;
        |
        |// GENERATED by GenCores — do not edit. Object[]-backed leaf for reference element types.
+       |// `data[offset + i]` = logical element i (D2b offset-leaf; slice = new leaf, no SliceNode wrapper).
        |public final class RefArr extends FBase {
-       |    public final Object[] arr;
-       |    public RefArr(Object[] arr, int length) { super(length); this.arr = arr; }
+       |    public final Object[] data;
+       |    public final int offset;
+       |    public RefArr(Object[] data, int length) { super(length); this.data = data; this.offset = 0; }
+       |    public RefArr(Object[] data, int offset, int length) { super(length); this.data = data; this.offset = offset; }
        |
-       |    @Override protected Object applyBoxedUnchecked(int i) { return arr[i]; }
+       |    @Override protected Object applyBoxedUnchecked(int i) { return data[offset + i]; }
        |
-       |    @Override public FBase take(int n) { int m = n < 0 ? 0 : (n > length ? length : n); return m == 0 ? Empty.INSTANCE : (m == 1 ? new RefOne(arr[0]) : (m == length ? this : new SliceNode(this, 0, m))); }
-       |    @Override public FBase drop(int n) { int d = n < 0 ? 0 : (n > length ? length : n); int m = length - d; return m == 0 ? Empty.INSTANCE : (m == 1 ? new RefOne(arr[d]) : (d == 0 ? this : new SliceNode(this, d, m))); }
-       |    @Override public FBase slice(int from, int until) { int lo = from < 0 ? 0 : from, hi = until > length ? length : until; int m = hi - lo; if (m <= 0) return Empty.INSTANCE; if (m == 1) return new RefOne(arr[lo]); return (lo == 0 && hi == length) ? this : new SliceNode(this, lo, m); }
+       |    @Override public FBase take(int n) { int m = n < 0 ? 0 : (n > length ? length : n); return m == 0 ? Empty.INSTANCE : (m == 1 ? new RefOne(data[offset]) : (m == length ? this : new RefArr(data, offset, m))); }
+       |    @Override public FBase drop(int n) { int d = n < 0 ? 0 : (n > length ? length : n); int m = length - d; return m == 0 ? Empty.INSTANCE : (m == 1 ? new RefOne(data[offset + d]) : (d == 0 ? this : new RefArr(data, offset + d, m))); }
+       |    @Override public FBase slice(int from, int until) { int lo = from < 0 ? 0 : from, hi = until > length ? length : until; int m = hi - lo; if (m <= 0) return Empty.INSTANCE; if (m == 1) return new RefOne(data[offset + lo]); return (lo == 0 && hi == length) ? this : new RefArr(data, offset + lo, m); }
        |    @Override public FBase reverse() { return length < 2 ? this : new ReverseNode(this); }
        |    @Override public FBase init() { return take(length - 1); }
        |
@@ -5061,7 +5108,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |        RefArr other = (RefArr) obj;
        |        if (other.length != length) return false;
        |        // range Arrays.equals: same Objects.equals semantics as the old manual loop, null-safe.
-       |        return Arrays.equals(arr, 0, length, other.arr, 0, other.length);
+       |        return Arrays.equals(data, offset, offset + length, other.data, other.offset, other.offset + other.length);
        |    }
        |    @Override public String toString() { return Concat.render(this); }
        |}
@@ -5073,7 +5120,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // four ops-kinds (Int/Long/Double/Ref) leaves/payload nodes are ever constructed, so those are the cases;
     // anything else (shouldn't happen) falls back to applyBoxed -> RefOne.
     val oneLeaf = (prims.map(p => (p.name, s"${p.name}Arr")) :+ ("Ref", "RefArr"))
-      .map { case (k, leaf) => s"        if (n instanceof $leaf a) return new ${k}One(a.arr[i]);" }
+      .map { case (k, leaf) => s"        if (n instanceof $leaf a) return new ${k}One(a.data[a.offset + i]);" }
       .mkString("\n")
     // Append/Prepend exist for every prim kind + Ref; Pad/Updated only for padKinds (Int/Long/Double/Ref).
     val oneAppendPrepend = (prims.map(_.name) :+ "Ref")
@@ -5434,8 +5481,8 @@ object GenCores extends BleepCodegenScript("GenCores") {
       .map(p =>
         s"""       |        if (node instanceof ${p.name}Arr a) { if (rev) for (int i = a.length - 1; i >= 0; i--) hs[pos++] = ${eh(
             p,
-            "a.arr[i]"
-          )}; else for (int i = 0; i < a.length; i++) hs[pos++] = ${eh(p, "a.arr[i]")}; return pos; }"""
+            "a.data[a.offset + i]"
+          )}; else for (int i = 0; i < a.length; i++) hs[pos++] = ${eh(p, "a.data[a.offset + i]")}; return pos; }"""
       )
       .mkString("\n")
     val appendFill = prims
@@ -5503,13 +5550,15 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // (hashing a 10-element slice of a 1M leaf allocated 4MB).
     val hashOfFast = {
       val leafArms = (prims.map(_.name) :+ "Ref")
-        .map(n => s"""       |        if (node instanceof ${n}Arr a) return hash${n}Run(a.arr, 0, a.length);""")
+        .map(n => s"""       |        if (node instanceof ${n}Arr a) return hash${n}Run(a.data, a.offset, a.length);""")
         .mkString("\n")
       val oneArms = oneKinds
         .map { case (n, _, _) => s"""       |        if (node instanceof ${n}One o) return finalizeHash(mix(SEED, ${ehName(n, "o.elem")}), 1);""" }
         .mkString("\n")
       val sliceArms = (prims.map(_.name) :+ "Ref")
-        .map(n => s"""       |        if (node instanceof SliceNode s && s.base instanceof ${n}Arr a) return hash${n}Run(a.arr, s.offset, s.length);""")
+        .map(n =>
+          s"""       |        if (node instanceof SliceNode s && s.base instanceof ${n}Arr a) return hash${n}Run(a.data, a.offset + s.offset, s.length);"""
+        )
         .mkString("\n")
       leafArms + "\n" + oneArms + "\n" + sliceArms
     }
@@ -5517,7 +5566,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // tmp-buffer fallback for a hypothetical non-leaf base.
     val sliceFillArms = (prims.map(_.name) :+ "Ref")
       .map { n =>
-        val ehE = ehName(n, "a.arr[s.offset + i]")
+        val ehE = ehName(n, "a.data[a.offset + s.offset + i]")
         s"""       |            if (s.base instanceof ${n}Arr a) { if (rev) for (int i = s.length - 1; i >= 0; i--) hs[pos++] = $ehE; else for (int i = 0; i < s.length; i++) hs[pos++] = $ehE; return pos; }"""
       }
       .mkString("\n")
@@ -5569,7 +5618,7 @@ $runHashers
        |    private static int fill(FBase node, boolean rev, int[] hs, int pos) {
        |        if (node instanceof Empty) return pos;
 $leafFill
-       |        if (node instanceof RefArr a) { if (rev) for (int i = a.length - 1; i >= 0; i--) hs[pos++] = scala.runtime.Statics.anyHash(a.arr[i]); else for (int i = 0; i < a.length; i++) hs[pos++] = scala.runtime.Statics.anyHash(a.arr[i]); return pos; }
+       |        if (node instanceof RefArr a) { if (rev) for (int i = a.length - 1; i >= 0; i--) hs[pos++] = scala.runtime.Statics.anyHash(a.data[a.offset + i]); else for (int i = 0; i < a.length; i++) hs[pos++] = scala.runtime.Statics.anyHash(a.data[a.offset + i]); return pos; }
        |        if (node instanceof Concat c) { if (rev) { pos = fill(c.right, true, hs, pos); return fill(c.left, true, hs, pos); } else { pos = fill(c.left, false, hs, pos); return fill(c.right, false, hs, pos); } }
 $appendFill
 $prependFill

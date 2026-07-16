@@ -15,8 +15,8 @@
   ({
     val s: FBase = src0
     val a: Array[Int] = s match {
-      case l: IntArr =>
-        (l.arr: Array[Int])
+      case l: IntArr if l.offset.==(0) =>
+        (l.data: Array[Int])
       case _ =>
         Array.emptyIntArray
     }
