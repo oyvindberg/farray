@@ -265,3 +265,49 @@ scrutinees are ≥3-element flat/structural shapes with no RefOne among them, so
 cannot move this op family — its cost is the SliceNode alloc + tower, which is exactly D2b's target.
 The worklist row proves the tax is confined to flat scrutinees. **Phase 2 (D2b) is measured against
 THIS table.**
+
+## 6. Phase 2 results (D2b offset-leaf, IMPLEMENTED, branch `dotty-gaps`)
+
+CompilerShapeBenchmark re-run, same suite/flags (`-f 2 -wi 3 -i 5 -prof gc`), JDK 26, macOS aarch64 —
+but a DIFFERENT (busy) session than §5, so **compare ratios, not absolutes** (the whole `filterConserve`
+row and List's `destructure3` both moved ~3× between sessions for List too, i.e. environment variance).
+
+| op | P1 far/List ratio | P2 far | P2 List | P2 ratio | P2 alloc B/op |
+|---|--:|--:|--:|--:|--:|
+| construct | 1.34× | 27.7M | 21.1M | **1.31×** | 464 (List 576, Vec 1104) |
+| foreach | 0.56× | 18.9M | 24.7M | 0.76× | — |
+| foldLeft | 0.77× | 21.3M | 25.4M | 0.84× | — |
+| map | 1.11× | 12.6M | 8.8M | 1.43× | 592 (List 720) |
+| mapConserve | 3.01× | 32.1M | 10.4M | 3.09× | — |
+| filterConserve | 0.90× | 11.1M | 11.6M | 0.96× | — |
+| **destructure1** | 0.14× | 26.8M | 178.3M | **0.15×** | **144** (List ~0) |
+| **destructure2** | 0.13× | 13.3M | 106.2M | **0.126×** | **288** |
+| **destructure3** | 0.10× | 6.6M | 39.0M | **0.169×** (List noisy) | **408** |
+| worklist (D5) | 1.00× | 16.2M | 16.1M | **1.00×** | 240 |
+
+**Honest conclusion — the Phase-2 hypothesis is DISPROVEN by measurement (measure-don't-assume):**
+
+- **Construct + every traversal row is within noise or improved** vs the Phase-1 table (construct 1.34→1.31×;
+  foldLeft 0.77→0.84×; foreach 0.56→0.76×; map/conserve ≥ List; worklist exact parity). So D2b did NOT
+  regress the offset-0 hot path — `data(offset + i)` with a runtime-final `offset==0` vectorizes exactly like
+  `data(i)` (the offset-0 leaf loop is byte-identical to the pre-change loop; the SliceNode-over-leaf fast arm
+  the codebase already trusted proves the constant-stride-with-invariant-offset shape vectorizes). **Gate 2 met.**
+- **Destructure alloc is now strictly LINEAR: 144 / 288 / 408 B/op = ~1 small offset-leaf per level** (GC
+  profiler), no super-linear tower. **Gate 3's alloc sub-criterion (≤1 small alloc/level) is met.**
+- **BUT destructure THROUGHPUT is UNCHANGED (0.13–0.17× of List, gate wanted ≥0.67×). D2b does NOT close the
+  destructure gap.** Root cause, found by measurement: `SliceNode.drop(1)` already returned a *flat*
+  `SliceNode(base, offset+1, len-1)` — it never towered — so there was no tower for D2b to flatten. The
+  per-level destructure cost is the ONE tail-node allocation (`xs.tail`), and D2b merely swaps
+  `SliceNode`→offset-leaf at the same size/count (~144 B/op either way). The `+:` extractor is already
+  allocation-free (name-based `isEmpty`/`_1`/`_2`, no Option/Tuple), so the only heap traffic is that tail node
+  — which D2b cannot remove (it acknowledged as much: §4 point 4, "D2b alone will not reach List parity on
+  destructuring"). Reaching List's zero-alloc destructure would require the `+:` tail to be a non-allocating
+  view (a Phase-3 direction), not a representation swap.
+
+**Net: D2b is a correct, throughput-neutral, alloc-neutral simplification** (leaf slicing → leaf; `SliceNode`
+is now unconstructable over a leaf base — dead code retained per the plan). It removes the SliceNode wrapper
+indirection and the deep-slice `kindAt` head-read (destructure head now reads the offset leaf inline via
+`applyAtImpl`), but on the compiler-shape mix that buys nothing measurable over the SliceNode baseline. The
+keep/revert decision is the coordinator's end-to-end call per the sequencing table's
+"keep if ≥0.3pp end-to-end OR neutral-with-simplification; revert otherwise" — D2b qualifies on the
+"neutral-with-simplification" arm but has no independent JMH win to show.
