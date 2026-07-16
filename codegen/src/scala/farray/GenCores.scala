@@ -2661,16 +2661,38 @@ object GenCores extends BleepCodegenScript("GenCores") {
         .mkString("\n") + "\n    }",
       "A"
     )
-    // shared backbone for corresponds/startsWith/endsWith: walk xs[xsOff+i] vs that[i] for i in [0,m), calling
-    // pred (continue while true). 2D dispatch on both operand kinds + leaf+leaf fast-path reading both arrays
-    // unboxed (<kind>At fallback for trees) — kills the per-index applyAt O(n·depth) and the per-element match.
+    // shared backbone for corresponds/startsWith/endsWith/sameElements/eqElements: walk xs[xsOff+i] vs that[i]
+    // for i in [0,m), calling pred (continue while true). 2D dispatch on both operand kinds. The BOTH-LEAF hot
+    // path binds each backing array ONCE and runs a tight unboxed loop. Round-8 item 3: when EITHER operand is a
+    // non-leaf, DO NOT materialize it into a fresh flat array — the old `flatOf` fallback allocated one Object[]
+    // per non-leaf operand (materializeRef was the #1 alloc leaf site, 2.1% — and it fired even for a RefOne, a
+    // ONE-element array alloc per compare). Instead read each operand per-element via its `${k}At` accessor (leaf
+    // fast path + spine walk for trees; O(1) for a One), so a corresponds/eqElements over RefOne/small-tower
+    // operands is ZERO-alloc. Mixed-storage safe: a boxed leaf misses the ${K}Arr instanceof and routes through
+    // `${k}At`'s applyBoxed tail, exactly as the old materialize${K} did.
     val matchAll2V = withErr(
       "summonFrom {\n" + opKinds
         .map { ka =>
           val inner = "summonFrom {\n" + opKinds
             .map { kb =>
               val rdB = (e: String) => if kb.name == "Ref" then s"r2.wrap($e.asInstanceOf[B])" else s"r2.wrap($e)"
-              s"          case r2: ${kb.name}Repr[B] => { val xa = ${flatOf(ka, "xs")}; val ta = ${flatOf(kb, "that")}; var i = 0; while (i < m && pred(${readVal(ka, "xa(i + xsOff)")}, ${rdB("ta(i)")})) i += 1; i == m }"
+              // Read xs[i+xsOff] either from a hoisted leaf array `xa` (fast) or via ${ka}At (spine walk, no alloc).
+              val xLeafRd = readVal(ka, "xa(i + xsOff)")
+              val xNodeRd = readVal(ka, s"${ka.lc}At(xs, i + xsOff)")
+              val tLeafRd = rdB("ta(i)")
+              val tNodeRd = rdB(s"${kb.lc}At(that, i)")
+              def loop(xr: String, tr: String) = s"var i = 0; while (i < m && pred($xr, $tr)) i += 1; i == m"
+              // 4-way split so EACH operand that IS a leaf keeps its backing array hoisted once (a tight unboxed
+              // read), and only a genuinely non-leaf operand pays the per-index ${k}At — with NO materialization
+              // of either side (the old flatOf allocated an Object[] per non-leaf operand; see the comment above).
+              val bothLeaf = s"{ val xa = xs.asInstanceOf[${ka.name}Arr].arr; val ta = that.asInstanceOf[${kb.name}Arr].arr; ${loop(xLeafRd, tLeafRd)} }"
+              val xLeafOnly = s"{ val xa = xs.asInstanceOf[${ka.name}Arr].arr; ${loop(xLeafRd, tNodeRd)} }"
+              val tLeafOnly = s"{ val ta = that.asInstanceOf[${kb.name}Arr].arr; ${loop(xNodeRd, tLeafRd)} }"
+              val neither = s"{ ${loop(xNodeRd, tNodeRd)} }"
+              val body =
+                s"{ val xl = xs.isInstanceOf[${ka.name}Arr]; val tl = that.isInstanceOf[${kb.name}Arr]; " +
+                  s"if (xl && tl) $bothLeaf else if (xl) $xLeafOnly else if (tl) $tLeafOnly else $neither }"
+              s"          case r2: ${kb.name}Repr[B] => $body"
             }
             .mkString("\n") + "\n        }"
           s"      case r: ${ka.name}Repr[A] => $inner"
