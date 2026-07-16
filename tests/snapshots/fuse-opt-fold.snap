@@ -1,38 +1,28 @@
-{
-  val $proxy: FArray$package {
-    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
-  } = FArray$package.$asInstanceOf$[FArray$package {
-    type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
-  }]
-  val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
-  val Fuse_this: Fuse[Stat] = (new Fuse[Int](xs$proxy): Fuse[Int]).map[Stat](((x: Int) => Stat.apply(x, x.*(100), x.*(1000))))
+((({
+  val src0: FBase = {
+    val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
+
+    (xs$proxy: ints)
+  }.asInstanceOf[FBase]
+  val n0: Int = src0.length
+  var acc: Int = 0
 
   ({
-    val `Fuse_this₂`: Fuse_this.type = Fuse_this
-
-    ({
-      val src0: FBase = inline$base$i1[Stat](`Fuse_this₂`).asInstanceOf[FBase]
-      val n0: Int = src0.length
-      var acc: Int = 0
-
-      ({
-        val s: FBase = src0
-        val a: Array[Int] = s match {
-          case l: IntArr =>
-            (l.arr: Array[Int])
-          case t =>
-            if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
-        }
-        val len: Int = s.length
-        var i: Int = 0
-        while (i.<(len)) {
-          val v: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
-          val `v₂`: Int = v.*(100)
-          acc = acc.+(`v₂`)
-          i = i.+(1)
-        }
-        acc
-      }: Int)
-    }.asInstanceOf[Int]: Int)
+    val s: FBase = src0
+    val a: Array[Int] = s match {
+      case l: IntArr =>
+        (l.arr: Array[Int])
+      case t =>
+        if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
+    }
+    val len: Int = s.length
+    var i: Int = 0
+    while (i.<(len)) {
+      val x: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
+      val score: Int = x.*(100)
+      acc = acc.+(score)
+      i = i.+(1)
+    }
+    acc
   }: Int)
-}
+}.asInstanceOf[Int]: Int): Int): Int)

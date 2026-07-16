@@ -10,3 +10,12 @@ class HeadStrBenchmark extends Inputs {
   @Benchmark def fs2chunk(): String = fs2ChunkInput(0) // fs2.Chunk.head returns Option; apply(0) is the element
   @Benchmark def ziochunk(): String = zioChunkInput.head
 }
+
+class HeadIntBenchmark extends IntInputs {
+  @Benchmark def list(): Int = listInput.head
+  @Benchmark def farray(): Int = farrayInput.head
+  @Benchmark def iarray(): Int = iarrayInput.head
+  @Benchmark def vector(): Int = vectorInput.head
+  @Benchmark def fs2chunk(): Int = fs2ChunkInput(0) // fs2.Chunk.head returns Option; apply(0) is the element
+  @Benchmark def ziochunk(): Int = zioChunkInput.head
+}

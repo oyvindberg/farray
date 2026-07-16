@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * Produces the JSON files the SPA consumes, into site/public/data/:
+ * Produces the JSON files the site's components consume, into site/static/data/
+ * (Docusaurus copies static/ into the build verbatim):
  *
  *   bench.json     — the JMH results slimmed to {b:benchmark, p:params, s:score}.
  *                    The raw docs/bench-results.json is ~7.8 MB of percentiles + raw samples;
@@ -13,7 +14,8 @@
  *
  *   bench-sources.json / setbench-sources.json — every @Benchmark body, verbatim, per suite.
  *
- * Dev: re-run `npm run data` to refresh without restarting Vite. Prod: `vite build` bakes public/ into dist/.
+ * Dev: re-run `npm run data` to refresh without restarting the dev server. Prod: `docusaurus build`
+ * copies static/ into build/ (both dev and build run this script first via pre-scripts).
  */
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, existsSync } from "node:fs";
 import { dirname, resolve, relative, extname, join } from "node:path";
@@ -24,27 +26,32 @@ import { createHighlighter } from "shiki";
 // and the page's [data-theme] picks which to show, so code follows the site's light/dark mode.
 const THEMES = { light: "vitesse-light", dark: "vitesse-dark" };
 
-// Schematic of the core, faithful to the real FBase `permits` clause but collapsed across element kinds.
-const NODE_TREE = `// An FArray[A] is one of these. Each carrying-data node exists once per element
-// kind (Int, Long, Double, … , Ref) — generated, not hand-written.
+// Schematic of the core, faithful to the real FBase `permits` clause but collapsed across element
+// kinds: the Int-prefixed classes shown here each stand for NINE generated twins (one per kind).
+const NODE_TREE = `// An FArray[A] is one of these. There is no generic node anywhere: every shape that
+// touches an element is generated once per element kind — Int, Long, Double, Float,
+// Short, Byte, Char, Boolean, Ref. Each "Int…" class below stands for all nine twins
+// (IntArr beside LongArr, DoubleArr, …, RefArr); the pure-shape nodes exist once.
+// 7 element-carrying shapes × 9 kinds + 5 kind-free shapes = 68 final Java classes.
 sealed abstract class FBase
 
 // leaves — the data actually lives here:
-final class IntArr(arr: Array[Int])                       extends FBase  // a real int[]  (also Long/Double/…/Ref)
-final class IntOne(value: Int)                            extends FBase  // a single element
-case object Empty                                         extends FBase
+final class IntArr(arr: Array[Int])                       extends FBase  // ×9 — a real int[]; LongArr holds a long[], …, RefArr an Object[]
+final class IntOne(value: Int)                            extends FBase  // ×9 — a single unboxed element
+case object Empty                                         extends FBase  // once — carries no element, so no twins
 
-// lazy structural nodes — O(1) to build; they just point at their children:
-final class Concat(left: FBase, right: FBase)             extends FBase  // ++
-final class IntAppend(base: FBase, elem: Int)             extends FBase  // :+
-final class IntPrepend(elem: Int, base: FBase)            extends FBase  // +:
-final class SliceNode(base: FBase, off: Int, len: Int)    extends FBase  // take / drop / slice
-final class ReverseNode(base: FBase)                      extends FBase  // reverse
-final class IntPad(base: FBase, fill: Int, len: Int)      extends FBase  // padTo
-final class IntUpdated(base: FBase, i: Int, elem: Int)    extends FBase  // updated
-final class RangeNode(start: Int, step: Int, count: Int)  extends FBase  // FArray.range — elements never built
-final class IntFlatMap(segs: Array[Array[Int]],           //  flatMap with wide inners — one segment per
-                       offs: Array[Int])                  extends FBase  //  inner, their arrays kept, not copied`;
+// lazy structural nodes — O(1) to build; they just point at their children.
+// The ones that store an element are ×9 like the leaves; pure shapes exist once:
+final class Concat(left: FBase, right: FBase)             extends FBase  // once — ++
+final class IntAppend(base: FBase, elem: Int)             extends FBase  // ×9   — :+  (stores the appended elem)
+final class IntPrepend(elem: Int, base: FBase)            extends FBase  // ×9   — +:
+final class SliceNode(base: FBase, off: Int, len: Int)    extends FBase  // once — take / drop / slice
+final class ReverseNode(base: FBase)                      extends FBase  // once — reverse
+final class IntPad(base: FBase, fill: Int, len: Int)      extends FBase  // ×9   — padTo (stores the fill elem)
+final class IntUpdated(base: FBase, i: Int, elem: Int)    extends FBase  // ×9   — updated
+final class RangeNode(start: Int, step: Int, count: Int)  extends FBase  // once — FArray.range, elements never built
+final class IntFlatMap(segs: Array[Array[Int]],           // ×9   — flatMap with wide inners: one segment
+                       offs: Array[Int])                  extends FBase  //        per inner, arrays kept, not copied`;
 
 // Extract a brace-balanced `def` verbatim from generated source, starting at the line matching `sigRe`.
 function extractBraceDef(text, sigRe) {
@@ -69,7 +76,7 @@ const hl = (code, lang) =>
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, "../..");
-const OUT = resolve(HERE, "../public/data");
+const OUT = resolve(HERE, "../static/data");
 mkdirSync(OUT, { recursive: true });
 
 // ---------------------------------------------------------------- bench.json / setbench.json
@@ -98,7 +105,7 @@ function buildBench(srcRel, outName) {
 }
 
 // ---------------------------------------------------------------- snippets.json
-const SOURCE_ROOTS = ["farray/src", "codegen/src", "benchmarks/src", "tests/src", "fset/src", "gensets/src", "setbenchmarks/src", "fset-tests/src"];
+const SOURCE_ROOTS = ["farray/src", "example-json-decoder/src", "codegen/src", "benchmarks/src", "tests/src", "fset/src", "gensets/src", "setbenchmarks/src", "fset-tests/src"];
 const LANG = { ".scala": "scala", ".java": "java" };
 const START = /\/\/\s*start:([\w.-]+)/;
 const STOP = /\/\/\s*stop:([\w.-]+)/;
@@ -170,6 +177,45 @@ function firstOuterBranch(code) {
   ].join("\n");
 }
 
+
+// The lowering now inlines the receiver chain INTO `src0`'s initializer (terminals are extension methods).
+// For the short view, collapse that nested block back to the opaque `(Fuse_this)` the pages always showed —
+// the verbatim tree stays one toggle away.
+
+// drop the opaque-type encoding noise from a short view: `x$proxy` -> `x`, and the compiler's
+// `.$asInstanceOf$[...]` casts (erased; zero bytecode). Same spirit as stripProxy, for the fuse goldens.
+function stripOpaqueNoise(s) {
+  return s
+    .replace(/\.\$asInstanceOf\$\[(?:[^\[\]]|\[[^\]]*\])*\]/g, "")
+    .replace(/(\w+)\$proxy/g, "$1");
+}
+
+function collapseBase(code) {
+  const idx = code.indexOf("inline$base$i1[");
+  if (idx < 0) return code;
+  const parenStart = code.indexOf("(", code.indexOf("]", idx));
+  if (parenStart < 0) return code;
+  // paren-match the WHOLE argument — the receiver chain including its trailing marker calls
+  // (.map(...).collect(...)) — and collapse it to the opaque Fuse_this the pages always showed.
+  let depth = 0, k = parenStart;
+  for (; k < code.length; k++) {
+    const ch = code[k];
+    if (ch === "(") depth++;
+    else if (ch === ")") { depth--; if (depth === 0) break; }
+  }
+  if (k >= code.length) return code;
+  return (code.slice(0, parenStart + 1) + "Fuse_this" + code.slice(k))
+    .split("\n").filter((l) => l.trim() !== "").join("\n");
+}
+
+
+// The ONE view of a fuse golden: the FULL expansion, verbatim modulo pure cosmetics (infix operators,
+// proxy renames, erased-cast removal, inline-accessor renames). No elisions, no toggle.
+function fuseFull(raw) {
+  return polish(stripOpaqueNoise(raw))
+    .replace(/inline\$(buf|until|from)\$i1\([^)]*\)/g, "src.$1");
+}
+
 // From a FuseDebug.show golden, keep just the `({ … })` block the macro actually emits — i.e. drop the
 // `$proxy`/`Fuse_this` marker preamble (dead-code-eliminated at runtime) and show the loop.
 function fuseLoop(code) {
@@ -204,6 +250,7 @@ function polish(s) {
 // The JSON scanners nest a few dead wrapper blocks; mirror JsonDemo.clean — drop the proxy/placeholder
 // preamble (down to the first real accumulator/statement), strip noise, balance, then polish.
 function cleanJson(code) {
+  code = stripOpaqueNoise(collapseBase(code)); // same cleanup as the FArray snippets
   const lines = code.split("\n");
   const isPreamble = (l) => {
     const t = l.trim().replace(/`/g, "");
@@ -280,7 +327,6 @@ function buildSnippets() {
   // Ingested whole (they are pure generated code, no markers) so the page can show what `.fuse` emits.
   const GOLDENS = [
     { name: "fuse-generated", file: "tests/snapshots/fuse-long-pipeline.snap" },
-    { name: "fuse-collect-generated", file: "tests/snapshots/fuse-collect-zip.snap" },
     { name: "map-generated", file: "tests/snapshots/map-inline.snap" },
   ];
   for (const g of GOLDENS) {
@@ -307,10 +353,33 @@ function buildSnippets() {
   for (const key of FUSE_OPT) {
     const file = `tests/snapshots/fuse-opt-${key}.snap`;
     const raw = readFileSync(resolve(REPO, file), "utf8").replace(/^\n+|\n+$/g, "");
-    const short = polish(fuseLoop(raw));
+    const code = fuseFull(raw);
     out[`fuse-opt-${key}`] = {
       name: `fuse-opt-${key}`, file, lang: "scala",
-      code: short, html: hl(short, "scala"), full: raw, fullHtml: hl(raw, "scala"), fullLabel: "full expansion",
+      code, html: hl(code, "scala"), full: null, fullHtml: null,
+    };
+  }
+  // The user-guide demos for the "Using .fuse" page — same treatment as the optimizer demos: the emitted
+  // loop by default (marker preamble stripped), the verbatim expansion one toggle away.
+  const FUSE_GUIDE = [
+    ["fuse-guide-collect", "tests/snapshots/fuse-guide-collect.snap"],
+    ["fuse-guide-zipcollect", "tests/snapshots/fuse-collect-zip.snap"],
+    ["fuse-guide-find", "tests/snapshots/fuse-guide-find.snap"],
+    ["fuse-guide-agg", "tests/snapshots/fuse-guide-agg.snap"],
+    ["fuse-guide-groupsum", "tests/snapshots/fuse-guide-groupsum.snap"],
+    ["fuse-guide-aggto", "tests/snapshots/fuse-guide-aggto.snap"],
+    ["fuse-guide-foldadj", "tests/snapshots/fuse-guide-foldadj.snap"],
+    ["fuse-guide-groupadj", "tests/snapshots/fuse-guide-groupadj.snap"],
+    ["fuse-guide-nested", "tests/snapshots/fuse-guide-nested.snap"],
+    ["fuse-guide-topn", "tests/snapshots/fuse-guide-topn.snap"],
+    ["fuse-guide-taketake", "tests/snapshots/fuse-guide-taketake.snap"],
+  ];
+  for (const [name, file] of FUSE_GUIDE) {
+    const raw = readFileSync(resolve(REPO, file), "utf8").replace(/^\n+|\n+$/g, "");
+    const code = fuseFull(raw);
+    out[name] = {
+      name, file, lang: "scala",
+      code, html: hl(code, "scala"), full: null, fullHtml: null,
     };
   }
   // The fused-JSON scanners for the "Fused JSON" page — the per-record byte scanner the macro emits,
@@ -319,25 +388,44 @@ function buildSnippets() {
   for (const key of FUSE_JSON) {
     const file = `tests/snapshots/fuse-json-${key}.snap`;
     const raw = readFileSync(resolve(REPO, file), "utf8").replace(/^\n+|\n+$/g, "");
-    const short = cleanJson(raw);
+    const code = fuseFull(raw);
     out[`fuse-json-${key}`] = {
       name: `fuse-json-${key}`, file, lang: "scala",
-      code: short, html: hl(short, "scala"), full: raw, fullHtml: hl(raw, "scala"), fullLabel: "full expansion",
+      code, html: hl(code, "scala"), full: null, fullHtml: null,
     };
   }
   // the "you write" pipeline for each demo (verbatim from the snapshot tests / JsonDemo).
   const FUSE_OPT_SRC = {
-    "fuse-src-oneloop": "xs.fuse.map(_ + 1).filter(_ % 2 == 0).map(_ * 2).run",
-    "fuse-src-dce": "xs.fuse.map(x => (x % 3, x * 7, x * 13)).filter(_._1 == 0).map(_._2).run",
-    "fuse-src-sink": "xs.fuse.map(x => (x % 2, expensive(x))).filter(_._1 == 0).map(_._2).sum",
+    "fuse-src-oneloop": "xs.fuse.map(x => x + 1).filter(y => y % 2 == 0).map(z => z * 2).run",
+    "fuse-src-dce": "xs.fuse.map(x => (x % 3, x * 7, x * 13)).filter(t => t._1 == 0).map(t => t._2).run",
+    "fuse-src-sink": "xs.fuse.map(x => (x % 2, expensive(x))).filter(t => t._1 == 0).map(t => t._2).sum",
     "fuse-src-cse": "xs.fuse.map(x => (x*x + 1, x*x + 2)).map(t => t._1 + t._2).run",
     "fuse-src-fold": "xs.fuse.map(x => Stat(x, x * 100, x * 1000)).foldLeft(0)((acc, s) => acc + s.score)",
-    "fuse-src-jsum": "Json.ndjson[Event](src).stream.filter(_.amount > 150).map(_.amount).foldLeft(0.0)(_ + _)",
-    "fuse-src-jcat": "Json.ndjson[Event](src).stream.filter(_.amount > 150).map(_.category).toList",
-    "fuse-src-jcount": 'Json.ndjson[Event](src).stream.filter(_.status == "active").map(_.category).count',
-    "fuse-src-jwide": "Json.ndjson[Wide](src).stream.filter(_.key > 90).map(_.payload).count",
+    "fuse-src-jsum": "Json.ndjson[Event](src).stream.filter(e => e.amount > 150).map(e => e.amount).foldLeft(0.0)((acc, amount) => acc + amount)",
+    "fuse-src-jcat": "Json.ndjson[Event](src).stream.filter(e => e.amount > 150).map(e => e.category).toList",
+    "fuse-src-jcount": 'Json.ndjson[Event](src).stream.filter(e => e.status == "active").map(e => e.category).count',
+    "fuse-src-jwide": "Json.ndjson[Wide](src).stream.filter(w => w.key > 90).map(w => w.payload).count",
     "fuse-src-jagg":
-      'Json.ndjson[Event](src).stream.filter(_.status == "active")\n  .aggTo(Stats.apply)(Agg.sum(_.amount), Agg.count, Agg.max1(_.score))',
+      'Json.ndjson[Event](src).stream.filter(e => e.status == "active")\n  .aggTo(Stats.apply)(Agg.sum(e => e.amount), Agg.count, Agg.max1(e => e.score))',
+    "fuse-src-jentry":
+      `// three ways in — all end at .stream, which hands you a Fuse[Event]:
+Json.ndjson[Event](bytes).stream                   // an in-memory NDJSON byte buffer
+Json.ndjsonFile[Event](path).stream                // a file of ANY size — constant memory
+Json.ndjsonStream[Event](inputStream).stream       // any InputStream — constant memory, owned + closed
+
+// from here it's the pipeline you already know:
+Json.ndjson[Event](bytes).stream.filter(_.amount > 150).map(_.category).toList`,
+    "fuse-src-guide-collect": "xs.fuse.map(_ + 1).collect { case x if x % 2 == 0 => x * 2 }.run",
+    "fuse-src-guide-zipcollect": "xs.fuse.zip(ys).collect { case (a, b) if (a + b) % 2 == 0 => a * b }.map(r => r + 1).run",
+    "fuse-src-guide-find": "xs.fuse.map(_ * 3).find(_ > 100)",
+    "fuse-src-guide-agg": "xs.fuse.filter(_ % 2 == 0).agg(Agg.sum(x => x), Agg.count, Agg.max1(x => x))",
+    "fuse-src-guide-groupsum": "xs.fuse.groupSum(_ % 3)(x => x)",
+    "fuse-src-guide-aggto": "trades.fuse.aggTo(Summary.apply)(Agg.sum(_.amount), Agg.count, Agg.max1(_.amount))",
+    "fuse-src-guide-foldadj": "trades.fuse.foldAdjacentBy(_.day)(0.0)((acc, t) => acc + t.amount).run",
+    "fuse-src-guide-groupadj": "trades.fuse.groupAdjacentBy(_.day).map(_.length).take(2).run",
+    "fuse-src-guide-nested": "trades.fuse.groupAdjacentReduceBy(_.day)(_.map(_.amount).filter(_ > 20.0))(Agg.sum(x => x)).run",
+    "fuse-src-guide-topn": "trades.fuse.topNBy(2)(_.amount)",
+    "fuse-src-guide-taketake": "xs.fuse.take(7).map(_ * 2).take(3).run",
   };
   for (const [name, code] of Object.entries(FUSE_OPT_SRC)) {
     out[name] = { name, file: "you write", lang: "scala", code, html: hl(code, "scala"), full: null, fullHtml: null };
@@ -375,7 +463,7 @@ if r.amount > 150 then r.category                   // and decodes \`category\` 
   // real FBase `permits` clause, collapsed across element kinds.
   const ILLUSTRATIONS = {
     "node-tree": {
-      file: "the core — schematic (the real hierarchy is generated Java, one final class per shape × kind)",
+      file: "the core — schematic (the real hierarchy is generated Java: 7 shapes × 9 element kinds + 5 kind-free = 68 final classes)",
       lang: "scala",
       code: NODE_TREE,
     },
@@ -618,3 +706,37 @@ const setSlim = buildBench("docs/set-bench-results.json", "setbench.json");
 buildSnippets();
 buildBenchSources("benchmarks/src/scala/farray", "bench-sources.json", classesOf(slim));
 buildBenchSources("setbenchmarks/src/scala/farray", "setbench-sources.json", classesOf(setSlim));
+
+// ---------------------------------------------------------------- referenced-benchmark safeguard
+// Every benchmark class a docs page references (BenchChart cls=, BenchPair int=/str=, SideBySide
+// cls=) must exist in the measured data, or the chart renders as an empty "no benchmark matched"
+// card. New pages may reference benchmarks that exist in source but haven't been measured yet; the
+// fix is to run them and patch the scorecard, so this FAILS the build with the list.
+{
+  const measured = new Set([...classesOf(slim), ...classesOf(setSlim)]);
+  const referenced = new Map(); // class -> first referencing file
+  const walkDocs = (dir) => {
+    for (const f of readdirSync(dir)) {
+      const p = join(dir, f);
+      if (statSync(p).isDirectory()) walkDocs(p);
+      else if (extname(p) === ".mdx" || extname(p) === ".md") {
+        const text = readFileSync(p, "utf8");
+        for (const m of text.matchAll(/\b(?:cls|int|str)=["']([A-Za-z0-9]+(?:Benchmark|Bench))["']/g)) {
+          if (!referenced.has(m[1])) referenced.set(m[1], relative(REPO, p));
+        }
+      }
+    }
+  };
+  walkDocs(resolve(REPO, "site/docs"));
+  const unmeasured = [...referenced].filter(([c]) => !measured.has(c));
+  if (unmeasured.length) {
+    console.error(`✗ ${unmeasured.length} referenced benchmark class(es) have NO measurements:`);
+    for (const [c, f] of unmeasured) console.error(`    ${c}  (referenced from ${f})`);
+    console.error("  Run them and patch docs/bench-results.json (scripts/bench-run.sh), or fix the reference.");
+    // hard failure only for the real build (prebuild); dev keeps running so pages can be written
+    // before their benchmarks have been measured.
+    if (process.env.npm_lifecycle_event !== "predev") process.exit(1);
+  } else {
+    console.log(`  ✓ all ${referenced.size} doc-referenced benchmark classes are measured`);
+  }
+}

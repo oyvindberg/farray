@@ -12,3 +12,6 @@ bleep-site/docs
 docs/parts/
 docs/setparts/
 .claude/
+# snapshot harness: transient mismatch dumps + the update-mode marker (see tests/.../Snapshots.scala)
+tests/snapshots/*.snap.actual
+tests/snapshots/.update

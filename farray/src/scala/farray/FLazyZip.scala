@@ -1,52 +1,5 @@
 package farray
 
-import scala.compiletime.summonFrom
-
-/** One fused `collect` pass shared by [[FLazyZip2]] / [[FLazyZip3]]: walk `0 until len`, build the
-  * per-element tuple via `pair` (the PartialFunction inherently matches a tuple — that per-element
-  * tuple is acceptable; there is NO intermediate tuple array), test it with `isDefinedAt` and, when
-  * matched, `apply` the result into a KIND-SPECIALIZED builder so a primitive output `C` lands in a
-  * primitive backing array (unwrapped once via the `Repr` evidence — no boxed result array). */
-private inline def lazyZipCollect[T, C](len: Int, inline pair: Int => T, pf: PartialFunction[T, C]): FArray[C] =
-  summonFrom {
-    case r: IntRepr[C] =>
-      val b = new IntFArrayBuilder; var i = 0
-      while i < len do { val t = pair(i); if pf.isDefinedAt(t) then b.addOne(r.unwrap(pf(t))); i += 1 }
-      b.result().asInstanceOf[FArray[C]]
-    case r: LongRepr[C] =>
-      val b = new LongFArrayBuilder; var i = 0
-      while i < len do { val t = pair(i); if pf.isDefinedAt(t) then b.addOne(r.unwrap(pf(t))); i += 1 }
-      b.result().asInstanceOf[FArray[C]]
-    case r: DoubleRepr[C] =>
-      val b = new DoubleFArrayBuilder; var i = 0
-      while i < len do { val t = pair(i); if pf.isDefinedAt(t) then b.addOne(r.unwrap(pf(t))); i += 1 }
-      b.result().asInstanceOf[FArray[C]]
-    case r: FloatRepr[C] =>
-      val b = new FloatFArrayBuilder; var i = 0
-      while i < len do { val t = pair(i); if pf.isDefinedAt(t) then b.addOne(r.unwrap(pf(t))); i += 1 }
-      b.result().asInstanceOf[FArray[C]]
-    case r: ShortRepr[C] =>
-      val b = new ShortFArrayBuilder; var i = 0
-      while i < len do { val t = pair(i); if pf.isDefinedAt(t) then b.addOne(r.unwrap(pf(t))); i += 1 }
-      b.result().asInstanceOf[FArray[C]]
-    case r: ByteRepr[C] =>
-      val b = new ByteFArrayBuilder; var i = 0
-      while i < len do { val t = pair(i); if pf.isDefinedAt(t) then b.addOne(r.unwrap(pf(t))); i += 1 }
-      b.result().asInstanceOf[FArray[C]]
-    case r: CharRepr[C] =>
-      val b = new CharFArrayBuilder; var i = 0
-      while i < len do { val t = pair(i); if pf.isDefinedAt(t) then b.addOne(r.unwrap(pf(t))); i += 1 }
-      b.result().asInstanceOf[FArray[C]]
-    case r: BooleanRepr[C] =>
-      val b = new BooleanFArrayBuilder; var i = 0
-      while i < len do { val t = pair(i); if pf.isDefinedAt(t) then b.addOne(r.unwrap(pf(t))); i += 1 }
-      b.result().asInstanceOf[FArray[C]]
-    case _ =>
-      val b = new RefFArrayBuilder[C]; var i = 0
-      while i < len do { val t = pair(i); if pf.isDefinedAt(t) then b.addOne(pf(t)); i += 1 }
-      b.result().asInstanceOf[FArray[C]]
-  }
-
 /** Inline-only markers behind `xs.lazyZip(ys)` / `xs.lazyZip(ys).lazyZip(zs)` (stdlib `lazyZip`
   * shape: the operation lambdas are multi-parameter — `(a, b) => c`, `(a, b, c) => d` — NOT tuple).
   *
@@ -98,11 +51,17 @@ object FLazyZip2:
       while i < len do { acc = acc ++ f(self.xs(i), self.ys(i)); i += 1 }
       acc
 
-    /** ONE fused pass over the pairs — no intermediate tuple ARRAY. The `PartialFunction` inherently
-      * receives a per-element tuple `(A, B)` (acceptable); each is tested with `isDefinedAt` and, when
-      * matched, `apply`d into a kind-specialized builder (unboxed output for a primitive `C`). */
-    inline def collect[C](pf: PartialFunction[(A, B), C]): FArray[C] =
-      lazyZipCollect[(A, B), C](self.n, i => (self.xs(i), self.ys(i)), pf)
+    /** ONE fused pass over the pairs — no intermediate tuple ARRAY. Fuses over the O(1) `RangeNode` of
+      * indices (no backing int[]): each index maps to its per-element tuple `(A, B)` (acceptable — the
+      * `PartialFunction` inherently receives one), and `fuse.collect` filters+applies straight into the
+      * unboxed result (primitive output `C` lands in a primitive leaf). */
+    inline def collect[C](inline pf: PartialFunction[(A, B), C]): FArray[C] =
+      // ONE fused lock-step pass: `fuse.zip` pairs the two sources without building the pair array, and
+      // `inline pf` splices the PartialFunction LITERAL into `fuse.collect`, so the macro picks its
+      // pattern/guard/body apart (no runtime PF, no boxing). Both `that` args are plain FArray values —
+      // no lambda captures an inline `p$proxy` out of the macro's scope (which a `.map(i => (xs(i),…))`
+      // over the inline receiver's fields, or a by-value PF, would).
+      self.xs.fuse.zip(self.ys).collect(pf).run
 
     inline def zipWithIndex: FArray[(A, B, Int)] =
       FArray.tabulate(self.n)(i => (self.xs(i), self.ys(i), i))
@@ -149,9 +108,13 @@ object FLazyZip3:
       while i < len do { acc = acc ++ f(self.xs(i), self.ys(i), self.zs(i)); i += 1 }
       acc
 
-    /** ONE fused pass over the triples — no intermediate tuple ARRAY (mirrors [[FLazyZip2.collect]]). */
-    inline def collect[D](pf: PartialFunction[(A, B, C), D]): FArray[D] =
-      lazyZipCollect[(A, B, C), D](self.n, i => (self.xs(i), self.ys(i), self.zs(i)), pf)
+    /** Fused `collect` over the triples. A 3-way lock-step needs the intermediate element type `(A, B, C)`
+      * to survive a second fuse stage, but `Fuse[+A]`'s covariance widens it to `Any` there (the element
+      * sits contravariantly in a stage lambda). So we materialize the triples once via `toFArray` and fuse
+      * the single `collect` stage, whose `inline pf` literal pins the element type and is picked apart by
+      * the macro (no runtime PF, no boxing). */
+    inline def collect[D](inline pf: PartialFunction[(A, B, C), D]): FArray[D] =
+      self.toFArray.fuse.collect(pf).run
 
     inline def zipWithIndex: FArray[(A, B, C, Int)] =
       FArray.tabulate(self.n)(i => (self.xs(i), self.ys(i), self.zs(i), i))

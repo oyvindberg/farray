@@ -1,0 +1,131 @@
+---
+title: Use it
+sidebar_label: Use it
+description: "Coordinates, license, requirements, and a straight answer on maturity and Java/Kotlin interop."
+---
+
+<p className="lede">
+  FArray is published as an experiment. The design is serious and the benchmarks are real, but a
+  collection library earns trust over years, not milestones. This page states exactly where it
+  stands.
+</p>
+
+<div className="factsheet">
+  <div className="factsheet__row">
+    <div className="factsheet__key">License</div>
+    <div className="factsheet__val">MIT</div>
+  </div>
+  <div className="factsheet__row">
+    <div className="factsheet__key">Source</div>
+    <div className="factsheet__val">
+      <a href="https://github.com/oyvindberg/farray">github.com/oyvindberg/farray</a>
+    </div>
+  </div>
+  <div className="factsheet__row">
+    <div className="factsheet__key">Scala</div>
+    <div className="factsheet__val">3.8 or later</div>
+  </div>
+  <div className="factsheet__row">
+    <div className="factsheet__key">Runtime</div>
+    <div className="factsheet__val">
+      JDK 25 — the M1 jar is compiled to Java 25 bytecode, and that's where it's built and
+      benchmarked.
+    </div>
+  </div>
+  <div className="factsheet__row">
+    <div className="factsheet__key">Platform</div>
+    <div className="factsheet__val">
+      JVM only, Scala 3 only — see <a href="#reach">Reach</a>.
+    </div>
+  </div>
+  <div className="factsheet__row">
+    <div className="factsheet__key">Memory</div>
+    <div className="factsheet__val">
+      A materialized <code>FArray[Int]</code> is its <code>int[]</code> plus one small leaf node (a
+      couple of object headers) and no per-element wrapper; lazy <code>take</code>/<code>++</code>/
+      <code>reverse</code> nodes add O(depth) small objects until something forces them flat.
+    </div>
+  </div>
+</div>
+
+## Coordinates
+
+```scala
+// sbt
+libraryDependencies += "com.olvind.farray" %% "farray" % "1.0.0-M1"
+```
+
+```yaml
+# bleep (bleep.build) — a complete minimal bleep.yaml
+$schema: https://raw.githubusercontent.com/oyvindberg/bleep/master/schema.json
+$version: 1.0.0-M10
+jvm:
+  name: temurin:25
+projects:
+  myapp:
+    dependencies: com.olvind.farray::farray:1.0.0-M1
+    platform:
+      name: jvm
+    scala:
+      version: 3.8.3
+```
+
+Put code in `myapp/src/scala/`, run with `bleep run myapp`.
+
+## Try it in thirty seconds
+
+Paste into `example.sc`, run with `scala-cli example.sc` (don't name the file `farray.sc` — the
+script object would shadow the `farray` package):
+
+```scala
+//> using dep com.olvind.farray::farray:1.0.0-M1
+//> using jvm 25
+import farray.FArray
+
+val xs = FArray.tabulate(1_000_000)(identity) // an int[] underneath
+val eager = xs.map(_ * 2).filter(_ % 3 != 0).foldLeft(0L)(_ + _)
+val fused = xs.fuse.map(_ * 2).filter(_ % 3 != 0).foldLeft(0L)(_ + _) // same result, one loop
+println(s"$eager == $fused")
+```
+
+Swap the type where the profile says collections cost you; add `.fuse` where the chain is hot.
+[When to fuse (and when not to)](./fusion/farray.mdx) covers the judgment calls.
+
+## What M1 means
+
+:::warning Experiment status
+
+This is a milestone release of an experiment.
+
+- **Somewhat tested, not guaranteed.** Every operation is checked against the equivalent `List`
+  operation across sizes and structural shapes (~480 parity tests), and every macro lowering is a
+  golden test regenerated on each build. That catches a lot. It does not add up to a correctness
+  guarantee yet; that takes more work and more users.
+- **Expect performance cliffs.** The scorecard covers the shapes we thought to measure. Your
+  workload will contain shapes we didn't, and some of them will be slow in ways that surprise both
+  of us. When you hit one, [open an issue](https://github.com/oyvindberg/farray/issues) with a JMH
+  reproduction if you can; finding the cliffs is the point of this milestone.
+- **No binary compatibility between versions.** The API is `inline` end to end, which means library
+  internals expand into your compiled call sites. Pin an exact version and expect to recompile on
+  every upgrade. There is no MiMa story for an inline API and there won't be.
+- **Mostly written by a model.** Most of the implementation (the code generator, the generated
+  operations, the fusion macro and its optimizer, the benchmark suite) was written by Claude, from a
+  human design and under human review, across roughly four hundred commits in seventeen days. Every
+  operation is gated by ~480 parity tests against `List`, every macro lowering by a golden file, and
+  every performance claim by a checked-in JMH result. Nothing landed on the strength of an
+  explanation, but review was read-and-questioned, not formal verification, which is part of why the
+  version starts with M.
+
+:::
+
+## Reach
+
+Today FArray runs on the JVM, from Scala 3, and nowhere else — but the two missing directions are
+not the same kind of "no."
+
+There is no Scala.js or Scala Native cross-build yet. Nothing structural stands in the way: the
+representation is plain arrays and the API is ordinary Scala 3, so cross-building is a matter of
+someone who cares doing the porting and CI work, not of a design that resists it.
+
+Java and Kotlin simply won't happen.
+

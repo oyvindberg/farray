@@ -6,11 +6,23 @@ jvm:
 projects:
   farray:
     extends: template-common
-    platform:
-      mainClass: com.foo.App
     sourcegen:
       project: codegen
       main: farray.GenCores
+    publish:
+      groupId: com.olvind.farray
+      description: "An immutable, unboxed, Array-backed sequence for Scala 3 with the whole collections API"
+      url: https://github.com/oyvindberg/farray
+      organization: com.olvind
+      sonatypeProfileName: com.olvind
+      developers:
+        - id: oyvindberg
+          name: Øyvind Raddum Berg
+          url: https://github.com/oyvindberg
+      licenses:
+        - name: MIT
+          url: http://opensource.org/licenses/MIT
+          distribution: repo
   codegen:
     extends: template-common
     dependencies:
@@ -19,6 +31,13 @@ projects:
     extends: template-common
     dependencies:
       - build.bleep::bleep-core:${BLEEP_VERSION}
+  # The NDJSON record decoder as a DOWNSTREAM module: farray ships the fusion engine and the
+  # ByteRecordSource contract, this project plugs a concrete decoder into the RecordDecoder seam
+  # (discovered reflectively at macro-expansion time). Deliberately an example — the shape of what a
+  # user would write for their own record-framed byte format.
+  example-json-decoder:
+    extends: template-common
+    dependsOn: farray
   fset:
     extends: template-common
     dependsOn: farray
@@ -72,11 +91,11 @@ projects:
       - com.github.sbt:junit-interface:0.13.2
       - com.github.plokhotnyuk.jsoniter-scala::jsoniter-scala-core:2.31.3
       - com.github.plokhotnyuk.jsoniter-scala::jsoniter-scala-macros:2.31.3
-    dependsOn: farray
+    dependsOn: [farray, example-json-decoder]
     extends: template-common
     isTestProject: true
   benchmarks:
-    dependsOn: farray
+    dependsOn: [farray, example-json-decoder]
     extends: template-common
     dependencies:
       - com.github.plokhotnyuk.jsoniter-scala::jsoniter-scala-core:2.31.3
@@ -119,22 +138,6 @@ projects:
     sourcegen:
       project: setbenchmarks
       main: farray.GenSetJmh
-  scripts:
-    dependencies:
-      - build.bleep::bleep-plugin-ci-release:${BLEEP_VERSION}
-    platform:
-      name: jvm
-    scala:
-      options: -encoding utf8 -feature -unchecked
-      strict: true
-      version: 3.8.3
-scripts:
-  my-publish-local:
-    main: PublishLocal
-    project: scripts
-  publish:
-    main: Publish
-    project: scripts
 templates:
   template-common:
     platform:

@@ -1,0 +1,152 @@
+---
+title: Stages
+sidebar_label: Stages
+description: "The pipeline vocabulary: markers that cost nothing, the algebraic rewrites between them, and the clustered-data family no standard library has."
+---
+
+import Link from "@docusaurus/Link";
+import Snippet from "@site/src/components/Snippet";
+
+export function FuseEx({ src, gen }) {
+  return (
+    <div className="fuseex">
+      <p className="fuse-cap">you write</p>
+      <Snippet name={src} hideFull />
+      <p className="fuse-cap">the macro emits</p>
+      <Snippet name={gen} />
+    </div>
+  );
+}
+
+export function Api({ label, ops }) {
+  return (
+    <p className="api-sheet">
+      <span className="api-label">{label}</span>
+      {ops.map((o, i) => (
+        <span key={o}>
+          {i > 0 && <span className="api-sep"> · </span>}
+          <code>{o}</code>
+        </span>
+      ))}
+    </p>
+  );
+}
+
+<p className="page__eyebrow">the stages</p>
+
+<p className="lede">
+  A stage is a method that does nothing: <code>def map[B](f: A => B): Fuse[B, S] = this</code>. The
+  body discards the lambda and returns the receiver. Stages exist so the terminal macro (code that
+  runs inside the compiler and rewrites the call from its typed syntax tree) has something to read
+  off the syntax tree; they have no runtime representation. That is why chaining
+  fourteen of them costs nothing.
+</p>
+
+## The vocabulary
+
+These carry their usual collection-library meanings. What differs is the cost (none) and where the
+lambdas end up (spliced into the one loop):
+
+<Api
+  label="transform"
+  ops={["map", "collect", "flatMap", "flatten", "scanLeft", "tapEach"]}
+/>
+<Api
+  label="select"
+  ops={["filter", "filterNot", "withFilter", "takeWhile", "dropWhile", "distinct", "distinctBy"]}
+/>
+<Api
+  label="slice"
+  ops={["take", "drop", "slice", "takeRight", "grouped"]}
+/>
+<Api
+  label="pair"
+  ops={["zip", "zipWithIndex", "map2"]}
+/>
+<Api
+  label="clustered"
+  ops={["foldAdjacentBy", "groupAdjacentBy", "groupAdjacentReduceBy"]}
+/>
+
+Details: `withFilter` means for-comprehension guards fuse (a for-comprehension is Scala's `for`
+syntax, which the compiler desugars into `map`/`flatMap`/`withFilter` calls). `grouped(n)`
+is a *stage* here, not a terminal: it emits `FArray[A]` chunks you can keep transforming, and it
+short-circuits under a downstream `take`. `takeRight` is the one stage that can't short-circuit its
+source (the last *n* aren't knowable until the end; it rides an O(n) ring buffer). `map2(that)(f)` is
+`zip(that).map(f)` that never forms the pair.
+
+## The stage worth staring at: collect, unboxed
+
+`collect` shows what "spliced into the loop" means, because the standard-library version is
+expensive: it allocates a `PartialFunction` (a Scala function object that also reports whether it
+matches a given argument) and runs every element through generic `applyOrElse`, boxing each
+primitive twice. Fused:
+
+<FuseEx src="fuse-src-guide-collect" gen="fuse-guide-collect" />
+
+The lowering contains no `PartialFunction` object: the `case x if x % 2 == 0 => x * 2` became a
+pattern match on an unboxed `Int` inside the loop, the guard is the branch, and the result goes
+straight into the output `int[]`.
+
+The stage composes: here `zip` reads a second array in lock-step, `collect` destructures the pair
+in the loop, and both columns stay unboxed throughout:
+
+<FuseEx src="fuse-src-guide-zipcollect" gen="fuse-guide-zipcollect" />
+
+## Stages rewrite each other
+
+Because the whole chain is visible at compile time, adjacent stages simplify *algebraically* before
+any code is emitted. `take(n).take(m)` collapses to one clamped limit; `drop(n).drop(m)` to one skip
+counter; and a `take` slides left past a `map` (length- and position-preserving) to meet another
+`take` on the far side. In this chain the two takes become a single `min(7, 3)`:
+
+<FuseEx src="fuse-src-guide-taketake" gen="fuse-guide-taketake" />
+
+In practice this means composition is free: helper methods that append a defensive `take`, or
+guards layered by different call sites, leave no residual loop machinery behind.
+
+## The clustered-data family
+
+One family has no standard-library counterpart at all, and it exists because real data is so often
+*already ordered*: a time-clustered trade log, an access log grouped by request id, any sorted
+export. A hash `groupBy` would buffer the entire dataset to rediscover an order it already had. The
+adjacent stages exploit the order instead, and because they're stages, they compose downstream and
+short-circuit; over a <Link to="/fusion/sources">streaming source</Link> they process a file of any
+size in constant memory.
+
+The examples run on a realistic record, straight from the snapshot tests that generate every
+lowering on this page:
+
+<Snippet name="guide-trade" hideFull />
+
+**`foldAdjacentBy(key)(seed)(combine)`** emits one `(key, acc)` pair per maximal run of equal keys,
+in O(1) memory: the whole state is the current key and one accumulator. Per-day totals in one line;
+in the lowering, the emit happens on key *change*, with the final run flushed after the loop:
+
+<FuseEx src="fuse-src-guide-foldadj" gen="fuse-guide-foldadj" />
+
+**`groupAdjacentBy(key)`** is for when you need the run's *rows*: each run becomes its own `FArray[A]`,
+buffered one run at a time (O(largest run), never O(N)). Downstream stages see a stream of groups,
+so `take` stops the source after enough *runs*:
+
+<FuseEx src="fuse-src-guide-groupadj" gen="fuse-guide-groupadj" />
+
+**`groupAdjacentReduceBy(key)(prep)(agg)`** is nested fusion: a *fused sub-pipeline* runs over each
+group's rows and emits `(key, result)` per run. `prep` is ordinary stages over the group; `agg` its
+aggregate; with a folding aggregate the rows are never materialized. In the lowering, the inner
+`map`/`filter` runs inline as each row streams past, the accumulator resets on key change, and no
+per-group collection ever exists:
+
+<FuseEx src="fuse-src-guide-nested" gen="fuse-guide-nested" />
+
+One precondition for all three: "clustered by key" is the caller's declaration. On unordered input
+the result is per-run, not per-key; this is documented, not detected.
+
+## Semantics: what laziness changes
+
+A fused pipeline is short-circuiting end to end. Under `take`, `find`, `exists`, a stage lambda runs
+*fewer* times than in the strict `List` version: `map(f).take(3)` calls `f` exactly three times over
+a million elements. And when a `map` builds a product whose columns a later `filter` only partly
+reads, the unread columns are computed only for survivors; that analysis belongs to{" "}
+<Link to="/fusion/optimizer">the optimizer</Link>. For pure lambdas the results are identical to the
+strict semantics; side-effecting lambdas can observe the difference.

@@ -20,6 +20,7 @@ class ConvertIntBenchmark extends IntInputs {
   @Benchmark def farray_copyToArray(): Array[Int] = { val a = new Array[Int](size); farrayInput.copyToArray(a, 0, size); a }
   @Benchmark def list_copyToArray(): Array[Int] = { val a = new Array[Int](size); listInput.copyToArray(a); a }
   @Benchmark def vector_copyToArray(): Array[Int] = { val a = new Array[Int](size); vectorInput.copyToArray(a); a }
+  @Benchmark def iarray_copyToArray(): Array[Int] = { val a = new Array[Int](size); iarrayInput.copyToArray(a); a }
   @Benchmark def ziochunk_copyToArray(): Array[Int] = { val a = new Array[Int](size); zioChunkInput.copyToArray(a); a }
   @Benchmark def fs2chunk_copyToArray(): Array[Int] = { val a = new Array[Int](size); fs2ChunkInput.copyToArray(a, 0); a }
 

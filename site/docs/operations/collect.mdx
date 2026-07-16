@@ -1,0 +1,87 @@
+---
+title: collect, picked apart
+sidebar_label: collect
+description: "filter + map through one pattern match: why the PartialFunction object is pure tax, the macro that splits it into predicate and transform, and the megamorphic chart where the field falls 9× behind."
+---
+
+import Link from "@docusaurus/Link";
+import BenchPair from "@site/src/components/BenchPair";
+
+<p className="lede">
+  <code>collect</code> is filter and map in one pattern match (a Scala <code>match</code>: a switch
+  whose cases can test, destructure and produce a value). The first eager
+  implementation here kept the <code>PartialFunction</code> object and <em>measurably lost</em>. What
+  ships instead picks the pattern match apart at compile time, the same move the fusion engine makes,
+  done in the eager machinery.
+</p>
+
+## The tax, and where it isn't
+
+A `PartialFunction[A, B]` (Scala's reification of a pattern match: a lambda paired with an
+`isDefinedAt` test) is a generic runtime object, and a collect loop consults it per element — fs2
+and zio via one `applyOrElse` with a sentinel default, the standard library via `isDefinedAt` +
+`apply`. Generic means erased: on `Int` every question and answer crosses through `Integer`. And it
+isn't about *arrays* — our first cut had unboxed storage on both sides of the PF boundary and still
+ran at **0.65×** of the best rival at 100k Int. The boundary itself was the whole cost.
+
+The call site, though, contains a pattern-match *literal*, and a literal is
+compile-time information:
+
+```scala
+xs.collect { case x if x % 2 == 0 => x * 2 }
+```
+
+`collect` is an inline op, so a small macro (code that runs in the compiler, rewriting the typed
+tree) sees that literal and splits it: pattern and guard become a predicate `x => x % 2 == 0`, the
+case body a transform `x => x * 2`, and both feed a one-pass impl exactly as{" "}
+<Link to="/operations/filter">filter's</Link> and <Link to="/operations/map">map's</Link> lambdas
+do — `inline` parameters spliced into the per-element loop, unboxed end to end, output written
+filter-style into one slack-wrapped max-size array (no growable buffer, no trim copy). No
+`PartialFunction` is ever constructed; for a single simple case there isn't even a match in the
+output — the guard *is* the branch, evaluated once per element.
+
+The fine print:
+
+<ul className="points">
+  <li>
+    <strong>Destructuring and multi-case matches</strong> split into two mirrored matches (one
+    answering yes/no, one producing the value), with the pattern binders hygienically freshened.
+    Patterns and guards may then evaluate more than once per element (the usual purity assumption).
+  </li>
+  <li>
+    <strong>A stored PF</strong> (<code>val pf: PartialFunction[…]</code> passed by name) can't be
+    picked apart; it falls back to the runtime path unchanged.
+  </li>
+  <li>
+    <strong>Every element kind is carried</strong>: the split lambdas ride the same per-kind
+    dispatch as filter/map, so <code>Float</code>/<code>Byte</code>/<code>Char</code> collections
+    get the same treatment as <code>Int</code> and refs.
+  </li>
+</ul>
+
+<BenchPair
+  int="CollectIntBenchmark"
+  str="CollectStrBenchmark"
+  caption="A lone collect { case x if … => … }, Int beside String, fully serialized measurement. On Int the pick-apart flips the op from a 0.65× loss to 1.6–2.4× wins at every size past trivial. On String there was never boxing to remove and the good rivals run the same one-array shape, so the result is ties-to-narrow-wins from 100 up (1.01–1.10× vs fs2.Chunk), with one cell we plainly lose: size 10, ~0.6× of zio.Chunk's tiny-collect at ~1ns/element, measured thrice and real. One lone nano-cell is the entire remaining deficit."
+/>
+
+## Eight pattern matches in one method
+
+This is the [method-size effect](/operations/map#where-it-stops-being-a-tie) again, in collect's
+clothing. A lone collect is the friendliest case a rival sees — one call site, one `PartialFunction`
+class, fully inlined — but pack eight distinct pattern matches into one method (a parser, a router,
+any dispatch-heavy code) and every rival funnels eight PF classes through its one shared collect
+loop. Collect's twist over `map`: the shared site is a `PartialFunction.applyOrElse`, which is
+generic, so once it goes megamorphic it not only loses inlining but *re-boxes* every primitive —
+where `map`'s specialized lambda did not. FArray's collect has no shared site to poison; the macro
+gave each call site its own loop at compile time:
+
+<BenchPair
+  int="CollectMegaIntBenchmark"
+  str="CollectMegaStrBenchmark"
+  caption="Eight distinct PartialFunction literals through collect in ONE method. On Int the field collapses: IArray, whose stdlib collect both boxes and dispatches megamorphically, falls 7× behind at size 10 and 9.5× at 10k; List and Vector run 2.4–4.6× behind; fs2's applyOrElse discipline holds best and still trails 1.1–1.3×. On String there's no re-boxing, and FArray still leads everywhere (up to 1.5×) because the rivals' megamorphic applyOrElse plus virtual chunk-read plus builder append now all cost, while our split predicate/transform ride call-site-private loops. The lone chart above is the microbenchmark; this one is closer to real code."
+/>
+
+The same idea one level up: in a *fused* chain, `collect`'s cases splice straight into the pipeline
+loop (<Link to="/fusion/stages">stages page</Link>); this page's macro is that move, packaged for
+the eager op so a lone `collect` gets it too.

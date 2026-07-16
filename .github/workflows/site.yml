@@ -46,13 +46,13 @@ jobs:
           npm ci
           npm run build
       - name: Keep the raw JMH data reachable
-        # the SPA bakes in the slimmed data; these are the full untrimmed JMH results for tooling/verification
+        # the site bakes in the slimmed data; these are the full untrimmed JMH results for tooling/verification
         run: |
-          cp docs/bench-results.json site/dist/bench-results.json
-          cp docs/set-bench-results.json site/dist/set-bench-results.json
+          cp docs/bench-results.json site/build/bench-results.json
+          cp docs/set-bench-results.json site/build/set-bench-results.json
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: site/dist
+          path: site/build
 
   deploy:
     if: github.event_name != 'pull_request'

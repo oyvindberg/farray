@@ -98,3 +98,97 @@ class SearchSliceIntBenchmark extends IntInputs {
   @Benchmark def iarray_containsSlice(): Boolean = iarrayInput.containsSlice(iarraySlice)
   @Benchmark def ziochunk_containsSlice(): Boolean = zioChunkInput.containsSlice(zioSlice)
 }
+
+// The Str twin: same ops over String elements — every compare is an equals call, so this measures
+// the drivers + candidate scan against reference equality costs everyone shares.
+class SearchSliceStrBenchmark extends Inputs {
+  var farraySlice: FArray[String] = _
+  var listSlice: List[String] = _
+  var vectorSlice: Vector[String] = _
+  var iarraySlice: IArray[String] = _
+  var zioSlice: zio.Chunk[String] = _
+
+  var farraySame: FArray[String] = _
+  var listSame: List[String] = _
+  var vectorSame: Vector[String] = _
+  var iarraySame: IArray[String] = _
+  var zioSame: zio.Chunk[String] = _
+
+  var farrayStarts: FArray[String] = _
+  var farrayEnds: FArray[String] = _
+
+  @Setup
+  def setupSlices(): Unit = {
+    farrayStarts = FArray.tabulate(3)(_.toString)
+    farrayEnds = FArray.tabulate(3)(i => (size - 3 + i).toString)
+    val mid = size / 2
+    val sliceArr = Array.tabulate(math.min(3, size))(i => (mid + i).toString)
+    farraySlice = FArray.fromArray(sliceArr.clone())
+    listSlice = sliceArr.toList
+    vectorSlice = sliceArr.toVector
+    iarraySlice = IArray.unsafeFromArray(sliceArr.clone())
+    zioSlice = zio.Chunk.fromArray(sliceArr.clone())
+
+    val sameArr = Array.tabulate(size)(_.toString)
+    farraySame = FArray.fromArray(sameArr.clone())
+    listSame = sameArr.toList
+    vectorSame = sameArr.toVector
+    iarraySame = IArray.unsafeFromArray(sameArr.clone())
+    zioSame = zio.Chunk.fromArray(sameArr.clone())
+  }
+
+  @Benchmark def farray_startsWith(): Boolean = farrayInput.startsWith(farrayStarts)
+  @Benchmark def list_startsWith(): Boolean = listInput.startsWith(List("0", "1", "2"))
+  @Benchmark def vector_startsWith(): Boolean = vectorInput.startsWith(Vector("0", "1", "2"))
+  @Benchmark def iarray_startsWith(): Boolean = iarrayInput.startsWith(IArray("0", "1", "2"))
+  @Benchmark def ziochunk_startsWith(): Boolean = zioChunkInput.startsWith(zio.Chunk("0", "1", "2"))
+  @Benchmark def fs2chunk_startsWith(): Boolean = fs2ChunkInput.startsWith(fs2.Chunk("0", "1", "2"))
+
+  @Benchmark def farray_endsWith(): Boolean = farrayInput.endsWith(farrayEnds)
+  @Benchmark def list_endsWith(): Boolean = listInput.endsWith(List((size - 3).toString, (size - 2).toString, (size - 1).toString))
+  @Benchmark def vector_endsWith(): Boolean = vectorInput.endsWith(Vector((size - 3).toString, (size - 2).toString, (size - 1).toString))
+  @Benchmark def iarray_endsWith(): Boolean = iarrayInput.endsWith(IArray((size - 3).toString, (size - 2).toString, (size - 1).toString))
+  @Benchmark def ziochunk_endsWith(): Boolean = zioChunkInput.endsWith(zio.Chunk((size - 3).toString, (size - 2).toString, (size - 1).toString))
+
+  @Benchmark def farray_segmentLength(): Int = farrayInput.segmentLength(_.length < 3)
+  @Benchmark def list_segmentLength(): Int = listInput.segmentLength(_.length < 3)
+  @Benchmark def vector_segmentLength(): Int = vectorInput.segmentLength(_.length < 3)
+  @Benchmark def iarray_segmentLength(): Int = iarrayInput.segmentLength(_.length < 3)
+  @Benchmark def ziochunk_segmentLength(): Int = zioChunkInput.segmentLength(_.length < 3)
+
+  @Benchmark def farray_lastIndexWhere(): Int = farrayInput.lastIndexWhere(_ == "5")
+  @Benchmark def list_lastIndexWhere(): Int = listInput.lastIndexWhere(_ == "5")
+  @Benchmark def vector_lastIndexWhere(): Int = vectorInput.lastIndexWhere(_ == "5")
+  @Benchmark def iarray_lastIndexWhere(): Int = iarrayInput.lastIndexWhere(_ == "5")
+  @Benchmark def ziochunk_lastIndexWhere(): Int = zioChunkInput.lastIndexWhere(_ == "5")
+
+  @Benchmark def farray_sameElements(): Boolean = farrayInput.sameElements(farraySame)
+  @Benchmark def list_sameElements(): Boolean = listInput.sameElements(listSame)
+  @Benchmark def vector_sameElements(): Boolean = vectorInput.sameElements(vectorSame)
+  @Benchmark def iarray_sameElements(): Boolean = iarrayInput.sameElements(iarraySame)
+  @Benchmark def ziochunk_sameElements(): Boolean = zioChunkInput.sameElements(zioSame)
+
+  @Benchmark def farray_indexOfSlice(): Int = farrayInput.indexOfSlice(farraySlice)
+  @Benchmark def list_indexOfSlice(): Int = listInput.indexOfSlice(listSlice)
+  @Benchmark def vector_indexOfSlice(): Int = vectorInput.indexOfSlice(vectorSlice)
+  @Benchmark def iarray_indexOfSlice(): Int = iarrayInput.indexOfSlice(iarraySlice)
+  @Benchmark def ziochunk_indexOfSlice(): Int = zioChunkInput.indexOfSlice(zioSlice)
+
+  @Benchmark def farray_lastIndexOf(): Int = farrayInput.lastIndexOf("5")
+  @Benchmark def list_lastIndexOf(): Int = listInput.lastIndexOf("5")
+  @Benchmark def vector_lastIndexOf(): Int = vectorInput.lastIndexOf("5")
+  @Benchmark def iarray_lastIndexOf(): Int = iarrayInput.lastIndexOf("5")
+  @Benchmark def ziochunk_lastIndexOf(): Int = zioChunkInput.lastIndexOf("5")
+
+  @Benchmark def farray_lastIndexOfSlice(): Int = farrayInput.lastIndexOfSlice(farraySlice)
+  @Benchmark def list_lastIndexOfSlice(): Int = listInput.lastIndexOfSlice(listSlice)
+  @Benchmark def vector_lastIndexOfSlice(): Int = vectorInput.lastIndexOfSlice(vectorSlice)
+  @Benchmark def iarray_lastIndexOfSlice(): Int = iarrayInput.lastIndexOfSlice(iarraySlice)
+  @Benchmark def ziochunk_lastIndexOfSlice(): Int = zioChunkInput.lastIndexOfSlice(zioSlice)
+
+  @Benchmark def farray_containsSlice(): Boolean = farrayInput.containsSlice(farraySlice)
+  @Benchmark def list_containsSlice(): Boolean = listInput.containsSlice(listSlice)
+  @Benchmark def vector_containsSlice(): Boolean = vectorInput.containsSlice(vectorSlice)
+  @Benchmark def iarray_containsSlice(): Boolean = iarrayInput.containsSlice(iarraySlice)
+  @Benchmark def ziochunk_containsSlice(): Boolean = zioChunkInput.containsSlice(zioSlice)
+}

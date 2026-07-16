@@ -1,0 +1,95 @@
+---
+title: Why fusion
+sidebar_label: Why fusion
+description: "What fusion buys, measured first: the fused pipeline warm, cold, streaming, against java.util.stream, and on a second long chain — every bar hoverable, every @Benchmark source one click away."
+hide_table_of_contents: true
+---
+
+import Link from "@docusaurus/Link";
+import Snippet from "@site/src/components/Snippet";
+import SideBySide from "@site/src/components/SideBySide";
+import BenchChart from "@site/src/components/BenchChart";
+import BenchPair from "@site/src/components/BenchPair";
+
+<p className="page__eyebrow">what fusion buys</p>
+
+<p className="lede">
+  Before the how, the what. This is what fusion buys, measured — every bar a JMH sweep you can hover,
+  every card the exact <code>@Benchmark</code> methods behind it, so you can check each rival runs its
+  best idiom rather than a strawman. The rest of this section is how it is done.
+</p>
+
+## The headline: fourteen stages, warm
+
+The pipeline from the introduction: `flatMap`, `filter`, `map`, `zip`, `zipWithIndex`, `foldLeft`
+(a seeded reduce), twice over. Every collection runs the identical code; the FArray entry differs
+by the one word:
+
+<SideBySide
+  snippet="fuse-pipeline"
+  cls="LongMixedPipelineIntBenchmark"
+  title="14-stage pipeline"
+  caption={
+    <>
+      Swept from empty to 100k elements. At 100k: ~36× the quickest rival, ~83× List, and ~15× the
+      same pipeline run eagerly on FArray itself (the gap between compiled-once ops and a compiled
+      pipeline). The lazy <code>List.view</code>/<code>Vector.view</code> forms don't rescue the
+      collections on a chain this flatMap- and zip-heavy — their per-stage View wrappers cost more
+      than the intermediates they remove, landing ~60–70× behind <code>.fuse</code>. Hover any column
+      for exact ratios; the fused variant's allocation profile measures at inputs-only (4·N + 40 bytes
+      per invocation, the benchmark's own zip source), with the pipeline contributing zero.
+    </>
+  }
+/>
+
+## Against java.util.stream: the same pipeline, both fused
+
+`java.util.stream` is the JVM's own fused pipeline, which makes it the fair rival for `.fuse` and
+the wrong one for the eager chains on the <Link to="/chains">chains page</Link> (comparing a lazy
+pipeline against eager materialization would be a strawman, so it sits this one out there). The
+standard collections have their own lazy single-pass form too — `List.view` and `Vector.view` — so
+these charts include them as well; they too belong here rather than on the eager page. Here is the
+classic map → filter → foldLeft with every side collapsed to a single pass:
+
+<BenchPair
+  int="MapFilterFoldIntBenchmark"
+  str="MapFilterFoldStrBenchmark"
+  caption="map → filter → foldLeft. Eager FArray and every eager collection materialize two intermediate arrays across three passes; IntStream, List.view/Vector.view, and FArray's .fuse all run it as one pass with none. On Int, IntStream leads the EAGER FArray chain ~1.5× and .fuse retakes the lead at 1.1×; the collection .view forms fuse the three stages but stay boxed, landing ~2.5–3× past their own eager selves yet ~7–9× behind .fuse. On String the per-element String allocation dominates, so the field compresses — Vector.view is the quickest rival and fusion leads it only ~1.1×. The eager FArray bar is the same measurement shown on the chains page."
+/>
+
+## Cold: no warmup lap
+
+Because the specialization is in the bytecode, there is no lap where a boxing collection is briefly
+ahead:
+
+<BenchChart
+  cls="ColdPipelineIntBenchmark"
+  caption="The same 14-stage pipeline measured COLD: SingleShotTime, zero warmup, one uncompiled invocation at 100k elements (invocations/sec). Fused FArray is ~3.8× past List and IArray, ~2.7× past the quickest rival, before the JIT compiles anything. Cold is exactly where the lazy .view forms collapse — their View-wrapper allocation isn't compiled away yet, so List.view/Vector.view run ~4–5× slower than even eager List here; laziness is a warm-JIT bet, and .fuse doesn't make it. Warmup only changes the size of the lead."
+/>
+
+## Streaming: constant memory without the streaming tax
+
+The same fused loop runs over data too big for the heap — a generated sequence, or a file's lines,
+folded without holding either in memory, at no per-element streaming tax. The chart, against
+`Iterator`, `LazyList`, `fs2.Stream` and a hand-rolled `BufferedReader`, lives with the{" "}
+<Link to="/fusion/sources#streaming-measured">source model</Link> that makes it work.
+
+## A second pipeline, a different stage mix
+
+A nine-stage chain built from a different set of combinators — `map`, `filter`, `collect` (a
+PartialFunction the macro folds into one filter-plus-map), `zipWithIndex`, `takeWhile`, and `sum` —
+so the win isn't an artifact of one lucky shape. Fused, eager, and the whole field, Int beside
+String:
+
+<BenchPair
+  int="IntLongPipelineBench"
+  str="StrLongPipelineBench"
+  caption="map · filter · collect · map · zipWithIndex · map · takeWhile · filter · map · sum. Fused FArray runs it in one unboxed pass with no intermediate collections. The fairest rival is each collection's own lazy .view (single-pass, no intermediates) — and on Int at 100k the quickest of those is Vector.view, ~2× past eager Vector but still 16.7× behind .fuse (and 4.9× behind eager FArray). On String the per-element string work compresses the field, so Vector.view is the quickest rival there too, with fusion 1.7× ahead of it and 1.7× ahead of eager FArray. Both bright/dark bars are FArray — .fuse and the same chain eager."
+/>
+
+## JSON projection queries
+
+The byte-source numbers live with their scanners and rivals on{" "}
+<Link to="/fusion/json">the JSON integration page</Link>. The headline: 1.6× past jsoniter-scala's
+hand-written reader loop at ~1 B/op, 4–9× past the AST parsers, and 2.5× on selective queries where
+records are abandoned mid-scan.

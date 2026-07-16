@@ -1,0 +1,167 @@
+---
+title: Why FArray
+sidebar_label: Why FArray
+description: "Eager FArray, no .fuse anywhere, already beats List, Vector, IArray and the Chunks. Single ops tie a raw array; chaining is where the model compounds, shown Int beside String."
+---
+
+import Link from "@docusaurus/Link";
+import BenchPair from "@site/src/components/BenchPair";
+import BenchChart from "@site/src/components/BenchChart";
+import ChainScore from "@site/src/components/ChainScore";
+import Scorecard from "@site/src/components/Scorecard";
+
+{/* This page is eager-only by construction. The fused/lazy pipelines belong with the fused
+    comparison, not here: java.util.stream (a lazy fused pipeline) and FArray's own .fuse (the
+    `farrayFused` bar, e.g. on the cold-pipeline chart). Every chart drops them via ignore={fused}. */}
+export const fused = ["javastream", "farrayFused", "listView", "vectorView"];
+
+<p className="page__eyebrow">what FArray buys</p>
+
+<p className="lede">
+  The introduction led with fusion, FArray's headline trick, which has{" "}
+  <Link to="/fusion">its own section</Link>. This page is the plain library: no <code>.fuse</code>
+  anywhere, just eager <code>FArray</code>, and it already beats the field. Single ops tie a raw
+  array; chaining is where it pulls ahead, so that is what these benchmarks show, Int on the left and
+  String on the right.
+</p>
+
+The rivals throughout:
+
+- `List` — Scala's immutable linked list, not `java.util.List`
+- `Vector` — a persistent tree
+- `IArray` — an immutable view of a raw array
+- `fs2.Chunk` — the array-backed chunk from the fs2 streaming library
+- `zio.Chunk` — the array-backed chunk from the ZIO streaming library
+
+First the totals. Every size of every chained-operation benchmark class in the suite, eager FArray
+only, no `.fuse`:
+
+<ChainScore />
+
+Three effects compound down a chain:
+
+<ul className="points">
+  <li>
+    <strong>Boxing is paid per stage.</strong> A three-stage pipeline over boxed elements boxes at
+    every crossing; chaining multiplies the tax rather than amortizing it. FArray's stages hand
+    each other primitive arrays.
+  </li>
+  <li>
+    <strong>Structural stages cost nothing.</strong> A <code>take</code>, <code>drop</code> or{" "}
+    <code>reverse</code> in the middle of a chain is an O(1) lazy node for FArray and a full copy for
+    every array-backed rival, a copy of data whose only purpose is to be consumed by the next stage.
+  </li>
+  <li>
+    <strong>Big (calling) methods slow the rivals down.</strong> The array-backed collections run every lambda
+    you pass to <code>map</code>/<code>filter</code> through one shared, generic copy of that method.
+    Pack several different lambdas into one method and the JIT can no longer keep that shared copy
+    specialized, so it deoptimizes and slows down. FArray compiles each lambda into its own loop, so
+    there is nothing shared to spoil. This is what turns a one-line benchmark tie into a loss in real
+    code, detailed on <Link to="/operations/map#where-it-stops-being-a-tie">the map page</Link>.
+  </li>
+</ul>
+
+## flatMap → filter → take
+
+`flatMap` doubles the sequence, `filter` thins it, and `take` throws a chunk of it away. FArray's
+`take` is an O(1) SliceNode, so it discards the tail for *free* — everyone else copies out what they
+just finished building. With flat-leaf `flatMap` feeding an unboxed `filter` on top, eager FArray
+runs this shape up to **22× past List** and 6–10× past Vector and the Chunks, before a single
+`.fuse`:
+
+<BenchPair
+  int="FlatMapFilterTakeIntBenchmark"
+  str="FlatMapFilterTakeStrBenchmark"
+  ignore={fused}
+  caption="flatMap (doubles the sequence) → filter → take, Int beside String. The trailing take is a lazy SliceNode for FArray and a full copy for every rival. On Int: 22× List at 1k (13× at 100k), 6–10× Vector and the Chunks, and 1.6× IArray — which keeps its flatMap inners unboxed too, so only the take-copy separates them. String is the same shape: 11× List, 7× the Chunks."
+/>
+
+## map → filter → fold
+
+Transform, select, aggregate: the shape of half the collection code ever written. One boxed
+crossing per stage for the field; `int[]` end to end for FArray:
+
+<BenchPair
+  int="MapFilterFoldIntBenchmark"
+  str="MapFilterFoldStrBenchmark"
+  ignore={fused}
+  caption="map → filter → foldLeft, Int beside String. The boxing collections pay per stage (5.6× over Vector, 12× over List at 100k); IArray and zio.Chunk pay only the intermediate allocations. int[] end to end for FArray, and eager FArray beats eager IArray at every size — its filter is branchless and vectorizes. The lazy single-pass rivals (java.util.stream, List.view/Vector.view, and FArray's own .fuse, which all fuse the three stages into one loop with no intermediates) are compared on the fusion benchmarks page; here the field is eager."
+/>
+
+## take → drop → map → fold
+
+Slice stages are FArray's freebie: a lazy window over the source, no copy. A `map` then transforms
+through the window, and the fold reads straight out of the result:
+
+<BenchPair
+  int="TakeDropMapFoldIntBenchmark"
+  str="TakeDropMapFoldStrBenchmark"
+  ignore={fused}
+  caption="take(n-1) → drop(1) → map → foldLeft. FArray's take/drop are O(1) SliceNodes: the map runs over the window without either slice ever being copied, then the fold consumes its result. The array-backed rivals copy at each slice before they even reach the map, and the boxing collections box the map stage on top."
+/>
+
+## filter → map → reverse
+
+The mirror case: the structural stage last. FArray's `reverse` is a node pointing at the result;
+everyone else allocates a third collection just to flip the second one:
+
+<BenchPair
+  int="FilterMapReverseIntBenchmark"
+  str="FilterMapReverseStrBenchmark"
+  ignore={fused}
+  caption="filter → map → reverse. The first two stages are the usual per-element story; the reverse is where FArray stops doing work: an O(1) ReverseNode versus a full reversed copy. (fs2.Chunk has no reverse and sits out.)"
+/>
+
+## flatMap → flatMap → map → fold
+
+Chained expansion stresses what a library hands its next stage. Each FArray `flatMap` produces one
+flat leaf, so the following stage reads a tight array rather than a fragment chain:
+
+<BenchPair
+  int="FlatMapChainIntBenchmark"
+  str="FlatMapChainStrBenchmark"
+  ignore={fused}
+  caption="flatMap → flatMap → map → foldLeft with small inners. Every stage's output is a flat leaf, so the compounding is linear for FArray; the boxing collections pay both the per-element tax and the intermediate allocation, twice over."
+/>
+
+## A long interleaved structural chain
+
+The last chain alternates `+:`, `:+`, `++` (prepend, append, concat) and
+`reverse`, forced by one final `map`. For FArray that's a string of O(1) nodes and a single O(n)
+traversal; for array-copying structures it's a full copy *per op*:
+
+<BenchPair
+  int="StructuralShowcaseIntBenchmark"
+  str="StructuralShowcaseStrBenchmark"
+  ignore={fused}
+  caption="An interleaved prepend/append/concat/reverse chain, materialized once at the end. O(n) total for FArray versus O(n·chain-length) for the copiers: this is the thousands-× regime, identical on Int and String because structural ops never touch elements."
+/>
+
+## No warmup lap
+
+Every number above is steady-state, measured after the JIT has compiled the loop. FArray doesn't
+need that lap. Its unboxing and monomorphic reads are in the bytecode from compile time, not
+something the VM discovers at runtime, so it starts fast rather than warming up to fast. Measured
+cold — single-shot, zero warmup, the JVM still interpreting — eager FArray is already ahead of the
+whole field, before anything is compiled:
+
+<BenchChart
+  cls="ColdPipelineIntBenchmark"
+  ignore={fused}
+  caption="A long eager pipeline measured COLD: SingleShotTime, one uncompiled invocation at 100k elements (invocations/sec, higher is faster). Eager FArray leads before the JIT compiles anything: 1.7× past IArray, 3.4× past Vector, 4× past List, and 4–7× past the Chunks. The boxing collections gain little from warmup anyway — their cost is allocation, and the JIT does not eliminate a million Integers."
+/>
+
+## The whole suite, one number per structure
+
+The charts above argue from selected benchmarks; this is the unselected version. Every operation at
+every size, boiled down per structure, losses included; [the benchmarks page](./benchmarks/farray.mdx)
+has every chart behind it.
+
+<Scorecard />
+
+---
+
+There is one speed above this: handing the whole chain to the compiler.{" "}
+<Link to="/fusion">Fusion</Link> takes these same pipelines and emits a single loop; the 14-stage
+version runs ~15× past even FArray's own eager chains. The eager ops above are already the
+strongest field; fusion is the ceiling.

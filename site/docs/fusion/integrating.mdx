@@ -1,0 +1,156 @@
+---
+title: Integrating with fusion
+sidebar_label: Integrating
+description: "What the engine actually is (a loop assembler over columns), why one optimizer serves an FArray and a stream of JSON bytes, what an integration provides, and where the magic stops."
+---
+
+import Link from "@docusaurus/Link";
+import Snippet from "@site/src/components/Snippet";
+import GeneratedCode from "@site/src/components/GeneratedCode";
+
+<p className="page__eyebrow">for library authors</p>
+
+<p className="lede">
+  The fusion engine is an assembler that builds one loop out of three parts. A{" "}
+  <strong>driver</strong> owns iteration: who advances, when to stop. <strong>Columns</strong> are
+  how the parts of one element get read: an array index, or twenty byte-level field scans. A{" "}
+  <strong>terminal</strong> owns the accumulators. Stages and the optimizer live in the column layer
+  and never learn where columns come from. Integrating a format means providing a driver and a way
+  to make columns; the optimizer is not yours to build, and it works on day one.
+</p>
+
+## One optimizer, two worlds
+
+Every lowering is a golden test, so the claim is checkable. The same logical query, lowered twice.
+Over an `FArray[Int]`: filter, then three aggregates in one pass:
+
+<GeneratedCode name="fuse-guide-agg" summary="filter + sum/count/max over FArray[Int] — the emitted loop" />
+
+Over a stream of NDJSON bytes: filter on a field, sum it:
+
+<GeneratedCode name="fuse-json-sum" summary="filter + sum over NDJSON bytes — the emitted scanner" />
+
+Read the bottom of each: both end in the same `val keep = <predicate>` and guarded accumulation,
+from the shared machinery. Everything above it is each world's answer to "how do I read this
+element's columns": `a(i)` for the array, a key-matching byte scan for JSON.
+
+## The column model, in one paragraph
+
+A value in flight is a set of columns: a scalar column is a deferred read that binds to a `val` on
+first use, a product is its columns plus a rebuild function that fires only if someone uses the
+value whole. Stages transform and guard columns, and a column nothing reads is never emitted.
+Dead-code elimination, compute-for-survivors and decode-once memoization are corollaries of this
+one representation, which is why the <Link to="/fusion/optimizer">optimizer page</Link> never
+mentions data formats.
+
+The seam follows: **to the engine, a JSON record is a tuple.** The decoder's per-field columns are
+wrapped in the same product-of-columns a tuple literal would get, and from that line on there is no
+byte-specific code path; "a field decodes at most once, and only for survivors" is the ordinary
+memoizer behavior, inherited.
+
+## The familiar half: chunks and records
+
+A byte source deals in two units:
+
+- **A chunk is a unit of memory.** The source holds one block of bytes at a time: `buf`, advanced
+  by `nextChunk()`.
+- **A record is a unit of meaning.** Within the current chunk, `nextRecord()` frames the next
+  complete record as a range, `recordStart` until `recordEnd`, no copy and no allocation.
+
+The engine emits exactly the nesting you'd guess, with `close()` in a `finally`:
+
+```scala
+try
+  while (source.nextChunk() && notDone)     // memory: one block resident
+    while (source.nextRecord() && notDone)  // meaning: one complete frame
+      scan(source.buf, source.recordStart, source.recordEnd)
+finally source.close()
+```
+
+Records do not respect block boundaries, so "unfinished record" is a first-class value:
+
+<Snippet name="framed-adt" hideFull />
+
+farray's `FramedByteSource` owns the buffer and the carry for a record that straddles two reads;
+memory is one block plus the largest record. What's left for a format is one function from a byte
+window to a verdict; here is the NDJSON framer, in its entirety:
+
+<Snippet name="ndjson-frame" hideFull />
+
+## Where terminals come from
+
+`Fuse[A, S]` carries only stage markers; the terminals are inline extension methods from the
+shape's `FuseLowering[S]` given, published in the shape's companion so they need no imports. Three
+consequences:
+
+<ul className="points">
+  <li>
+    <strong>Scope lives in the types.</strong> A shape mixes in the terminal families it supports
+    (<code>AggTerminals</code>, <code>SearchTerminals</code>, <code>GroupTerminals</code>,{" "}
+    <code>PlanTerminals</code>, <code>MaterializeTerminals</code>, bundled as{" "}
+    <code>StandardTerminals</code>); anything else is not a member and doesn't compile.
+  </li>
+  <li>
+    <strong>The syntax is written once:</strong> each terminal method reifies the call into a typed{" "}
+    <code>Terminal[A, R]</code> and hands it to the one abstract hook a lowering implements.
+  </li>
+  <li>
+    <strong>The hook is the whole integration surface</strong>, shown below.
+  </li>
+</ul>
+
+## The whole integration, one file
+
+The NDJSON plug-in, verbatim: the shape, the given, and the hook.
+
+<Snippet name="json-integration" hideFull />
+
+The last four lines introduce the engine to your format: `FuseMacro` can compile any pipeline into
+a loop but cannot read your bytes; your module owns the decoder but has no loop compiler. When a
+user writes `pipeline.sum`, the reified call lands in `lower` at compile time, the pipeline, the
+terminal and `JsonDecode` go across, and the returned loop replaces the `.sum` call in the user's
+program. The two declarations and their exact punctuation are Scala 3's required ritual for
+crossing into compiler-executed code and back. Copy the four lines verbatim; the only token that is
+yours is the decoder's name.
+
+## The decoder: answering the column question
+
+The engine asks the decoder, once per pipeline, at compile time: *"here is the record type, here is
+every lambda in the pipeline and the terminal's readers; produce this record's columns."*
+Concretely the decoder:
+
+1. **Computes the live set** by walking the lambdas' syntax trees for field paths:
+   `.filter(_.amount > 150).map(_.category)` makes two of a 20-field record's fields live. (Using
+   the record whole makes every field live; see the boundaries below.)
+2. **Answers with one column per field.** A live numeric field's column reads the `var` its scanner
+   fills; a live String field's stores slice bounds and builds the `String` only when read, so it
+   decodes at most once, only for survivors. A dead field's column is a typed default no one reads,
+   and its bytes are `skipValue`d.
+3. **Optionally hands the engine a leading-filter early-out**, letting the scanner abandon a record
+   mid-scan on predicate failure. The filter is re-checked downstream; the early-out is never the
+   correctness path.
+
+Everything else in the emitted code is the engine's, shared with the in-memory world; a CSV or
+length-prefixed-binary decoder would be the same shape: framing, per-field reads, a given.
+
+The decoder also renders its decisions as a plan string
+(`JsonPlan(record=Event, live=[amount], decoded=[amount], earlyOut=…, rebuildsRecord=false)`), and
+the tests assert on plans as well as golden lowerings.
+
+## Where the magic stops
+
+The boundaries, stated as plainly as the wins:
+
+- **Byte-source pipelines are `map`/`filter` only (v1).** `zip`, `flatMap`, `take`, `drop`,
+  `scan`, the adjacent-grouping family: all compile errors on a decomposed source. The engine
+  guards this at the one place that knows the stage list, so a decoder never has to.
+- **Records are flat case classes** with `Int`/`Long`/`Double`/`String` fields. Nested records,
+  options, collections in fields: not in v1, and the error says so at compile time.
+- **One frame at a time.** The driver sees a single complete record; there is no lookahead and no
+  cross-record window on a byte source.
+- **Synchronous.** The emitted code is a `while` loop in a `try`/`finally`; there is no async
+  variant.
+- **A performance cliff to know:** `topN`, `reduce` and `extremumByElem` keep whole elements, so on
+  a byte source they force every field live and rebuild the record per surviving element,
+  projection pushdown is off. `sum`/`fold`/`count`/`avg`/`agg` and the key-projecting extremums
+  decode only what they touch. The plan string makes this visible (`rebuildsRecord=true`).

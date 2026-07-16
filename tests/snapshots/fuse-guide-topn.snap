@@ -1,0 +1,40 @@
+((({
+  val src0: FBase = {
+    val xs$proxy: trades & FArray[Trade] = trades.$asInstanceOf$[trades & FArray[Trade]]
+
+    (xs$proxy: trades)
+  }.asInstanceOf[FBase]
+  val n0: Int = src0.length
+  val heap: DoubleTopNHeap = new DoubleTopNHeap(2, true)
+  val s: FBase = src0
+  val a: Array[Object] = s match {
+    case l: RefArr =>
+      (l.arr: Array[Object])
+    case t =>
+      if (t.length.>=(64)) FArrayOps.materializeRef(t) else Array.emptyObjectArray
+  }
+  val len: Int = s.length
+  var i: Int = 0
+  while (i.<(len)) {
+    val elem: Trade = if (a.ne(Array.emptyObjectArray)) a.apply(i).asInstanceOf[Trade] else FArrayOps.refAt(s, i).asInstanceOf[Trade]
+    val amount: Double = elem.amount
+    heap.offer(elem.asInstanceOf[Object], amount)
+    i = i.+(1)
+  }
+
+  {
+    val $proxy: FArray$package {
+      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+    } = FArray$package.$asInstanceOf$[FArray$package {
+      type FArray >: [A >: Nothing <: Any] =>> FBase <: [A >: Nothing <: Any] =>> FBase
+    }]
+    val FArray$package$_this: $proxy.type = $proxy
+    val as$proxy: Array[<FromJavaObject>] = heap.toSortedArray()
+
+    (({
+      val r: refRepr[Trade] = refRepr[Trade]
+      val _l: Int = as$proxy.length
+      if (_l.==(0)) Empty.INSTANCE else if (_l.==(1)) new RefOne(as$proxy.apply(0)) else new RefArr(as$proxy, _l)
+    }: FBase): FArray[Trade])
+  }.$asInstanceOf$[FArray[Trade]]
+}.asInstanceOf[FArray[Trade]]: FArray[Trade]): FArray[Trade]): FArray[Trade])

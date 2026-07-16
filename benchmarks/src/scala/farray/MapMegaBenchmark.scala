@@ -71,6 +71,16 @@ class MapMegaIntBenchmark extends IntInputs {
     bh.consume(zioChunkInput.map(_ + 9))
     bh.consume(zioChunkInput.map(_ * 5))
   }
+  @Benchmark def javastream(bh: Blackhole): Unit = {
+    bh.consume(java.util.Arrays.stream(arrInput).map(_ + 1).toArray)
+    bh.consume(java.util.Arrays.stream(arrInput).map(_ * 2).toArray)
+    bh.consume(java.util.Arrays.stream(arrInput).map(_ - 3).toArray)
+    bh.consume(java.util.Arrays.stream(arrInput).map(_ ^ 7).toArray)
+    bh.consume(java.util.Arrays.stream(arrInput).map(_ | 4).toArray)
+    bh.consume(java.util.Arrays.stream(arrInput).map(_ & 13).toArray)
+    bh.consume(java.util.Arrays.stream(arrInput).map(_ + 9).toArray)
+    bh.consume(java.util.Arrays.stream(arrInput).map(_ * 5).toArray)
+  }
 }
 
 // MEGAMORPHIC map over REFERENCES (String). 8 distinct compile-time lambdas funnel into the shared
@@ -138,5 +148,15 @@ class MapMegaStrBenchmark extends Inputs {
     bh.consume(zioChunkInput.map(_.trim))
     bh.consume(zioChunkInput.map(_ + "z"))
     bh.consume(zioChunkInput.map(s => s.reverse))
+  }
+  @Benchmark def javastream(bh: Blackhole): Unit = {
+    bh.consume(java.util.Arrays.stream(strArrInput).map(_ + "a").toArray)
+    bh.consume(java.util.Arrays.stream(strArrInput).map(_ + "b").toArray)
+    bh.consume(java.util.Arrays.stream(strArrInput).map(_.toUpperCase).toArray)
+    bh.consume(java.util.Arrays.stream(strArrInput).map(_.toLowerCase).toArray)
+    bh.consume(java.util.Arrays.stream(strArrInput).map(s => s + s).toArray)
+    bh.consume(java.util.Arrays.stream(strArrInput).map(_.trim).toArray)
+    bh.consume(java.util.Arrays.stream(strArrInput).map(_ + "z").toArray)
+    bh.consume(java.util.Arrays.stream(strArrInput).map(s => s.reverse).toArray)
   }
 }

@@ -1,0 +1,36 @@
+(({
+  val src0: FBase = {
+    val xs$proxy: ints & FArray[Int] = ints.$asInstanceOf$[ints & FArray[Int]]
+
+    (xs$proxy: ints)
+  }.asInstanceOf[FBase]
+  val n0: Int = src0.length
+  val cap: Int = n0
+  val out: Array[Int] = new Array[Int](cap)
+  var o: Int = 0
+  val s: FBase = src0
+  val a: Array[Int] = s match {
+    case l: IntArr =>
+      (l.arr: Array[Int])
+    case t =>
+      if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
+  }
+  val len: Int = s.length
+  var i: Int = 0
+  while (i.<(len)) {
+    val elem: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
+    val mapped: Int = elem.+(1)
+    mapped match {
+      case x if x.%(2).==(0) =>
+        val kept: Int = x.*(2)
+        {
+          out.update(o, kept)
+          o = o.+(1)
+        }
+      case _ =>
+        ()
+    }
+    i = i.+(1)
+  }
+  if (o.==(0)) (Empty.INSTANCE: FBase) else if (o.==(1)) new IntOne(out.apply(0)) else if (o.==(cap)) new IntArr(out, o) else new IntArr(java.util.Arrays.copyOf(out, o), o)
+}.asInstanceOf[FArray[Int]]: FArray[Int]): FArray[Int])

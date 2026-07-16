@@ -1,0 +1,110 @@
+---
+title: Fusing FArray pipelines
+sidebar_label: Using it with FArray
+description: "The practical guide: when to reach for .fuse, the recipes that replace hand-written loops, and the gotchas."
+---
+
+import Link from "@docusaurus/Link";
+import Snippet from "@site/src/components/Snippet";
+
+<p className="page__eyebrow">putting it to work</p>
+
+<p className="lede">
+  The concepts are covered; this page is usage. FArray's eager ops are already{" "}
+  <Link to="/operations/map">fast compiled-once loops</Link>, so the practical question is{" "}
+  <em>when</em> the switch pays and what idioms it replaces. In short: one
+  elementwise op, stay eager; two or more, a hand-written accumulator loop, or a cold path:
+  fuse.
+</p>
+
+## When it pays
+
+<ul className="points">
+  <li>
+    <strong>Chains.</strong> Two or more elementwise stages means at least one intermediate array on
+    the eager path. Fusion never builds it. The longer the chain, the larger the ratio: the
+    14-stage pipeline runs 15× past FArray's <em>own</em> eager ops.
+  </li>
+  <li>
+    <strong>Multiple answers over one dataset.</strong> If you traverse twice to get a sum and a max,
+    <code>agg</code> gets both in one pass. If you fold into a tuple to avoid traversing twice, the
+    tuple boxes; <code>agg</code> doesn't.
+  </li>
+  <li>
+    <strong>Cold and warm alike.</strong> The specialization is in the bytecode, so fused pipelines
+    lead from the first uncompiled invocation (CLI tools, lambdas, startup paths), and the lead
+    widens as the JIT warms the loop — measured cold on the{" "}
+    <Link to="/fusion/benchmarks">Why fusion page</Link>, ~3.8× ahead before anything compiles.
+  </li>
+  <li>
+    <strong>Not worth it:</strong> a single <code>map</code> or <code>filter</code>. The eager op is
+    already one specialized loop; there is nothing for fusion to remove.
+  </li>
+</ul>
+
+## The recipes
+
+Each of these replaces something you'd otherwise hand-write, and each stays one fused pass.
+
+**The accumulator loop.** Any `var acc; while (...) { ... }` over a collection is `foldLeft` (a
+seeded reduce: initial value plus accumulator function, folding left to right), or better, `agg`
+when there's more than one accumulator:
+
+<p className="codeline"><code>{"trades.fuse.aggTo(Summary.apply)(Agg.sum(_.amount), Agg.count, Agg.max1(_.amount))"}</code></p>
+
+**`sortBy(...).take(n)`.** Materializing and sorting a million elements to keep ten is O(N log N)
+and a full copy; `topNBy(n)(key)` is a bounded heap inside the pass (O(N log n), O(n) memory):
+
+<p className="codeline"><code>{"trades.fuse.topNBy(2)(_.amount)"}</code></p>
+
+**`groupBy(...).view.mapValues(_.sum)`.** Building a `Map[K, List[A]]` only to collapse each list
+wastes the whole intermediate structure; `groupSum` folds each group as elements stream past, unboxed:
+
+<p className="codeline"><code>{"xs.fuse.groupSum(_ % 3)(x => x)"}</code></p>
+
+**Time-ordered data.** If the data is already clustered (logs, time series, sorted exports),
+<Link to="/fusion/stages">the adjacent family</Link> avoids hashing entirely:
+
+<p className="codeline"><code>{"trades.fuse.foldAdjacentBy(_.day)(0.0)((acc, t) => acc + t.amount).run"}</code></p>
+
+**For-comprehensions.** Scala's `for`/`yield` syntax desugars into `map`/`flatMap`/`withFilter`
+calls, and `withFilter` is a fused stage, so guards fuse; this compiles to one loop:
+
+<p className="codeline"><code>{"for (x <- xs.fuse if x % 2 == 0) yield x * 2"}</code></p>
+
+**Files and generated data.** The same chains run in constant memory over{" "}
+<Link to="/fusion/sources">chunked sources</Link>: `Source.fromIterator(linesIn).fuse.filter(...).count`
+folds a file larger than the heap.
+
+And `run` hands back a plain `FArray`, so a fused pipeline drops into eager code mid-expression;
+callers see only the resulting `FArray`.
+
+## Gotchas
+
+<ul className="points">
+  <li>
+    <strong>Inputs materialize.</strong> Fusion reads the chain at the call site; it does not reach
+    back through an already-materialized value. <code>val ys = xs.map(f); ys.fuse…</code> pays for{" "}
+    <code>ys</code>. Move the <code>map</code> inside the fuse chain when you can.
+  </li>
+  <li>
+    <strong><code>zip</code>'s right side is indexed.</strong> The lock-step read needs a
+    materialized <code>FArray</code> on the right, which is why benchmark code hoists it. (The left
+    side streams.)
+  </li>
+  <li>
+    <strong>Purity is assumed.</strong> Short-circuiting and compute-for-survivors mean a
+    side-effecting lambda can run fewer times than the strict semantics would. Counters and loggers
+    inside stage lambdas can observe this; pure lambdas cannot.
+  </li>
+  <li>
+    <strong>A chain with no terminal is nothing.</strong> Stages are markers: <code>xs.fuse.map(f)</code>{" "}
+    assigned to a val does no work and produces no warning. The terminal is the computation.
+  </li>
+  <li>
+    <strong>Dynamic pipelines are a different tool.</strong> The chain is read off the syntax tree,
+    so it must be written down. Assembling stages at runtime from config is a case for the
+    eager ops. Static reuse is fine, though: pull shared stages into an <code>inline def</code> and
+    call it in the chain — it splices in and fuses just as if written in place.
+  </li>
+</ul>

@@ -1,0 +1,48 @@
+---
+title: Paper cuts, and a Java core
+sidebar_label: A Java core
+description: Why FArray's data layer is generated, final, fields-and-methods Java, and the node tree it's made of.
+---
+
+import Snippet from "@site/src/components/Snippet";
+import { RepresentationDiagram } from "@site/src/components/Diagrams";
+
+<p className="lede">
+  The speed starts at the bottom, with the data. And the data lives in Java, because Scala, wonderful
+  as it is to write, cuts you in a hundred small ways when you need a method to stay static, a field
+  read to be a field read, and nothing to allocate a closure or a boxed <code>Integer</code> behind
+  your back. Most of those cuts you only ever discover by reading bytecode.
+</p>
+
+So the core is plain, `final`, fields-and-methods Java, where "static call" and "field access" mean
+exactly what they say. It is also generated: one hand-shaped class per node shape, per element kind.
+No shared abstraction soaks up a virtual call; there is an `IntArr` and a `LongArr` and a `RefArr`, an
+`IntAppend` and a `LongAppend`, and so on. The duplication is wholesale so that every class stays
+monomorphic. It's simple; there's just a lot of it.
+
+## The shape of an FArray
+
+An `FArray` is a small tree of two kinds of node. **Leaves** hold the data: a `${K}Arr` is a genuine
+primitive array. Everything else is a **lazy structural node** that holds no data at all: it points at
+its children and records an intention. Building one is O(1) and copies nothing:
+
+<RepresentationDiagram />
+
+Every structural operation is one of these nodes: `Concat` for `++` (Scala's concatenation
+operator), `Append`/`Prepend` for `:+`/`+:` (append/prepend one element), `SliceNode` for
+`take`/`drop`, `ReverseNode` for `reverse`. Here's the full set, collapsed
+across element kinds: every `Int…` class in the listing stands for nine generated variants (`IntArr`
+beside `LongArr`, `DoubleArr`, …, `RefArr`), while the pure-shape nodes exist once; 68 final Java
+classes in all:
+
+<Snippet name="node-tree" hideFull />
+
+Reading a tree is *one* direction-aware walk, shared by every operation: a forward driver and a
+backward driver, mirror images that swap roles at each `ReverseNode`, handing each leaf's backing
+array to the consumer in bulk (a `System.arraycopy` where the shapes line up). It's a single `final`,
+compiled-once method, so it never trips the JIT's huge-method cliff, and it flattens the tree into one
+contiguous array only when something demands one, such as a sort.
+
+That's the entire Java layer: flat primitive arrays, a handful of lazy node shapes, and one walk that
+reads them. It is fast but almost untyped; to the core, everything is an `FBase`. Everything you
+actually *type*, and everything that stays unboxed, lives one layer up, in Scala.

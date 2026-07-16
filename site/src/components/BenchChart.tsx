@@ -1,9 +1,9 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useStore } from "../data/store";
-import { useTheme } from "../theme";
+import { useColorMode } from "@docusaurus/theme-common";
 import BenchSource from "./BenchSource";
 import {
-  bandColor, edgeColor, kindOf, lc, nf, nfAxis, ours, verdictAt, type Chart,
+  ratioBand, ratioEdge, kindOf, lc, nf, nfAxis, ours, verdictAt, filterChart, type Chart,
 } from "../data/bench";
 
 // geometry — ported from bench_report.py
@@ -44,19 +44,19 @@ function layout(chart: Chart) {
     });
     groups.push({ x, gx, gw, cx: gx + gw / 2, vd, r, bars });
   }
-  // card frame color from the most dramatic ratio (win -> max, loss -> min)
-  let frame: string | null = null;
-  if (ratios.length) {
-    const edge = chart.agg === "loss" ? Math.min(...ratios) : chart.agg === "win" ? Math.max(...ratios) : null;
-    if (edge != null) frame = edgeColor(edge);
-  }
-  return { groups, gw, frame };
+  // the card's overall standing: geometric mean of per-size ratios (ours / best rival).
+  const geo = ratios.length ? Math.exp(ratios.reduce((a, r) => a + Math.log(r), 0) / ratios.length) : null;
+  return { groups, gw, geo };
 }
 
 export function Card({ chart, title }: { chart: Chart; title?: string }) {
-  const { groups, frame } = useMemo(() => layout(chart), [chart]);
+  const { groups, geo } = useMemo(() => layout(chart), [chart]);
   const [hover, setHover] = useState<number | null>(null);
-  const dark = useTheme().theme === "dark";
+  const dark = useColorMode().colorMode === "dark";
+  const frame = geo != null ? ratioEdge(geo, dark) : null;
+  const standing = geo == null ? "" : geo >= 1
+    ? `fastest overall (geomean ${geo.toFixed(2)}× the best rival)`
+    : `geomean ${(1 / geo).toFixed(2)}× behind the fastest`;
 
   const legend = chart.impls.filter((v) => chart.xs.some((x) => chart.series[v]?.[x] > 0));
   const g = hover != null ? groups[hover] : null;
@@ -73,8 +73,9 @@ export function Card({ chart, title }: { chart: Chart; title?: string }) {
           </span>
         )}
         {chart.w + chart.t + chart.l > 0 && (
-          <span className={`bcard__wl bcard__wl--${chart.agg}`}>
-            <b className="w">{chart.w}</b>·<b className="t">{chart.t}</b>·<b className="l">{chart.l}</b>
+          <span className={`bcard__wl bcard__wl--${chart.agg}`} title={standing}>
+            <span className="bcard__glyph" aria-hidden>{chart.l === 0 ? "🟢" : chart.w > chart.l ? "🟡" : "🔴"}</span>
+            <b className="w">{chart.w}W</b>·<b className="t">{chart.t}T</b>·<b className="l">{chart.l}L</b>
           </span>
         )}
       </div>
@@ -90,7 +91,7 @@ export function Card({ chart, title }: { chart: Chart; title?: string }) {
           {groups.map((grp, i) => (
             <g key={i}>
               {grp.vd && (
-                <rect x={grp.gx} y={BAR_TOP - 2} width={grp.gw} height={PLOT_H + 4} rx={5} fill={bandColor(grp.r, dark)} />
+                <rect x={grp.gx} y={BAR_TOP - 2} width={grp.gw} height={PLOT_H + 4} rx={5} fill={ratioBand(grp.r, dark)} />
               )}
             </g>
           ))}
@@ -117,7 +118,7 @@ export function Card({ chart, title }: { chart: Chart; title?: string }) {
           ))}
         </svg>
         {g && (
-          <div className="bcard__tip" style={{ left: `${(g.cx / W) * 100}%` }}>
+          <div className="bcard__tip" style={{ left: `clamp(90px, ${((g.cx / W) * 100).toFixed(2)}%, calc(100% - 90px))` }}>
             <div className="bcard__tip-h">
               size {nf(g.x)}
               {g.vd && <span className={`vd vd--${g.vd}`}>{VLABEL[g.vd]}</span>}
@@ -125,7 +126,7 @@ export function Card({ chart, title }: { chart: Chart; title?: string }) {
             {sortedBars.map((b, i) => {
               const ratio = fa && !b.ours ? fa.v / b.v : null;
               return (
-                <div key={i} className={b.ours ? "row row--me" : "row"}>
+                <div key={i} className={b.ours ? "tiprow tiprow--me" : "tiprow"}>
                   <i style={{ background: b.color }} />
                   <span className="nm">{b.label}</span>
                   <span className="vv">{nf(b.v)}</span>
@@ -158,14 +159,17 @@ interface Props {
   bare?: boolean;
   /** which benchmark suite to look the class up in (default: the FArray suite) */
   suite?: "farray" | "fset";
+  /** competitors to drop from THIS chart (e.g. ["javastream"]) — W/T/L and ratios recompute
+    * against the rest, so the same benchmark reads correctly in different contexts. */
+  ignore?: string[];
 }
 
-export default function BenchChart({ cls, op, caption, title, bare, suite = "farray" }: Props) {
+export default function BenchChart({ cls, op, caption, title, bare, suite = "farray", ignore }: Props) {
   const { charts: faCharts, setCharts, ready } = useStore();
   const charts = suite === "fset" ? setCharts : faCharts;
   const matches = useMemo(
-    () => charts.filter((c) => c.cls === cls && (op == null || c.op === op)),
-    [charts, cls, op],
+    () => charts.filter((c) => c.cls === cls && (op == null || c.op === op)).map((c) => filterChart(c, ignore)),
+    [charts, cls, op, ignore?.join(",")],
   );
   if (!ready) return <div className="bench-grid bench-grid--loading">measuring…</div>;
   if (!matches.length) return <div className="snippet snippet--error">no benchmark matched <code>{cls}{op ? ` · ${op}` : ""}</code></div>;

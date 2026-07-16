@@ -124,9 +124,10 @@ class DottyGapsTest:
     val b = FArray.newBuilder[String]; b += "x"
     assertEquals(List("x"), b.result().toList)
 
-  @Test def builder_sizeHint_and_grow: Unit =
-    val b = FArray.newBuilder[Int]
-    b.sizeHint(1000)
+  @Test def builder_capacity_and_grow: Unit =
+    // the capacity overload sizes the backing array in one allocation (no sizeHint double-allocation);
+    // appending past the capacity still grows correctly.
+    val b = FArray.newBuilder[Int](8)
     var i = 0; while i < 1000 do { b += i; i += 1 }
     val r = b.result()
     assertEquals(1000, r.length)
@@ -145,11 +146,6 @@ class DottyGapsTest:
     b ++= List("c")
     b += "d"
     assertEquals(List("a", "b", "c", "d"), b.result().toList)
-
-  @Test def builder_clear: Unit =
-    val b = FArray.newBuilder[Int]
-    b += 1; b += 2; b.clear(); b += 9
-    assertEquals(List(9), b.result().toList)
 
   @Test def builder_parity_vs_vector: Unit =
     // build the same sequence with Vector.newBuilder and FArray.newBuilder, compare

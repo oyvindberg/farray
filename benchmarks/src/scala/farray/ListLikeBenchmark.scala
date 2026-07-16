@@ -6,6 +6,7 @@ import scala.annotation.tailrec
 
 // FArray used exactly like a List: `x :: xs` to build, `case h :: t` to pick apart, via recursion.
 // Recursion lives in two objects so `ListSyntax.::` (FArray) and `scala.::` (List) don't collide.
+// Deliberately FArray-vs-List ONLY: Vector/IArray/fs2.Chunk/zio.Chunk have no `::` cons/extractor syntax.
 
 object FArrayRec:
   import farray.ListSyntax.* // FArray's `::`/`Nil` shadow scala's here

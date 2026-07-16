@@ -5,6 +5,7 @@ import org.openjdk.jmh.annotations.{Benchmark, Param, Setup}
 // Sum of Ints. `iarray` is the raw unboxed int[] baseline; List/Vector.foldLeft
 // all box the Int through a generic Function2; FArray's specialized inline foldLeft should match `iarray`.
 class FoldLeftIntBenchmark extends IntInputs {
+  @Benchmark def javastream(): Int = java.util.Arrays.stream(arrInput).reduce(0, (a, b) => a + b)
   @Benchmark def list(): Int = listInput.foldLeft(0)(_ + _)
   @Benchmark def vector(): Int = vectorInput.foldLeft(0)(_ + _)
   @Benchmark def iarray(): Int = iarrayInput.foldLeft(0)(_ + _)
@@ -46,6 +47,8 @@ class FoldLeftLongBenchmark extends CommonParams {
 
 // sum-style fold over string lengths
 class FoldLeftStrBenchmark extends Inputs {
+  // java.util.stream: foldLeft over lengths is the idiomatic mapToInt(...).sum
+  @Benchmark def javastream(): Int = java.util.Arrays.stream(strArrInput).mapToInt(_.length).sum
   @Benchmark def list(): Int = listInput.foldLeft(0)(_ + _.length)
   @Benchmark def farray(): Int = farrayInput.foldLeft(0)(_ + _.length)
   @Benchmark def iarray(): Int = iarrayInput.foldLeft(0)(_ + _.length)

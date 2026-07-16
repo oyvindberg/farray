@@ -1,0 +1,95 @@
+---
+title: Folds, reduces and scans
+sidebar_label: folds
+description: "The accumulator ops: where the boxing tax is purest, where the JIT's inlining budget betrays competitors, and where a loop-shape mistake cost 4× until measured."
+---
+
+import Link from "@docusaurus/Link";
+import BenchChart from "@site/src/components/BenchChart";
+import BenchPair from "@site/src/components/BenchPair";
+
+<p className="lede">
+  A fold is the purest boxing benchmark there is: no output collection, no structural work, just one
+  lambda applied per element into an accumulator. Whatever a library's per-element crossing costs,
+  a fold is <em>nothing but</em> that crossing, a hundred thousand times. That makes this page the
+  cleanest view of the thesis: FArray's unboxing lives in method signatures; competitors' depends on
+  the JIT inlining their shared generic loop.
+</p>
+
+## The microbenchmark that can't tell anyone apart
+
+The lone-fold baseline frames everything after it. A *lone* fold is the case
+every JIT handles: one call site, one lambda class, the shared generic `foldLeft` (`Stream.reduce`
+with a seed) inlines and specializes, and everyone's loop ends up load-add-load-add. Measured that
+way, FArray and a bare `int[]` (IArray, Scala's immutable view of one, in the charts) sit together
+at the hardware ceiling, within 1% at every size, and that tie is the correct
+result:
+
+<BenchPair
+  int="FoldLeftIntBenchmark"
+  str="FoldLeftStrBenchmark"
+  ignore={["javastream"]}
+  caption="A lone foldLeft, Int beside String. On Int, FArray and IArray land within a few percent at 100k: a single fold is the case every JIT specializes. On String the collection field sits within ~±20% and the small/mid cells jitter (fast in-loop ops are noise-sensitive). If folds ended here, no library would have anything to sell."
+/>
+
+The tie does not hold once the fold sits in a real method.
+
+## The part that matters: folds in real methods
+
+The same [method-size effect](/operations/map#where-it-stops-being-a-tie) as `map`, with a fold's
+own twist. Competitors' primitive folds run unboxed *because* the JIT inlines the shared generic
+`foldLeft` and specializes it; the lone-fold tie above is paid out of the method's inlining budget.
+With several folds in one method the budget runs out and the shared fold collapses to its generic
+boxed signature, one call site at a time — and unlike `map`, where nothing boxed, what boxes here is
+the *accumulator*, threaded through every element. We measured the collapse beginning at four folds
+per method on C2 and around twelve on Graal.
+
+FArray's fold surface is a tiny call to a compiled-once leaf, not inlined, so the
+sixth fold in a method compiles exactly like the first. The benchmark runs six reference folds in one
+measured method, and the sweep shows the whole arc:
+
+<BenchChart
+  cls="FoldRefPollutedBenchmark"
+  caption="Six reference folds in ONE measured method. At 1k the competitors' folds are still inlined and FArray's shared-leaf call overhead shows: a 0.47× cell, reported as measured. By 10k the budget strain begins (1.2×), and at 100k the collapse is complete: FArray is 3.5× ahead of the same IArray that tied it on the lone-fold chart. The crossover is the finding: the competitors' unboxed fold depends on inlining that stops scaling with method size; FArray's does not."
+/>
+
+The pair of numbers is the summary: 1.00× alone, 3.5× embedded.
+
+## reduce, min, max, sum
+
+The reduce family is fold with the seed taken from the data, and the aggregations are folds with a
+fixed combiner. Same machinery, same result:
+
+<BenchChart
+  cls="ReduceIntBenchmark"
+  caption="reduce / reduceLeft / reduceRight (and Option variants) on Int. Seeded from the first element, then the same unboxed accumulator loop; reduceRight is the standout (~3.4×; competitors traverse twice or reverse first). (fs2.Chunk has no reduce family and sits this one out.)"
+/>
+
+<BenchChart
+  cls="AggregateIntBenchmark"
+  caption="max / min / maxBy / minBy / sum / product on Int. The By-variants are where FArray stretches the lead: the projected key is computed once per element into a primitive local, versus an Ordering[B] (Scala's Comparator) call chain that boxes both the key and the comparison."
+/>
+
+## scan: the op that taught us about loop shape
+
+`scanLeft` emits every intermediate accumulator: a fold that writes its state out as it goes. It
+also carries a measure-don't-assume scar: the first implementation carried the
+accumulator *through the output array* (`out(o) = op(out(o - 1), v)`), which reads back a value
+written one iteration ago, a store-to-load dependency on the loop's serial chain. That one shape
+decision ran at 0.22–0.40× of a raw array. Moving the accumulator into a register local (the change
+is two lines) made it 4×, to a dead tie with `IArray`. Nothing about dispatch, boxing, or the
+tree: just where a loop-carried value lives.
+
+<BenchChart
+  cls="ScanIntBenchmark"
+  caption="scanLeft / scanRight / scan on Int, post-fix: the accumulator lives in a register, the output array is write-only, and FArray sits at-or-above the raw array through the mid and large sizes (small-n cells jitter). The 4× loop-shape lesson is documented in the repo's memory so nobody re-learns it."
+/>
+
+For completeness, the family's remaining members are all the same machinery pointed differently:
+`foldRight` and `reduceRight` run the backward driver (no reverse-then-fold copy; the ~3.4× in the
+chart above is exactly that saved pass), and `reduceOption`/`reduceLeftOption`/`reduceRightOption`
+are the empty-safe spellings, one branch in front of the same loop.
+
+When the fold ends a *chain*,{" "}
+<Link to="/fusion/farray">fusing the chain</Link> folds without materializing any stage at all, and
+`agg` runs several folds in one pass.

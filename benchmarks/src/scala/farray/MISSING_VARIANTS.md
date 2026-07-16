@@ -65,7 +65,7 @@ Total single-kind ops: 55  (Int-only: 26, Str-only: 29)
 - `Slice` — only `SliceStrBenchmark` (file `SliceBenchmark.scala`)
 - `Tail` — only `TailStrBenchmark` (file `TailBenchmark.scala`)
 - `Take` — only `TakeStrBenchmark` (file `TakeBenchmark.scala`)
-- `TakeDropFold` — only `TakeDropFoldStrBenchmark` (file `TakeDropFoldBenchmark.scala`)
+- `TakeDropMapFold` — only `TakeDropMapFoldStrBenchmark` (file `TakeDropMapFoldBenchmark.scala`)
 - `Updated` — only `UpdatedStrBenchmark` (file `UpdatedBenchmark.scala`)
 
 ## Note on multi-kind ops (already covered, listed for completeness)

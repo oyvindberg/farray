@@ -11,6 +11,8 @@ import org.openjdk.jmh.annotations.Benchmark
 //
 // Each collection runs the IDENTICAL logical transform; the only differences are forced by API shape
 // (zip tuple types). The result is a single Int folded out, so the whole chain is consumed.
+// java.util.stream is excluded here: Streams have no zip/zipWithIndex, so the 14 stages cannot be
+// expressed stage-for-stage. See MapFilterFold/FlatMapChain/FoldLeft for the IntStream comparison.
 class LongMixedPipelineIntBenchmark extends IntInputs {
 
   @Benchmark def list(): Int = {
@@ -49,6 +51,44 @@ class LongMixedPipelineIntBenchmark extends IntInputs {
       .foldLeft(0)(_ + _)
   }
 
+  // .view = the standard library's own lazy, single-pass forms — no outer intermediate collection per
+  // stage, the fair comparison for .fuse. (The inner flatMap collections still allocate, as they must.)
+  @Benchmark def listView(): Int = {
+    listInput.view
+      .flatMap(x => List(x, x + 1))
+      .filter(_ % 3 != 0)
+      .map(_ * 2)
+      .flatMap(x => List(x, x ^ 5))
+      .filter(_ % 2 == 0)
+      .map(_ - 7)
+      .zip(listInput.view.map(_ + 100))
+      .map((a, b) => a + b)
+      .zipWithIndex
+      .filter((v, i) => (v + i) % 4 != 0)
+      .map((v, i) => v - i)
+      .flatMap(x => List(x, x + 3))
+      .filter(_ > 0)
+      .foldLeft(0)(_ + _)
+  }
+
+  @Benchmark def vectorView(): Int = {
+    vectorInput.view
+      .flatMap(x => Vector(x, x + 1))
+      .filter(_ % 3 != 0)
+      .map(_ * 2)
+      .flatMap(x => Vector(x, x ^ 5))
+      .filter(_ % 2 == 0)
+      .map(_ - 7)
+      .zip(vectorInput.view.map(_ + 100))
+      .map((a, b) => a + b)
+      .zipWithIndex
+      .filter((v, i) => (v + i) % 4 != 0)
+      .map((v, i) => v - i)
+      .flatMap(x => Vector(x, x + 3))
+      .filter(_ > 0)
+      .foldLeft(0)(_ + _)
+  }
+
   @Benchmark def iarray(): Int = {
     iarrayInput
       .flatMap(x => IArray(x, x + 1))
@@ -67,7 +107,7 @@ class LongMixedPipelineIntBenchmark extends IntInputs {
       .foldLeft(0)(_ + _)
   }
 
-  @Benchmark def farrayEager(): Int = {
+  @Benchmark def farray(): Int = {
     farrayInput
       .flatMap(x => FArray(x, x + 1))
       .filter(_ % 3 != 0)
@@ -95,19 +135,19 @@ class LongMixedPipelineIntBenchmark extends IntInputs {
     val zipSrc = farrayInput.map(_ + 100)
     farrayInput.fuse
       .flatMap(x => FArray(x, x + 1))
-      .filter(_ % 3 != 0)
-      .map(_ * 2)
-      .flatMap(x => FArray(x, x ^ 5))
-      .filter(_ % 2 == 0)
-      .map(_ - 7)
+      .filter(n => n % 3 != 0)
+      .map(n => n * 2)
+      .flatMap(m => FArray(m, m ^ 5))
+      .filter(p => p % 2 == 0)
+      .map(p => p - 7)
       .zip(zipSrc)
       .map((a, b) => a + b)
       .zipWithIndex
       .filter((v, i) => (v + i) % 4 != 0)
       .map((v, i) => v - i)
-      .flatMap(x => FArray(x, x + 3))
-      .filter(_ > 0)
-      .foldLeft(0)(_ + _)
+      .flatMap(d => FArray(d, d + 3))
+      .filter(r => r > 0)
+      .foldLeft(0)((acc, r) => acc + r)
   }
   // stop:fuse-pipeline
 

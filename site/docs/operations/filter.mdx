@@ -1,0 +1,79 @@
+---
+title: filter, and the branch that isn't there
+sidebar_label: filter
+description: The branchless primitive filter that vectorizes, and why references keep the branch.
+---
+
+import Snippet from "@site/src/components/Snippet";
+import BenchChart from "@site/src/components/BenchChart";
+
+<p className="lede">
+  <code>filter</code> reads an element, asks a question, and maybe keeps it. That makes it the
+  simplest loop in the library and also the most decision-rich: it is the one operation whose
+  output size is unknown until the loop finishes, so someone has to decide how big the output
+  buffer is, what to do when everything survives, and what the keep-or-skip step costs on data the
+  branch predictor can't learn. A lone <code>filter</code> over a flat array ties the raw-array
+  baseline here like everywhere else; this page is about the three decisions that make the tie
+  hold, and the one place FArray leaves the baseline behind entirely.
+</p>
+
+The three decisions, before the code:
+
+<ul className="points">
+  <li>
+    <strong>Keep-everything costs nothing.</strong> If every element survives, the result is the
+    input, the same object, no allocation. Validation passes and defensive cleanups hit this
+    constantly.
+  </li>
+  <li>
+    <strong>The buffer is sized once, up front.</strong> Full input size, handed over with its
+    logical length and no trim copy, unless the filter kept under a quarter of the input, in which
+    case it trims rather than pin four hundred kilobytes behind a two-element result.
+  </li>
+  <li>
+    <strong>For primitives, there is no keep-branch at all.</strong> Every element is stored
+    unconditionally and the predicate only decides whether the write cursor advances; a rejected
+    element is overwritten by the next one.
+  </li>
+</ul>
+
+All three are visible in the generated Int leaf:
+
+<Snippet name="filter-leaf-int" hideFull />
+
+The first two decisions read directly out of the code: the `if (o == n) xs` exit and the
+quarter-full trim. The third deserves a closer look, because it is extra work on paper. There is no
+`if (p(e)) { out(o) = e; o += 1 }` (Scala indexes arrays with parentheses; read it as
+`out[o] = e`). The store happens every iteration; only the cursor is conditional. What that buys is
+the removal of the branch.
+
+A predictable predicate (keep everything over some threshold in sorted data, keep the evens of
+`0, 1, 2, 3…`) costs a branchy loop nothing; the predictor learns the pattern and the branch is free.
+But filters exist to make *data-dependent* decisions, and on genuinely unpredictable data every
+surprise costs a pipeline flush. The branchless form has no branch to mispredict, and with
+the loop body straight-line, the compiler vectorizes it. Measured on random ints, keep-the-evens: the
+branchy loop managed 3.3 thousand ops/s at 100k elements; the branchless one does 21.5 thousand, six
+and a half times as much. On *predictable* data it's faster still, because a vector unit doesn't care
+whether the pattern was learnable.
+
+<BenchChart
+  cls="FilterIntBenchmark"
+  caption="filter on RANDOM ints, keeping the even half, so every element is a coin flip the branch predictor cannot learn. Everyone else pays a mispredict per surprise (or boxes, or both); FArray's branchless prim loop has no branch and vectorizes."
+/>
+
+The branchless trick is *primitive-only*, and not because
+references were forgotten. Storing a reference, even one about to be overwritten, isn't just a
+store: the garbage collector's write barrier fires on every one, rejected or not. We measured the
+branchless form on `String` and it lost by double digits. So the generator emits the branchless write
+for the eight primitive kinds and keeps the guarded write for references. The same per-kind
+specialization that unboxes elements also picks a different loop shape per kind, which a generic
+`filter[A]` cannot do.
+
+<BenchChart
+  cls="FilterRandStrBenchmark"
+  caption="The same coin-flip filter on reference elements: random-content strings, keep by hash parity. Here everyone runs the same guarded loop and everyone eats the same mispredicts; this is the field the branchy write was kept for."
+/>
+
+Same predicate shape, two loops, each measured against the other's. There is no single best
+`filter`, only a best filter per element kind, and resolving the kind at compile time lets the
+generator ship both.

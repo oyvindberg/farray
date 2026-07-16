@@ -1,0 +1,132 @@
+---
+title: How map stays unboxed
+sidebar_label: map
+description: The inline dispatch that resolves element kinds at compile time, and what it wins once benchmarks stop being micro.
+---
+
+import Snippet from "@site/src/components/Snippet";
+import BenchPair from "@site/src/components/BenchPair";
+import { DispatchDiagram } from "@site/src/components/Diagrams";
+
+<p className="lede">
+  An elementwise combinator is one <code>inline</code> hop (guaranteed compile-time
+  inlining) to a generated <code>…Impl</code>, and the impl is where the element
+  kind gets resolved. <code>map</code>'s impl is one big{" "}
+  <code>summonFrom</code>, a compile-time match on which <code>Repr</code> evidence exists for{" "}
+  <code>A</code>, with an outer branch per input kind and, nested inside, one per result kind.
+</p>
+
+When the kinds line up (the common case) the branch is a one-liner into a
+specialized leaf method; when they don't, it's a generic loop. The *all 81 branches* toggle shows
+the full cross-product you'll never write:
+
+<Snippet name="map-dispatch-real" />
+
+That leaf method is where the loop lives:
+
+<Snippet name="map-leaf" hideFull />
+
+A genuine `while` loop over `int[]`, and `f` is an `IntToIntFn`, a specialized SAM rather than a boxed
+`Function1` (Scala's generic lambda interface, which boxes primitives like a `java.util.function`
+interface without the primitive specializations). The `IntArr` case is the fast path; a tree input falls through the `case _` to the shared
+traverser, the one direction-aware walk every op reuses. At a concrete
+`FArray[Int]` call site the compiler knows `A = Int`, so `summonFrom` keeps the `IntRepr` branch and
+deletes the other eighty. So this:
+
+<p className="codeline"><code>xs.map(_ + 1)</code> <span className="codeline__where">where <code>xs: FArray[Int]</code></span></p>
+
+resolves entirely in the compiler:
+
+<DispatchDiagram />
+
+Here's the actual lowering: the whole
+`xs.map(_ + 1)`, dispatch and kind resolution included, became one line. (The dead bindings
+the expansion leaves behind are elided; the *raw expansion* toggle shows the verbatim tree.)
+
+<Snippet name="map-generated" />
+
+Three things in that one line:
+
+<ul className="points">
+  <li>
+    <code>mapLeafInt<strong>Int</strong></code>: the resolution is in the name. <code>summonFrom</code>{" "}
+    picked the <code>Int → Int</code> leaf at compile time and deleted the other eighty
+    branches; the dispatch is gone before the program runs.
+  </li>
+  <li>
+    It's a call, not the loop. The <code>while</code> loop lives <em>inside</em>{" "}
+    <code>mapLeafIntInt</code>, which is <em>not</em> <code>inline</code>: compiled once
+    and shared, never copied into your code. That's why the loop isn't in the line above. (Inlined at
+    every call site it would bloat straight into the JVM's method-size cliff, the trade{" "}
+    <code>.fuse</code> opts into.)
+  </li>
+  <li>
+    <code>{"(v: Int) => v + 1"}</code>: your lambda, materialized once as a
+    specialized <code>IntToIntFn</code> SAM and passed to that loop. Typed <code>Int</code> throughout,
+    no <code>Function1</code>, no <code>Integer</code>; the unboxing is in the type, not a JIT bet.
+    It is <em>not</em> spliced into the loop body; it's a function value the loop
+    calls.
+  </li>
+</ul>
+
+That last point is a consequence of how `inline` works here. `mapImpl` is `inline`, so the dispatch
+and your lambda are resolved and lifted at the call site; `mapLeafIntInt` is not, so the
+one heavy loop is compiled a single time and shared. The price of crossing that hand-off is that the
+lambda has to become a function value, hence the SAM. But it's a *specialized* SAM, so nothing boxes,
+and it's one allocation per `map` call, not per element; the JIT inlines its `apply` into the shared
+loop at runtime. In the bytecode it's a single `anonfun` lifted by one `invokedynamic`, emitted once,
+not twice.
+
+The version that splices your lambda straight into the `while` loop, with no SAM at all, is `.fuse`,
+which is why [fusion](../fusion/index.mdx) is a separate gear. What the inline layer buys on
+its own is narrower but still decisive. A generic `map[B](f: A => B)` compiles once, generically, and
+leans on the JIT to inline and specialize it afresh at each call site. That holds until several
+distinct lambdas make the site megamorphic, at which point the JIT gives up and the loop turns
+generic and virtual-dispatched (and, for element types it can't specialize, boxing on top). FArray
+never writes that method down: the specialization is in the call site from compile time, so it holds
+however large the surrounding method grows.
+
+The machinery, measured: `map` over a hundred thousand elements, Int beside
+String. On its own, `map` is no rout:
+
+<BenchPair
+  int="MapIntBenchmark"
+  str="MapStrBenchmark"
+  caption="map, swept to 100k. On Int (left) FArray runs within a few percent of a bare int[] and ~8–27× past the collections that box the element (List, Vector, fs2.Chunk). zio.Chunk keeps its Ints unboxed too, and correspondingly hangs much closer (~1.6× back at 100k); the boxing tax is the whole spread. On String (right) there's nothing to unbox, so the field compresses: FArray ties IArray exactly, with List and fs2.Chunk ~1.3–1.4× back. Against the raw array it's a wash."
+/>
+
+## Where it stops being a tie
+
+Measured against a bare array, those two charts are a wash: a few percent shy on `Int`, a dead tie
+on `String`. That's the texture of a *micro*-benchmark — one op over one array, where a lone
+`Array.map` (the shared generic map Scala bolts onto raw arrays) is a call the JIT inlines fully,
+and FArray's opaque wrapper plus specialized SAM are pure overhead. FArray isn't built to win those
+by a percent; it's built for what happens once the benchmark stops being micro, and it doesn't take
+much.
+
+Write eight of that same `map` with eight *distinct* lambdas in one method — the profile any
+nontrivial method builds up — and on `Int` at 100k IArray drops to a third of FArray's speed. It
+isn't boxing: the allocator shows both at byte-for-byte the same eight `int[]` per call, because an
+`Int => Int` lambda is specialized (`apply$mcII$sp`). The gap is pure dispatch. IArray funnels all
+eight lambdas through its one shared `Array.map`, whose call site now sees eight `Function1` (Scala's
+lambda interface) classes — past the JIT's ≥3-type megamorphic threshold, so it can't inline the map,
+and every element runs one generic loop with a virtual `apply`. On trivial work (`_ + 1`) that
+overhead *is* the cost, so it shows as a multiple; on `String`, where each element already allocates,
+it's a rounding error — the tell that the cost is dispatch, not allocation. (It ties through 1k, where
+fixed per-call costs still dominate.)
+
+FArray has no shared site to poison: each lambda was bound to its own specialized loop at compile
+time, so eight maps are eight tight `int[]` loops, however many you write.
+
+<BenchPair
+  int="MapMegaIntBenchmark"
+  str="MapMegaStrBenchmark"
+  ignore={["javastream"]}
+  caption="Eight distinct lambdas through map in one method. On Int (left): IArray ties FArray through 1k, then falls ~3.4× behind at 10k and holds there; List lands at 11×, Vector 5.6×. On String (right) the field stays close, the dispatch overhead swamped by the per-element string work."
+/>
+
+One sibling deserves a name here: `mapConserve`, the identity-preserving map used by compilers and
+transformers (`if (f(x) eq x)` for every element, return `this`). FArray's version keeps
+the reference-reuse semantics and the specialized loop, and returns the *original* array untouched
+when nothing changed: no allocation at all on the no-op pass.
+
