@@ -43,6 +43,10 @@ class IndexedApplyPollutedBenchmark {
 
   // The hot, flat RefArr leaf whose indexed loop should benefit.
   var fArr: FArray[String] = _
+  // A flat RefOne singleton — the histogram's #1 shape (63% of ctors) and its single biggest cell
+  // (`at`·RefOne·1 = 30.9M/compile). Its element read is the item-1 RefOne-peel target; before the
+  // peel `fOne(0)` fails the `isInstanceOf[RefArr]` test and falls to the out-of-line megamorphic refAt.
+  var fOne: FArray[String] = _
   // Five other node shapes to pollute the shared refAt's type profile (all FArray[String]).
   var fSlice: FArray[String] = _ // SliceNode over a RefArr
   var fConcat: FArray[String] = _ // Concat tree
@@ -52,6 +56,8 @@ class IndexedApplyPollutedBenchmark {
 
   @Setup def setup(): Unit = {
     fArr = FArray.tabulate(size)(_.toString)
+    fOne = FArray("solo") // RefOne — length 1 regardless of `size`
+
     // drop(1) on a size+1 array yields a SliceNode of logical length `size`
     fSlice = FArray.tabulate(size + 1)(_.toString).drop(1)
     val half = FArray.tabulate((size + 1) / 2)(_.toString)
@@ -95,6 +101,28 @@ class IndexedApplyPollutedBenchmark {
       val xs = fArr; val n = xs.length; var i = 0; var s = 0
       while (i < n) { s += xs(i).length; i += 1 }
       acc += s; k += 1
+    }
+    bh.consume(acc)
+  }
+
+  // The hot RefOne read — the REAL dotc profile (`at`·RefOne·1, the 30.9M single biggest cell). Run
+  // alongside the same five pollution shapes so the SHARED `refAt` stays megamorphic and out-of-line.
+  // Before the item-1 RefOne peel, `fOne(0)` fails `isInstanceOf[RefArr]` and pays a full megamorphic
+  // `refAt` dispatch; after the peel it reads `.elem` inline. `fOne` is length 1, so the read is repeated
+  // 16x (mirroring refArrHot's weighting) rather than looped over n. Independent of `size`.
+  @Benchmark def refOneHot(bh: Blackhole): Unit = {
+    bh.consume(sumApply(fSlice))
+    bh.consume(sumApply(fConcat))
+    bh.consume(sumApply(fPrepend))
+    bh.consume(sumApply(fAppend))
+    bh.consume(sumApply(fReverse))
+    // Dominant hot RefOne read — a DISTINCT `xs(0)` site (not via sumApply), repeated 16x to weight it.
+    var acc = 0
+    var k = 0
+    while (k < 16) {
+      val xs = fOne
+      acc += xs(0).length
+      k += 1
     }
     bh.consume(acc)
   }

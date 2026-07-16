@@ -2501,9 +2501,17 @@ object GenCores extends BleepCodegenScript("GenCores") {
     // `${k.lc}At` node match as a COLD, out-of-line call for the structural-node tail. Reading the leaf here is
     // exactly the first arm of `${k.lc}At` (`case leaf: ${k.name}Arr => leaf.arr(i)`), so semantics are identical,
     // including mixed-storage: a foreign leaf fails the instanceof and routes through `${k.lc}At`'s applyBoxed tail.
+    // Second inline arm (item 1, listealization Phase 1 / D3): peel `${k.name}One` too. The histogram
+    // (docs/listealization-histogram.md) shows `at`·RefOne·1 = 30.9M/compile — the single biggest cell of
+    // the whole workload — because a RefOne read fails the RefArr test above and falls to the out-of-line
+    // megamorphic `${k.lc}At`. RefOne is a field singleton (`.elem`, no array, length 1), so reading it here
+    // is exactly `${k.lc}At`'s second arm (`case o: ${k.name}One => o.elem`) — semantics identical, and the
+    // index is necessarily 0. The megamorphic 11-case tail stays out-of-line for structural nodes.
     val applyAt = dispatchA { k =>
       val leaf = s"${k.name}Arr"
-      val fast = s"(if (xs.isInstanceOf[$leaf]) xs.asInstanceOf[$leaf].arr(i) else ${k.lc}At(xs, i))"
+      val one = s"${k.name}One"
+      val fast =
+        s"(if (xs.isInstanceOf[$leaf]) xs.asInstanceOf[$leaf].arr(i) else if (xs.isInstanceOf[$one]) xs.asInstanceOf[$one].elem else ${k.lc}At(xs, i))"
       if k.name == "Ref" then s"r.wrap($fast.asInstanceOf[A])" else s"r.wrap($fast)"
     }
     // mapConserve: I == O == k (always a COVERED pair — prim-self + Ref->Ref). List.mapConserve semantics with
