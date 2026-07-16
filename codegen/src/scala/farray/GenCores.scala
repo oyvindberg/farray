@@ -2533,6 +2533,29 @@ object GenCores extends BleepCodegenScript("GenCores") {
         s"{ val n = xs.length; ${scan(readVal(k, nodeReadI))}; if (!changed) xs else { val sa = materialize${k.name}(xs); $rebuild } }"
       s"xs match { case leaf: ${k.name}Arr => $bodyLeaf; case _ => $bodyNode }"
     }
+    // filterConserve: List.filterConserve semantics with p applied EXACTLY ONCE per element, identity-preserving.
+    // Single pass: SCAN while every element is KEPT (p true), calling p once per scanned element. If the scan
+    // reaches the end with nothing dropped, return xs with NO allocation (identity — the point of "conserve").
+    // On the FIRST drop (at index i, p(sa(i)) == false), allocate an output array sized n (the max), copy the
+    // all-kept PREFIX [0, i) straight from the source array, then scan the SUFFIX (i+1, n) appending each kept
+    // element (p applied once each). Total p-calls == n. The result leaf carries the size-n array with logical
+    // length o (kept count) — no trim copy, slack-tolerant; `leaf` canonicalises o==0 -> Empty, o==1 -> One. Leaf:
+    // source array is `leaf.arr` directly; node: materialize ONCE (foreign-leaf tolerant) only AFTER a drop, so an
+    // all-kept node also stays zero-alloc. Unlike mapConserve, prims filter/conserve normally (no boxed-eq forcing).
+    val filterConserve = dispatchA { k =>
+      val saReadI = if k.name == "Ref" then "sa(i).asInstanceOf[A]" else "sa(i)"
+      val saReadJ = if k.name == "Ref" then "sa(j).asInstanceOf[A]" else "sa(j)"
+      val nodeReadI = if k.name == "Ref" then s"${k.lc}At(xs, i).asInstanceOf[A]" else s"${k.lc}At(xs, i)"
+      // rebuild given a flat source array `sa` and the first-dropped index `i` (p(sa(i)) false; prefix [0,i) kept).
+      val rebuild =
+        s"{ val out = new Array[${k.arr}](n); System.arraycopy(sa, 0, out, 0, i); var o = i; var j = i + 1; while (j < n) { if (p(${readVal(k, saReadJ)})) { out(o) = sa(j); o += 1 }; j += 1 }; ${leaf(k, "out", "o")} }"
+      val scan = (read: String) => s"var i = 0; var dropped = false; while (i < n && !dropped) { if (p($read)) i += 1 else dropped = true }"
+      val bodyLeaf =
+        s"{ val sa = leaf.arr; val n = leaf.length; ${scan(readVal(k, saReadI))}; if (!dropped) xs else $rebuild }"
+      val bodyNode =
+        s"{ val n = xs.length; ${scan(readVal(k, nodeReadI))}; if (!dropped) xs else { val sa = materialize${k.name}(xs); $rebuild } }"
+      s"xs match { case leaf: ${k.name}Arr => $bodyLeaf; case _ => $bodyNode }"
+    }
     // ONE pass, no inner buffer: dfs the source, and for each element append f(x)'s elements straight into a
     // growing output array (inline grow). The inner FArray is created, matched, and arraycopied within the
     // loop body, never stored -> escape analysis drops its wrapper, so each inner costs only its int[] (like
@@ -3022,6 +3045,7 @@ object GenCores extends BleepCodegenScript("GenCores") {
        |  inline def partitionMapImpl[A, A1, A2](xs: FBase)(inline f: A => Either[A1, A2]): scala.Tuple2[FBase, FBase] = $partitionMap
        |  inline def containsImpl[A](xs: FBase, elem: A): Boolean = { val length = xs.length; if (length == 0) false else $contains }
        |  inline def mapConserveImpl[A](xs: FBase)(inline f: A => A): FBase = { val n = xs.length; if (n == 0) xs else if (n == 1) { val e = applyAtImpl[A](xs, 0); val r = f(e); if (r.asInstanceOf[AnyRef] eq e.asInstanceOf[AnyRef]) xs else fromValues1[A](r) } else $mapConserve }
+       |  inline def filterConserveImpl[A](xs: FBase)(inline p: A => Boolean): FBase = { val n = xs.length; if (n == 0) xs else if (n == 1) { if (p(applyAtImpl[A](xs, 0))) xs else Empty.INSTANCE } else $filterConserve }
        |  inline def unzipImpl[A, A1, A2](xs: FBase)(ev: A <:< (A1, A2)): (FBase, FBase) = { val n = xs.length; if (n == 0) emptyPair else if (n == 1) { val t = ev(applyAtImpl[A](xs, 0)); new scala.Tuple2(fromValues1[A1](t._1), fromValues1[A2](t._2)) } else $unzipV }
        |  inline def unzip3Impl[A, A1, A2, A3](xs: FBase)(ev: A <:< (A1, A2, A3)): (FBase, FBase, FBase) = { val n = xs.length; if (n == 0) emptyTriple else if (n == 1) { val t = ev(applyAtImpl[A](xs, 0)); new scala.Tuple3(fromValues1[A1](t._1), fromValues1[A2](t._2), fromValues1[A3](t._3)) } else $unzip3V }
        |  inline def zipImpl[A, B](xs: FBase, that: FBase): FBase = { val n = if (xs.length < that.length) xs.length else that.length; if (n == 0) Empty.INSTANCE else if (n == 1) fromValues1[(A, B)]((applyAtImpl[A](xs, 0), applyAtImpl[B](that, 0))) else { $zipV } }

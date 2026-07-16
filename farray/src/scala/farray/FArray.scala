@@ -440,6 +440,11 @@ object FArray:
         res.asInstanceOf[FArray[FArray[B]]]
     inline def mapConserve(inline f: A => A): FArray[A] = FArrayOps.mapConserveImpl[A](xs)(f)
 
+    /** Like [[filter]] but identity-preserving: returns `this` (no allocation) when NO element is dropped. `p` is applied exactly once per element, in one
+      * pass. Mirrors `List.filterConserve`; the win over a generic `filter` is the zero-allocation identity return on the common no-drop case.
+      */
+    inline def filterConserve(inline p: A => Boolean): FArray[A] = FArrayOps.filterConserveImpl[A](xs)(p)
+
     // ---- composed from specialised primitives: no boxed storage, inline lambdas thread through ----
     inline def reduceLeftOption[B >: A](inline op: (B, A) => B): Option[B] =
       if xs.length == 0 then None else Some(xs.reduceLeft[B](op))
