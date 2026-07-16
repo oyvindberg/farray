@@ -3687,14 +3687,34 @@ object GenCores extends BleepCodegenScript("GenCores") {
       spec.act("ap.elem")
       e.line("next = ap.base;")
     }
-    // concat: fwd left-then-right; bwd right-then-left
+    // concat: fwd left-then-right; bwd right-then-left. SPINE PEEL (round-8 item 1): when the NEAR child (fwd: left,
+    // bwd: right) is a leaf or a One, emit it INLINE and continue into the FAR child WITHOUT pushing — so a
+    // right-leaning Concat(leaf, tower) spine, and the shallow `leaf ++ leaf`, never allocate the DFS stack (measured
+    // 2.29% of dotc alloc). Only a genuinely compound near child (left-heavy/balanced) falls back to push+descend. The
+    // peeled arms reuse the SAME runLeaf/act callbacks as the leaf/One arms, so semantics are identical to descending.
     e.closeOpen("else if (cur instanceof Concat c)")
     if !backward then {
+      e.open(s"if (c.left instanceof ${K}Arr clf)")
+      spec.runLeaf("clf.arr", "clf.length")
+      e.line("next = c.right;")
+      e.closeOpen(s"else if (c.left instanceof ${K}One clo)")
+      spec.act("clo.elem")
+      e.line("next = c.right;")
+      e.closeOpen("else")
       pushChild("c.right")
       e.line("next = c.left;")
+      e.close()
     } else {
+      e.open(s"if (c.right instanceof ${K}Arr crf)")
+      spec.runLeaf("crf.arr", "crf.length")
+      e.line("next = c.left;")
+      e.closeOpen(s"else if (c.right instanceof ${K}One cro)")
+      spec.act("cro.elem")
+      e.line("next = c.left;")
+      e.closeOpen("else")
       pushChild("c.left")
       e.line("next = c.right;")
+      e.close()
     }
     // reverse: the ONLY recursion — flip direction across the JVM call boundary
     e.closeOpen("else if (cur instanceof ReverseNode rev)")
@@ -4713,14 +4733,34 @@ object GenCores extends BleepCodegenScript("GenCores") {
       oneScan("ap.elem")
       e.line("next = ap.base;")
     }
-    // concat: fwd left-then-right; bwd right-then-left
-    e.closeOpen("else if (cur instanceof Concat c)")
+    // concat: fwd left-then-right; bwd right-then-left. SPINE PEEL (round-8 item 1): when the NEAR child (fwd: left,
+    // bwd: right) is a leaf or a One, scan it INLINE and continue into the FAR child WITHOUT pushing — so a
+    // right-leaning Concat(leaf, tower) spine, and the shallow `leaf ++ leaf`, never allocate the DFS stack. Only a
+    // genuinely compound near child falls back to push+descend. runScan/oneScan already `return` on a hit and thread
+    // `cum`, so the peeled path is identical to descending into the leaf/One arm.
+    e.closeOpen("else if (cur instanceof Concat cc)")
     if !backward then {
-      pushChild("c.right")
-      e.line("next = c.left;")
+      e.open(s"if (cc.left instanceof ${K}Arr clf)")
+      runScan("clf.arr", "0", "clf.length")
+      e.line("next = cc.right;")
+      e.closeOpen(s"else if (cc.left instanceof ${K}One clo)")
+      oneScan("clo.elem")
+      e.line("next = cc.right;")
+      e.closeOpen("else")
+      pushChild("cc.right")
+      e.line("next = cc.left;")
+      e.close()
     } else {
-      pushChild("c.left")
-      e.line("next = c.right;")
+      e.open(s"if (cc.right instanceof ${K}Arr crf)")
+      runScan("crf.arr", "0", "crf.length")
+      e.line("next = cc.left;")
+      e.closeOpen(s"else if (cc.right instanceof ${K}One cro)")
+      oneScan("cro.elem")
+      e.line("next = cc.left;")
+      e.closeOpen("else")
+      pushChild("cc.left")
+      e.line("next = cc.right;")
+      e.close()
     }
     // reverse: the ONLY recursion — flip the PHYSICAL walk direction (fwd<->bwd) over rev.base, but keep THIS
     // call's global-index direction. The child runs on rev.base in its OWN base-local index space (cum seeded at
