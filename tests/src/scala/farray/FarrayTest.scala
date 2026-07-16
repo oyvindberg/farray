@@ -2042,6 +2042,27 @@ class FListTest:
     )
   }
 
+  // apply(i) out-of-range throws IndexOutOfBoundsException, exactly like List — across the shapes whose
+  // `applyAtImpl`/`applyBoxed` arm ignores the index (singleton, prepend, slack-backed leaf) and would
+  // otherwise silently return a stale/valid slot. Covers the specialized `apply` and the boxed Seq view.
+  @Test def testApplyOutOfBoundsThrows: Unit = {
+    val ioobe = classOf[IndexOutOfBoundsException]
+    val one = FArray("x") // RefOne — the shape whose arm ignores i
+    org.junit.Assert.assertThrows(ioobe, () => one(5))
+    org.junit.Assert.assertThrows(ioobe, () => one(1))
+    org.junit.Assert.assertThrows(ioobe, () => one(-1))
+    org.junit.Assert.assertThrows(ioobe, () => FArray.empty[String](0))
+    val prep = "a" +: FArray("b") // RefPrepend
+    org.junit.Assert.assertThrows(ioobe, () => prep(2))
+    // slack-backed leaf: filterConserve drops an element, leaving array capacity past the logical length.
+    val slack = FArray("a", "b", "c").filterConserve(_ != "b") // logical length 2, backing capacity 3
+    assert(slack.length == 2)
+    org.junit.Assert.assertThrows(ioobe, () => slack(2))
+    // the O(1) IndexedSeq view must obey the same contract.
+    org.junit.Assert.assertThrows(ioobe, () => one.toIndexedSeq.apply(5))
+    org.junit.Assert.assertThrows(ioobe, () => slack.toSeq.apply(2))
+  }
+
   // ---- size-0/1 canonicalization invariant: every length-0 FArray is the Empty singleton, every length-1
   // FArray is a per-kind `*One` node. No structural node (Concat/Append/Prepend/SliceNode/ReverseNode/Pad/
   // Updated/RangeNode/*Arr) may have length 0 or 1. Tests are in package farray, so they cast to FBase.

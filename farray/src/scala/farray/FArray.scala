@@ -182,7 +182,13 @@ object FArray:
     def reverse_:::[B >: A](prefix: FArray[B]): FArray[B] = (xs.reverse: FBase).concat(prefix)
 
     // ---- specialized element ops (lambda inlined, unboxed) ----
-    inline def apply(i: Int): A = FArrayOps.applyAtImpl[A](xs, i)
+    inline def apply(i: Int): A =
+      // Seq contract: an out-of-range index throws IndexOutOfBoundsException (parity with List). The check is
+      // against the LOGICAL length — a slack-backed leaf (e.g. from filterConserve) or a singleton/structural
+      // node whose `applyAtImpl` arm ignores `i` would otherwise silently return a stale/valid slot. `head`/
+      // `last` and internal callers keep hitting `applyAtImpl` directly (they pass known-valid indices).
+      if i < 0 || i >= xs.length then throw new IndexOutOfBoundsException(java.lang.Integer.toString(i))
+      else FArrayOps.applyAtImpl[A](xs, i)
     inline def head: A = FArrayOps.applyAtImpl[A](xs, 0)
     inline def last: A = FArrayOps.applyAtImpl[A](xs, xs.length - 1)
     def headOption: Option[A] = if xs.length == 0 then None else Some((xs: FBase).applyBoxed(0).asInstanceOf[A])
