@@ -190,3 +190,78 @@ first in Phase 1. Reasoning, all evidence-based:
 #1 gap). Phase 3 = re-evaluate D1 `Ref2` *only if* the suite still shows a construction/traversal
 gap after D2b, gated hard on the megamorphic `at`-site control. Re-run this suite after each phase;
 it is the acceptance metric.
+
+## 5. Phase 1 results (implemented; this section supersedes §3 as the Phase-2 baseline)
+
+Phase 1 landed three changes (branch `dotty-gaps`):
+
+1. **Item 1 — RefOne peeled in the `applyAtImpl` inline fast path.** The §1 top cell
+   (`at`·RefOne·1, 30.9M/compile) now resolves inline: a second arm
+   `else if (xs.isInstanceOf[${K}One]) xs.asInstanceOf[${K}One].elem` before the out-of-line
+   megamorphic `${k}At`. One edit covers every surface (`apply`/`head`/`last`/`_1` all funnel
+   through `applyAtImpl`). JMH gate (`IndexedApplyPollutedBenchmark`, extended with a `refOneHot`
+   case — RefOne read under full 5-shape refAt pollution; `-f 2 -wi 3 -i 5`, size=3):
+   **refOneHot 27.5M → 44.3M ops/s (1.61×)**; refArrHot 18.96M → 18.66M (parity, within noise);
+   mixedShapes 50.8M → 45.7M (−8%: the structural-node minority pays one extra failed instanceof —
+   RefOne is 63% of reads vs ~10% structural, strongly net-positive). Bytecode growth: +17–19
+   bytecodes per `applyAtImpl` splice (vs the 8000 HugeMethodLimit; a consumer would need ~450
+   apply sites to be pushed over).
+2. **D3 audit (evidence-scoped to ops ≥1% of histogram events).** The hot sites are `at` (47.5%),
+   `ctor` (19.7%), `fold` (15.3%), `foreach` (10.0%), `map` (5.7%), `dfs` (1.0%) — `filter` (0.9%)
+   was included as borderline. Verified in the generated code: `reduceLeaf*`/`foreachLeaf*`/
+   `mapLeaf*`/`filterLeaf*` all peel `Empty`/`${K}One`/top-leaf/Slice-over-leaf INLINE at entry
+   before any engine setup — **no misses; no changes needed**. The plan's flagged unpeeled ops
+   (sort/groupBy/partition/diff/intersect/toSet/distinct/toArray/scan/mkString/lastIndex*) were
+   re-checked and SKIPPED: all are <1% of events in both corpora, and in fact all of them already
+   carry length-0/1 (or length<2) guards at their inline surfaces (verified: `mkStringImpl`,
+   `toArrayImpl`, `distinctImpl`, `partitionImpl`, `sortWithImpl`/`sortedImpl`/`sortByImpl`,
+   `scanLeft/RightImpl`, `groupByImpl`, `lastIndexWhere/OfImpl`, `diff`, `intersect`, `toSet`) —
+   the research doc's 127-loss list predates rounds 7–8.
+   The audit did surface one real bug, fixed and tested: **`apply(i)` out of range silently
+   returned a value instead of throwing** on every shape whose read arm ignores the index
+   (RefOne/Prepend/Append/Updated/Pad/structural recursion) and on slack-backed leaves —
+   `FArray("x")(5)` returned `"x"` where `List("x")(5)` throws. Fixed with a logical-length bounds
+   check at the two public surfaces: the specialized `apply` extension, and `FBase.applyBoxed`
+   (now a final checked entry delegating to `applyBoxedUnchecked`, so the check re-runs at every
+   recursion level and validates against the LEAF's logical length when the walk lands on one).
+   `head`/`last`/internal engines keep the unchecked `applyAtImpl` path. Cost on the item-1 gate:
+   none (refOneHot 44.9M unchecked vs 44.3M checked, within noise).
+3. **D5 worklist-parity verification (measurement only).** New `worklist_*` cases in
+   `CompilerShapeBenchmark`: build a 10-item accumulator by `+:` cons, drain it fully by
+   `case h +: t`. Tightened run (`-f 2 -wi 5 -i 8`):
+
+   | | FArray | List | Vector |
+   |---|--:|--:|--:|
+   | worklist (cons-build + uncons-drain) | 36.65M ± 2.5M | 36.78M ± 0.5M | 6.93M ± 1.0M |
+
+   **Verdict: exact List parity (1.00×; 5.3× Vector).** Prepend-chain build+destructure is free
+   post-round-8 (`tail = base`, no alloc). This CONFIRMS the §3 destructure catastrophe is
+   EXCLUSIVELY the flat-scrutinee/SliceNode case — D2b's scope is exactly right, and no extractor/
+   isEmpty/length-maintenance gap exists on the cons-shaped path.
+
+### Post-Phase-1 CompilerShapeBenchmark baseline (the table Phase 2 is measured against)
+
+Same suite/method as §3 but `-f 2` (two forks; §3 was `-f 1`), JDK 26, macOS aarch64, quiet box.
+Absolute numbers are not directly comparable to §3 (different day/forks); ratios are.
+
+| op | FArray | List | Vector | FArray/List | FArray/Vector |
+|---|--:|--:|--:|--:|--:|
+| construct | 29.1M | 21.6M | 7.1M | **1.34×** | 4.08× |
+| foreach | 14.2M | 25.2M | 20.1M | 0.56× | 0.71× |
+| foldLeft | 19.9M | 25.7M | 11.4M | 0.77× | 1.76× |
+| map | 11.8M | 10.6M | 23.6M | 1.11× | 0.50× |
+| mapConserve | 30.3M | 10.1M | 28.0M | **3.01×** | 1.08× |
+| filterConserve | 29.5M | 32.7M | 20.8M | 0.90× | 1.42× |
+| **destructure1** (`h +: t`) | 24.4M | 180.7M | 44.9M | **0.14×** | 0.54× |
+| **destructure2** | 12.7M | 101.4M | 44.7M | **0.13×** | 0.28× |
+| **destructure3** | 8.1M | 76.7M | 37.6M | **0.10×** | 0.21× |
+| worklist (D5) | 34.6M | 31.5M | 7.8M | **1.10×** (tightened: 1.00×) | 4.43× |
+
+Reading, vs §3: construct ratio unchanged (1.34×), conserve ops improved (mapConserve 2.61→3.01×,
+filterConserve 0.72→0.90×), fold ~unchanged (0.77×), foreach 0.65→0.56× (no mechanism links Phase-1
+changes to foreach — it never touches `applyAtImpl` — treat as environment variance between the two
+sessions). **Destructuring is still the catastrophe (0.10–0.14×), as predicted**: the `faD`
+scrutinees are ≥3-element flat/structural shapes with no RefOne among them, so the item-1 peel
+cannot move this op family — its cost is the SliceNode alloc + tower, which is exactly D2b's target.
+The worklist row proves the tax is confined to flat scrutinees. **Phase 2 (D2b) is measured against
+THIS table.**

@@ -41,8 +41,12 @@ class CompilerShapeBenchmark:
   // construction operands (set in @Setup so the JIT can't constant-fold the literals).
   var a, b, c, d, e, f, g: String = null
 
+  // D5 worklist items — consed one-by-one into an accumulator, then drained (see worklist_* below).
+  var work: Array[String] = null
+
   @Setup def setup(): Unit =
     a = "alpha"; b = "beta"; c = "gamma"; d = "delta"; e = "eps"; f = "phi"; g = "psi"
+    work = Array(a, b, c, d, e, f, g, a, b, c) // 10-item worklist
 
     // logical mix ~= histogram construction buckets, with FArray NODE-CLASS diversity per size.
     val builders: Array[() => FArray[String]] = Array(
@@ -219,3 +223,38 @@ class CompilerShapeBenchmark:
         case x +: y +: z +: rest => bh.consume(x); bh.consume(y); bh.consume(z); bh.consume(rest)
         case _                   => ()
       i += 1
+
+  // ============================ D5 worklist parity (listealization-plan §D5) ==================================
+  // Build a sequence by consing items one-by-one via `+:` onto an accumulator, then fully drain it via
+  // `case h +: t`. On FArray this is a RefPrepend cons chain (O(1), length-carrying cons cell); draining a
+  // Prepend via `h +: t` sets `t = base` with NO allocation (round-8 spine peeling) — the exact List
+  // cons/uncons shape. This is the D5 verification: if FArray reaches List parity here, the destructure gap
+  // is EXCLUSIVELY the flat-scrutinee/SliceNode case (confirming D2b's Phase-2 scope). If it does NOT, the
+  // gap diagnosis (extractor view / isEmpty / length maintenance) changes D2b's design inputs.
+  @Benchmark def worklist_farray(bh: Blackhole): Unit =
+    import farray.`+:`
+    var acc: FArray[String] = FArray.empty[String]
+    var i = 0
+    while i < work.length do { acc = work(i) +: acc; i += 1 }
+    var sum = 0
+    var cur = acc
+    while cur.nonEmpty do cur match { case h +: t => sum += h.length; cur = t; case _ => cur = FArray.empty[String] }
+    bh.consume(sum)
+  @Benchmark def worklist_list(bh: Blackhole): Unit =
+    var acc: List[String] = Nil
+    var i = 0
+    while i < work.length do { acc = work(i) :: acc; i += 1 }
+    var sum = 0
+    var cur = acc
+    while cur.nonEmpty do cur match { case h :: t => sum += h.length; cur = t; case _ => cur = Nil }
+    bh.consume(sum)
+  // Vector drains via head/tail (its native uncons): the `+:` extractor is ambiguous here because this file
+  // is `package farray`, so farray's `+:` is visible unqualified — head/tail is Vector's equivalent cons drain.
+  @Benchmark def worklist_vector(bh: Blackhole): Unit =
+    var acc: Vector[String] = Vector.empty
+    var i = 0
+    while i < work.length do { acc = work(i) +: acc; i += 1 }
+    var sum = 0
+    var cur = acc
+    while cur.nonEmpty do { sum += cur.head.length; cur = cur.tail }
+    bh.consume(sum)
