@@ -337,3 +337,39 @@ Two findings on top of §6:
   lever for destructure parity is a **non-allocating tail view in the `+:` extractor (Phase-3 direction)**.
 - **Worklist parity re-confirmed at 1.08×** (D5 control, identical 240 B/op on both sides) — the cons-shaped
   build+drain path remains at List parity, keeping the destructure tax isolated to flat scrutinees.
+
+## 7. Phase 3 Grade 1 results (inline tail peel in `_2`; IMPLEMENTED, branch `dotty-gaps`)
+
+Grade 1 (plan §4.2): every cons view's `_2` (`+:` in PlusExtractors AND `::` in ListSyntax; symmetric
+`_1` init peel in `:+`'s Snoc views) peels `${K}Arr` (→ offset-leaf tail, One-canonicalized at
+length 2) and `${K}One` (→ `Empty.INSTANCE`) inline before the `xs.tail` virtual fallback. The
+Prepend arm stays first, so the cons-chain path is untouched. The views are plain `def`s — no
+inline-splice growth at match sites; `_2$extension` grows to ~100 bytecodes (JIT FreqInlineSize=325).
+
+Quiet-box run (`destructure|worklist|drain`, `-f 2 -wi 3 -i 5 -prof gc`, tight errors ≤ ~6%):
+
+| op | FArray | List | ratio | pre-Grade-1 (§6.1) | FArray alloc B/op |
+|---|--:|--:|--:|--:|--:|
+| destructure1 | 34.3M ±0.8M | 202.9M | **0.169×** | 0.145× (23.8M) | 144 (unchanged) |
+| destructure2 | 18.4M ±0.3M | 111.1M | **0.165×** | 0.148× (14.3M) | 288 (unchanged) |
+| destructure3 | 14.1M ±1.8M | 76.2M | **0.185×** | 0.131× (11.3M) | 408 (unchanged) |
+| drainFlat (8-elem @tailrec uncons, mono) | 50.6M ±0.8M | 156.7M | 0.32× (2.7× Vector) | — new | **168** (≈ all 7 tails) |
+| drainPolluted (faD mix drain) | 9.9M ±0.2M | 37.8M | 0.26× (1.9× Vector) | — new | 456 |
+| worklist (D5 control) | 41.3M ±1.0M | 38.4M | **1.08×** | 1.08× | 240 (= List) |
+
+Two results, one positive, one negative:
+
+- **Throughput +25–44% on destructure across all depths** (d1 +44%, d2 +28%, d3 +25%), no regression
+  anywhere (worklist parity intact — the peel arms sit after the Prepend arm). The win is
+  **devirtualization**: the tail no longer goes through the megamorphic `FBase.drop(1)` call.
+- **The zero-alloc EA claim is DISPROVEN (measure-don't-assume).** Alloc per op is byte-identical
+  (144/288/408), and `drainFlat` measures 168 B/op ≈ all 7 tail nodes — scalar replacement never
+  fires even for a monomorphic loop-local tail. Root cause: `_2`'s leaf arm merges TWO allocation
+  classes (`${K}One` for length-2, `${K}Arr` otherwise) into one result value; C2 cannot scalar-replace
+  class-differing allocation merges (JDK 24+ `ReduceAllocationMerges` handles same-class only), and
+  the merge is inherent to the extractor-result position. Avoiding it would require a length-1 leaf
+  (violates the size-0/1 invariant — rejected) or a non-allocating tail representation.
+
+**Verdict: Grade 1 ships** (pure throughput win, alloc-neutral, no regressions) **and the EA finding
+hardens Grade 2's case**: the per-level allocation can only be removed by the delimited decomp macro
+(mutable int-offset local, plan §4.2 Grade 2) — no JIT will do it for us at this shape.

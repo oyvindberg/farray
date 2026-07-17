@@ -42,6 +42,8 @@ final class IntHead(private val xs: FArray[Int]) extends AnyVal:
     case node          => FArrayOps.intAt(node, 0)
   def _2: FArray[Int] = xs.asInstanceOf[FBase] match
     case p: IntPrepend => p.base.asInstanceOf[FArray[Int]]
+    case l: IntArr     => (if l.length == 2 then new IntOne(l.data(l.offset + 1)) else new IntArr(l.data, l.offset + 1, l.length - 1)).asInstanceOf[FArray[Int]]
+    case _: IntOne     => Empty.INSTANCE.asInstanceOf[FArray[Int]]
     case _             => xs.tail
 
 final class LongHead(private val xs: FArray[Long]) extends AnyVal:
@@ -52,7 +54,9 @@ final class LongHead(private val xs: FArray[Long]) extends AnyVal:
     case node           => FArrayOps.longAt(node, 0)
   def _2: FArray[Long] = xs.asInstanceOf[FBase] match
     case p: LongPrepend => p.base.asInstanceOf[FArray[Long]]
-    case _              => xs.tail
+    case l: LongArr => (if l.length == 2 then new LongOne(l.data(l.offset + 1)) else new LongArr(l.data, l.offset + 1, l.length - 1)).asInstanceOf[FArray[Long]]
+    case _: LongOne => Empty.INSTANCE.asInstanceOf[FArray[Long]]
+    case _          => xs.tail
 
 final class DoubleHead(private val xs: FArray[Double]) extends AnyVal:
   def isEmpty: Boolean = xs.length == 0
@@ -62,7 +66,10 @@ final class DoubleHead(private val xs: FArray[Double]) extends AnyVal:
     case node             => FArrayOps.doubleAt(node, 0)
   def _2: FArray[Double] = xs.asInstanceOf[FBase] match
     case p: DoublePrepend => p.base.asInstanceOf[FArray[Double]]
-    case _                => xs.tail
+    case l: DoubleArr     =>
+      (if l.length == 2 then new DoubleOne(l.data(l.offset + 1)) else new DoubleArr(l.data, l.offset + 1, l.length - 1)).asInstanceOf[FArray[Double]]
+    case _: DoubleOne => Empty.INSTANCE.asInstanceOf[FArray[Double]]
+    case _            => xs.tail
 
 final class FloatHead(private val xs: FArray[Float]) extends AnyVal:
   def isEmpty: Boolean = xs.length == 0
@@ -72,7 +79,10 @@ final class FloatHead(private val xs: FArray[Float]) extends AnyVal:
     case node            => FArrayOps.floatAt(node, 0)
   def _2: FArray[Float] = xs.asInstanceOf[FBase] match
     case p: FloatPrepend => p.base.asInstanceOf[FArray[Float]]
-    case _               => xs.tail
+    case l: FloatArr     =>
+      (if l.length == 2 then new FloatOne(l.data(l.offset + 1)) else new FloatArr(l.data, l.offset + 1, l.length - 1)).asInstanceOf[FArray[Float]]
+    case _: FloatOne => Empty.INSTANCE.asInstanceOf[FArray[Float]]
+    case _           => xs.tail
 
 final class ShortHead(private val xs: FArray[Short]) extends AnyVal:
   def isEmpty: Boolean = xs.length == 0
@@ -82,7 +92,10 @@ final class ShortHead(private val xs: FArray[Short]) extends AnyVal:
     case node            => FArrayOps.shortAt(node, 0)
   def _2: FArray[Short] = xs.asInstanceOf[FBase] match
     case p: ShortPrepend => p.base.asInstanceOf[FArray[Short]]
-    case _               => xs.tail
+    case l: ShortArr     =>
+      (if l.length == 2 then new ShortOne(l.data(l.offset + 1)) else new ShortArr(l.data, l.offset + 1, l.length - 1)).asInstanceOf[FArray[Short]]
+    case _: ShortOne => Empty.INSTANCE.asInstanceOf[FArray[Short]]
+    case _           => xs.tail
 
 final class ByteHead(private val xs: FArray[Byte]) extends AnyVal:
   def isEmpty: Boolean = xs.length == 0
@@ -92,7 +105,9 @@ final class ByteHead(private val xs: FArray[Byte]) extends AnyVal:
     case node           => FArrayOps.byteAt(node, 0)
   def _2: FArray[Byte] = xs.asInstanceOf[FBase] match
     case p: BytePrepend => p.base.asInstanceOf[FArray[Byte]]
-    case _              => xs.tail
+    case l: ByteArr => (if l.length == 2 then new ByteOne(l.data(l.offset + 1)) else new ByteArr(l.data, l.offset + 1, l.length - 1)).asInstanceOf[FArray[Byte]]
+    case _: ByteOne => Empty.INSTANCE.asInstanceOf[FArray[Byte]]
+    case _          => xs.tail
 
 final class CharHead(private val xs: FArray[Char]) extends AnyVal:
   def isEmpty: Boolean = xs.length == 0
@@ -102,7 +117,9 @@ final class CharHead(private val xs: FArray[Char]) extends AnyVal:
     case node           => FArrayOps.charAt(node, 0)
   def _2: FArray[Char] = xs.asInstanceOf[FBase] match
     case p: CharPrepend => p.base.asInstanceOf[FArray[Char]]
-    case _              => xs.tail
+    case l: CharArr => (if l.length == 2 then new CharOne(l.data(l.offset + 1)) else new CharArr(l.data, l.offset + 1, l.length - 1)).asInstanceOf[FArray[Char]]
+    case _: CharOne => Empty.INSTANCE.asInstanceOf[FArray[Char]]
+    case _          => xs.tail
 
 final class BooleanHead(private val xs: FArray[Boolean]) extends AnyVal:
   def isEmpty: Boolean = xs.length == 0
@@ -112,7 +129,10 @@ final class BooleanHead(private val xs: FArray[Boolean]) extends AnyVal:
     case node              => FArrayOps.booleanAt(node, 0)
   def _2: FArray[Boolean] = xs.asInstanceOf[FBase] match
     case p: BooleanPrepend => p.base.asInstanceOf[FArray[Boolean]]
-    case _                 => xs.tail
+    case l: BooleanArr     =>
+      (if l.length == 2 then new BooleanOne(l.data(l.offset + 1)) else new BooleanArr(l.data, l.offset + 1, l.length - 1)).asInstanceOf[FArray[Boolean]]
+    case _: BooleanOne => Empty.INSTANCE.asInstanceOf[FArray[Boolean]]
+    case _             => xs.tail
 
 /** Reference / abstract element head-tail view (also the primitive fallback). Handles every prepend node kind; refs hit the `RefPrepend` arm first. Reads box
   * only for a genuinely abstract `A`.
@@ -141,7 +161,9 @@ final class Head[A](private val xs: FArray[A]) extends AnyVal:
     case p: BytePrepend    => p.base.asInstanceOf[FArray[A]]
     case p: CharPrepend    => p.base.asInstanceOf[FArray[A]]
     case p: BooleanPrepend => p.base.asInstanceOf[FArray[A]]
-    case _                 => xs.tail
+    case l: RefArr => (if l.length == 2 then new RefOne(l.data(l.offset + 1)) else new RefArr(l.data, l.offset + 1, l.length - 1)).asInstanceOf[FArray[A]]
+    case _: RefOne => Empty.INSTANCE.asInstanceOf[FArray[A]]
+    case _         => xs.tail
 
 object `:+`:
   transparent inline def unapply[A](xs: FArray[A]) = summonFrom {
@@ -162,6 +184,8 @@ final class IntSnoc(private val xs: FArray[Int]) extends AnyVal:
   def get: IntSnoc = this
   def _1: FArray[Int] = xs.asInstanceOf[FBase] match
     case a: IntAppend => a.base.asInstanceOf[FArray[Int]]
+    case l: IntArr    => (if l.length == 2 then new IntOne(l.data(l.offset)) else new IntArr(l.data, l.offset, l.length - 1)).asInstanceOf[FArray[Int]]
+    case _: IntOne    => Empty.INSTANCE.asInstanceOf[FArray[Int]]
     case _            => xs.init
   def _2: Int = xs.asInstanceOf[FBase] match
     case a: IntAppend => a.elem
@@ -172,6 +196,8 @@ final class LongSnoc(private val xs: FArray[Long]) extends AnyVal:
   def get: LongSnoc = this
   def _1: FArray[Long] = xs.asInstanceOf[FBase] match
     case a: LongAppend => a.base.asInstanceOf[FArray[Long]]
+    case l: LongArr    => (if l.length == 2 then new LongOne(l.data(l.offset)) else new LongArr(l.data, l.offset, l.length - 1)).asInstanceOf[FArray[Long]]
+    case _: LongOne    => Empty.INSTANCE.asInstanceOf[FArray[Long]]
     case _             => xs.init
   def _2: Long = xs.asInstanceOf[FBase] match
     case a: LongAppend => a.elem
@@ -182,7 +208,9 @@ final class DoubleSnoc(private val xs: FArray[Double]) extends AnyVal:
   def get: DoubleSnoc = this
   def _1: FArray[Double] = xs.asInstanceOf[FBase] match
     case a: DoubleAppend => a.base.asInstanceOf[FArray[Double]]
-    case _               => xs.init
+    case l: DoubleArr => (if l.length == 2 then new DoubleOne(l.data(l.offset)) else new DoubleArr(l.data, l.offset, l.length - 1)).asInstanceOf[FArray[Double]]
+    case _: DoubleOne => Empty.INSTANCE.asInstanceOf[FArray[Double]]
+    case _            => xs.init
   def _2: Double = xs.asInstanceOf[FBase] match
     case a: DoubleAppend => a.elem
     case node            => FArrayOps.doubleAt(node, node.length - 1)
@@ -192,6 +220,8 @@ final class FloatSnoc(private val xs: FArray[Float]) extends AnyVal:
   def get: FloatSnoc = this
   def _1: FArray[Float] = xs.asInstanceOf[FBase] match
     case a: FloatAppend => a.base.asInstanceOf[FArray[Float]]
+    case l: FloatArr    => (if l.length == 2 then new FloatOne(l.data(l.offset)) else new FloatArr(l.data, l.offset, l.length - 1)).asInstanceOf[FArray[Float]]
+    case _: FloatOne    => Empty.INSTANCE.asInstanceOf[FArray[Float]]
     case _              => xs.init
   def _2: Float = xs.asInstanceOf[FBase] match
     case a: FloatAppend => a.elem
@@ -202,6 +232,8 @@ final class ShortSnoc(private val xs: FArray[Short]) extends AnyVal:
   def get: ShortSnoc = this
   def _1: FArray[Short] = xs.asInstanceOf[FBase] match
     case a: ShortAppend => a.base.asInstanceOf[FArray[Short]]
+    case l: ShortArr    => (if l.length == 2 then new ShortOne(l.data(l.offset)) else new ShortArr(l.data, l.offset, l.length - 1)).asInstanceOf[FArray[Short]]
+    case _: ShortOne    => Empty.INSTANCE.asInstanceOf[FArray[Short]]
     case _              => xs.init
   def _2: Short = xs.asInstanceOf[FBase] match
     case a: ShortAppend => a.elem
@@ -212,6 +244,8 @@ final class ByteSnoc(private val xs: FArray[Byte]) extends AnyVal:
   def get: ByteSnoc = this
   def _1: FArray[Byte] = xs.asInstanceOf[FBase] match
     case a: ByteAppend => a.base.asInstanceOf[FArray[Byte]]
+    case l: ByteArr    => (if l.length == 2 then new ByteOne(l.data(l.offset)) else new ByteArr(l.data, l.offset, l.length - 1)).asInstanceOf[FArray[Byte]]
+    case _: ByteOne    => Empty.INSTANCE.asInstanceOf[FArray[Byte]]
     case _             => xs.init
   def _2: Byte = xs.asInstanceOf[FBase] match
     case a: ByteAppend => a.elem
@@ -222,6 +256,8 @@ final class CharSnoc(private val xs: FArray[Char]) extends AnyVal:
   def get: CharSnoc = this
   def _1: FArray[Char] = xs.asInstanceOf[FBase] match
     case a: CharAppend => a.base.asInstanceOf[FArray[Char]]
+    case l: CharArr    => (if l.length == 2 then new CharOne(l.data(l.offset)) else new CharArr(l.data, l.offset, l.length - 1)).asInstanceOf[FArray[Char]]
+    case _: CharOne    => Empty.INSTANCE.asInstanceOf[FArray[Char]]
     case _             => xs.init
   def _2: Char = xs.asInstanceOf[FBase] match
     case a: CharAppend => a.elem
@@ -232,7 +268,10 @@ final class BooleanSnoc(private val xs: FArray[Boolean]) extends AnyVal:
   def get: BooleanSnoc = this
   def _1: FArray[Boolean] = xs.asInstanceOf[FBase] match
     case a: BooleanAppend => a.base.asInstanceOf[FArray[Boolean]]
-    case _                => xs.init
+    case l: BooleanArr    =>
+      (if l.length == 2 then new BooleanOne(l.data(l.offset)) else new BooleanArr(l.data, l.offset, l.length - 1)).asInstanceOf[FArray[Boolean]]
+    case _: BooleanOne => Empty.INSTANCE.asInstanceOf[FArray[Boolean]]
+    case _             => xs.init
   def _2: Boolean = xs.asInstanceOf[FBase] match
     case a: BooleanAppend => a.elem
     case node             => FArrayOps.booleanAt(node, node.length - 1)
@@ -253,6 +292,8 @@ final class Snoc[A](private val xs: FArray[A]) extends AnyVal:
     case a: ByteAppend    => a.base.asInstanceOf[FArray[A]]
     case a: CharAppend    => a.base.asInstanceOf[FArray[A]]
     case a: BooleanAppend => a.base.asInstanceOf[FArray[A]]
+    case l: RefArr        => (if l.length == 2 then new RefOne(l.data(l.offset)) else new RefArr(l.data, l.offset, l.length - 1)).asInstanceOf[FArray[A]]
+    case _: RefOne        => Empty.INSTANCE.asInstanceOf[FArray[A]]
     case _                => xs.init
   def _2: A = xs.asInstanceOf[FBase] match
     case a: RefAppend     => a.elem.asInstanceOf[A]

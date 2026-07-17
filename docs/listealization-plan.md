@@ -225,6 +225,44 @@ Decisions made (evaluated against implementation cost + the gates):
 Audited sites: **~62 generated (GenCores.scala) + ~9 hand-written (FuseMacro.scala 9 leaf arms; plus
 OpaquePrimAllocTest white-box)**. No site class could NOT be made offset-aware.
 
+## 4.2 Phase 3 — destructure parity: the three-grade ladder
+
+Post-D2b measurement (histogram §6.1) pinned the remaining flat ~7× destructure gap to exactly ONE
+tail-node allocation per `+:`/`::` level vs List's free `.tail` field read. The `+:`/`::` extractors
+are already allocation-free themselves (name-based `isEmpty`/`_1`/`_2` on value-class views); the
+alloc is `_2`'s `xs.tail` = the megamorphic virtual `FBase.drop(1)`, whose allocation happens inside
+a NON-INLINED callee — invisible to escape analysis, so even intermediates in `case a +: b +: rest`
+and loop-local tails in `@tailrec` drains are heap-allocated. Three grades, in order:
+
+- **Grade 1 — EA-visible inline tail peel in `_2` (no API change; do first).** In every cons view's
+  `_2` (PlusExtractors `+:` — `${K}Head`/`Head[A]` — AND ListSyntax `::` — `${K}Cons`/`RefCons`/
+  `Cons[A]`, since dotc's `case h :: t` sites go through ListSyntax), peel the leaf and One cases
+  inline before the `xs.tail` fallback: `case l: ${K}Arr => if l.length == 2 then new ${K}One(
+  l.data(l.offset + 1)) else new ${K}Arr(l.data, l.offset + 1, l.length - 1)` and `case _: ${K}One
+  => Empty.INSTANCE`. The allocation then sits in a small static `_2$extension` the JIT inlines at
+  the match site → (a) nested-match intermediates become scalar-replaceable (destructure3: 3 allocs
+  → 1, only the escaping `rest`), (b) a `@tailrec` drain whose tail dies each iteration can go
+  ZERO-alloc via EA → potentially List parity with unchanged syntax, (c) the 63%-dominant RefOne
+  scrutinee skips the virtual `drop` entirely. ~15–30 bytecodes per view method (they are `def`s,
+  not inline — no per-call-site inline-budget growth; the JIT budget is FreqInlineSize=325, the
+  grown `_2$extension` is ~100). Caveat to VERIFY by measurement: the leaf arm merges two allocation
+  sites (`One` vs `Arr`) — C2 scalar replacement of allocation merges is only partial (improved
+  JDK 24+); if EA fails on the merge, the drain keeps ~40 B/op instead of 0. Symmetric peel applies
+  to `:+`'s `_1` (init of a leaf = same-offset leaf, length−1).
+- **Grade 2 — delimited decomp macro (opt-in, guaranteed).** A FuseMacro-style `FArray.decomp(xs){
+  case h +: t => … }` (or wrapping a whole recursive function) that rewrites the match block so the
+  tail is not an object at all but a **mutable local `offset: Int`** over the hoisted `data` array —
+  pattern syntax preserved, uses of `t` inside the block substituted, and a real FArray materialized
+  ONLY if `t` escapes the block (the fuse machinery's letBind/done-flag escape bookkeeping already
+  does this analysis). Zero-alloc regardless of JIT mood; cost = macro complexity + opt-in rewrites
+  at the hot subset of dotc's 603 `+:` sites. Do only if Grade 1's EA proves insufficient end-to-end.
+- **Grade 3 — shared mutable scratch node: REJECTED.** Rebinding one preallocated node's
+  `data`/`offset`/`length` per `_2` needs non-final fields on the hottest class (kills final-field
+  constant-folding for every read, taxing ALL ops) or a new `MutableView` receiver type (the D1
+  megamorphic-cliff objection), and any escape or interleaved match silently corrupts — against
+  "correctness = List parity". Grade 2 delivers the same speed with the unsafety moved to compile
+  time where the macro can prove it.
+
 ## 5. Targets
 
 - **Realistic**: close half of the ~6pp stdlib/compiler-src gap (→ ~+3% vs main), keep

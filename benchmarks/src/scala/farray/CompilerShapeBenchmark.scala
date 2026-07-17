@@ -44,9 +44,17 @@ class CompilerShapeBenchmark:
   // D5 worklist items — consed one-by-one into an accumulator, then drained (see worklist_* below).
   var work: Array[String] = null
 
+  // Phase-3 Grade-1 drain inputs: ONE flat 8-element leaf (monomorphic scrutinee, EA's best case).
+  var faFlat: FArray[String] = FArray.empty[String]
+  var liFlat: List[String] = null
+  var veFlat: Vector[String] = null
+
   @Setup def setup(): Unit =
     a = "alpha"; b = "beta"; c = "gamma"; d = "delta"; e = "eps"; f = "phi"; g = "psi"
     work = Array(a, b, c, d, e, f, g, a, b, c) // 10-item worklist
+    faFlat = FArray(a, b, c, d, e, f, g, a) // one flat RefArr, offset 0
+    liFlat = faFlat.iterator.toList
+    veFlat = faFlat.iterator.toVector
 
     // logical mix ~= histogram construction buckets, with FArray NODE-CLASS diversity per size.
     val builders: Array[() => FArray[String]] = Array(
@@ -257,4 +265,58 @@ class CompilerShapeBenchmark:
     var sum = 0
     var cur = acc
     while cur.nonEmpty do { sum += cur.head.length; cur = cur.tail }
+    bh.consume(sum)
+
+  // ==================== Phase-3 Grade-1: flat-leaf @tailrec drain (the zero-alloc EA claim) ====================
+  // `drainFlat_*`: a @tailrec full uncons of ONE flat 8-element leaf via `case h +: t` — the tail is loop-local
+  // and dies each iteration, so with the Grade-1 inline tail peel (allocation visible at the match site after
+  // JIT inlining of `_2$extension`) escape analysis can scalar-replace EVERY tail → target 0 B/op and List
+  // parity. Monomorphic scrutinee: EA's best case. `drainPolluted_*`: the same drain over the megamorphic faD
+  // mix (RefArr offset-0 / offset leaves / RefPrepend / Concat at ONE match site) — EA depends on inlining,
+  // which depends on the type profile, so this is the realistic-dotc control. GC profiler is the metric.
+  @Benchmark def drainFlat_farray(bh: Blackhole): Unit =
+    import farray.`+:`
+    @annotation.tailrec
+    def loop(xs: FArray[String], acc: Int): Int = xs match
+      case h +: t => loop(t, acc + h.length)
+      case _      => acc
+    bh.consume(loop(faFlat, 0))
+  @Benchmark def drainFlat_list(bh: Blackhole): Unit =
+    @annotation.tailrec
+    def loop(xs: List[String], acc: Int): Int = xs match
+      case h :: t => loop(t, acc + h.length)
+      case _      => acc
+    bh.consume(loop(liFlat, 0))
+  @Benchmark def drainFlat_vector(bh: Blackhole): Unit =
+    @annotation.tailrec
+    def loop(xs: Vector[String], acc: Int): Int =
+      if xs.isEmpty then acc else loop(xs.tail, acc + xs.head.length)
+    bh.consume(loop(veFlat, 0))
+
+  @Benchmark def drainPolluted_farray(bh: Blackhole): Unit =
+    import farray.`+:`
+    @annotation.tailrec
+    def loop(xs: FArray[String], acc: Int): Int = xs match
+      case h +: t => loop(t, acc + h.length)
+      case _      => acc
+    var i = 0
+    var sum = 0
+    while i < faD.length do { sum += loop(faD(i), 0); i += 1 }
+    bh.consume(sum)
+  @Benchmark def drainPolluted_list(bh: Blackhole): Unit =
+    @annotation.tailrec
+    def loop(xs: List[String], acc: Int): Int = xs match
+      case h :: t => loop(t, acc + h.length)
+      case _      => acc
+    var i = 0
+    var sum = 0
+    while i < liD.length do { sum += loop(liD(i), 0); i += 1 }
+    bh.consume(sum)
+  @Benchmark def drainPolluted_vector(bh: Blackhole): Unit =
+    @annotation.tailrec
+    def loop(xs: Vector[String], acc: Int): Int =
+      if xs.isEmpty then acc else loop(xs.tail, acc + xs.head.length)
+    var i = 0
+    var sum = 0
+    while i < veD.length do { sum += loop(veD(i), 0); i += 1 }
     bh.consume(sum)

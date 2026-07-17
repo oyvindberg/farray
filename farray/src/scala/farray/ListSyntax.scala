@@ -48,7 +48,9 @@ object ListSyntax:
       case node          => FArrayOps.intAt(node, 0)
     def _2: FArray[Int] = xs.asFBase match
       case p: IntPrepend => p.base.asInstanceOf[FArray[Int]]
-      case _             => xs.tail
+      case l: IntArr => (if l.length == 2 then new IntOne(l.data(l.offset + 1)) else new IntArr(l.data, l.offset + 1, l.length - 1)).asInstanceOf[FArray[Int]]
+      case _: IntOne => Empty.INSTANCE.asInstanceOf[FArray[Int]]
+      case _         => xs.tail
 
   final class LongCons(private val xs: FArray[Long]) extends AnyVal:
     def isEmpty: Boolean = xs.length == 0
@@ -58,7 +60,10 @@ object ListSyntax:
       case node           => FArrayOps.longAt(node, 0)
     def _2: FArray[Long] = xs.asFBase match
       case p: LongPrepend => p.base.asInstanceOf[FArray[Long]]
-      case _              => xs.tail
+      case l: LongArr     =>
+        (if l.length == 2 then new LongOne(l.data(l.offset + 1)) else new LongArr(l.data, l.offset + 1, l.length - 1)).asInstanceOf[FArray[Long]]
+      case _: LongOne => Empty.INSTANCE.asInstanceOf[FArray[Long]]
+      case _          => xs.tail
 
   final class DoubleCons(private val xs: FArray[Double]) extends AnyVal:
     def isEmpty: Boolean = xs.length == 0
@@ -68,7 +73,10 @@ object ListSyntax:
       case node             => FArrayOps.doubleAt(node, 0)
     def _2: FArray[Double] = xs.asFBase match
       case p: DoublePrepend => p.base.asInstanceOf[FArray[Double]]
-      case _                => xs.tail
+      case l: DoubleArr     =>
+        (if l.length == 2 then new DoubleOne(l.data(l.offset + 1)) else new DoubleArr(l.data, l.offset + 1, l.length - 1)).asInstanceOf[FArray[Double]]
+      case _: DoubleOne => Empty.INSTANCE.asInstanceOf[FArray[Double]]
+      case _            => xs.tail
 
   final class FloatCons(private val xs: FArray[Float]) extends AnyVal:
     def isEmpty: Boolean = xs.length == 0
@@ -78,7 +86,10 @@ object ListSyntax:
       case node            => FArrayOps.floatAt(node, 0)
     def _2: FArray[Float] = xs.asFBase match
       case p: FloatPrepend => p.base.asInstanceOf[FArray[Float]]
-      case _               => xs.tail
+      case l: FloatArr     =>
+        (if l.length == 2 then new FloatOne(l.data(l.offset + 1)) else new FloatArr(l.data, l.offset + 1, l.length - 1)).asInstanceOf[FArray[Float]]
+      case _: FloatOne => Empty.INSTANCE.asInstanceOf[FArray[Float]]
+      case _           => xs.tail
 
   final class ShortCons(private val xs: FArray[Short]) extends AnyVal:
     def isEmpty: Boolean = xs.length == 0
@@ -88,7 +99,10 @@ object ListSyntax:
       case node            => FArrayOps.shortAt(node, 0)
     def _2: FArray[Short] = xs.asFBase match
       case p: ShortPrepend => p.base.asInstanceOf[FArray[Short]]
-      case _               => xs.tail
+      case l: ShortArr     =>
+        (if l.length == 2 then new ShortOne(l.data(l.offset + 1)) else new ShortArr(l.data, l.offset + 1, l.length - 1)).asInstanceOf[FArray[Short]]
+      case _: ShortOne => Empty.INSTANCE.asInstanceOf[FArray[Short]]
+      case _           => xs.tail
 
   final class ByteCons(private val xs: FArray[Byte]) extends AnyVal:
     def isEmpty: Boolean = xs.length == 0
@@ -98,7 +112,10 @@ object ListSyntax:
       case node           => FArrayOps.byteAt(node, 0)
     def _2: FArray[Byte] = xs.asFBase match
       case p: BytePrepend => p.base.asInstanceOf[FArray[Byte]]
-      case _              => xs.tail
+      case l: ByteArr     =>
+        (if l.length == 2 then new ByteOne(l.data(l.offset + 1)) else new ByteArr(l.data, l.offset + 1, l.length - 1)).asInstanceOf[FArray[Byte]]
+      case _: ByteOne => Empty.INSTANCE.asInstanceOf[FArray[Byte]]
+      case _          => xs.tail
 
   final class CharCons(private val xs: FArray[Char]) extends AnyVal:
     def isEmpty: Boolean = xs.length == 0
@@ -108,7 +125,10 @@ object ListSyntax:
       case node           => FArrayOps.charAt(node, 0)
     def _2: FArray[Char] = xs.asFBase match
       case p: CharPrepend => p.base.asInstanceOf[FArray[Char]]
-      case _              => xs.tail
+      case l: CharArr     =>
+        (if l.length == 2 then new CharOne(l.data(l.offset + 1)) else new CharArr(l.data, l.offset + 1, l.length - 1)).asInstanceOf[FArray[Char]]
+      case _: CharOne => Empty.INSTANCE.asInstanceOf[FArray[Char]]
+      case _          => xs.tail
 
   final class BooleanCons(private val xs: FArray[Boolean]) extends AnyVal:
     def isEmpty: Boolean = xs.length == 0
@@ -118,7 +138,10 @@ object ListSyntax:
       case node              => FArrayOps.booleanAt(node, 0)
     def _2: FArray[Boolean] = xs.asFBase match
       case p: BooleanPrepend => p.base.asInstanceOf[FArray[Boolean]]
-      case _                 => xs.tail
+      case l: BooleanArr     =>
+        (if l.length == 2 then new BooleanOne(l.data(l.offset + 1)) else new BooleanArr(l.data, l.offset + 1, l.length - 1)).asInstanceOf[FArray[Boolean]]
+      case _: BooleanOne => Empty.INSTANCE.asInstanceOf[FArray[Boolean]]
+      case _             => xs.tail
 
   final class RefCons[A](private val xs: FArray[A]) extends AnyVal:
     def isEmpty: Boolean = xs.length == 0
@@ -128,6 +151,8 @@ object ListSyntax:
       case node          => FArrayOps.refAt(node, 0).asInstanceOf[A]
     def _2: FArray[A] = xs.asFBase match
       case p: RefPrepend => p.base.asInstanceOf[FArray[A]]
+      case l: RefArr     => (if l.length == 2 then new RefOne(l.data(l.offset + 1)) else new RefArr(l.data, l.offset + 1, l.length - 1)).asInstanceOf[FArray[A]]
+      case _: RefOne     => Empty.INSTANCE.asInstanceOf[FArray[A]]
       case _             => xs.tail
 
   /** boxed fallback for an abstract element type (no `${K}Repr` in scope) — the pre-specialization view. */
@@ -155,4 +180,6 @@ object ListSyntax:
       case p: BytePrepend    => p.base.asInstanceOf[FArray[A]]
       case p: CharPrepend    => p.base.asInstanceOf[FArray[A]]
       case p: BooleanPrepend => p.base.asInstanceOf[FArray[A]]
-      case _                 => xs.tail
+      case l: RefArr => (if l.length == 2 then new RefOne(l.data(l.offset + 1)) else new RefArr(l.data, l.offset + 1, l.length - 1)).asInstanceOf[FArray[A]]
+      case _: RefOne => Empty.INSTANCE.asInstanceOf[FArray[A]]
+      case _         => xs.tail
