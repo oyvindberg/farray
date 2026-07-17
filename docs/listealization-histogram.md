@@ -311,3 +311,29 @@ indirection and the deep-slice `kindAt` head-read (destructure head now reads th
 keep/revert decision is the coordinator's end-to-end call per the sequencing table's
 "keep if ≥0.3pp end-to-end OR neutral-with-simplification; revert otherwise" — D2b qualifies on the
 "neutral-with-simplification" arm but has no independent JMH win to show.
+
+### 6.1 Destructure re-measure (same flags, destructure+worklist only)
+
+Re-run of `CompilerShapeBenchmark.(destructure|worklist)` (`-f 2 -wi 3 -i 5 -prof gc`) after the §6 session.
+**Load caveat:** the box carried background load (~19–26 1-min avg, foreign builds) during the run; FArray-side
+errors are tight (destructure2 ±1.3%, destructure3 ±6%) but List's columns carry ±12–20% error. List's
+magnitudes match the Phase-1 baseline session (164/96/87M vs 181/101/77M), so the ratios are trustworthy to
+roughly ±15% — not enough to change the §6 verdict.
+
+| op | FArray | List | ratio | FArray alloc B/op |
+|---|--:|--:|--:|--:|
+| destructure1 | 23.8M ±4.1M | 164.2M ±22.8M | **0.145×** | 144 |
+| destructure2 | 14.3M ±0.2M | 96.3M ±18.7M | **0.148×** | 288 |
+| destructure3 | 11.3M ±0.7M | 86.6M ±17.6M | **0.131×** | 408 |
+| worklist (D5 control) | 37.4M ±1.9M | 34.7M ±2.7M | **1.08×** | 240 (= List's 240) |
+
+Two findings on top of §6:
+
+- **The depth-degradation is GONE.** Phase-1 ratios degraded with destructure depth (0.14 → 0.13 → 0.10);
+  post-D2b they are flat (0.145 → 0.148 → 0.131), and alloc is exactly constant per level (144/288/408 B/op =
+  one small offset-leaf per `+:` level). That is the tower-flattening signature: per-level cost no longer
+  compounds. D2b did what it structurally could. The remaining **flat ~7× gap is the one tail-node allocation
+  per level vs List's free `.tail` field read** — a representation swap cannot remove it; the only remaining
+  lever for destructure parity is a **non-allocating tail view in the `+:` extractor (Phase-3 direction)**.
+- **Worklist parity re-confirmed at 1.08×** (D5 control, identical 240 B/op on both sides) — the cons-shaped
+  build+drain path remains at List parity, keeping the destructure tax isolated to flat scrutinees.
