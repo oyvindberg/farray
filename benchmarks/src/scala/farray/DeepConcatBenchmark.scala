@@ -21,6 +21,7 @@ class DeepConcatIntBenchmark:
 
   var farrayInput: FArray[Int] = _
   var ziochunkInput: zio.Chunk[Int] = _
+  var kyochunkInput: kyo.Chunk[Int] = _
   var fs2chunkInput: fs2.Chunk[Int] = _
   var iarrayInput: IArray[Int] = _
   var vectorInput: Vector[Int] = _
@@ -35,6 +36,9 @@ class DeepConcatIntBenchmark:
     val zioLeaf = zio.Chunk.fromArray(leafArr)
     ziochunkInput = (0 until numLeaves).foldLeft(zio.Chunk.empty[Int])((acc, _) => acc ++ zioLeaf)
 
+    val kyoLeaf = kyo.Chunk.from(leafArr)
+    kyochunkInput = (0 until numLeaves).foldLeft(kyo.Chunk.empty[Int])((acc, _) => acc.concat(kyoLeaf))
+
     val fs2Leaf = fs2.Chunk.array(leafArr)
     fs2chunkInput = (0 until numLeaves).foldLeft(fs2.Chunk.empty[Int])((acc, _) => acc ++ fs2Leaf)
 
@@ -48,6 +52,7 @@ class DeepConcatIntBenchmark:
 
   @Benchmark def farray_foldLeft(): Int = farrayInput.foldLeft(0)(_ + _)
   @Benchmark def ziochunk_foldLeft(): Int = ziochunkInput.foldLeft(0)(_ + _)
+  @Benchmark def kyochunk_foldLeft(): Int = kyochunkInput.foldLeft(0)(_ + _)
   @Benchmark def fs2chunk_foldLeft(): Int = fs2chunkInput.foldLeft(0)(_ + _)
   @Benchmark def iarray_foldLeft(): Int = iarrayInput.foldLeft(0)(_ + _)
   @Benchmark def vector_foldLeft(): Int = vectorInput.foldLeft(0)(_ + _)
@@ -55,6 +60,7 @@ class DeepConcatIntBenchmark:
 
   @Benchmark def farray_map(): FArray[Int] = farrayInput.map(_ + 1)
   @Benchmark def ziochunk_map(): zio.Chunk[Int] = ziochunkInput.map(_ + 1)
+  @Benchmark def kyochunk_map(): kyo.Chunk[Int] = kyochunkInput.map(_ + 1)
   @Benchmark def fs2chunk_map(): fs2.Chunk[Int] = fs2chunkInput.map(_ + 1)
   @Benchmark def iarray_map(): IArray[Int] = iarrayInput.map(_ + 1)
   @Benchmark def vector_map(): Vector[Int] = vectorInput.map(_ + 1)

@@ -51,6 +51,8 @@ class FoldRefPollutedBenchmark extends CommonParams {
   var cWid: fs2.Chunk[Wid] = _; var cTall: fs2.Chunk[Tall] = _; var cChar: fs2.Chunk[Character] = _
   var zStr: zio.Chunk[String] = _; var zInt: zio.Chunk[Integer] = _; var zLong: zio.Chunk[java.lang.Long] = _
   var zWid: zio.Chunk[Wid] = _; var zTall: zio.Chunk[Tall] = _; var zChar: zio.Chunk[Character] = _
+  var kStr: kyo.Chunk[String] = _; var kInt: kyo.Chunk[Integer] = _; var kLong: kyo.Chunk[java.lang.Long] = _
+  var kWid: kyo.Chunk[Wid] = _; var kTall: kyo.Chunk[Tall] = _; var kChar: kyo.Chunk[Character] = _
 
   @Setup def setup(): Unit = {
     fStr = FArray.tabulate(size)(i => i.toString)
@@ -72,6 +74,8 @@ class FoldRefPollutedBenchmark extends CommonParams {
     cChar = fs2.Chunk.from(lChar)
     zStr = zio.Chunk.fromIterable(lStr); zInt = zio.Chunk.fromIterable(lInt); zLong = zio.Chunk.fromIterable(lLong); zWid = zio.Chunk.fromIterable(lWid);
     zTall = zio.Chunk.fromIterable(lTall); zChar = zio.Chunk.fromIterable(lChar)
+    kStr = kyo.Chunk.from(lStr); kInt = kyo.Chunk.from(lInt); kLong = kyo.Chunk.from(lLong); kWid = kyo.Chunk.from(lWid);
+    kTall = kyo.Chunk.from(lTall); kChar = kyo.Chunk.from(lChar)
   }
 
   // MEGAMORPHIC: 6 distinct element types funnel through the SAME generated foldLeft read site.
@@ -127,6 +131,15 @@ class FoldRefPollutedBenchmark extends CommonParams {
     bh.consume(zWid.foldLeft(0)((acc, w) => acc + w.w))
     bh.consume(zTall.foldLeft(0)((acc, t) => acc + t.h.toInt))
     bh.consume(zChar.foldLeft(0)((acc, c) => acc + c.charValue.toInt))
+  }
+
+  @Benchmark def kyochunk(bh: Blackhole): Unit = {
+    bh.consume(kStr.foldLeft(0)((acc, s) => acc + s.length))
+    bh.consume(kInt.foldLeft(0)((acc, n) => acc + n.intValue))
+    bh.consume(kLong.foldLeft(0)((acc, n) => acc + n.intValue))
+    bh.consume(kWid.foldLeft(0)((acc, w) => acc + w.w))
+    bh.consume(kTall.foldLeft(0)((acc, t) => acc + t.h.toInt))
+    bh.consume(kChar.foldLeft(0)((acc, c) => acc + c.charValue.toInt))
   }
 
 }

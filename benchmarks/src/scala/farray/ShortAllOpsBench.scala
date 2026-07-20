@@ -106,6 +106,22 @@ class ShortAllOpsBench extends ShortInputs {
     .filter(_ > 0)
     .foldLeft(0)((acc, x) => acc + x)
 
+  @Benchmark def kyochunk(): Int = kyoChunkInput
+    .flatMap(x => kyo.Chunk(x, (x + 1).toShort))
+    .filter(_ % 3 != 0)
+    .map(s => (s * 2).toShort)
+    .flatMap(x => kyo.Chunk(x, (x ^ 5).toShort))
+    .filter(_ % 2 == 0)
+    .map(s => (s - 7).toShort)
+    .zip(kyoChunkInput.map(s => (s + 100).toShort))
+    .map((a, b) => (a + b).toShort)
+    .zipWithIndex
+    .filter((v, i) => (v + i) % 4 != 0)
+    .map((v, i) => (v - i).toShort)
+    .flatMap(x => kyo.Chunk(x, (x + 3).toShort))
+    .filter(_ > 0)
+    .foldLeft(0)((acc, x) => acc + x)
+
   @Benchmark def farrayFused(): Int = {
     val zipSrc = farrayInput.map(s => (s + 100).toShort)
     farrayInput.fuse

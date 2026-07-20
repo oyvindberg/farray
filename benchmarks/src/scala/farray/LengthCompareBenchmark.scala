@@ -8,5 +8,6 @@ class LengthCompareStrBenchmark extends Inputs {
   @Benchmark def iarray(): Int = iarrayInput.lengthCompare(size / 2)
   @Benchmark def vector(): Int = vectorInput.lengthCompare(size / 2)
   @Benchmark def ziochunk(): Int = zioChunkInput.lengthCompare(size / 2)
+  @Benchmark def kyochunk(): Int = kyoChunkInput.lengthCompare(size / 2)
   // fs2.Chunk has no lengthCompare
 }

@@ -14,6 +14,7 @@ abstract class IntInputs extends CommonParams {
   var farrayInput: FArray[Int] = _
   var fs2ChunkInput: fs2.Chunk[Int] = _
   var zioChunkInput: zio.Chunk[Int] = _
+  var kyoChunkInput: kyo.Chunk[Int] = _
 
   @Setup
   def setup(): Unit = {
@@ -25,5 +26,6 @@ abstract class IntInputs extends CommonParams {
     farrayInput = FArray.tabulate(size)(i => i)
     fs2ChunkInput = fs2.Chunk.array(arr)
     zioChunkInput = zio.Chunk.fromArray(arr)
+    kyoChunkInput = kyo.Chunk.from(arr)
   }
 }

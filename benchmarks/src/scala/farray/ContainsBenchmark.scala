@@ -10,6 +10,7 @@ class ContainsStrBenchmark extends Inputs {
   @Benchmark def vector(): Boolean = vectorInput.contains("nope")
   @Benchmark def fs2chunk(): Boolean = fs2ChunkInput.contains("nope")
   @Benchmark def ziochunk(): Boolean = zioChunkInput.contains("nope")
+  @Benchmark def kyochunk(): Boolean = kyoChunkInput.contains("nope")
 }
 
 // the Int twin: unboxed value compares — the boxing collections unbox per element to compare.
@@ -20,4 +21,5 @@ class ContainsIntBenchmark extends IntInputs {
   @Benchmark def iarray(): Boolean = iarrayInput.contains(-1)
   @Benchmark def fs2chunk(): Boolean = fs2ChunkInput.contains(-1)
   @Benchmark def ziochunk(): Boolean = zioChunkInput.contains(-1)
+  @Benchmark def kyochunk(): Boolean = kyoChunkInput.contains(-1)
 }

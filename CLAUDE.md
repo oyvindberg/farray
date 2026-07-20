@@ -9,7 +9,7 @@
 > edits, and never drop/clear a stash.
 
 `FArray[+A]` — an immutable, `Array`-backed sequence whose goal is to **beat every competitor**
-(`IArray`, `List`, `Vector`, `fs2.Chunk`, `zio.Chunk`) on as many operations as possible while
+(`IArray`, `List`, `Vector`, `fs2.Chunk`, `zio.Chunk`, `kyo.Chunk`) on as many operations as possible while
 keeping the full `IndexedSeq` API.
 
 ## Goals & principles
@@ -24,7 +24,7 @@ keeping the full `IndexedSeq` API.
   `RangeNode`) so structural ops (`++`, `take`/`drop`, `reverse`, `:+`, …) are O(1). Traversal is **one
   direction-aware DFS** — forward/backward drivers are mutual mirrors that flip at each `ReverseNode`.
 - **Beat Chunk at minimum.** Losing to `IArray` on inherently-allocating ops (e.g. construction must
-  allocate more than a raw array) is acceptable; **losing to `fs2.Chunk`/`zio.Chunk` is not.** Treat
+  allocate more than a raw array) is acceptable; **losing to `fs2.Chunk`/`zio.Chunk`/`kyo.Chunk` is not.** Treat
   `IArray` ≈ `Array` as the same raw-array baseline.
 - **Measure, don't assume.** Performance claims are validated by benchmarks, never by reasoning about
   the JIT. Several "obvious" optimizations here were committed then reverted once measurement disproved
@@ -42,6 +42,10 @@ app; pages `/benchmarks/farray` and `/benchmarks/fset`: W/T/L per op × size, �
 tie, <0.95× loss).
 There is NO generated HTML report anymore. Treat the data like code: **re-measure and commit it
 alongside the change that moved the numbers.**
+
+**Full guide: `docs/benchmarking.md`** — the one-liner for a new machine (`bash scripts/bench-all.sh`,
+sequential, both suites, all competitors), every knob, and the traps (shard contention ≈1.26× median,
+FArray's longer warmup, the fresh-checkout preflight).
 
 **Fast round-trip (the common loop).** Because `docs/bench-results.json` already exists, the runner
 auto-selects **farray-only patch mode**: it re-measures *only* the `farray_*` methods and patches them
@@ -68,6 +72,10 @@ caffeinate -i bash scripts/bench-run.sh [warmup-iters] [measure-iters] [forks] [
 - Ends at the refreshed `docs/bench-results.json` — view it via the site (`cd site && npm run dev`),
   and always check the refreshed JSON back in.
 - Delete `docs/bench-results.json` to force a full-suite run (re-measures competitors too).
+- `BENCH_VARIANT=<methodPrefix>` generalizes the patch to any one implementation — how a NEWLY ADDED
+  competitor gets folded into an existing scorecard without re-measuring the field:
+  `BENCH_VARIANT=kyochunk caffeinate -i bash scripts/bench-run.sh 3 5 1 6`. Its cells were measured
+  under different contention than the entries beside them, so confirm close calls with `-f 2`.
 - Beware under-warmed-up artifacts in a fast sweep; confirm a surprising number with `-f 2`/more iters
   before acting on it.
 

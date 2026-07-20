@@ -28,6 +28,7 @@ class ConcatTreeIntBenchmark:
   private def listRec(n: Int): List[Int] = if n <= 1 then List(1) else listRec(n / 2) ++ listRec(n - n / 2)
   private def vectorRec(n: Int): Vector[Int] = if n <= 1 then Vector(1) else vectorRec(n / 2) ++ vectorRec(n - n / 2)
   private def zioRec(n: Int): zio.Chunk[Int] = if n <= 1 then zio.Chunk.single(1) else zioRec(n / 2) ++ zioRec(n - n / 2)
+  private def kyoRec(n: Int): kyo.Chunk[Int] = if n <= 1 then kyo.Chunk(1) else kyoRec(n / 2).concat(kyoRec(n - n / 2))
   private def fs2Rec(n: Int): fs2.Chunk[Int] = if n <= 1 then fs2.Chunk.singleton(1) else fs2Rec(n / 2) ++ fs2Rec(n - n / 2)
 
   // --- leftConcat ---
@@ -46,6 +47,9 @@ class ConcatTreeIntBenchmark:
   @Benchmark def ziochunk_leftConcat(): zio.Chunk[Int] =
     val leaf = zio.Chunk.single(1); var c: zio.Chunk[Int] = zio.Chunk.single(0); var i = 0
     while i < size do { c = leaf ++ c; i += 1 }; c.map(_ + 1)
+  @Benchmark def kyochunk_leftConcat(): kyo.Chunk[Int] =
+    val leaf = kyo.Chunk(1); var c: kyo.Chunk[Int] = kyo.Chunk(0); var i = 0
+    while i < size do { c = leaf.concat(c); i += 1 }; c.map(_ + 1)
   @Benchmark def fs2chunk_leftConcat(): fs2.Chunk[Int] =
     val leaf = fs2.Chunk.singleton(1); var c: fs2.Chunk[Int] = fs2.Chunk.singleton(0); var i = 0
     while i < size do { c = leaf ++ c; i += 1 }; c.map(_ + 1)
@@ -66,6 +70,9 @@ class ConcatTreeIntBenchmark:
   @Benchmark def ziochunk_rightConcat(): zio.Chunk[Int] =
     val leaf = zio.Chunk.single(1); var c: zio.Chunk[Int] = zio.Chunk.single(0); var i = 0
     while i < size do { c = c ++ leaf; i += 1 }; c.map(_ + 1)
+  @Benchmark def kyochunk_rightConcat(): kyo.Chunk[Int] =
+    val leaf = kyo.Chunk(1); var c: kyo.Chunk[Int] = kyo.Chunk(0); var i = 0
+    while i < size do { c = c.concat(leaf); i += 1 }; c.map(_ + 1)
   @Benchmark def fs2chunk_rightConcat(): fs2.Chunk[Int] =
     val leaf = fs2.Chunk.singleton(1); var c: fs2.Chunk[Int] = fs2.Chunk.singleton(0); var i = 0
     while i < size do { c = c ++ leaf; i += 1 }; c.map(_ + 1)
@@ -76,4 +83,5 @@ class ConcatTreeIntBenchmark:
   @Benchmark def list_balanced(): List[Int] = listRec(size).map(_ + 1)
   @Benchmark def vector_balanced(): Vector[Int] = vectorRec(size).map(_ + 1)
   @Benchmark def ziochunk_balanced(): zio.Chunk[Int] = zioRec(size).map(_ + 1)
+  @Benchmark def kyochunk_balanced(): kyo.Chunk[Int] = kyoRec(size).map(_ + 1)
   @Benchmark def fs2chunk_balanced(): fs2.Chunk[Int] = fs2Rec(size).map(_ + 1)

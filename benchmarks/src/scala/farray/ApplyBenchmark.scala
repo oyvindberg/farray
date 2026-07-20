@@ -10,6 +10,7 @@ class ApplyStrBenchmark extends Inputs {
   @Benchmark def vector(): String = vectorInput(size / 2)
   @Benchmark def fs2chunk(): String = fs2ChunkInput(size / 2)
   @Benchmark def ziochunk(): String = zioChunkInput(size / 2)
+  @Benchmark def kyochunk(): String = kyoChunkInput(size / 2)
 }
 
 // the Int twin: indexed lookup at a non-constant index, unboxed.
@@ -20,4 +21,5 @@ class ApplyIntBenchmark extends IntInputs {
   @Benchmark def vector(): Int = vectorInput(size / 2)
   @Benchmark def fs2chunk(): Int = fs2ChunkInput(size / 2)
   @Benchmark def ziochunk(): Int = zioChunkInput(size / 2)
+  @Benchmark def kyochunk(): Int = kyoChunkInput(size / 2)
 }

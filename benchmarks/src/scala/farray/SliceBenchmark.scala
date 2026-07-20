@@ -8,5 +8,6 @@ class SliceStrBenchmark extends Inputs {
   @Benchmark def iarray(): IArray[String] = iarrayInput.slice(size / 4, (size * 3) / 4)
   @Benchmark def vector(): Vector[String] = vectorInput.slice(size / 4, (size * 3) / 4)
   @Benchmark def ziochunk(): zio.Chunk[String] = zioChunkInput.slice(size / 4, (size * 3) / 4)
+  @Benchmark def kyochunk(): kyo.Chunk[String] = kyoChunkInput.slice(size / 4, (size * 3) / 4)
   // fs2.Chunk has no slice (use drop/take instead, but no direct slice)
 }

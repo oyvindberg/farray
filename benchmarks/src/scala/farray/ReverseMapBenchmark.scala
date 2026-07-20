@@ -11,5 +11,6 @@ class ReverseMapIntBenchmark extends IntInputs {
   @Benchmark def vector(): Vector[Int] = vectorInput.reverse.map(_ + 1)
   @Benchmark def iarray(): IArray[Int] = iarrayInput.reverse.map(_ + 1)
   @Benchmark def ziochunk(): zio.Chunk[Int] = zioChunkInput.reverse.map(_ + 1)
+  @Benchmark def kyochunk(): kyo.Chunk[Int] = kyoChunkInput.reverse.map(_ + 1)
   // fs2.Chunk has no reverse
 }

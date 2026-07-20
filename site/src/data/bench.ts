@@ -20,9 +20,11 @@ export const KNOWN: Record<string, [string, string]> = {
   jsoniterNarrow: ["jsoniter (narrow)", "#c58a4e"], jsoniterFull: ["jsoniter (full)", "#d8b184"],
   jsoniterManual: ["jsoniter (manual)", "#a9743d"], jawn: ["jawn", "#9b8fb2"], jackson: ["Jackson", "#7ea2bd"],
   vector: ["Vector", "#7ea2bd"], vectorView: ["Vector.view", "#a6c3d9"], fs2chunk: ["fs2.Chunk", "#c5876b"],
-  ziochunk: ["zio.Chunk", "#bd8aa6"], scalaRange: ["Range", "#8b9197"],
+  ziochunk: ["zio.Chunk", "#bd8aa6"], kyochunk: ["kyo.Chunk", "#8a7fc0"],
+  scalaRange: ["Range", "#8b9197"],
   farrayTree: ["FArray·tree", "#16a34a"], farrayMat: ["FArray·flat", "#6ee7a8"],
   ziochunkTree: ["zio·tree", "#bd8aa6"], ziochunkMat: ["zio·flat", "#d6b3c6"],
+  kyochunkTree: ["kyo·tree", "#8a7fc0"], kyochunkMat: ["kyo·flat", "#b3aade"],
   // ---- the FSet suite (subject = fset; competitors muted; same palette as scripts/setbench_report.py) ----
   fset: ["FSet", "#16a34a"],
   scalaset: ["scala.immut", "#8b5cf6"], scalamut: ["scala.mut", "#a78bfa"],
@@ -37,7 +39,7 @@ const XPRIORITY = ["size", "numChunks", "chunkCount", "numLeaves", "n", "innerSi
 // diagnostic / non-structure variants excluded from the leaderboard (decompositions, and the
 // fused/eager pipeline probes which are FArray-vs-itself, not a competing collection)
 const SUBV = new Set([
-  "farrayTree", "farrayMat", "ziochunkTree", "ziochunkMat", "farrayFused",
+  "farrayTree", "farrayMat", "ziochunkTree", "ziochunkMat", "kyochunkTree", "kyochunkMat", "farrayFused",
   // mutable builders and generators, not immutable-collection competitors — excluded from the
   // leaderboard summary (they still appear as bars on their individual benchmark charts).
   "arraybuffer", "arraybuilder", "scalaRange",

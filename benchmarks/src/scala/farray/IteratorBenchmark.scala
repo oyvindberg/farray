@@ -40,4 +40,10 @@ class IteratorStrBenchmark extends Inputs {
     while (it.hasNext) acc += it.next().length
     acc
   }
+  @Benchmark def kyochunk(): Int = {
+    var acc = 0
+    val it = kyoChunkInput.iterator
+    while (it.hasNext) acc += it.next().length
+    acc
+  }
 }

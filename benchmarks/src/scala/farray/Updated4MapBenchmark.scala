@@ -17,5 +17,7 @@ class Updated4MapIntBenchmark extends IntInputs {
     iarrayInput.updated(0, -1).updated(size / 4, -2).updated(size / 2, -3).updated(size - 1, -4).map(_ + 1)
   @Benchmark def ziochunk(): zio.Chunk[Int] =
     zioChunkInput.updated(0, -1).updated(size / 4, -2).updated(size / 2, -3).updated(size - 1, -4).map(_ + 1)
+  @Benchmark def kyochunk(): kyo.Chunk[Int] =
+    kyoChunkInput.updated(0, -1).updated(size / 4, -2).updated(size / 2, -3).updated(size - 1, -4).map(_ + 1)
   // fs2.Chunk has no updated
 }

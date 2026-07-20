@@ -29,6 +29,7 @@ class CreationIntBenchmark:
   @Benchmark def list_create02(): List[Int] = List(a1, a2)
   @Benchmark def vector_create02(): Vector[Int] = Vector(a1, a2)
   @Benchmark def ziochunk_create02(): zio.Chunk[Int] = zio.Chunk(a1, a2)
+  @Benchmark def kyochunk_create02(): kyo.Chunk[Int] = kyo.Chunk(a1, a2)
   @Benchmark def fs2chunk_create02(): fs2.Chunk[Int] = fs2.Chunk(a1, a2)
 
   // ---- N = 4 ----
@@ -37,6 +38,7 @@ class CreationIntBenchmark:
   @Benchmark def list_create04(): List[Int] = List(a1, a2, a3, a4)
   @Benchmark def vector_create04(): Vector[Int] = Vector(a1, a2, a3, a4)
   @Benchmark def ziochunk_create04(): zio.Chunk[Int] = zio.Chunk(a1, a2, a3, a4)
+  @Benchmark def kyochunk_create04(): kyo.Chunk[Int] = kyo.Chunk(a1, a2, a3, a4)
   @Benchmark def fs2chunk_create04(): fs2.Chunk[Int] = fs2.Chunk(a1, a2, a3, a4)
 
   // ---- N = 8 ----
@@ -45,6 +47,7 @@ class CreationIntBenchmark:
   @Benchmark def list_create08(): List[Int] = List(a1, a2, a3, a4, a5, a6, a7, a8)
   @Benchmark def vector_create08(): Vector[Int] = Vector(a1, a2, a3, a4, a5, a6, a7, a8)
   @Benchmark def ziochunk_create08(): zio.Chunk[Int] = zio.Chunk(a1, a2, a3, a4, a5, a6, a7, a8)
+  @Benchmark def kyochunk_create08(): kyo.Chunk[Int] = kyo.Chunk(a1, a2, a3, a4, a5, a6, a7, a8)
   @Benchmark def fs2chunk_create08(): fs2.Chunk[Int] = fs2.Chunk(a1, a2, a3, a4, a5, a6, a7, a8)
 
   // ---- N = 16 ----
@@ -58,6 +61,8 @@ class CreationIntBenchmark:
     Vector(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16)
   @Benchmark def ziochunk_create16(): zio.Chunk[Int] =
     zio.Chunk(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16)
+  @Benchmark def kyochunk_create16(): kyo.Chunk[Int] =
+    kyo.Chunk(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16)
   @Benchmark def fs2chunk_create16(): fs2.Chunk[Int] =
     fs2.Chunk(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16)
 
@@ -171,6 +176,41 @@ class CreationIntBenchmark:
     )
   @Benchmark def ziochunk_create32(): zio.Chunk[Int] =
     zio.Chunk(
+      a1,
+      a2,
+      a3,
+      a4,
+      a5,
+      a6,
+      a7,
+      a8,
+      a9,
+      a10,
+      a11,
+      a12,
+      a13,
+      a14,
+      a15,
+      a16,
+      a17,
+      a18,
+      a19,
+      a20,
+      a21,
+      a22,
+      a23,
+      a24,
+      a25,
+      a26,
+      a27,
+      a28,
+      a29,
+      a30,
+      a31,
+      a32
+    )
+  @Benchmark def kyochunk_create32(): kyo.Chunk[Int] =
+    kyo.Chunk(
       a1,
       a2,
       a3,

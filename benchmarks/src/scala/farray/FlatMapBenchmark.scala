@@ -11,6 +11,7 @@ class FlatMapIntBenchmark extends IntInputs {
   @Benchmark def iarray(): Int = iarrayInput.flatMap(x => IArray(x, x)).foldLeft(0)(_ + _)
   @Benchmark def fs2chunk(): Int = fs2ChunkInput.flatMap(x => fs2.Chunk(x, x)).foldLeft(0)(_ + _)
   @Benchmark def ziochunk(): Int = zioChunkInput.flatMap(x => zio.Chunk(x, x)).foldLeft(0)(_ + _)
+  @Benchmark def kyochunk(): Int = kyoChunkInput.flatMap(x => kyo.Chunk(x, x)).foldLeft(0)(_ + _)
 }
 
 class FlatMapStrBenchmark extends Inputs {
@@ -20,4 +21,5 @@ class FlatMapStrBenchmark extends Inputs {
   @Benchmark def iarray(): Int = iarrayInput.flatMap(s => IArray(s, s)).foldLeft(0)((acc, s) => acc + s.length)
   @Benchmark def fs2chunk(): Int = fs2ChunkInput.flatMap(s => fs2.Chunk(s, s)).foldLeft(0)((acc, s) => acc + s.length)
   @Benchmark def ziochunk(): Int = zioChunkInput.flatMap(s => zio.Chunk(s, s)).foldLeft(0)((acc, s) => acc + s.length)
+  @Benchmark def kyochunk(): Int = kyoChunkInput.flatMap(s => kyo.Chunk(s, s)).foldLeft(0)((acc, s) => acc + s.length)
 }

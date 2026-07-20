@@ -44,6 +44,7 @@ class ColdPipelineIntBenchmark extends CommonParams {
   var farrayInput: FArray[Int] = _
   var fs2ChunkInput: fs2.Chunk[Int] = _
   var zioChunkInput: zio.Chunk[Int] = _
+  var kyoChunkInput: kyo.Chunk[Int] = _
 
   @Setup
   def setup(): Unit = {
@@ -54,6 +55,7 @@ class ColdPipelineIntBenchmark extends CommonParams {
     farrayInput = FArray.tabulate(size)(i => i)
     fs2ChunkInput = fs2.Chunk.array(arr)
     zioChunkInput = zio.Chunk.fromArray(arr)
+    kyoChunkInput = kyo.Chunk.from(arr)
   }
 
   @Benchmark def list(): Int =
@@ -209,6 +211,23 @@ class ColdPipelineIntBenchmark extends CommonParams {
       .filter((v, i) => (v + i) % 4 != 0)
       .map((v, i) => v - i)
       .flatMap(x => zio.Chunk(x, x + 3))
+      .filter(_ > 0)
+      .foldLeft(0)(_ + _)
+
+  @Benchmark def kyochunk(): Int =
+    kyoChunkInput
+      .flatMap(x => kyo.Chunk(x, x + 1))
+      .filter(_ % 3 != 0)
+      .map(_ * 2)
+      .flatMap(x => kyo.Chunk(x, x ^ 5))
+      .filter(_ % 2 == 0)
+      .map(_ - 7)
+      .zip(kyoChunkInput.map(_ + 100))
+      .map((a, b) => a + b)
+      .zipWithIndex
+      .filter((v, i) => (v + i) % 4 != 0)
+      .map((v, i) => v - i)
+      .flatMap(x => kyo.Chunk(x, x + 3))
       .filter(_ > 0)
       .foldLeft(0)(_ + _)
 }

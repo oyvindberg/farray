@@ -66,3 +66,10 @@ class BuilderIntBenchmark:
     var i = 0; val n = size
     while i < n do { b += src(i); i += 1 }
     b.result()
+
+  // kyo's builder is a single generic ChunkBuilder (no primitive specialization).
+  @Benchmark def kyochunk(): kyo.Chunk[Int] =
+    val b = kyo.ChunkBuilder.init[Int]
+    var i = 0; val n = size
+    while i < n do { b += src(i); i += 1 }
+    b.result()

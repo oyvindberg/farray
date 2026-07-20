@@ -122,6 +122,19 @@ class IntLongPipelineBench extends IntInputs:
       .map(_ * 2)
       .sum
 
+  @Benchmark def kyochunk(): Int =
+    kyoChunkInput
+      .map(_ + 1)
+      .filter(_ % 2 == 0)
+      .collect { case x if x % 3 == 0 => x * 3 }
+      .map(_ - 1)
+      .zipWithIndex
+      .map((x, i) => x + i)
+      .takeWhile(_ < 1_000_000)
+      .filter(_ % 5 != 0)
+      .map(_ * 2)
+      .sum
+
   // fs2.Chunk excluded: no takeWhile / sum — the chain can't be expressed stage-for-stage
 
 @State(Scope.Thread)
@@ -226,6 +239,18 @@ class StrLongPipelineBench extends Inputs:
       .map(_.length)
       .sum
 
+  @Benchmark def kyochunk(): Int =
+    kyoChunkInput
+      .filter(_.length <= 4)
+      .map(_.reverse)
+      .collect { case s if !s.startsWith("0") => s.toUpperCase }
+      .map(_ + "!")
+      .zipWithIndex
+      .map((s, i) => s + i)
+      .filter(_.length > 2)
+      .map(_.length)
+      .sum
+
   // fs2.Chunk excluded: no sum — the chain can't be expressed stage-for-stage
 
 /** DEAD-CODE ELIMINATION showcase: `map` each element into a multi-field case class, then `filter` on one field and project ONE other. The two unused fields —
@@ -270,6 +295,8 @@ class IntDceBench extends IntInputs:
     iarrayInput.map(mkRec).filter(_.key % 5 == 0).map(_.score).sum
   @Benchmark def ziochunk(): Int =
     zioChunkInput.map(mkRec).filter(_.key % 5 == 0).map(_.score).sum
+  @Benchmark def kyochunk(): Int =
+    kyoChunkInput.map(mkRec).filter(_.key % 5 == 0).map(_.score).sum
   // fs2.Chunk excluded: no sum — the chain can't be expressed stage-for-stage
 
 /** STRING dead-code elimination — the reference-element version of the showcase, and it flies here too: a record whose dead fields are EXPENSIVE STRING work.
@@ -315,4 +342,6 @@ class StrDceBench extends Inputs:
     iarrayInput.map(mkRec).filter(_.len <= 4).map(_.head).map(_.length).sum
   @Benchmark def ziochunk(): Int =
     zioChunkInput.map(mkRec).filter(_.len <= 4).map(_.head).map(_.length).sum
+  @Benchmark def kyochunk(): Int =
+    kyoChunkInput.map(mkRec).filter(_.len <= 4).map(_.head).map(_.length).sum
   // fs2.Chunk excluded: no sum — the chain can't be expressed stage-for-stage

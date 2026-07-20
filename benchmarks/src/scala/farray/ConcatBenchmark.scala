@@ -10,4 +10,5 @@ class ConcatStrBenchmark extends Inputs {
   @Benchmark def vector(): Vector[String] = vectorInput ++ vectorInput
   @Benchmark def fs2chunk(): fs2.Chunk[String] = fs2ChunkInput ++ fs2ChunkInput
   @Benchmark def ziochunk(): zio.Chunk[String] = zioChunkInput ++ zioChunkInput
+  @Benchmark def kyochunk(): kyo.Chunk[String] = kyoChunkInput.concat(kyoChunkInput)
 }

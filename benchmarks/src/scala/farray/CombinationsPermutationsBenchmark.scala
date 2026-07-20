@@ -20,6 +20,7 @@ class CombinationsPermutationsIntBenchmark {
   var vectorInput: Vector[Int] = _
   var iarrayInput: IArray[Int] = _
   var zioChunkInput: zio.Chunk[Int] = _
+  var kyoChunkInput: kyo.Chunk[Int] = _
 
   @Setup
   def setup(): Unit = {
@@ -29,6 +30,7 @@ class CombinationsPermutationsIntBenchmark {
     vectorInput = arr.toVector
     iarrayInput = IArray.unsafeFromArray(arr.clone())
     zioChunkInput = zio.Chunk.fromArray(arr.clone())
+    kyoChunkInput = kyo.Chunk.from(arr.clone())
   }
 
   // combinations(n) taken k = n/2
@@ -37,6 +39,7 @@ class CombinationsPermutationsIntBenchmark {
   @Benchmark def vector_combinations(): Int = { var c = 0; vectorInput.combinations(n / 2).foreach(_ => c += 1); c }
   @Benchmark def iarray_combinations(): Int = { var c = 0; iarrayInput.combinations(n / 2).foreach(_ => c += 1); c }
   @Benchmark def ziochunk_combinations(): Int = { var c = 0; zioChunkInput.combinations(n / 2).foreach(_ => c += 1); c }
+  @Benchmark def kyochunk_combinations(): Int = { var c = 0; kyoChunkInput.combinations(n / 2).foreach(_ => c += 1); c }
 
   // permutations
   @Benchmark def farray_permutations(): Int = { var c = 0; farrayInput.permutations.foreach(_ => c += 1); c }
@@ -44,4 +47,5 @@ class CombinationsPermutationsIntBenchmark {
   @Benchmark def vector_permutations(): Int = { var c = 0; vectorInput.permutations.foreach(_ => c += 1); c }
   @Benchmark def iarray_permutations(): Int = { var c = 0; iarrayInput.permutations.foreach(_ => c += 1); c }
   @Benchmark def ziochunk_permutations(): Int = { var c = 0; zioChunkInput.permutations.foreach(_ => c += 1); c }
+  @Benchmark def kyochunk_permutations(): Int = { var c = 0; kyoChunkInput.permutations.foreach(_ => c += 1); c }
 }

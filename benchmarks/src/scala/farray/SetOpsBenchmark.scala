@@ -11,6 +11,7 @@ class SetOpsIntBenchmark extends IntInputs {
   var vectorThat: Vector[Int] = _
   var iarrayThat: IArray[Int] = _
   var zioThat: zio.Chunk[Int] = _
+  var kyoThat: kyo.Chunk[Int] = _
 
   @Setup
   def setupThat(): Unit = {
@@ -20,6 +21,7 @@ class SetOpsIntBenchmark extends IntInputs {
     vectorThat = thatArr.toVector
     iarrayThat = IArray.unsafeFromArray(thatArr.clone())
     zioThat = zio.Chunk.fromArray(thatArr.clone())
+    kyoThat = kyo.Chunk.from(thatArr.clone())
   }
 
   // distinct on the base input (dense 0..n-1, ALL distinct — the identity-return + bitmap showcase) and
@@ -29,6 +31,7 @@ class SetOpsIntBenchmark extends IntInputs {
   var vectorDups: Vector[Int] = _
   var iarrayDups: IArray[Int] = _
   var zioDups: zio.Chunk[Int] = _
+  var kyoDups: kyo.Chunk[Int] = _
 
   @Setup
   def setupDups(): Unit = {
@@ -39,6 +42,7 @@ class SetOpsIntBenchmark extends IntInputs {
     vectorDups = dupArr.toVector
     iarrayDups = IArray.unsafeFromArray(dupArr.clone())
     zioDups = zio.Chunk.fromArray(dupArr.clone())
+    kyoDups = kyo.Chunk.from(dupArr.clone())
   }
 
   @Benchmark def farray_distinct(): FArray[Int] = farrayInput.distinct
@@ -46,12 +50,14 @@ class SetOpsIntBenchmark extends IntInputs {
   @Benchmark def vector_distinct(): Vector[Int] = vectorInput.distinct
   @Benchmark def iarray_distinct(): IArray[Int] = iarrayInput.distinct
   @Benchmark def ziochunk_distinct(): zio.Chunk[Int] = zioChunkInput.distinct
+  @Benchmark def kyochunk_distinct(): kyo.Chunk[Int] = kyoChunkInput.distinct
 
   @Benchmark def farray_distinctDups(): FArray[Int] = farrayDups.distinct
   @Benchmark def list_distinctDups(): List[Int] = listDups.distinct
   @Benchmark def vector_distinctDups(): Vector[Int] = vectorDups.distinct
   @Benchmark def iarray_distinctDups(): IArray[Int] = iarrayDups.distinct
   @Benchmark def ziochunk_distinctDups(): zio.Chunk[Int] = zioDups.distinct
+  @Benchmark def kyochunk_distinctDups(): kyo.Chunk[Int] = kyoDups.distinct
 
   // distinctBy with a dense Int key (x >> 3: 8x collapse) — the bitmap-kernel path over a computed column.
   @Benchmark def farray_distinctBy(): FArray[Int] = farrayInput.distinctBy(_ >> 3)
@@ -59,28 +65,33 @@ class SetOpsIntBenchmark extends IntInputs {
   @Benchmark def vector_distinctBy(): Vector[Int] = vectorInput.distinctBy(_ >> 3)
   @Benchmark def iarray_distinctBy(): IArray[Int] = iarrayInput.distinctBy(_ >> 3)
   @Benchmark def ziochunk_distinctBy(): zio.Chunk[Int] = zioChunkInput.distinctBy(_ >> 3)
+  @Benchmark def kyochunk_distinctBy(): kyo.Chunk[Int] = kyoChunkInput.distinctBy(_ >> 3)
 
   @Benchmark def farray_diff(): FArray[Int] = farrayInput.diff(farrayThat)
   @Benchmark def list_diff(): List[Int] = listInput.diff(listThat)
   @Benchmark def vector_diff(): Vector[Int] = vectorInput.diff(vectorThat)
   @Benchmark def iarray_diff(): IArray[Int] = iarrayInput.diff(iarrayThat)
   @Benchmark def ziochunk_diff(): zio.Chunk[Int] = zioChunkInput.diff(zioThat)
+  @Benchmark def kyochunk_diff(): kyo.Chunk[Int] = kyoChunkInput.diff(kyoThat)
 
   @Benchmark def farray_intersect(): FArray[Int] = farrayInput.intersect(farrayThat)
   @Benchmark def list_intersect(): List[Int] = listInput.intersect(listThat)
   @Benchmark def vector_intersect(): Vector[Int] = vectorInput.intersect(vectorThat)
   @Benchmark def iarray_intersect(): IArray[Int] = iarrayInput.intersect(iarrayThat)
   @Benchmark def ziochunk_intersect(): zio.Chunk[Int] = zioChunkInput.intersect(zioThat)
+  @Benchmark def kyochunk_intersect(): kyo.Chunk[Int] = kyoChunkInput.intersect(kyoThat)
 
   @Benchmark def farray_toSet(): Set[Int] = farrayInput.toSet
   @Benchmark def list_toSet(): Set[Int] = listInput.toSet
   @Benchmark def vector_toSet(): Set[Int] = vectorInput.toSet
   @Benchmark def iarray_toSet(): Set[Int] = iarrayInput.toSet
   @Benchmark def ziochunk_toSet(): Set[Int] = zioChunkInput.toSet
+  @Benchmark def kyochunk_toSet(): Set[Int] = kyoChunkInput.toSet
 
   @Benchmark def farray_groupBy(): Map[Int, FArray[Int]] = farrayInput.groupBy(_ % 8)
   @Benchmark def list_groupBy(): Map[Int, List[Int]] = listInput.groupBy(_ % 8)
   @Benchmark def vector_groupBy(): Map[Int, Vector[Int]] = vectorInput.groupBy(_ % 8)
   @Benchmark def iarray_groupBy(): Map[Int, IArray[Int]] = iarrayInput.groupBy(_ % 8)
   @Benchmark def ziochunk_groupBy(): Map[Int, zio.Chunk[Int]] = zioChunkInput.groupBy(_ % 8)
+  @Benchmark def kyochunk_groupBy(): Map[Int, kyo.Chunk[Int]] = kyoChunkInput.groupBy(_ % 8)
 }

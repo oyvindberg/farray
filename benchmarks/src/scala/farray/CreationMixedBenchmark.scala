@@ -63,3 +63,9 @@ class CreationMixedBenchmark:
     bh.consume(zio.Chunk(l1, l2, l3, l4))
     bh.consume(zio.Chunk(d1, d2, d3, d4))
     bh.consume(zio.Chunk(s1, s2, s3, s4))
+
+  @Benchmark def kyochunk(bh: Blackhole): Unit =
+    bh.consume(kyo.Chunk(i1, i2, i3, i4))
+    bh.consume(kyo.Chunk(l1, l2, l3, l4))
+    bh.consume(kyo.Chunk(d1, d2, d3, d4))
+    bh.consume(kyo.Chunk(s1, s2, s3, s4))

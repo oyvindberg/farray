@@ -106,6 +106,22 @@ class DoubleAllOpsBench extends DoubleInputs {
     .filter(_ > 0.0)
     .foldLeft(0.0)((acc, x) => acc + x)
 
+  @Benchmark def kyochunk(): Double = kyoChunkInput
+    .flatMap(x => kyo.Chunk(x, x + 1.0))
+    .filter(_ > 1.5)
+    .map(_ * 2.0)
+    .flatMap(x => kyo.Chunk(x, x - 0.5))
+    .filter(_ < 5.0e6)
+    .map(_ + 0.25)
+    .zip(kyoChunkInput.map(_ + 100.0))
+    .map((a, b) => a + b)
+    .zipWithIndex
+    .filter((v, i) => i % 4 != 0)
+    .map((v, i) => v - i)
+    .flatMap(x => kyo.Chunk(x, x + 3.0))
+    .filter(_ > 0.0)
+    .foldLeft(0.0)((acc, x) => acc + x)
+
   @Benchmark def farrayFused(): Double = {
     val zipSrc = farrayInput.map(_ + 100.0)
     farrayInput.fuse

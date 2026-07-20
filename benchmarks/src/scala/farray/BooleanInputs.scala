@@ -13,6 +13,7 @@ abstract class BooleanInputs extends CommonParams {
   var farrayInput: FArray[Boolean] = _
   var fs2ChunkInput: fs2.Chunk[Boolean] = _
   var zioChunkInput: zio.Chunk[Boolean] = _
+  var kyoChunkInput: kyo.Chunk[Boolean] = _
 
   @Setup
   def setup(): Unit = {
@@ -23,5 +24,6 @@ abstract class BooleanInputs extends CommonParams {
     farrayInput = FArray.tabulate(size)(i => i % 2 == 0)
     fs2ChunkInput = fs2.Chunk.array(arr)
     zioChunkInput = zio.Chunk.fromArray(arr)
+    kyoChunkInput = kyo.Chunk.from(arr)
   }
 }

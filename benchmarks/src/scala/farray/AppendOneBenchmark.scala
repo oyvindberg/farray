@@ -9,5 +9,6 @@ class AppendOneStrBenchmark extends Inputs {
   @Benchmark def iarray(): IArray[String] = iarrayInput :+ "x"
   @Benchmark def vector(): Vector[String] = vectorInput :+ "x"
   @Benchmark def ziochunk(): zio.Chunk[String] = zioChunkInput :+ "x"
+  @Benchmark def kyochunk(): kyo.Chunk[String] = kyoChunkInput.append("x")
   // fs2.Chunk has no :+ (append-one)
 }

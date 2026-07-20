@@ -10,4 +10,5 @@ class DropConcatFoldStrBenchmark extends Inputs {
   @Benchmark def vector(): Int = (vectorInput.drop(1) ++ vectorInput).foldLeft(0)(_ + _.length)
   @Benchmark def fs2chunk(): Int = (fs2ChunkInput.drop(1) ++ fs2ChunkInput).foldLeft(0)(_ + _.length)
   @Benchmark def ziochunk(): Int = (zioChunkInput.drop(1) ++ zioChunkInput).foldLeft(0)(_ + _.length)
+  @Benchmark def kyochunk(): Int = kyoChunkInput.drop(1).concat(kyoChunkInput).foldLeft(0)(_ + _.length)
 }

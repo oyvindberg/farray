@@ -9,5 +9,6 @@ class PrependOneStrBenchmark extends Inputs {
   @Benchmark def iarray(): IArray[String] = "x" +: iarrayInput
   @Benchmark def vector(): Vector[String] = "x" +: vectorInput
   @Benchmark def ziochunk(): zio.Chunk[String] = "x" +: zioChunkInput
+  @Benchmark def kyochunk(): kyo.Chunk[String] = "x" +: kyoChunkInput
   // fs2.Chunk has no +: (prepend-one)
 }

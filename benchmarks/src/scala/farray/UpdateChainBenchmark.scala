@@ -19,6 +19,7 @@ class UpdateChainIntBenchmark:
   var listBase: List[Int] = _
   var vectorBase: Vector[Int] = _
   var zioBase: zio.Chunk[Int] = _
+  var kyoBase: kyo.Chunk[Int] = _
 
   @Setup def setup(): Unit =
     farrayBase = FArray.fill(size)(0)
@@ -26,6 +27,7 @@ class UpdateChainIntBenchmark:
     listBase = List.fill(size)(0)
     vectorBase = Vector.fill(size)(0)
     zioBase = zio.Chunk.fill(size)(0)
+    kyoBase = kyo.Chunk.from(Array.fill(size)(0))
 
   @Benchmark def farray_update(): FArray[Int] =
     var c = farrayBase; var i = 0
@@ -45,6 +47,10 @@ class UpdateChainIntBenchmark:
 
   @Benchmark def ziochunk_update(): zio.Chunk[Int] =
     var c = zioBase; var i = 0
+    while i < size do { c = c.updated(i, i); i += 1 }; c
+
+  @Benchmark def kyochunk_update(): kyo.Chunk[Int] =
+    var c = kyoBase; var i = 0
     while i < size do { c = c.updated(i, i); i += 1 }; c
 
   // fs2chunk: no updated

@@ -70,6 +70,16 @@ class CollectMegaIntBenchmark extends IntInputs {
     bh.consume(zioChunkInput.collect { case x if x % 4 != 2 => x + 9 })
     bh.consume(zioChunkInput.collect { case x if x % 6 > 0 => x * 5 })
   }
+  @Benchmark def kyochunk(bh: Blackhole): Unit = {
+    bh.consume(kyoChunkInput.collect { case x if x % 2 == 0 => x + 1 })
+    bh.consume(kyoChunkInput.collect { case x if x % 3 != 0 => x * 2 })
+    bh.consume(kyoChunkInput.collect { case x if x > 16 => x - 3 })
+    bh.consume(kyoChunkInput.collect { case x if (x & 1) == 1 => x ^ 7 })
+    bh.consume(kyoChunkInput.collect { case x if x % 5 != 4 => x | 4 })
+    bh.consume(kyoChunkInput.collect { case x if x % 7 < 5 => x & 13 })
+    bh.consume(kyoChunkInput.collect { case x if x % 4 != 2 => x + 9 })
+    bh.consume(kyoChunkInput.collect { case x if x % 6 > 0 => x * 5 })
+  }
 }
 
 class CollectMegaStrBenchmark extends Inputs {
@@ -132,5 +142,15 @@ class CollectMegaStrBenchmark extends Inputs {
     bh.consume(zioChunkInput.collect { case s if s.length < 12 => s })
     bh.consume(zioChunkInput.collect { case s if s.length != 5 => s + "z" })
     bh.consume(zioChunkInput.collect { case s if s.length > 1 => s.reverse })
+  }
+  @Benchmark def kyochunk(bh: Blackhole): Unit = {
+    bh.consume(kyoChunkInput.collect { case s if s.length > 1 => s })
+    bh.consume(kyoChunkInput.collect { case s if s.length < 9 => s + "b" })
+    bh.consume(kyoChunkInput.collect { case s if !s.isEmpty => s.toUpperCase })
+    bh.consume(kyoChunkInput.collect { case s if s.length != 3 => s.toLowerCase })
+    bh.consume(kyoChunkInput.collect { case s if s.length > 0 => s + s })
+    bh.consume(kyoChunkInput.collect { case s if s.length < 12 => s })
+    bh.consume(kyoChunkInput.collect { case s if s.length != 5 => s + "z" })
+    bh.consume(kyoChunkInput.collect { case s if s.length > 1 => s.reverse })
   }
 }

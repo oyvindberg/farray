@@ -18,8 +18,11 @@ class SortIntBenchmark extends IntInputs {
   @Benchmark def list_sorted(): List[Int] = listInput.sorted
   @Benchmark def vector_sorted(): Vector[Int] = vectorInput.sorted
   @Benchmark def ziochunk_sortWith(): zio.Chunk[Int] = zioChunkInput.sortWith((a, b) => scramble(a) < scramble(b))
+  @Benchmark def kyochunk_sortWith(): kyo.Chunk[Int] = kyoChunkInput.sortWith((a, b) => scramble(a) < scramble(b))
   @Benchmark def ziochunk_sortBy(): zio.Chunk[Int] = zioChunkInput.sortBy(scramble)
+  @Benchmark def kyochunk_sortBy(): kyo.Chunk[Int] = kyoChunkInput.sortBy(scramble)
   @Benchmark def ziochunk_sorted(): zio.Chunk[Int] = zioChunkInput.sorted
+  @Benchmark def kyochunk_sorted(): kyo.Chunk[Int] = kyoChunkInput.sorted
   // fs2.Chunk has no sortWith/sortBy/sorted
 }
 
@@ -37,7 +40,10 @@ class SortStrBenchmark extends Inputs {
   @Benchmark def list_sorted(): List[String] = listInput.sorted
   @Benchmark def vector_sorted(): Vector[String] = vectorInput.sorted
   @Benchmark def ziochunk_sortWith(): zio.Chunk[String] = zioChunkInput.sortWith((a, b) => a < b)
+  @Benchmark def kyochunk_sortWith(): kyo.Chunk[String] = kyoChunkInput.sortWith((a, b) => a < b)
   @Benchmark def ziochunk_sortBy(): zio.Chunk[String] = zioChunkInput.sortBy(_.reverse)
+  @Benchmark def kyochunk_sortBy(): kyo.Chunk[String] = kyoChunkInput.sortBy(_.reverse)
   @Benchmark def ziochunk_sorted(): zio.Chunk[String] = zioChunkInput.sorted
+  @Benchmark def kyochunk_sorted(): kyo.Chunk[String] = kyoChunkInput.sorted
   // fs2.Chunk has no sortWith/sortBy/sorted
 }

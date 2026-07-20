@@ -27,6 +27,7 @@ abstract class ClusteredIntInputs extends CommonParams:
   var farrayInput: FArray[Int] = _
   var fs2ChunkInput: fs2.Chunk[Int] = _
   var zioChunkInput: zio.Chunk[Int] = _
+  var kyoChunkInput: kyo.Chunk[Int] = _
 
   // key(i) = i / RunLen → contiguous runs of RunLen equal keys. value(i) = i (the element itself).
   inline def keyOf(i: Int): Int = i / RunLen
@@ -40,6 +41,7 @@ abstract class ClusteredIntInputs extends CommonParams:
     farrayInput = FArray.tabulate(size)(i => i)
     fs2ChunkInput = fs2.Chunk.iarray(iarrayInput)
     zioChunkInput = zio.Chunk.fromArray(arr)
+    kyoChunkInput = kyo.Chunk.from(arr)
 
 /** ── group-and-SUM per run: the headline fold. Σ over each run, emit (key, sum). ───────────────────────────────── */
 @State(Scope.Thread)
@@ -96,6 +98,19 @@ class IntGroupSumBenchmark extends ClusteredIntInputs:
     val n = zioChunkInput.length
     while i < n do
       val a = zioChunkInput(i); val k = keyOf(a)
+      if !started then { curKey = k; acc = a; started = true }
+      else if k == curKey then acc += a
+      else { out += ((curKey, acc)); curKey = k; acc = a }
+      i += 1
+    if started then out += ((curKey, acc))
+    out.result()
+
+  @Benchmark def kyochunk_groupSum(): kyo.Chunk[(Int, Int)] =
+    val out = kyo.Chunk.newBuilder[(Int, Int)]
+    var started = false; var curKey = 0; var acc = 0; var i = 0
+    val n = kyoChunkInput.length
+    while i < n do
+      val a = kyoChunkInput(i); val k = keyOf(a)
       if !started then { curKey = k; acc = a; started = true }
       else if k == curKey then acc += a
       else { out += ((curKey, acc)); curKey = k; acc = a }
@@ -174,6 +189,18 @@ class IntGroupSumProjectBenchmark extends ClusteredIntInputs:
     if started then total += acc
     total
 
+  @Benchmark def kyochunk_groupProject(): Int =
+    var total = 0; var started = false; var curKey = 0; var acc = 0; var i = 0
+    val n = kyoChunkInput.length
+    while i < n do
+      val a = kyoChunkInput(i); val k = keyOf(a)
+      if !started then { curKey = k; acc = a; started = true }
+      else if k == curKey then acc += a
+      else { total += acc; curKey = k; acc = a }
+      i += 1
+    if started then total += acc
+    total
+
   @Benchmark def fs2chunk_groupProject(): Int =
     var total = 0; var started = false; var curKey = 0; var acc = 0; var i = 0
     val n = fs2ChunkInput.size
@@ -239,6 +266,19 @@ class IntGroupFilterCountBenchmark extends ClusteredIntInputs:
     val n = zioChunkInput.length
     while i < n do
       val a = zioChunkInput(i); val k = keyOf(a)
+      if !started then { curKey = k; cnt = if a % 2 == 0 then 1 else 0; started = true }
+      else if k == curKey then { if a % 2 == 0 then cnt += 1 }
+      else { out += ((curKey, cnt)); curKey = k; cnt = if a % 2 == 0 then 1 else 0 }
+      i += 1
+    if started then out += ((curKey, cnt))
+    out.result()
+
+  @Benchmark def kyochunk_groupFilterCount(): kyo.Chunk[(Int, Int)] =
+    val out = kyo.Chunk.newBuilder[(Int, Int)]
+    var started = false; var curKey = 0; var cnt = 0; var i = 0
+    val n = kyoChunkInput.length
+    while i < n do
+      val a = kyoChunkInput(i); val k = keyOf(a)
       if !started then { curKey = k; cnt = if a % 2 == 0 then 1 else 0; started = true }
       else if k == curKey then { if a % 2 == 0 then cnt += 1 }
       else { out += ((curKey, cnt)); curKey = k; cnt = if a % 2 == 0 then 1 else 0 }
@@ -321,6 +361,19 @@ class IntGroupMinBenchmark extends ClusteredIntInputs:
     if started then out += ((curKey, best))
     out.result()
 
+  @Benchmark def kyochunk_groupMin(): kyo.Chunk[(Int, Int)] =
+    val out = kyo.Chunk.newBuilder[(Int, Int)]
+    var started = false; var curKey = 0; var best = 0; var i = 0
+    val n = kyoChunkInput.length
+    while i < n do
+      val a = kyoChunkInput(i); val k = keyOf(a)
+      if !started then { curKey = k; best = a; started = true }
+      else if k == curKey then { if a < best then best = a }
+      else { out += ((curKey, best)); curKey = k; best = a }
+      i += 1
+    if started then out += ((curKey, best))
+    out.result()
+
   // fs2.Chunk has no element-wise builder; idiomatic accumulation is a buffer + Chunk.from at the end.
   @Benchmark def fs2chunk_groupMin(): fs2.Chunk[(Int, Int)] =
     val out = scala.collection.mutable.ArrayBuffer.empty[(Int, Int)]
@@ -383,6 +436,16 @@ class IntGroupNaiveBenchmark extends ClusteredIntInputs:
       val a = zioChunkInput(i); val k = keyOf(a)
       if out.nonEmpty && out.last._1 == k then out = out.updated(out.length - 1, (k, out.last._2 :+ a))
       else out = out :+ ((k, zio.Chunk(a)))
+      i += 1
+    out.map((k, rows) => (k, rows.sum))
+
+  @Benchmark def kyochunk_groupNaive(): kyo.Chunk[(Int, Int)] =
+    var out = kyo.Chunk.empty[(Int, kyo.Chunk[Int])]
+    var i = 0; val n = kyoChunkInput.length
+    while i < n do
+      val a = kyoChunkInput(i); val k = keyOf(a)
+      if out.nonEmpty && out.last._1 == k then out = out.updated(out.length - 1, (k, out.last._2.append(a)))
+      else out = out.append((k, kyo.Chunk(a)))
       i += 1
     out.map((k, rows) => (k, rows.sum))
 
