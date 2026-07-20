@@ -18,10 +18,13 @@ class ShortCircuitIntBenchmark extends IntInputs {
   @Benchmark def iarray_find(): Option[Int] = iarrayInput.find(_ == 5)
   @Benchmark def fs2chunk_exists(): Boolean = fs2ChunkInput.exists(_ == 5)
   @Benchmark def ziochunk_exists(): Boolean = zioChunkInput.exists(_ == 5)
+  @Benchmark def kyochunk_exists(): Boolean = kyoChunkInput.exists(_ == 5)
   @Benchmark def fs2chunk_indexWhere(): Option[Int] = fs2ChunkInput.indexWhere(_ == 5) // fs2 indexWhere returns Option[Int]
   @Benchmark def ziochunk_indexWhere(): Int = zioChunkInput.indexWhere(_ == 5)
+  @Benchmark def kyochunk_indexWhere(): Int = kyoChunkInput.indexWhere(_ == 5)
   @Benchmark def fs2chunk_find(): Option[Int] = fs2ChunkInput.find(_ == 5)
   @Benchmark def ziochunk_find(): Option[Int] = zioChunkInput.find(_ == 5)
+  @Benchmark def kyochunk_find(): Option[Int] = kyoChunkInput.find(_ == 5)
 }
 
 class ShortCircuitStrBenchmark extends Inputs {
@@ -39,8 +42,11 @@ class ShortCircuitStrBenchmark extends Inputs {
   @Benchmark def iarray_find(): Option[String] = iarrayInput.find(_ == "5")
   @Benchmark def fs2chunk_exists(): Boolean = fs2ChunkInput.exists(_ == "5")
   @Benchmark def ziochunk_exists(): Boolean = zioChunkInput.exists(_ == "5")
+  @Benchmark def kyochunk_exists(): Boolean = kyoChunkInput.exists(_ == "5")
   @Benchmark def fs2chunk_indexWhere(): Option[Int] = fs2ChunkInput.indexWhere(_ == "5") // fs2 indexWhere returns Option[Int]
   @Benchmark def ziochunk_indexWhere(): Int = zioChunkInput.indexWhere(_ == "5")
+  @Benchmark def kyochunk_indexWhere(): Int = kyoChunkInput.indexWhere(_ == "5")
   @Benchmark def fs2chunk_find(): Option[String] = fs2ChunkInput.find(_ == "5")
   @Benchmark def ziochunk_find(): Option[String] = zioChunkInput.find(_ == "5")
+  @Benchmark def kyochunk_find(): Option[String] = kyoChunkInput.find(_ == "5")
 }

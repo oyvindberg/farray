@@ -13,6 +13,7 @@ abstract class CharInputs extends CommonParams {
   var farrayInput: FArray[Char] = _
   var fs2ChunkInput: fs2.Chunk[Char] = _
   var zioChunkInput: zio.Chunk[Char] = _
+  var kyoChunkInput: kyo.Chunk[Char] = _
 
   @Setup
   def setup(): Unit = {
@@ -23,5 +24,6 @@ abstract class CharInputs extends CommonParams {
     farrayInput = FArray.tabulate(size)(i => ('a' + (i % 26)).toChar)
     fs2ChunkInput = fs2.Chunk.array(arr)
     zioChunkInput = zio.Chunk.fromArray(arr)
+    kyoChunkInput = kyo.Chunk.from(arr)
   }
 }

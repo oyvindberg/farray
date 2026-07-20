@@ -9,4 +9,5 @@ class TakeStrBenchmark extends Inputs {
   @Benchmark def vector(): Vector[String] = vectorInput.take(size / 2)
   @Benchmark def fs2chunk(): fs2.Chunk[String] = fs2ChunkInput.take(size / 2)
   @Benchmark def ziochunk(): zio.Chunk[String] = zioChunkInput.take(size / 2)
+  @Benchmark def kyochunk(): kyo.Chunk[String] = kyoChunkInput.take(size / 2)
 }

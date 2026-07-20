@@ -32,6 +32,9 @@ The rivals throughout:
 - `IArray` — an immutable view of a raw array
 - `fs2.Chunk` — the array-backed chunk from the fs2 streaming library
 - `zio.Chunk` — the array-backed chunk from the ZIO streaming library
+- `kyo.Chunk` — the array-backed chunk from Kyo's `kyo-data`, which like `IArray` is usable standalone
+  without the effect system, and whose `append`/`concat`/`take`/`drop`/`slice` are O(1) views over a
+  shared buffer — the closest thing in the field to FArray's own structural sharing
 
 First the totals. Every size of every chained-operation benchmark class in the suite, eager FArray
 only, no `.fuse`:

@@ -8,5 +8,6 @@ class InitStrBenchmark extends Inputs {
   @Benchmark def iarray(): IArray[String] = iarrayInput.init
   @Benchmark def vector(): Vector[String] = vectorInput.init
   @Benchmark def ziochunk(): zio.Chunk[String] = zioChunkInput.init
+  @Benchmark def kyochunk(): kyo.Chunk[String] = kyoChunkInput.init
   // fs2.Chunk has no init
 }

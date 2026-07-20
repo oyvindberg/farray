@@ -10,4 +10,5 @@ class ConcatDropTakeStrBenchmark extends Inputs {
   @Benchmark def vector(): Vector[String] = (vectorInput ++ vectorInput).drop(1).take(size)
   @Benchmark def fs2chunk(): fs2.Chunk[String] = (fs2ChunkInput ++ fs2ChunkInput).drop(1).take(size)
   @Benchmark def ziochunk(): zio.Chunk[String] = (zioChunkInput ++ zioChunkInput).drop(1).take(size)
+  @Benchmark def kyochunk(): kyo.Chunk[String] = kyoChunkInput.concat(kyoChunkInput).drop(1).take(size)
 }

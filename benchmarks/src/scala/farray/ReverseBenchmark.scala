@@ -8,5 +8,6 @@ class ReverseStrBenchmark extends Inputs {
   @Benchmark def iarray(): IArray[String] = iarrayInput.reverse
   @Benchmark def vector(): Vector[String] = vectorInput.reverse
   @Benchmark def ziochunk(): zio.Chunk[String] = zioChunkInput.reverse
+  @Benchmark def kyochunk(): kyo.Chunk[String] = kyoChunkInput.reverse
   // fs2.Chunk has no reverse (only reverseIterator)
 }

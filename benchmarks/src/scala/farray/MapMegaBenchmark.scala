@@ -71,6 +71,16 @@ class MapMegaIntBenchmark extends IntInputs {
     bh.consume(zioChunkInput.map(_ + 9))
     bh.consume(zioChunkInput.map(_ * 5))
   }
+  @Benchmark def kyochunk(bh: Blackhole): Unit = {
+    bh.consume(kyoChunkInput.map(_ + 1))
+    bh.consume(kyoChunkInput.map(_ * 2))
+    bh.consume(kyoChunkInput.map(_ - 3))
+    bh.consume(kyoChunkInput.map(_ ^ 7))
+    bh.consume(kyoChunkInput.map(_ | 4))
+    bh.consume(kyoChunkInput.map(_ & 13))
+    bh.consume(kyoChunkInput.map(_ + 9))
+    bh.consume(kyoChunkInput.map(_ * 5))
+  }
   @Benchmark def javastream(bh: Blackhole): Unit = {
     bh.consume(java.util.Arrays.stream(arrInput).map(_ + 1).toArray)
     bh.consume(java.util.Arrays.stream(arrInput).map(_ * 2).toArray)
@@ -148,6 +158,16 @@ class MapMegaStrBenchmark extends Inputs {
     bh.consume(zioChunkInput.map(_.trim))
     bh.consume(zioChunkInput.map(_ + "z"))
     bh.consume(zioChunkInput.map(s => s.reverse))
+  }
+  @Benchmark def kyochunk(bh: Blackhole): Unit = {
+    bh.consume(kyoChunkInput.map(_ + "a"))
+    bh.consume(kyoChunkInput.map(_ + "b"))
+    bh.consume(kyoChunkInput.map(_.toUpperCase))
+    bh.consume(kyoChunkInput.map(_.toLowerCase))
+    bh.consume(kyoChunkInput.map(s => s + s))
+    bh.consume(kyoChunkInput.map(_.trim))
+    bh.consume(kyoChunkInput.map(_ + "z"))
+    bh.consume(kyoChunkInput.map(s => s.reverse))
   }
   @Benchmark def javastream(bh: Blackhole): Unit = {
     bh.consume(java.util.Arrays.stream(strArrInput).map(_ + "a").toArray)

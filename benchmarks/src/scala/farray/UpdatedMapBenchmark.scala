@@ -11,5 +11,6 @@ class UpdatedMapIntBenchmark extends IntInputs {
   @Benchmark def vector(): Vector[Int] = vectorInput.updated(size / 2, -1).map(_ + 1)
   @Benchmark def iarray(): IArray[Int] = iarrayInput.updated(size / 2, -1).map(_ + 1)
   @Benchmark def ziochunk(): zio.Chunk[Int] = zioChunkInput.updated(size / 2, -1).map(_ + 1)
+  @Benchmark def kyochunk(): kyo.Chunk[Int] = kyoChunkInput.updated(size / 2, -1).map(_ + 1)
   // fs2.Chunk has no updated
 }

@@ -16,7 +16,9 @@ class SortAdaptiveIntBenchmark extends IntInputs {
   @Benchmark def vector_reverse(): Vector[Int] = vectorInput.sortWith((a, b) => a > b)
 
   @Benchmark def ziochunk_sorted(): zio.Chunk[Int] = zioChunkInput.sortWith((a, b) => a < b)
+  @Benchmark def kyochunk_sorted(): kyo.Chunk[Int] = kyoChunkInput.sortWith((a, b) => a < b)
   @Benchmark def ziochunk_reverse(): zio.Chunk[Int] = zioChunkInput.sortWith((a, b) => a > b)
+  @Benchmark def kyochunk_reverse(): kyo.Chunk[Int] = kyoChunkInput.sortWith((a, b) => a > b)
   // fs2.Chunk has no sortWith/sortBy
 
   // sortBy on the unboxed int[] index path is adaptive too (keys already in order)
@@ -25,4 +27,5 @@ class SortAdaptiveIntBenchmark extends IntInputs {
   @Benchmark def list_sortBy(): List[Int] = listInput.sortBy(x => x)
   @Benchmark def vector_sortBy(): Vector[Int] = vectorInput.sortBy(x => x)
   @Benchmark def ziochunk_sortBy(): zio.Chunk[Int] = zioChunkInput.sortBy(x => x)
+  @Benchmark def kyochunk_sortBy(): kyo.Chunk[Int] = kyoChunkInput.sortBy(x => x)
 }

@@ -63,3 +63,9 @@ class BuilderSizedIntBenchmark:
     var i = 0; val n = size
     while i < n do { b += src(i); i += 1 }
     b.result()
+
+  @Benchmark def kyochunk(): kyo.Chunk[Int] =
+    val b = kyo.ChunkBuilder.init[Int]; b.sizeHint(size)
+    var i = 0; val n = size
+    while i < n do { b += src(i); i += 1 }
+    b.result()

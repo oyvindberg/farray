@@ -106,6 +106,22 @@ class ByteAllOpsBench extends ByteInputs {
     .filter(_ != 0)
     .foldLeft(0)((acc, x) => acc + x)
 
+  @Benchmark def kyochunk(): Int = kyoChunkInput
+    .flatMap(x => kyo.Chunk(x, (x + 1).toByte))
+    .filter(_ % 3 != 0)
+    .map(b => (b * 2).toByte)
+    .flatMap(x => kyo.Chunk(x, (x ^ 5).toByte))
+    .filter(_ % 2 == 0)
+    .map(b => (b - 7).toByte)
+    .zip(kyoChunkInput.map(b => (b + 100).toByte))
+    .map((a, b) => (a + b).toByte)
+    .zipWithIndex
+    .filter((v, i) => (v + i) % 4 != 0)
+    .map((v, i) => (v - i).toByte)
+    .flatMap(x => kyo.Chunk(x, (x + 3).toByte))
+    .filter(_ != 0)
+    .foldLeft(0)((acc, x) => acc + x)
+
   @Benchmark def farrayFused(): Int = {
     val zipSrc = farrayInput.map(b => (b + 100).toByte)
     farrayInput.fuse

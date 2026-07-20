@@ -15,6 +15,7 @@ class ConvertIntBenchmark extends IntInputs {
   @Benchmark def vector_toArray(): Array[Int] = vectorInput.toArray
   @Benchmark def iarray_toArray(): Array[Int] = iarrayInput.toArray
   @Benchmark def ziochunk_toArray(): Array[Int] = zioChunkInput.toArray
+  @Benchmark def kyochunk_toArray(): Array[Int] = kyoChunkInput.toArray
   @Benchmark def fs2chunk_toArray(): Array[Int] = fs2ChunkInput.toArray
 
   @Benchmark def farray_copyToArray(): Array[Int] = { val a = new Array[Int](size); farrayInput.copyToArray(a, 0, size); a }
@@ -22,6 +23,7 @@ class ConvertIntBenchmark extends IntInputs {
   @Benchmark def vector_copyToArray(): Array[Int] = { val a = new Array[Int](size); vectorInput.copyToArray(a); a }
   @Benchmark def iarray_copyToArray(): Array[Int] = { val a = new Array[Int](size); iarrayInput.copyToArray(a); a }
   @Benchmark def ziochunk_copyToArray(): Array[Int] = { val a = new Array[Int](size); zioChunkInput.copyToArray(a); a }
+  @Benchmark def kyochunk_copyToArray(): Array[Int] = { val a = new Array[Int](size); kyoChunkInput.copyToArray(a); a }
   @Benchmark def fs2chunk_copyToArray(): Array[Int] = { val a = new Array[Int](size); fs2ChunkInput.copyToArray(a, 0); a }
 
   @Benchmark def farray_mkString(): String = farrayInput.mkString(",")
@@ -29,6 +31,7 @@ class ConvertIntBenchmark extends IntInputs {
   @Benchmark def vector_mkString(): String = vectorInput.mkString(",")
   @Benchmark def iarray_mkString(): String = iarrayInput.mkString(",")
   @Benchmark def ziochunk_mkString(): String = zioChunkInput.mkString(",")
+  @Benchmark def kyochunk_mkString(): String = kyoChunkInput.mkString(",")
   // fs2.Chunk has no mkString
 
   // indices: sum them so JMH can't dead-code. FArray exposes indices.
@@ -37,6 +40,7 @@ class ConvertIntBenchmark extends IntInputs {
   @Benchmark def vector_indices(): Int = { var s = 0; vectorInput.indices.foreach(s += _); s }
   @Benchmark def iarray_indices(): Int = { var s = 0; iarrayInput.indices.foreach(s += _); s }
   @Benchmark def ziochunk_indices(): Int = { var s = 0; zioChunkInput.indices.foreach(s += _); s }
+  @Benchmark def kyochunk_indices(): Int = { var s = 0; kyoChunkInput.indices.foreach(s += _); s }
   // fs2.Chunk has no indices
 
   // isDefinedAt: FArray exposes it.
@@ -45,5 +49,6 @@ class ConvertIntBenchmark extends IntInputs {
   @Benchmark def vector_isDefinedAt(): Boolean = vectorInput.isDefinedAt(size / 2)
   @Benchmark def iarray_isDefinedAt(): Boolean = iarrayInput.isDefinedAt(size / 2)
   @Benchmark def ziochunk_isDefinedAt(): Boolean = zioChunkInput.isDefinedAt(size / 2)
+  @Benchmark def kyochunk_isDefinedAt(): Boolean = kyoChunkInput.isDefinedAt(size / 2)
   // fs2.Chunk has no isDefinedAt
 }

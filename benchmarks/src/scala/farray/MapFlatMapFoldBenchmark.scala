@@ -10,4 +10,5 @@ class MapFlatMapFoldStrBenchmark extends Inputs {
   @Benchmark def vector(): Int = vectorInput.map(_ + "a").flatMap(s => Vector(s, s)).foldLeft(0)(_ + _.length)
   @Benchmark def fs2chunk(): Int = fs2ChunkInput.map(_ + "a").flatMap(s => fs2.Chunk(s, s)).foldLeft(0)(_ + _.length)
   @Benchmark def ziochunk(): Int = zioChunkInput.map(_ + "a").flatMap(s => zio.Chunk(s, s)).foldLeft(0)(_ + _.length)
+  @Benchmark def kyochunk(): Int = kyoChunkInput.map(_ + "a").flatMap(s => kyo.Chunk(s, s)).foldLeft(0)(_ + _.length)
 }

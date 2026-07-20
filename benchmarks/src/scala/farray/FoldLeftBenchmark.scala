@@ -12,6 +12,7 @@ class FoldLeftIntBenchmark extends IntInputs {
   @Benchmark def farray(): Int = farrayInput.foldLeft(0)(_ + _)
   @Benchmark def fs2chunk(): Int = fs2ChunkInput.foldLeft(0)(_ + _)
   @Benchmark def ziochunk(): Int = zioChunkInput.foldLeft(0)(_ + _)
+  @Benchmark def kyochunk(): Int = kyoChunkInput.foldLeft(0)(_ + _)
 }
 
 // Validates wiring a second primitive (Long): FArray[Long].foldLeft should be an unboxed long[] loop
@@ -26,6 +27,7 @@ class FoldLeftLongBenchmark extends CommonParams {
   var farrayInput: FArray[Long] = _
   var fs2ChunkInput: fs2.Chunk[Long] = _
   var zioChunkInput: zio.Chunk[Long] = _
+  var kyoChunkInput: kyo.Chunk[Long] = _
 
   @Setup def setup(): Unit = {
     val arr = Array.tabulate(size)(i => i.toLong)
@@ -35,6 +37,7 @@ class FoldLeftLongBenchmark extends CommonParams {
     farrayInput = FArray.tabulate(size)(i => i.toLong)
     fs2ChunkInput = fs2.Chunk.array(arr)
     zioChunkInput = zio.Chunk.fromArray(arr)
+    kyoChunkInput = kyo.Chunk.from(arr)
   }
 
   @Benchmark def list(): Long = listInput.foldLeft(0L)(_ + _)
@@ -43,6 +46,7 @@ class FoldLeftLongBenchmark extends CommonParams {
   @Benchmark def farray(): Long = farrayInput.foldLeft(0L)(_ + _)
   @Benchmark def fs2chunk(): Long = fs2ChunkInput.foldLeft(0L)(_ + _)
   @Benchmark def ziochunk(): Long = zioChunkInput.foldLeft(0L)(_ + _)
+  @Benchmark def kyochunk(): Long = kyoChunkInput.foldLeft(0L)(_ + _)
 }
 
 // sum-style fold over string lengths
@@ -55,4 +59,5 @@ class FoldLeftStrBenchmark extends Inputs {
   @Benchmark def vector(): Int = vectorInput.foldLeft(0)(_ + _.length)
   @Benchmark def fs2chunk(): Int = fs2ChunkInput.foldLeft(0)(_ + _.length)
   @Benchmark def ziochunk(): Int = zioChunkInput.foldLeft(0)(_ + _.length)
+  @Benchmark def kyochunk(): Int = kyoChunkInput.foldLeft(0)(_ + _.length)
 }

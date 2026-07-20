@@ -9,6 +9,7 @@ class TransposeIntBenchmark extends IntInputs {
   var listMatrix: List[List[Int]] = _
   var vectorMatrix: Vector[Vector[Int]] = _
   var zioMatrix: zio.Chunk[zio.Chunk[Int]] = _
+  var kyoMatrix: kyo.Chunk[kyo.Chunk[Int]] = _
 
   @Setup
   def setupMatrix(): Unit = {
@@ -18,6 +19,7 @@ class TransposeIntBenchmark extends IntInputs {
     listMatrix = List.tabulate(rows)(r => List.tabulate(cols)(c => r * cols + c))
     vectorMatrix = Vector.tabulate(rows)(r => Vector.tabulate(cols)(c => r * cols + c))
     zioMatrix = zio.Chunk.fromIterable((0 until rows).map(r => zio.Chunk.fromIterable((0 until cols).map(c => r * cols + c))))
+    kyoMatrix = kyo.Chunk.from((0 until rows).map(r => kyo.Chunk.from((0 until cols).map(c => r * cols + c))))
   }
 
   @Benchmark def farray_transpose(): FArray[FArray[Int]] = farrayMatrix.transpose
@@ -25,4 +27,5 @@ class TransposeIntBenchmark extends IntInputs {
   @Benchmark def vector_transpose(): Vector[Vector[Int]] = vectorMatrix.transpose
   // IArray has no transpose
   @Benchmark def ziochunk_transpose(): zio.Chunk[zio.Chunk[Int]] = zioMatrix.transpose
+  @Benchmark def kyochunk_transpose(): kyo.Chunk[kyo.Chunk[Int]] = kyoMatrix.transpose
 }

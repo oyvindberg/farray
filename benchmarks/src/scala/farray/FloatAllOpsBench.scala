@@ -106,6 +106,22 @@ class FloatAllOpsBench extends FloatInputs {
     .filter(_ > 0.0f)
     .foldLeft(0.0f)((acc, x) => acc + x)
 
+  @Benchmark def kyochunk(): Float = kyoChunkInput
+    .flatMap(x => kyo.Chunk(x, x + 1.0f))
+    .filter(_ > 1.5f)
+    .map(_ * 2.0f)
+    .flatMap(x => kyo.Chunk(x, x - 0.5f))
+    .filter(_ < 5.0e6f)
+    .map(_ + 0.25f)
+    .zip(kyoChunkInput.map(_ + 100.0f))
+    .map((a, b) => a + b)
+    .zipWithIndex
+    .filter((v, i) => i % 4 != 0)
+    .map((v, i) => v - i)
+    .flatMap(x => kyo.Chunk(x, x + 3.0f))
+    .filter(_ > 0.0f)
+    .foldLeft(0.0f)((acc, x) => acc + x)
+
   @Benchmark def farrayFused(): Float = {
     val zipSrc = farrayInput.map(_ + 100.0f)
     farrayInput.fuse

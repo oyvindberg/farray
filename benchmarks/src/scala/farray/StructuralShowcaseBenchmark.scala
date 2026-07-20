@@ -36,6 +36,7 @@ class StructuralShowcaseIntBenchmark:
   var leafList: List[Int] = _
   var leafVector: Vector[Int] = _
   var leafZio: zio.Chunk[Int] = _
+  var leafKyo: kyo.Chunk[Int] = _
   var leafFs2: fs2.Chunk[Int] = _
 
   @Setup def setup(): Unit =
@@ -44,6 +45,7 @@ class StructuralShowcaseIntBenchmark:
     leafList = List(-1, -2, -3)
     leafVector = Vector(-1, -2, -3)
     leafZio = zio.Chunk(-1, -2, -3)
+    leafKyo = kyo.Chunk(-1, -2, -3)
     leafFs2 = fs2.Chunk(-1, -2, -3)
 
   // start:structural-chain
@@ -105,6 +107,18 @@ class StructuralShowcaseIntBenchmark:
       i += 1
     c.map(_ + 1)
 
+  // kyo.Chunk has native O(1) append/concat; prepend goes through Seq's +:
+  @Benchmark def kyochunk_showcase(): kyo.Chunk[Int] =
+    var c: kyo.Chunk[Int] = kyo.Chunk(0)
+    var i = 1
+    while i < size do
+      c = i +: c
+      c = c.append(i)
+      if i % 4 == 0 then c = leafKyo.concat(c)
+      if i % 8 == 0 then c = c.reverse
+      i += 1
+    c.map(_ + 1)
+
   // fs2.Chunk lacks native prepend-one / append-one / reverse; use idiomatic equivalents
   // for the SAME logical result: prepend = singleton(i) ++ c, append = c ++ singleton(i),
   // reverse = re-wrap the reversed backing array.
@@ -150,6 +164,7 @@ class StructuralShowcaseStrBenchmark:
   var leafList: List[String] = _
   var leafVector: Vector[String] = _
   var leafZio: zio.Chunk[String] = _
+  var leafKyo: kyo.Chunk[String] = _
   var leafFs2: fs2.Chunk[String] = _
 
   @Setup def setup(): Unit =
@@ -158,6 +173,7 @@ class StructuralShowcaseStrBenchmark:
     leafList = List("a", "b", "c")
     leafVector = Vector("a", "b", "c")
     leafZio = zio.Chunk("a", "b", "c")
+    leafKyo = kyo.Chunk("a", "b", "c")
     leafFs2 = fs2.Chunk("a", "b", "c")
 
   @Benchmark def farray_showcase(): FArray[String] =
@@ -211,6 +227,18 @@ class StructuralShowcaseStrBenchmark:
       c = elem +: c
       c = c :+ elem
       if i % 4 == 0 then c = leafZio ++ c
+      if i % 8 == 0 then c = c.reverse
+      i += 1
+    c.map(_ + "!")
+
+  // kyo.Chunk has native O(1) append/concat; prepend goes through Seq's +:
+  @Benchmark def kyochunk_showcase(): kyo.Chunk[String] =
+    var c: kyo.Chunk[String] = kyo.Chunk(elem)
+    var i = 1
+    while i < size do
+      c = elem +: c
+      c = c.append(elem)
+      if i % 4 == 0 then c = leafKyo.concat(c)
       if i % 8 == 0 then c = c.reverse
       i += 1
     c.map(_ + "!")

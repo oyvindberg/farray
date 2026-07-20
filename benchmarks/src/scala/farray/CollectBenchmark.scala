@@ -14,6 +14,7 @@ class CollectIntBenchmark extends IntInputs {
   @Benchmark def vector(): Vector[Int] = vectorInput.collect { case x if x % 2 == 0 => x * 2 }
   @Benchmark def fs2chunk(): fs2.Chunk[Int] = fs2ChunkInput.collect { case x if x % 2 == 0 => x * 2 }
   @Benchmark def ziochunk(): zio.Chunk[Int] = zioChunkInput.collect { case x if x % 2 == 0 => x * 2 }
+  @Benchmark def kyochunk(): kyo.Chunk[Int] = kyoChunkInput.collect { case x if x % 2 == 0 => x * 2 }
 }
 
 class CollectStrBenchmark extends Inputs {
@@ -23,4 +24,5 @@ class CollectStrBenchmark extends Inputs {
   @Benchmark def vector(): Vector[String] = vectorInput.collect { case s if s.length > 1 => s + "!" }
   @Benchmark def fs2chunk(): fs2.Chunk[String] = fs2ChunkInput.collect { case s if s.length > 1 => s + "!" }
   @Benchmark def ziochunk(): zio.Chunk[String] = zioChunkInput.collect { case s if s.length > 1 => s + "!" }
+  @Benchmark def kyochunk(): kyo.Chunk[String] = kyoChunkInput.collect { case s if s.length > 1 => s + "!" }
 }

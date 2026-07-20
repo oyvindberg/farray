@@ -10,6 +10,7 @@ class InitsTailsPatchIntBenchmark extends IntInputs {
   var vectorPatch: Vector[Int] = _
   var iarrayPatch: IArray[Int] = _
   var zioPatch: zio.Chunk[Int] = _
+  var kyoPatch: kyo.Chunk[Int] = _
 
   @Setup
   def setupPatch(): Unit = {
@@ -19,6 +20,7 @@ class InitsTailsPatchIntBenchmark extends IntInputs {
     vectorPatch = p.toVector
     iarrayPatch = IArray.unsafeFromArray(p.clone())
     zioPatch = zio.Chunk.fromArray(p.clone())
+    kyoPatch = kyo.Chunk.from(p.clone())
   }
 
   @Benchmark def farray_inits(): Int = { var n = 0; farrayInput.inits.foreach(_ => n += 1); n }
@@ -26,16 +28,19 @@ class InitsTailsPatchIntBenchmark extends IntInputs {
   @Benchmark def vector_inits(): Int = { var n = 0; vectorInput.inits.foreach(_ => n += 1); n }
   @Benchmark def iarray_inits(): Int = { var n = 0; iarrayInput.inits.foreach(_ => n += 1); n }
   @Benchmark def ziochunk_inits(): Int = { var n = 0; zioChunkInput.inits.foreach(_ => n += 1); n }
+  @Benchmark def kyochunk_inits(): Int = { var n = 0; kyoChunkInput.inits.foreach(_ => n += 1); n }
 
   @Benchmark def farray_tails(): Int = { var n = 0; farrayInput.tails.foreach(_ => n += 1); n }
   @Benchmark def list_tails(): Int = { var n = 0; listInput.tails.foreach(_ => n += 1); n }
   @Benchmark def vector_tails(): Int = { var n = 0; vectorInput.tails.foreach(_ => n += 1); n }
   @Benchmark def iarray_tails(): Int = { var n = 0; iarrayInput.tails.foreach(_ => n += 1); n }
   @Benchmark def ziochunk_tails(): Int = { var n = 0; zioChunkInput.tails.foreach(_ => n += 1); n }
+  @Benchmark def kyochunk_tails(): Int = { var n = 0; kyoChunkInput.tails.foreach(_ => n += 1); n }
 
   @Benchmark def farray_patch(): FArray[Int] = farrayInput.patch(size / 2, farrayPatch, 4)
   @Benchmark def list_patch(): List[Int] = listInput.patch(size / 2, listPatch, 4)
   @Benchmark def vector_patch(): Vector[Int] = vectorInput.patch(size / 2, vectorPatch, 4)
   @Benchmark def iarray_patch(): IArray[Int] = iarrayInput.patch(size / 2, iarrayPatch, 4)
   @Benchmark def ziochunk_patch(): zio.Chunk[Int] = zioChunkInput.patch(size / 2, zioPatch, 4)
+  @Benchmark def kyochunk_patch(): kyo.Chunk[Int] = kyoChunkInput.patch(size / 2, kyoPatch, 4)
 }

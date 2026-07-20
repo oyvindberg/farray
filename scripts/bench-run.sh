@@ -28,15 +28,30 @@ MAIN="org.openjdk.jmh.Main"
 
 # Fast-iteration mode: if results already exist, re-measure ONLY the farray methods and
 # patch them into the cached json (keeping every competitor entry). Otherwise full suite.
+#
+# BENCH_VARIANT generalises that patch to ANY method-name prefix — the mechanism used to fold a
+# newly-added competitor into an existing scorecard without re-measuring everyone else:
+#   BENCH_VARIANT=kyochunk caffeinate -i bash scripts/bench-run.sh 3 5 1 6
+# measures only the `kyochunk*` methods and patches them in, leaving farray and every other
+# competitor's cached numbers untouched. Caveat: numbers patched in this way were measured under a
+# DIFFERENT sweep's contention than the entries they sit beside, so a fresh competitor's cells are
+# only as trustworthy as that match — confirm close calls with an isolated -f 2 run.
 RESULTS="${BENCH_RESULTS:-docs/bench-results.json}"
+VARIANT="${BENCH_VARIANT:-farray}"
 if [ -f "$RESULTS" ]; then
-  MODE="farray"; echo "▶ Mode: farray-only patch ($RESULTS exists)"
+  MODE="patch"; echo "▶ Mode: ${VARIANT}-only patch ($RESULTS exists)"
 else
-  MODE="full";   echo "▶ Mode: full suite (no $RESULTS yet)"
+  MODE="full";  echo "▶ Mode: full suite (no $RESULTS yet)"
 fi
 
 echo "▶ Compiling…"
 bleep compile benchmarks-runner >/tmp/bench-compile.log 2>&1 || { echo "compile failed:"; tail -20 /tmp/bench-compile.log; exit 1; }
+
+# A fresh clone/worktree cannot generate the JMH wrappers until the classes-dir link exists — without
+# it every pattern reports "No matching benchmarks". Fix it, then re-run the build so the generator
+# actually sees the classes. See scripts/bench-preflight.sh.
+bash scripts/bench-preflight.sh benchmarks
+bleep compile benchmarks-runner >>/tmp/bench-compile.log 2>&1 || true
 
 # bleep's on-disk bloop configs are stale, so grab the real java+classpath from a live run.
 echo "▶ Capturing runtime java + classpath…"
@@ -79,10 +94,10 @@ echo "  $(echo "$ALL" | grep -c .) classes → $SHARDS shards, ≤$MAXJ at once 
 run_shard() {  # name  regex  extra-jmh-args...
   local name="$1" rx="$2"; shift 2
   local td="/tmp/jmh-$name"; rm -rf "$td"; mkdir -p "$td"
-  # In farray-only mode, constrain the class regex to `.farray*` methods so each shard
-  # measures just the FArray implementation; full mode runs all impls in each class.
+  # In patch mode, constrain the class regex to the `.$VARIANT*` methods so each shard measures
+  # just that one implementation; full mode runs all impls in each class.
   local filter
-  if [ "$MODE" = "farray" ]; then filter="(farray\.($rx)\.farray[A-Za-z]*_?)"; else filter="($rx)"; fi
+  if [ "$MODE" = "patch" ]; then filter="(farray\.($rx)\.${VARIANT}[A-Za-z]*_?)"; else filter="($rx)"; fi
   "$JAVA" -Xmx"$XMX" -Djava.io.tmpdir="$td" -Djmh.ignoreLock=true -cp "$CP" "$MAIN" \
     "$filter" -wi "$WI" -i "$MI" -f "$FORKS" -r 300ms -w 300ms \
     -rf json -rff "docs/parts/part-$name.json" "$@" >"docs/parts/log-$name.txt" 2>&1 &
@@ -98,24 +113,24 @@ echo "$ALL" | grep -qE "^($UPDATED)$" && { throttle; run_shard "upd" "$UPDATED" 
 echo "▶ $(jobs -rp 2>/dev/null | grep -c .) shards running in parallel across $CORES cores…"
 wait
 echo "▶ Merging + rendering…"
-MODE="$MODE" RESULTS="$RESULTS" python3 - <<'PY'
+MODE="$MODE" RESULTS="$RESULTS" VARIANT="$VARIANT" python3 - <<'PY'
 import json, glob, os
-mode = os.environ["MODE"]
+mode, variant = os.environ["MODE"], os.environ["VARIANT"]
 new, files = [], sorted(glob.glob("docs/parts/part-*.json"))
 for f in files:
     try: new += json.load(open(f))
     except Exception as e: print("  skip", f, e)
 
-def is_farray(b):  # farray_map, farray_scanLeft, bare farray, plus farrayMat_*/farrayTree_* variants
-    return b["benchmark"].split(".")[-1].split("_")[0].startswith("farray")
+def is_variant(b):  # kyochunk_map, farray_scanLeft, bare farray, plus farrayMat_*/farrayTree_* variants
+    return b["benchmark"].split(".")[-1].split("_")[0].startswith(variant)
 
 dst = os.environ.get("RESULTS", "docs/bench-results.json")
-if mode == "farray":
+if mode == "patch":
     old = json.load(open(dst))
-    kept = [b for b in old if not is_farray(b)]
+    kept = [b for b in old if not is_variant(b)]
     out = kept + new
     json.dump(out, open(dst, "w"))
-    print(f"  farray-only patch: refreshed {len(new)} farray entries, kept {len(kept)} competitor entries")
+    print(f"  {variant}-only patch: refreshed {len(new)} {variant} entries, kept {len(kept)} other entries")
 else:
     json.dump(new, open(dst, "w"))
     print(f"  full suite: merged {len(new)} results from {len(files)} shards")

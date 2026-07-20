@@ -9,6 +9,7 @@ class FilterStrBenchmark extends Inputs {
   @Benchmark def vector(): Vector[String] = vectorInput.filter(_.length > 1)
   @Benchmark def fs2chunk(): fs2.Chunk[String] = fs2ChunkInput.filter(_.length > 1)
   @Benchmark def ziochunk(): zio.Chunk[String] = zioChunkInput.filter(_.length > 1)
+  @Benchmark def kyochunk(): kyo.Chunk[String] = kyoChunkInput.filter(_.length > 1)
 }
 
 // filter with an UNPREDICTABLE predicate on REFERENCES: random-content strings, keep by hash
@@ -25,6 +26,7 @@ class FilterRandStrBenchmark extends CommonParams {
   var farrayInput: FArray[String] = _
   var fs2ChunkInput: fs2.Chunk[String] = _
   var zioChunkInput: zio.Chunk[String] = _
+  var kyoChunkInput: kyo.Chunk[String] = _
 
   @Setup
   def setup(): Unit = {
@@ -36,6 +38,7 @@ class FilterRandStrBenchmark extends CommonParams {
     farrayInput = FArray.fromArray(arr.clone())
     fs2ChunkInput = fs2.Chunk.array(arr)
     zioChunkInput = zio.Chunk.fromArray(arr)
+    kyoChunkInput = kyo.Chunk.from(arr)
   }
 
   @Benchmark def farray(): FArray[String] = farrayInput.filter(s => (s.hashCode & 1) == 0)
@@ -44,6 +47,7 @@ class FilterRandStrBenchmark extends CommonParams {
   @Benchmark def vector(): Vector[String] = vectorInput.filter(s => (s.hashCode & 1) == 0)
   @Benchmark def fs2chunk(): fs2.Chunk[String] = fs2ChunkInput.filter(s => (s.hashCode & 1) == 0)
   @Benchmark def ziochunk(): zio.Chunk[String] = zioChunkInput.filter(s => (s.hashCode & 1) == 0)
+  @Benchmark def kyochunk(): kyo.Chunk[String] = kyoChunkInput.filter(s => (s.hashCode & 1) == 0)
 }
 
 // filter with an UNPREDICTABLE predicate: RANDOM ints, keep the even half. On the sequential
@@ -60,6 +64,7 @@ class FilterIntBenchmark extends CommonParams {
   var farrayInput: FArray[Int] = _
   var fs2ChunkInput: fs2.Chunk[Int] = _
   var zioChunkInput: zio.Chunk[Int] = _
+  var kyoChunkInput: kyo.Chunk[Int] = _
 
   @Setup
   def setup(): Unit = {
@@ -71,6 +76,7 @@ class FilterIntBenchmark extends CommonParams {
     farrayInput = FArray.fromArray(arr.clone())
     fs2ChunkInput = fs2.Chunk.array(arr)
     zioChunkInput = zio.Chunk.fromArray(arr)
+    kyoChunkInput = kyo.Chunk.from(arr)
   }
 
   // start:filter-rand
@@ -81,4 +87,5 @@ class FilterIntBenchmark extends CommonParams {
   @Benchmark def vector(): Vector[Int] = vectorInput.filter(x => (x & 1) == 0)
   @Benchmark def fs2chunk(): fs2.Chunk[Int] = fs2ChunkInput.filter(x => (x & 1) == 0)
   @Benchmark def ziochunk(): zio.Chunk[Int] = zioChunkInput.filter(x => (x & 1) == 0)
+  @Benchmark def kyochunk(): kyo.Chunk[Int] = kyoChunkInput.filter(x => (x & 1) == 0)
 }

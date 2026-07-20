@@ -22,6 +22,7 @@ class ConcatNIntBenchmark:
 
   var fs2chunks: Seq[fs2.Chunk[Int]] = _
   var ziochunks: Seq[zio.Chunk[Int]] = _
+  var kyochunks: Seq[kyo.Chunk[Int]] = _
   var farrays: Seq[FArray[Int]] = _
   var iarrays: Seq[IArray[Int]] = _
   var vectors: Seq[Vector[Int]] = _
@@ -30,6 +31,7 @@ class ConcatNIntBenchmark:
   @Setup def setup(): Unit =
     fs2chunks = (0 until chunkCount).map(c => fs2.Chunk.array(Array.tabulate(chunkSize)(i => c * chunkSize + i)))
     ziochunks = (0 until chunkCount).map(c => zio.Chunk.fromArray(Array.tabulate(chunkSize)(i => c * chunkSize + i)))
+    kyochunks = (0 until chunkCount).map(c => kyo.Chunk.from(Array.tabulate(chunkSize)(i => c * chunkSize + i)))
     farrays = (0 until chunkCount).map(c => FArray.tabulate(chunkSize)(i => c * chunkSize + i))
     iarrays = (0 until chunkCount).map(c => IArray.tabulate(chunkSize)(i => c * chunkSize + i))
     vectors = (0 until chunkCount).map(c => Vector.tabulate(chunkSize)(i => c * chunkSize + i))
@@ -37,6 +39,7 @@ class ConcatNIntBenchmark:
 
   @Benchmark def fs2chunk_concat(): fs2.Chunk[Int] = fs2.Chunk.concat(fs2chunks).map(_ + 1)
   @Benchmark def ziochunk_concat(): zio.Chunk[Int] = ziochunks.reduce(_ ++ _).map(_ + 1)
+  @Benchmark def kyochunk_concat(): kyo.Chunk[Int] = kyochunks.reduce(_.concat(_)).map(_ + 1)
   @Benchmark def farray_concat(): FArray[Int] = farrays.reduce(_ ++ _).map(_ + 1)
   // iarray/array reduce via repeated ++ (O(n^2) flat copies) — the baseline FArray's O(1) concat beats
   @Benchmark def iarray_concat(): IArray[Int] = iarrays.reduce(_ ++ _).map(_ + 1)

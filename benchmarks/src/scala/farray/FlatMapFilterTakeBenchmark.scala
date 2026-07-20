@@ -13,6 +13,7 @@ class FlatMapFilterTakeStrBenchmark extends Inputs {
   @Benchmark def vector(): Vector[String] = vectorInput.flatMap(s => Vector(s, s)).filter(_.length > 1).take(size)
   @Benchmark def fs2chunk(): fs2.Chunk[String] = fs2ChunkInput.flatMap(s => fs2.Chunk(s, s)).filter(_.length > 1).take(size)
   @Benchmark def ziochunk(): zio.Chunk[String] = zioChunkInput.flatMap(s => zio.Chunk(s, s)).filter(_.length > 1).take(size)
+  @Benchmark def kyochunk(): kyo.Chunk[String] = kyoChunkInput.flatMap(s => kyo.Chunk(s, s)).filter(_.length > 1).take(size)
 }
 
 // the Int twin: flatMap doubles the sequence (boxing the inners for the collections, flat int[]
@@ -25,4 +26,5 @@ class FlatMapFilterTakeIntBenchmark extends IntInputs {
   @Benchmark def vector(): Vector[Int] = vectorInput.flatMap(x => Vector(x, x + 1)).filter(_ % 2 == 0).take(size)
   @Benchmark def fs2chunk(): fs2.Chunk[Int] = fs2ChunkInput.flatMap(x => fs2.Chunk(x, x + 1)).filter(_ % 2 == 0).take(size)
   @Benchmark def ziochunk(): zio.Chunk[Int] = zioChunkInput.flatMap(x => zio.Chunk(x, x + 1)).filter(_ % 2 == 0).take(size)
+  @Benchmark def kyochunk(): kyo.Chunk[Int] = kyoChunkInput.flatMap(x => kyo.Chunk(x, x + 1)).filter(_ % 2 == 0).take(size)
 }

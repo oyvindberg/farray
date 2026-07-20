@@ -106,6 +106,22 @@ class CharAllOpsBench extends CharInputs {
     .filter(_ != 'q')
     .foldLeft(0)((acc, x) => acc + x.toInt)
 
+  @Benchmark def kyochunk(): Int = kyoChunkInput
+    .flatMap(c => kyo.Chunk(c, c.toUpper))
+    .filter(_ != 'b')
+    .map(c => (c + 1).toChar)
+    .flatMap(c => kyo.Chunk(c, c.toLower))
+    .filter(_ != 'z')
+    .map(c => (c ^ 2).toChar)
+    .zip(kyoChunkInput.map(c => (c + 1).toChar))
+    .map((a, b) => (a + b).toChar)
+    .zipWithIndex
+    .filter((v, i) => i % 4 != 0)
+    .map((v, i) => (v + i).toChar)
+    .flatMap(c => kyo.Chunk(c, c.toUpper))
+    .filter(_ != 'q')
+    .foldLeft(0)((acc, x) => acc + x.toInt)
+
   @Benchmark def farrayFused(): Int = {
     val zipSrc = farrayInput.map(c => (c + 1).toChar)
     farrayInput.fuse

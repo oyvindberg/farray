@@ -20,6 +20,7 @@ class FlattenIntBenchmark:
   // outer structures of inner collections, one per impl
   var farrayOuter: FArray[FArray[Int]] = _
   var ziochunkOuter: zio.Chunk[zio.Chunk[Int]] = _
+  var kyochunkOuter: kyo.Chunk[kyo.Chunk[Int]] = _
   var fs2chunkOuter: fs2.Chunk[fs2.Chunk[Int]] = _
   var iarrayOuter: IArray[IArray[Int]] = _
   var vectorOuter: Vector[Vector[Int]] = _
@@ -30,6 +31,9 @@ class FlattenIntBenchmark:
     ziochunkOuter = zio.Chunk.fromIterable(
       (0 until numChunks).map(c => zio.Chunk.fromIterable((0 until innerSize).map(i => c * innerSize + i)))
     )
+    kyochunkOuter = kyo.Chunk.from(
+      (0 until numChunks).map(c => kyo.Chunk.from((0 until innerSize).map(i => c * innerSize + i)))
+    )
     fs2chunkOuter = fs2.Chunk.from(
       (0 until numChunks).map(c => fs2.Chunk.from((0 until innerSize).map(i => c * innerSize + i)))
     )
@@ -39,6 +43,7 @@ class FlattenIntBenchmark:
 
   @Benchmark def farray_flatten(): FArray[Int] = farrayOuter.flatMap(x => x)
   @Benchmark def ziochunk_flatten(): zio.Chunk[Int] = ziochunkOuter.flatten
+  @Benchmark def kyochunk_flatten(): kyo.Chunk[Int] = kyochunkOuter.flatten
   @Benchmark def fs2chunk_flatten(): fs2.Chunk[Int] = fs2chunkOuter.flatten
   @Benchmark def iarray_flatten(): IArray[Int] = iarrayOuter.flatten
   @Benchmark def vector_flatten(): Vector[Int] = vectorOuter.flatten

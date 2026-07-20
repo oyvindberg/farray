@@ -106,6 +106,22 @@ class LongAllOpsBench extends LongInputs {
     .filter(_ > 0L)
     .foldLeft(0L)((acc, x) => acc + x)
 
+  @Benchmark def kyochunk(): Long = kyoChunkInput
+    .flatMap(x => kyo.Chunk(x, x + 1L))
+    .filter(_ % 3L != 0L)
+    .map(_ * 2L)
+    .flatMap(x => kyo.Chunk(x, x ^ 5L))
+    .filter(_ % 2L == 0L)
+    .map(_ - 7L)
+    .zip(kyoChunkInput.map(_ + 100L))
+    .map((a, b) => a + b)
+    .zipWithIndex
+    .filter((v, i) => (v + i) % 4L != 0L)
+    .map((v, i) => v - i)
+    .flatMap(x => kyo.Chunk(x, x + 3L))
+    .filter(_ > 0L)
+    .foldLeft(0L)((acc, x) => acc + x)
+
   @Benchmark def farrayFused(): Long = {
     val zipSrc = farrayInput.map(_ + 100L)
     farrayInput.fuse

@@ -36,6 +36,10 @@ fi
 echo "▶ Compiling…"
 bleep compile "$RUNNER" >/tmp/setbench-compile.log 2>&1 || { echo "compile failed:"; tail -20 /tmp/setbench-compile.log; exit 1; }
 
+# See scripts/bench-preflight.sh — a fresh checkout generates an EMPTY JMH list without this.
+bash scripts/bench-preflight.sh setbenchmarks
+bleep compile "$RUNNER" >>/tmp/setbench-compile.log 2>&1 || true
+
 # bleep's on-disk bloop configs are stale, so grab the real java+classpath from a live run.
 echo "▶ Capturing runtime java + classpath…"
 # </dev/null: see bench-run.sh — a backgrounded bleep run from an interactive TTY fails its input reader.

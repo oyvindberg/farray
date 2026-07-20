@@ -48,6 +48,12 @@ class AppendChainIntBenchmark:
     while i < size do { c = c :+ i; i += 1 }
     c.map(_ + 1)
 
+  @Benchmark def kyochunk_append(): kyo.Chunk[Int] =
+    var c: kyo.Chunk[Int] = kyo.Chunk(1)
+    var i = 0
+    while i < size do { c = c.append(i); i += 1 }
+    c.map(_ + 1)
+
   @Benchmark def fs2chunk_append(): fs2.Chunk[Int] =
     var c: fs2.Chunk[Int] = fs2.Chunk.singleton(1)
     var i = 0

@@ -34,4 +34,9 @@ class ForeachStrBenchmark extends Inputs {
     zioChunkInput.foreach(acc += _.length)
     acc
   }
+  @Benchmark def kyochunk(): Int = {
+    var acc = 0
+    kyoChunkInput.foreach(acc += _.length)
+    acc
+  }
 }

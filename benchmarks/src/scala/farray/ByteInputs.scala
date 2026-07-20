@@ -13,6 +13,7 @@ abstract class ByteInputs extends CommonParams {
   var farrayInput: FArray[Byte] = _
   var fs2ChunkInput: fs2.Chunk[Byte] = _
   var zioChunkInput: zio.Chunk[Byte] = _
+  var kyoChunkInput: kyo.Chunk[Byte] = _
 
   @Setup
   def setup(): Unit = {
@@ -23,5 +24,6 @@ abstract class ByteInputs extends CommonParams {
     farrayInput = FArray.tabulate(size)(i => (i % 127).toByte)
     fs2ChunkInput = fs2.Chunk.array(arr)
     zioChunkInput = zio.Chunk.fromArray(arr)
+    kyoChunkInput = kyo.Chunk.from(arr)
   }
 }

@@ -11,4 +11,5 @@ class DropMapIntBenchmark extends IntInputs {
   @Benchmark def iarray(): IArray[Int] = iarrayInput.drop(size / 2).map(_ + 1)
   @Benchmark def fs2chunk(): fs2.Chunk[Int] = fs2ChunkInput.drop(size / 2).map(_ + 1)
   @Benchmark def ziochunk(): zio.Chunk[Int] = zioChunkInput.drop(size / 2).map(_ + 1)
+  @Benchmark def kyochunk(): kyo.Chunk[Int] = kyoChunkInput.drop(size / 2).map(_ + 1)
 }

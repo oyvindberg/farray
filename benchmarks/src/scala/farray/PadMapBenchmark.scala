@@ -11,5 +11,6 @@ class PadMapIntBenchmark extends IntInputs {
   @Benchmark def vector(): Vector[Int] = vectorInput.padTo(size * 2, -1).map(_ + 1)
   @Benchmark def iarray(): IArray[Int] = iarrayInput.padTo(size * 2, -1).map(_ + 1)
   @Benchmark def ziochunk(): zio.Chunk[Int] = zioChunkInput.padTo(size * 2, -1).map(_ + 1)
+  @Benchmark def kyochunk(): kyo.Chunk[Int] = kyoChunkInput.padTo(size * 2, -1).map(_ + 1)
   // fs2.Chunk has no padTo
 }

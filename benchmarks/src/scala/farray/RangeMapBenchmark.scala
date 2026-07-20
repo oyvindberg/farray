@@ -15,4 +15,5 @@ class RangeMapIntBenchmark extends IntInputs {
   // fs2/zio Chunk have no range constructor; build from a materialised range, then map
   @Benchmark def fs2chunk(): fs2.Chunk[Int] = fs2.Chunk.array(Array.range(0, size)).map(_ + 1)
   @Benchmark def ziochunk(): zio.Chunk[Int] = zio.Chunk.fromArray(Array.range(0, size)).map(_ + 1)
+  @Benchmark def kyochunk(): kyo.Chunk[Int] = kyo.Chunk.from(Array.range(0, size)).map(_ + 1)
 }

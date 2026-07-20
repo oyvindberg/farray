@@ -10,6 +10,7 @@ abstract class Inputs extends CommonParams {
   var vectorInput: Vector[String] = _
   var fs2ChunkInput: fs2.Chunk[String] = _
   var zioChunkInput: zio.Chunk[String] = _
+  var kyoChunkInput: kyo.Chunk[String] = _
 
   @Param(Array("0", "1", "10", "100", "1000", "10000", "100000"))
   var size: Int = 1000
@@ -24,5 +25,6 @@ abstract class Inputs extends CommonParams {
     vectorInput = arr.toVector
     fs2ChunkInput = fs2.Chunk.array(arr)
     zioChunkInput = zio.Chunk.fromArray(arr)
+    kyoChunkInput = kyo.Chunk.from(arr)
   }
 }

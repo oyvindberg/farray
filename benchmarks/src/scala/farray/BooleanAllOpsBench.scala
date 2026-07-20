@@ -106,6 +106,22 @@ class BooleanAllOpsBench extends BooleanInputs {
     .filter(identity)
     .foldLeft(0)((acc, x) => acc + (if (x) 1 else 0))
 
+  @Benchmark def kyochunk(): Int = kyoChunkInput
+    .flatMap(b => kyo.Chunk(b, !b))
+    .filter(identity)
+    .map(!_)
+    .flatMap(b => kyo.Chunk(b, b & true))
+    .filter(b => b | true)
+    .map(!_)
+    .zip(kyoChunkInput.map(!_))
+    .map((a, b) => a ^ b)
+    .zipWithIndex
+    .filter((v, i) => i % 4 != 0)
+    .map((v, i) => v ^ (i % 2 == 0))
+    .flatMap(b => kyo.Chunk(b, !b))
+    .filter(identity)
+    .foldLeft(0)((acc, x) => acc + (if (x) 1 else 0))
+
   @Benchmark def farrayFused(): Int = {
     val zipSrc = farrayInput.map(!_)
     farrayInput.fuse
