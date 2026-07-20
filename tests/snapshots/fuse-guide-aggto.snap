@@ -11,15 +11,15 @@
   var seen: Boolean = false
   val s: FBase = src0
   val a: Array[Object] = s match {
-    case l: RefArr =>
-      (l.arr: Array[Object])
+    case l: RefArr if l.offset.==(0) =>
+      (l.data: Array[Object])
     case t =>
-      if (t.length.>=(64)) FArrayOps.materializeRef(t) else null
+      if (t.length.>=(64)) FArrayOps.materializeRef(t) else Array.emptyObjectArray
   }
   val len: Int = s.length
   var i: Int = 0
   while (i.<(len)) {
-    val elem: Trade = if (a.ne(null)) a.apply(i).asInstanceOf[Trade] else FArrayOps.refAt(s, i).asInstanceOf[Trade]
+    val elem: Trade = if (a.ne(Array.emptyObjectArray)) a.apply(i).asInstanceOf[Trade] else FArrayOps.refAt(s, i).asInstanceOf[Trade]
     val amount: Double = elem.amount
     acc = acc.+(amount)
     c = c.+(1)

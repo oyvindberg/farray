@@ -10,15 +10,15 @@
   var o: Int = 0
   val s: FBase = src0
   val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
+    case l: IntArr if l.offset.==(0) =>
+      (l.data: Array[Int])
     case t =>
-      if (t.length.>=(64)) FArrayOps.materializeInt(t) else null
+      if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
   }
   val len: Int = s.length
   var i: Int = 0
   while (i.<(len)) {
-    val x: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+    val x: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
     val v: Int = x.%(3)
     val keep: Boolean = v.==(0)
     if (keep) {

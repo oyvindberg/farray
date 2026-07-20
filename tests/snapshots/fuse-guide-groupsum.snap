@@ -8,15 +8,15 @@
   val m: IntKeyMap = new IntKeyMap(16, true)
   val s: FBase = src0
   val a: Array[Int] = s match {
-    case l: IntArr =>
-      (l.arr: Array[Int])
+    case l: IntArr if l.offset.==(0) =>
+      (l.data: Array[Int])
     case t =>
-      if (t.length.>=(64)) FArrayOps.materializeInt(t) else null
+      if (t.length.>=(64)) FArrayOps.materializeInt(t) else Array.emptyIntArray
   }
   val len: Int = s.length
   var i: Int = 0
   while (i.<(len)) {
-    val x: Int = if (a.ne(null)) a.apply(i) else FArrayOps.intAt(s, i)
+    val x: Int = if (a.ne(Array.emptyIntArray)) a.apply(i) else FArrayOps.intAt(s, i)
     val slot: Int = m.probe(x.%(3))
     if (m.wasNew()) m.setValuePrim(slot, x.toLong) else m.setValuePrim(slot, {
       val `x₂`: Int = m.getValuePrim(slot).toInt

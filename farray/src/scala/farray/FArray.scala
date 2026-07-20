@@ -1,5 +1,6 @@
 package farray
 
+import scala.compiletime.summonFrom
 import scala.reflect.ClassTag
 
 //start:opaque-type
@@ -12,6 +13,12 @@ opaque type FArray[+A] <: AnyRef = FBase
 
 object FArray:
 
+  /** Every `FArray` — whatever its element type — is backed by the sealed runtime class [[FBase]], so a single `ClassTag` (runtime class `classOf[FBase]`)
+    * serves them all. Living in the companion it is in implicit scope, so `summon[ClassTag[FArray[A]]]`, `Array.ofDim[FArray[A]]`, and building an
+    * `Array[FArray[A]]` all resolve it with no import.
+    */
+  given classTag[A]: ClassTag[FArray[A]] = ClassTag[FArray[A]](classOf[FBase])
+
   inline def empty[A]: FArray[A] = FArrayOps.emptyImpl[A]
   // ONE varargs apply: the macro pattern-matches the literal argument list at compile time and emits
   // the construction directly for EVERY arity — Empty / ${K}One / a typed array filled with unrolled
@@ -20,10 +27,35 @@ object FArray:
   // the literal list from the macro — and from the fuse macro's flatMap splat). A non-literal spread
   // (`FArray(xs*)`) falls back to the runtime applyImpl.
   inline def apply[A](inline as: A*): FArray[A] = ${ FArrayMacros.applyMacro[A]('as) }
+
+  /** Name-based sequence extractor so `case FArray()`, `case FArray(a, b)`, `case FArray(x, rest*)` work. `transparent inline` + kind dispatch (the `${K}Repr`
+    * machinery) picks a value-class view whose `apply(i)` hands back a RAW element for a primitive `FArray` — positional bindings do not box. The vararg suffix
+    * goes through `drop(n): Seq[A]`, which boxes (a `Seq` erases its element); that box is inherent to the `_*` binding (a `Vector(x, rest*)` suffix boxes
+    * too).
+    */
+  transparent inline def unapplySeq[A](xs: FArray[A]) = summonFrom {
+    case _: IntRepr[A]     => new IntSeqView(xs.asInstanceOf[FArray[Int]])
+    case _: LongRepr[A]    => new LongSeqView(xs.asInstanceOf[FArray[Long]])
+    case _: DoubleRepr[A]  => new DoubleSeqView(xs.asInstanceOf[FArray[Double]])
+    case _: FloatRepr[A]   => new FloatSeqView(xs.asInstanceOf[FArray[Float]])
+    case _: ShortRepr[A]   => new ShortSeqView(xs.asInstanceOf[FArray[Short]])
+    case _: ByteRepr[A]    => new ByteSeqView(xs.asInstanceOf[FArray[Byte]])
+    case _: CharRepr[A]    => new CharSeqView(xs.asInstanceOf[FArray[Char]])
+    case _: BooleanRepr[A] => new BooleanSeqView(xs.asInstanceOf[FArray[Boolean]])
+    // Reference AND unknown-kind (abstract `T` / wildcard / union) elements share the BOXED
+    // [[AnySeqView]]: its `apply(i)` reads via `applyBoxed`, which on a `RefArr` is just `arr(i)` (no box) so
+    // references lose nothing, and which works for ANY A. This is deliberately NOT a `RefSeqView[A]` arm — a
+    // value-class `RefSeqView[A]` over a non-AnyRef A ("Type argument T does not conform to upper bound
+    // AnyRef") is exactly the bound that broke `unapplySeq` on `FArray[Double]`/`FArray[T]`/unions. With the
+    // round-3 low-priority `anyRepr`, `RefRepr[A]` now resolves for every A, so this single boxed arm covers
+    // all non-primitive element types uniformly.
+    case _ => new AnySeqView[A](xs)
+  }
   inline def tabulate[A](n: Int)(inline f: Int => A): FArray[A] = FArrayOps.tabulateImpl[A](n)(f)
 
   /** an unboxed imperative builder: accumulate with `+=`/`++=`, then `result()`. The element kind is resolved at THIS call site so primitive elements are
-    * written without boxing — see [[FBuilder]].
+    * written without boxing — see [[FBuilder]]. There is deliberately NO `sizeHint` (it forces a default allocation that a later resize throws away — a double
+    * allocation); pass the expected element count to the capacity overload instead, which sizes the backing array in ONE allocation.
     */
   inline def newBuilder[A]: FBuilder[A] = FBuilder[A](16)
   inline def newBuilder[A](initialCapacity: Int): FBuilder[A] = FBuilder[A](initialCapacity)
@@ -51,6 +83,34 @@ object FArray:
   // ---- factory methods mirroring the List companion (IterableFactory) ----
   /** build from any IterableOnce (Iterator / View / Iterable), like List.from. */
   inline def from[A](it: IterableOnce[A]): FArray[A] = FArrayOps.applyImpl[A](it.iterator.toSeq)
+
+  /** drive `add` over an IterableOnce, indexed when it is an IndexedSeq (no iterator alloc), else via its iterator. `add` is inline, so the per-element
+    * unbox/store fuses into one loop.
+    */
+  private inline def drainInto[A](it: IterableOnce[A])(inline add: A => Unit): Unit =
+    it match
+      case xs: scala.collection.IndexedSeq[A @unchecked] =>
+        val n = xs.length; var i = 0
+        while i < n do { add(xs(i)); i += 1 }
+      case _ =>
+        val ir = it.iterator
+        while ir.hasNext do add(ir.next())
+
+  /** the engine behind `IterableOnce#toFArray`. Defined here (inside the opaque type's transparent scope, so a core `FBase` returns as `FArray[A]` with no
+    * cast). Feeds the unboxed [[FBuilder]] — its inline `+=` resolves the element kind at THIS call site (`Repr` evidence), so a primitive `A` is written
+    * unboxed and a reference/abstract `A` boxes on add (inherent). `knownSize`, when > 0, sizes the backing array in ONE allocation via the capacity ctor (no
+    * `sizeHint` double-allocation). An `FArraySeq` short-circuits to its backing core in O(1).
+    */
+  inline def fromIterableOnce[A](it: IterableOnce[A]): FArray[A] =
+    it match
+      case s: FArraySeq[?] => s.fbase
+      case other           =>
+        val ks = other.knownSize
+        val b = if ks > 0 then FBuilder[A](ks) else FBuilder[A]()
+        drainInto(other)(a => b += a)
+        // b.result is FBuilderBase.result: FBase — already FArray[A] in this transparent opaque scope
+        // (note: NOT `b.result()`, which would `apply`-index the returned FBase).
+        b.result
 
   /** n copies of elem; elem is re-evaluated per element (like List.fill). */
   inline def fill[A](n: Int)(inline elem: A): FArray[A] = FArray.tabulate(n)(_ => elem)
@@ -82,6 +142,13 @@ object FArray:
     FArray.fromIterable(b)
   }
 
+  /** one-pass filtered map (predicate then map), no intermediate FArray. Backs `FWithFilter.map`. Delegates to the generated, kind-specialized
+    * `FArrayOps.filterMapImpl` (the fused `collect` engine: A read x B write over the shared `foreachLeaf` traverser into an unboxed `${B}Group`), with the map
+    * body `f` inlined and the predicate `p` evaluated once per element.
+    */
+  inline def filterMapImpl[A, B](xs: FArray[A], inline p: A => Boolean)(inline f: A => B): FArray[B] =
+    FArrayOps.filterMapImpl[A, B](xs)(p)(f)
+
   extension [A](xs: FArray[A])
     /** The opaque `FArray` IS its `FBase` core. Here in the defining scope the alias is transparent, so this is a plain ascription — no cast. Its job is to
       * carry that conversion to the OTHER files (where the opaque equality is hidden and a raw `asInstanceOf` would otherwise be needed).
@@ -96,7 +163,8 @@ object FArray:
     def lengthCompare(len: Int): Int = Integer.compare(xs.length, len)
     def lengthIs: Int = xs.length
     def sizeIs: Int = xs.length
-    def indices: Range = 0 until xs.length
+    // O(1) RangeNode-backed (unboxed traversal); FArray.range handles length 0/1. Was `0 until length: Range`.
+    def indices: FArray[Int] = FArray.range(0, xs.length)
     def isDefinedAt(i: Int): Boolean = i >= 0 && i < xs.length
 
     // ---- structural (tree-aware FBase virtuals) ----
@@ -114,7 +182,13 @@ object FArray:
     def reverse_:::[B >: A](prefix: FArray[B]): FArray[B] = (xs.reverse: FBase).concat(prefix)
 
     // ---- specialized element ops (lambda inlined, unboxed) ----
-    inline def apply(i: Int): A = FArrayOps.applyAtImpl[A](xs, i)
+    inline def apply(i: Int): A =
+      // Seq contract: an out-of-range index throws IndexOutOfBoundsException (parity with List). The check is
+      // against the LOGICAL length — a slack-backed leaf (e.g. from filterConserve) or a singleton/structural
+      // node whose `applyAtImpl` arm ignores `i` would otherwise silently return a stale/valid slot. `head`/
+      // `last` and internal callers keep hitting `applyAtImpl` directly (they pass known-valid indices).
+      if i < 0 || i >= xs.length then throw new IndexOutOfBoundsException(java.lang.Integer.toString(i))
+      else FArrayOps.applyAtImpl[A](xs, i)
     inline def head: A = FArrayOps.applyAtImpl[A](xs, 0)
     inline def last: A = FArrayOps.applyAtImpl[A](xs, xs.length - 1)
     def headOption: Option[A] = if xs.length == 0 then None else Some((xs: FBase).applyBoxed(0).asInstanceOf[A])
@@ -132,6 +206,10 @@ object FArray:
     inline def foreachWhile(inline f: A => Boolean): Unit = FArrayOps.foreachWhileImpl[A](xs)(f)
     inline def map[B](inline f: A => B): FArray[B] = FArrayOps.mapImpl[A, B](xs)(f)
     inline def filter(inline p: A => Boolean): FArray[A] = FArrayOps.filterImpl[A](xs)(p)
+
+    /** guarded-for-comprehension entry: `for x <- xs if p yield e` fuses the predicate into the result loop with no intermediate FArray. See [[FWithFilter]].
+      */
+    def withFilter(p: A => Boolean): FWithFilter[A] = new FWithFilter[A](xs, p)
     inline def filterNot(inline p: A => Boolean): FArray[A] = FArrayOps.filterNotImpl[A](xs)(p)
     inline def contains(elem: A): Boolean = FArrayOps.containsImpl[A](xs, elem)
     inline def flatMap[B](inline f: A => FArray[B]): FArray[B] = FArrayOps.flatMapImpl[A, B](xs)(a => f(a).asFBase)
@@ -196,6 +274,12 @@ object FArray:
     // PartialFunction object, no boxing. A stored PF falls back to the runtime impl.
     inline def collect[B](inline pf: PartialFunction[A, B]): FArray[B] =
       ${ CollectMacro.impl[A, B]('xs, 'pf) }
+
+    /** apply `f` once per element, keep the contents of the `Some`s, drop the `None`s — one fused pass, no intermediate collection (equivalent to
+      * `xs.flatMap(f)` where `f: A => Option[B]`). The `Option` is allocated by the caller's lambda (unavoidable); the op adds nothing on top and the output is
+      * built unboxed per element kind.
+      */
+    inline def mapNotNone[B](inline f: A => Option[B]): FArray[B] = FArrayOps.mapNotNoneImpl[A, B](xs)(f).asInstanceOf[FArray[B]]
     // unboxed per-kind seen-tables (domain/offset bitmaps, position-index probes, F14 ctrl bytes for refs),
     // Scala `==` semantics preserved exactly (NaN never collapses, ±0.0 does), identity return when nothing
     // was duplicated. Replaces the boxed mutable.HashSet[Any] + filter pass.
@@ -205,6 +289,14 @@ object FArray:
     inline def distinctBy[B](inline f: A => B): FArray[A] = FArrayOps.distinctByImpl[A, B](xs)(f)
     inline def zip[B](that: FArray[B]): FArray[(A, B)] = FArrayOps.zipImpl[A, B](xs, that)
     inline def zipWithIndex: FArray[(A, Int)] = FArrayOps.zipWithIndexImpl[A](xs)
+    // STABLE for reference elements (equal / equal-key elements keep their input order), so results
+    // are deterministic — the property dotty relies on. `sorted`/`sortWith` on refs go through
+    // `java.util.Arrays.sort(Object[], Comparator)` (TimSort, a stable merge sort; `sortWith`'s
+    // comparator returns 0 on ties so their order is preserved); `sortBy` sorts an index array with a
+    // stable merge sort (`sortInt`: insertion sort ≤32, else run-detecting bottom-up merge that
+    // reverses only STRICTLY-descending runs and breaks merge ties toward the left/earlier index) —
+    // or, on the standard-Ordering fast path, packs the original index into the sort key as the
+    // tiebreak. See DottyGapsTest.sort_stability.
     inline def sortWith(inline lt: (A, A) => Boolean): FArray[A] = FArrayOps.sortWithImpl[A](xs)(lt)
     inline def sortBy[B](inline f: A => B)(using ord: Ordering[B]): FArray[A] = FArrayOps.sortByImpl[A, B](xs)(f)
     inline def sorted[B >: A](using ord: Ordering[B]): FArray[A] = FArrayOps.sortedImpl[A, B](xs)
@@ -216,13 +308,47 @@ object FArray:
     inline def groupMap[K, B](inline key: A => K)(inline f: A => B): Map[K, FArray[B]] =
       if xs.length == 1 then
         val e = FArrayOps.applyAtImpl[A](xs, 0)
-        Map(key(e) -> (FArrayOps.fromValues1[B](f(e)): FArray[B]))
+        Map(scala.Tuple2(key(e), (FArrayOps.fromValues1[B](f(e)): FArray[B])))
       else
         val acc = FArrayOps.groupMapAcc[K, B]
         xs.foreach(a => acc.add(key(a), f(a)))
         acc.result.asInstanceOf[Map[K, FArray[B]]]
     inline def partitionMap[A1, A2](inline f: A => Either[A1, A2]): (FArray[A1], FArray[A2]) =
       FArrayOps.partitionMapImpl[A, A1, A2](xs)(f).asInstanceOf[(FArray[A1], FArray[A2])]
+
+    // ---- Task 6: small ops (empty-safe Option variants, zipAll, sizeCompare, copyToArray overloads, groupMapReduce) ----
+    inline def minOption[B >: A](using ord: Ordering[B]): Option[A] = if xs.length == 0 then None else Some(xs.min[B])
+    inline def maxOption[B >: A](using ord: Ordering[B]): Option[A] = if xs.length == 0 then None else Some(xs.max[B])
+    inline def minByOption[B](inline f: A => B)(using ord: Ordering[B]): Option[A] =
+      if xs.length == 0 then None else Some(xs.minBy[B](f))
+    inline def maxByOption[B](inline f: A => B)(using ord: Ordering[B]): Option[A] =
+      if xs.length == 0 then None else Some(xs.maxBy[B](f))
+
+    /** pair up to the LONGER length, padding the exhausted side with its default (like stdlib zipAll). */
+    inline def zipAll[B >: A, C](that: FArray[C], thisElem: B, thatElem: C): FArray[(B, C)] =
+      val n1 = xs.length; val n2 = that.length; val n = if n1 > n2 then n1 else n2
+      FArray.tabulate(n)(i => ((if i < n1 then xs(i) else thisElem): B, if i < n2 then that(i) else thatElem))
+
+    /** compare length to another FArray's / to a number without materializing (stdlib `sizeCompare`). */
+    def sizeCompare[B](that: FArray[B]): Int = Integer.compare(xs.length, that.length)
+    def sizeCompare(len: Int): Int = Integer.compare(xs.length, len)
+
+    /** copy into `dest` (whole array / from `start`); delegates to the clamped 3-arg form. */
+    inline def copyToArray[B >: A](dest: Array[B]): Int = FArrayOps.copyToArrayImpl[A, B](xs, dest, 0, dest.length)
+    inline def copyToArray[B >: A](dest: Array[B], start: Int): Int = FArrayOps.copyToArrayImpl[A, B](xs, dest, start, dest.length)
+
+    /** eager group-map-reduce: key each element, map with `f`, combine per-key with `reduce` (first value seeds). Returns an immutable `Map` (inherently
+      * boxed); the traversal is unboxed and `key`/`f`/`reduce` inline.
+      */
+    inline def groupMapReduce[K, B](inline key: A => K)(inline f: A => B)(inline reduce: (B, B) => B): Map[K, B] =
+      val m = scala.collection.mutable.HashMap.empty[K, B]
+      xs.foreach { a =>
+        val k = key(a); val v = f(a)
+        m.get(k) match
+          case Some(old) => m.update(k, reduce(old, v))
+          case None      => m.update(k, v)
+      }
+      m.toMap
 
     // flattening cursor: O(n) over trees (not O(n·depth)), unboxed leaf reads, reports knownSize.
     inline def iterator: Iterator[A] = FArrayOps.iteratorImpl[A](xs)
@@ -286,6 +412,13 @@ object FArray:
         val keep = scala.collection.mutable.HashMap.empty[Any, Int]
         that.foreach(b => keep.update(b, keep.getOrElse(b, 0) + 1))
         xs.filter { a => keep.getOrElse(a, 0) match { case 0 => false; case c => keep.update(a, c - 1); true } }
+
+    /** stdlib-shape `lazyZip`: `xs.lazyZip(ys)` returns an inline-only [[FLazyZip2]] whose terminals
+      * (`map`/`foreach`/`forall`/`exists`/`collect`/`foldLeft`/`flatMap`/`zipWithIndex`/`toFArray`) each fuse to one loop over the min length; `.lazyZip(zs)`
+      * chains to [[FLazyZip3]].
+      */
+    inline def lazyZip[B](ys: FArray[B]): FLazyZip2[A, B] = new FLazyZip2[A, B](xs, ys)
+    // the eager 3-ary tuple-building form (farray-specific) stays for compat; distinct arity.
     inline def lazyZip[B, C](ys: FArray[B], zs: FArray[C]): FArray[(A, B, C)] =
       val n = math.min(xs.length, math.min(ys.length, zs.length))
       FArray.tabulate(n)(i => (FArrayOps.applyAtImpl[A](xs, i), FArrayOps.applyAtImpl[B](ys, i), FArrayOps.applyAtImpl[C](zs, i)))
@@ -312,6 +445,11 @@ object FArray:
         val res: FBase = if cols == 0 then Empty.INSTANCE else if cols == 1 then new RefOne(outer(0)) else new RefArr(outer, cols)
         res.asInstanceOf[FArray[FArray[B]]]
     inline def mapConserve(inline f: A => A): FArray[A] = FArrayOps.mapConserveImpl[A](xs)(f)
+
+    /** Like [[filter]] but identity-preserving: returns `this` (no allocation) when NO element is dropped. `p` is applied exactly once per element, in one
+      * pass. Mirrors `List.filterConserve`; the win over a generic `filter` is the zero-allocation identity return on the common no-drop case.
+      */
+    inline def filterConserve(inline p: A => Boolean): FArray[A] = FArrayOps.filterConserveImpl[A](xs)(p)
 
     // ---- composed from specialised primitives: no boxed storage, inline lambdas thread through ----
     inline def reduceLeftOption[B >: A](inline op: (B, A) => B): Option[B] =

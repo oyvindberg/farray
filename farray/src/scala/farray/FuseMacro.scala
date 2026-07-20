@@ -1375,7 +1375,12 @@ object FuseMacro:
       // GenCores, a single-bound loop on the logical length ties `a.length` exactly (loop predication); the
       // compound `i < a.length && i < len` form is what kills vectorization — never that.
       val mat = outer && ctx.done.isEmpty
-      def skeleton[Arr <: AnyRef](arrOf: Expr[FBase] => Expr[Arr], read: (Expr[Arr], Expr[Int]) => Term)(using Type[Arr]): Expr[Unit] =
+      // `empty` is a cached, reference-unique empty array of `Arr`'s element type (Array.emptyIntArray /
+      // emptyObjectArray / …) used as the "not a flat leaf" sentinel INSTEAD of `null`. A bare `else null`
+      // where `Array[X]` is expected is `Found: Null, Required: Array[X]` under `-Yexplicit-nulls`, which
+      // blocked ALL `.fuse` adoption in dotty. The empties are shared singletons, so `a ne $empty` is the
+      // same single acmp `a ne null` was — identical hot-loop bytecode, no per-element cost.
+      def skeleton[Arr <: AnyRef](empty: Expr[Arr], arrOf: Expr[FBase] => Expr[Arr], read: (Expr[Arr], Expr[Int]) => Term)(using Type[Arr]): Expr[Unit] =
         elemTpe.asType match
           case '[se] =>
             '{
@@ -1384,71 +1389,123 @@ object FuseMacro:
               val len: Int = s.length
               var i: Int = 0
               while ${ cond('len, 'i) } do
-                ${ perElem('{ if a ne null then ${ read('a, 'i).asExprOf[se] } else ${ readAtKind(elemTpe, 's, 'i).asExprOf[se] } }.asTerm) }
+                ${ perElem('{ if a ne $empty then ${ read('a, 'i).asExprOf[se] } else ${ readAtKind(elemTpe, 's, 'i).asExprOf[se] } }.asTerm) }
                 i += 1
             }
       k match
         case Kind.KInt =>
           skeleton[Array[Int]](
+            '{ Array.emptyIntArray },
             s =>
-              if mat then '{ $s match { case l: IntArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeInt(t) else null } }
-              else '{ $s match { case l: IntArr => l.arr; case _ => null } },
+              if mat then
+                '{
+                  $s match { case l: IntArr if l.offset == 0 => l.data; case t => if t.length >= 64 then FArrayOps.materializeInt(t) else Array.emptyIntArray }
+                }
+              else '{ $s match { case l: IntArr if l.offset == 0 => l.data; case _ => Array.emptyIntArray } },
             (a, i) => '{ $a($i) }.asTerm
           )
         case Kind.KLong =>
           skeleton[Array[Long]](
+            '{ Array.emptyLongArray },
             s =>
-              if mat then '{ $s match { case l: LongArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeLong(t) else null } }
-              else '{ $s match { case l: LongArr => l.arr; case _ => null } },
+              if mat then
+                '{
+                  $s match {
+                    case l: LongArr if l.offset == 0 => l.data; case t => if t.length >= 64 then FArrayOps.materializeLong(t) else Array.emptyLongArray
+                  }
+                }
+              else '{ $s match { case l: LongArr if l.offset == 0 => l.data; case _ => Array.emptyLongArray } },
             (a, i) => '{ $a($i) }.asTerm
           )
         case Kind.KDouble =>
           skeleton[Array[Double]](
+            '{ Array.emptyDoubleArray },
             s =>
-              if mat then '{ $s match { case l: DoubleArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeDouble(t) else null } }
-              else '{ $s match { case l: DoubleArr => l.arr; case _ => null } },
+              if mat then
+                '{
+                  $s match {
+                    case l: DoubleArr if l.offset == 0 => l.data; case t => if t.length >= 64 then FArrayOps.materializeDouble(t) else Array.emptyDoubleArray
+                  }
+                }
+              else '{ $s match { case l: DoubleArr if l.offset == 0 => l.data; case _ => Array.emptyDoubleArray } },
             (a, i) => '{ $a($i) }.asTerm
           )
         case Kind.KFloat =>
           skeleton[Array[Float]](
+            '{ Array.emptyFloatArray },
             s =>
-              if mat then '{ $s match { case l: FloatArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeFloat(t) else null } }
-              else '{ $s match { case l: FloatArr => l.arr; case _ => null } },
+              if mat then
+                '{
+                  $s match {
+                    case l: FloatArr if l.offset == 0 => l.data; case t => if t.length >= 64 then FArrayOps.materializeFloat(t) else Array.emptyFloatArray
+                  }
+                }
+              else '{ $s match { case l: FloatArr if l.offset == 0 => l.data; case _ => Array.emptyFloatArray } },
             (a, i) => '{ $a($i) }.asTerm
           )
         case Kind.KShort =>
           skeleton[Array[Short]](
+            '{ Array.emptyShortArray },
             s =>
-              if mat then '{ $s match { case l: ShortArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeShort(t) else null } }
-              else '{ $s match { case l: ShortArr => l.arr; case _ => null } },
+              if mat then
+                '{
+                  $s match {
+                    case l: ShortArr if l.offset == 0 => l.data; case t => if t.length >= 64 then FArrayOps.materializeShort(t) else Array.emptyShortArray
+                  }
+                }
+              else '{ $s match { case l: ShortArr if l.offset == 0 => l.data; case _ => Array.emptyShortArray } },
             (a, i) => '{ $a($i) }.asTerm
           )
         case Kind.KByte =>
           skeleton[Array[Byte]](
+            '{ Array.emptyByteArray },
             s =>
-              if mat then '{ $s match { case l: ByteArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeByte(t) else null } }
-              else '{ $s match { case l: ByteArr => l.arr; case _ => null } },
+              if mat then
+                '{
+                  $s match {
+                    case l: ByteArr if l.offset == 0 => l.data; case t => if t.length >= 64 then FArrayOps.materializeByte(t) else Array.emptyByteArray
+                  }
+                }
+              else '{ $s match { case l: ByteArr if l.offset == 0 => l.data; case _ => Array.emptyByteArray } },
             (a, i) => '{ $a($i) }.asTerm
           )
         case Kind.KChar =>
           skeleton[Array[Char]](
+            '{ Array.emptyCharArray },
             s =>
-              if mat then '{ $s match { case l: CharArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeChar(t) else null } }
-              else '{ $s match { case l: CharArr => l.arr; case _ => null } },
+              if mat then
+                '{
+                  $s match {
+                    case l: CharArr if l.offset == 0 => l.data; case t => if t.length >= 64 then FArrayOps.materializeChar(t) else Array.emptyCharArray
+                  }
+                }
+              else '{ $s match { case l: CharArr if l.offset == 0 => l.data; case _ => Array.emptyCharArray } },
             (a, i) => '{ $a($i) }.asTerm
           )
         case Kind.KBoolean =>
           skeleton[Array[Boolean]](
+            '{ Array.emptyBooleanArray },
             s =>
-              if mat then '{ $s match { case l: BooleanArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeBoolean(t) else null } }
-              else '{ $s match { case l: BooleanArr => l.arr; case _ => null } },
+              if mat then
+                '{
+                  $s match {
+                    case l: BooleanArr if l.offset == 0 => l.data; case t => if t.length >= 64 then FArrayOps.materializeBoolean(t) else Array.emptyBooleanArray
+                  }
+                }
+              else '{ $s match { case l: BooleanArr if l.offset == 0 => l.data; case _ => Array.emptyBooleanArray } },
             (a, i) => '{ $a($i) }.asTerm
           )
         case Kind.KRef =>
           skeleton[Array[AnyRef]](
+            '{ Array.emptyObjectArray },
             s =>
-              if mat then '{ $s match { case l: RefArr => l.arr; case t => if t.length >= 64 then FArrayOps.materializeRef(t) else null } }
-              else '{ $s match { case l: RefArr => l.arr; case _ => null } },
+              if mat then
+                '{
+                  $s match {
+                    case l: RefArr if l.offset == 0 => l.data; case t => if t.length >= 64 then FArrayOps.materializeRef(t) else Array.emptyObjectArray
+                  }
+                }
+              else '{ $s match { case l: RefArr if l.offset == 0 => l.data; case _ => Array.emptyObjectArray } },
             (a, i) => elemTpe.asType match { case '[b] => '{ $a($i).asInstanceOf[b] }.asTerm }
           )
 
@@ -2421,14 +2478,19 @@ object FuseMacro:
               // 64: a single-run/tiny input must keep the zero-array path (n0=10 with one 16-elem run
               // halved at threshold 8 — the eager arm zeroed a cap array for one emit); above that the
               // upfront allocation amortizes and the hot emit is branch-free.
-              var out: Array[Object] = if $n0 <= 64 then null else new Array[Object](cap)
-              var single: Object = null
+              // explicit-nulls-clean: the cached empty-array singleton is the "not yet allocated" sentinel
+              // instead of a bare `null` (`var out: Array[Object] = null` is `Found: Null, Required:
+              // Array[Object]` under -Yexplicit-nulls); `out ne Array.emptyObjectArray` is the reference-unique
+              // "already allocated" test. `single` holds the first emit until a second arrives; its
+              // uninitialized slot uses the codebase's `null.asInstanceOf` idiom (only read once o >= 1).
+              var out: Array[Object] = if $n0 <= 64 then Array.emptyObjectArray else new Array[Object](cap)
+              var single: Object = null.asInstanceOf[Object]
               var o = 0
               ${
                 loop(v =>
                   '{
                     val _v = ${ v.asExpr }.asInstanceOf[Object]
-                    if out != null then out(o) = _v
+                    if out ne Array.emptyObjectArray then out(o) = _v
                     else if o == 0 then single = _v
                     else { out = new Array[Object](cap); out(0) = single; out(o) = _v }
                     o += 1
@@ -2436,7 +2498,7 @@ object FuseMacro:
                 )
               }
               if o == 0 then (Empty.INSTANCE: FBase)
-              else if o == 1 then new RefOne(if out == null then single else out(0))
+              else if o == 1 then new RefOne(if out eq Array.emptyObjectArray then single else out(0))
               else if o == cap then new RefArr(out, o)
               else new RefArr(java.util.Arrays.copyOf(out, o), o)
             }.asTerm

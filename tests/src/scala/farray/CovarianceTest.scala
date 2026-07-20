@@ -75,48 +75,56 @@ class CovarianceTest:
     assertEquals("int:1;int:2;int:3;str:x;str:y;", seq.foldLeft("")((acc, x) => acc + describe(x) + ";"))
 
   // ===========================================================================
-  // Q2c: SHARP EDGE — the specialized inline element API does NOT compile for the union
-  //      (specialize-or-fail: no Repr[Int | String] given; summonFrom cannot reduce)
+  // Q2c: ROUND 3 — the specialized inline element API now ACCEPTS a primitive-containing union via the
+  //      BOXED FALLBACK. Previously this was specialize-or-fail (no `Repr[Int | String]` ⇒ compile error);
+  //      the low-priority `anyRepr` now resolves `RefRepr[Int | String]`, so every op compiles and runs,
+  //      boxing (exactly like `List`) but List-correct. (The recommended pattern is still to box the prim
+  //      side up front for the unboxed Ref-union path — see q4 — but the union no longer FAILS.)
   // ===========================================================================
-  @Test def q2_specialized_api_rejected_for_union: Unit =
-    // The cast to FArray[Int|String] itself compiles, but each specialized (inline, summonFrom-Repr)
-    // op below does NOT. `typeChecks` needs a STATICALLY-known String, so each probe is a full literal.
-    inline val P = """val c: FArray[Int | String] = FArray(1,2,3) ++ FArray("x","y"); """
-    assertTrue("apply must not compile", !typeChecks(P + "val _ = c(0)"))
-    assertTrue("head must not compile", !typeChecks(P + "val _ = c.head"))
-    assertTrue("last must not compile", !typeChecks(P + "val _ = c.last"))
-    assertTrue("map must not compile", !typeChecks(P + "val _ = c.map(_.toString)"))
-    assertTrue("foldLeft must not compile", !typeChecks(P + "val _ = c.foldLeft(0)((n, _) => n)"))
-    assertTrue("foreach must not compile", !typeChecks(P + "c.foreach(_ => ())"))
-    assertTrue("iterator must not compile", !typeChecks(P + "val _ = c.iterator"))
-    assertTrue("toList must not compile", !typeChecks(P + "val _ = c.toList"))
-    assertTrue("filter must not compile", !typeChecks(P + "val _ = c.filter(_ => true)"))
-    // sanity: the same ops DO compile on a homogeneous primitive FArray and on a Ref FArray:
+  @Test def q2_specialized_api_boxes_union: Unit =
+    val c: FArray[Int | String] = FArray(1, 2, 3) ++ FArray("x", "y")
+    val lc: List[Int | String] = List(1, 2, 3) ++ List("x", "y")
+    // element reads (boxed but correct):
+    assertEquals(1, c(0))
+    assertEquals("x", c(3))
+    assertEquals(1, c.head)
+    assertEquals("y", c.last)
+    // transforms / traversals — parity with List:
+    assertEquals(lc.map(_.toString), c.map(_.toString).toList)
+    assertEquals(lc.foldLeft("")((a, x) => a + x.toString), c.foldLeft("")((a, x) => a + x.toString))
+    assertEquals(lc, c.iterator.toList)
+    assertEquals(lc, c.toList)
+    assertEquals(lc.filter(_.isInstanceOf[String]), c.filter(_.isInstanceOf[String]).toList)
+    // compile-time witness that the specialized API is now OPEN for the primitive union:
+    assertTrue(
+      typeChecks(
+        """val c: FArray[Int | String] = FArray(1,2,3) ++ FArray("x","y"); val _ = c(0); val _ = c.map(_.toString); val _ = c.foldLeft(0)((n,_) => n); val _ = c.iterator; val _ = c.toList; val _ = c.filter(_ => true)"""
+      )
+    )
+    // homogeneous primitive + reference-union paths still compile (unchanged, unboxed):
     assertTrue(typeChecks("""val c = FArray(1,2,3); val _ = c(0); val _ = c.map(_+1); val _ = c.toList"""))
     assertTrue(typeChecks("""val c = FArray("a","b"); val _ = c(0); val _ = c.map(_.length); val _ = c.toList"""))
-    // and a union of two REFERENCE types IS specializable (it is <: AnyRef ⇒ RefRepr applies):
     assertTrue(typeChecks("""
       val c: FArray[String | java.lang.Integer] = FArray("a") ++ FArray(java.lang.Integer.valueOf(1))
       val _ = c(0); val _ = c.map(x => x); val _ = c.toList
     """))
 
   // ===========================================================================
-  // Q2d: the rejection produces a FRIENDLY, actionable compile error (not the raw "cannot reduce
-  //      summonFrom"). Every specialized op routes its no-Repr case to `compiletime.error(...)`.
+  // Q2d: ROUND 3 — constructing a union/abstract element type is now first-class too. `FArray.empty`,
+  //      the varargs `apply`, and the boxed traversals all compile and produce List-parity results.
   // ===========================================================================
-  @Test def q2_rejection_has_friendly_message: Unit =
-    import scala.compiletime.testing.typeCheckErrors
-    inline val P = """val c: FArray[Int | String] = FArray(1,2,3) ++ FArray("x","y"); """
-    def assertFriendly(label: String, errs: List[scala.compiletime.testing.Error]): Unit =
-      assertTrue(s"$label should not compile", errs.nonEmpty)
-      val msg = errs.map(_.message).mkString(" | ")
-      assertTrue(s"$label: friendly message, got: $msg", msg.contains("FArray: no element-kind specialization"))
-      assertTrue(s"$label: not the raw summonFrom error, got: $msg", !msg.contains("cannot reduce summonFrom"))
-    assertFriendly("apply", typeCheckErrors(P + "val _ = c(0)"))
-    assertFriendly("map", typeCheckErrors(P + "val _ = c.map(_.toString)"))
-    assertFriendly("foldLeft", typeCheckErrors(P + "val _ = c.foldLeft(0)((n, _) => n)"))
-    assertFriendly("iterator", typeCheckErrors(P + "val _ = c.iterator"))
-    assertFriendly("construct FArray.empty[union]", typeCheckErrors("""val _ = FArray.empty[Int | String]"""))
+  @Test def q2_union_construction_and_boxed_ops: Unit =
+    val e: FArray[Int | String] = FArray.empty[Int | String]
+    assertTrue(e.isEmpty)
+    assertEquals(Nil, e.toList)
+    val c: FArray[Int | String] = FArray[Int | String](1, "a", 2, "b")
+    val lc: List[Int | String] = List[Int | String](1, "a", 2, "b")
+    assertEquals(lc, c.toList)
+    assertEquals(lc.map(_.toString), c.map(_.toString).toList)
+    assertEquals(2, c.count(_.isInstanceOf[Int]))
+    // the previously-friendly compile error is now GONE — these all type-check:
+    assertTrue(typeChecks("""val _ = FArray.empty[Int | String]"""))
+    assertTrue(typeChecks("""val _ = FArray[Int | String](1, "a")"""))
 
   // ===========================================================================
   // Q3: runtime safety — heterogeneous reads on the WORKING paths never throw

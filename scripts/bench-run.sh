@@ -70,7 +70,7 @@ ALL=$("$JAVA" -cp "$CP" "$MAIN" -l 2>/dev/null | grep -oE 'farray\.[A-Za-z0-9]+B
 EMPTY='StrHeadBenchmark|StrLastBenchmark|StrTailBenchmark|StrInitBenchmark|StrApplyBenchmark'
 CHAINS='IntAppendChainBenchmark|IntPrependChainBenchmark|IntUpdateChainBenchmark'
 UPDATED='StrUpdatedBenchmark|IntUpdatedMapBenchmark|IntUpdated4MapBenchmark'  # updated(fixed index) needs non-empty
-DIAG='ArrLenIterBenchmark|ArrLenFoldBenchmark'  # loop-shape validators: no competitor methods, not a scorecard comparison
+DIAG='ArrLenIterBenchmark|ArrLenFoldBenchmark|IndexedApplyPollutedBenchmark|IndexedApplyStrBenchmark'  # loop-shape / megamorphic-refAt validators: A/B only, not a scorecard comparison
 NORMAL=$(echo "$ALL" | grep -vE "^($EMPTY|$CHAINS|$UPDATED|$DIAG)$" || true)
 
 rm -rf docs/parts && mkdir -p docs/parts

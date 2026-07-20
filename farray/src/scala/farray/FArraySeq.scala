@@ -4,6 +4,11 @@ package farray
   * into a fresh collection. A `Seq` hands back boxed `A` regardless, so element reads go through the (non-specialised) boxed `applyBoxed`; length is direct.
   */
 final class FArraySeq[A] private[farray] (private val under: FBase) extends scala.collection.immutable.IndexedSeq[A]:
+  // `applyBoxed` bounds-checks against the logical length (IndexedSeq contract: OOB throws
+  // IndexOutOfBoundsException, parity with List), so this view needs no check of its own.
   def apply(i: Int): A = under.applyBoxed(i).asInstanceOf[A]
   def length: Int = under.length
   override def knownSize: Int = under.length
+
+  /** the wrapped core — lets `toFArray` unwrap an `FArraySeq` back to its `FArray` in O(1). */
+  private[farray] def fbase: FBase = under

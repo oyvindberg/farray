@@ -5,7 +5,6 @@ jvm:
   name: graalvm-community:25.0.1
 projects:
   farray:
-    dependencies: com.lihaoyi::fansi:0.3.1
     extends: template-common
     sourcegen:
       project: codegen
@@ -52,6 +51,40 @@ projects:
     dependsOn: fset
     extends: template-common
     isTestProject: true
+  # Compiles a representative set of `.fuse` pipelines + `distinctBy`/other inline-op call sites WITH
+  # `-Yexplicit-nulls` (the flag the Scala 3 compiler itself is built with). This is a COMPILE-ONLY gate:
+  # if the macro/inline-expanded code emits a bare `null` into a non-nullable type it fails to typecheck
+  # here, exactly as it did in dotty and blocked all `.fuse` adoption. `bleep compile nulls-tests` must be
+  # clean. strict:false isolates the gate to hard type errors (not unrelated warnings).
+  nulls-tests:
+    dependsOn: farray
+    extends: template-common
+    scala:
+      strict: false
+      options: -encoding utf8 -feature -unchecked -Yexplicit-nulls
+  # Compiles direct `xs.lazyZip(ys).<terminal>(…)` call sites WITH `-Ycheck:all` (the flag dotty runs
+  # its own bootstrap under). Inlining a lazyZip terminal used to lift the `FLazyZip2` marker receiver
+  # into a synthetic val whose TypeTree carried no position, tripping "position not set" under
+  # -Ycheck:all when the compiler's own sources were recompiled. This COMPILE-ONLY gate reproduces that
+  # exact shape; `bleep compile ycheck-tests` must be clean.
+  ycheck-tests:
+    dependsOn: farray
+    extends: template-common
+    scala:
+      strict: false
+      options: -encoding utf8 -feature -unchecked -Ycheck:all
+  # Compiles inline-op call sites (groupBy/groupMap/…) WITH `-Werror -deprecation`. An inline body that
+  # expands `a -> b` (Predef.ArrowAssoc, deprecated under recent dotty) becomes a hard error at the call
+  # site of a `-Werror` codebase (the Scala 3 compiler itself). This COMPILE-ONLY gate catches any such
+  # deprecated construct in an inline expansion; `bleep compile werror-tests` must be clean. (Scala 3.8.3
+  # does not yet deprecate ArrowAssoc, so this gate only bites once farray is re-pinned to 3.10+; it stays
+  # as a general -Werror inline-expansion gate meanwhile.)
+  werror-tests:
+    dependsOn: farray
+    extends: template-common
+    scala:
+      strict: false
+      options: -encoding utf8 -feature -unchecked -deprecation -Werror
   tests:
     dependencies:
       - junit:junit:4.13.2

@@ -36,6 +36,14 @@ object FBuilder:
     /** `b ++= xs` — alias for [[addAll]]. */
     inline def ++=(xs: FArray[A]): FBuilder[A] = { b.addNode(xs.asFBase); b }
 
+    /** bulk-append every element of any `IterableOnce`. Generic iteration, so primitive elements BOX at the `Iterator[A]` boundary (inherent — the same
+      * second-class path as [[asScala]]); prefer [[addAll]] on an `FArray[A]` for the unboxed leaf-arraycopy path.
+      */
+    def addAll(it: IterableOnce[A]): FBuilder[A] = { val i = it.iterator; while i.hasNext do b.addBoxed(i.next()); b }
+
+    /** `b ++= xs` — alias for the `IterableOnce` [[addAll]]. */
+    def ++=(it: IterableOnce[A]): FBuilder[A] = { val i = it.iterator; while i.hasNext do b.addBoxed(i.next()); b }
+
     /** number of elements accumulated so far. */
     inline def length: Int = b.knownSize
 

@@ -41,22 +41,6 @@ private[farray] object CollectMacro:
           case _                                        => super.transformTerm(x)(o)
       ).transformTerm(t)(Symbol.spliceOwner)
 
-    // deep-clone a case's pattern with fresh Bind symbols (owned by `owner`), rewriting guard/body refs
-    def freshened(cd: CaseDef, owner: Symbol): (CaseDef, Map[Symbol, Term]) =
-      val mapping = scala.collection.mutable.Map.empty[Symbol, Term]
-      def clonePat(t: Tree): Tree = t match
-        case b @ Bind(name, pat) =>
-          val fresh = Symbol.newBind(owner, name, b.symbol.flags, b.symbol.termRef.widen)
-          mapping(b.symbol) = Ref(fresh)
-          Bind(fresh, clonePat(pat))
-        case u @ Unapply(fun, implicits, patterns) => Unapply.copy(u)(fun, implicits, patterns.map(clonePat))
-        case t @ Typed(e, tpt)                     => Typed.copy(t)(clonePat(e).asInstanceOf[Term], tpt)
-        case a @ Alternatives(ps)                  => Alternatives.copy(a)(ps.map(clonePat))
-        case other                                 => other
-      val pat = clonePat(cd.pattern)
-      val m = mapping.toMap
-      (CaseDef(pat, cd.guard.map(substitute(m)), substitute(m)(cd.rhs)), m)
-
     def lam(res: TypeRepr)(bodyFor: (Term, Symbol) => Term): Term =
       val mt = MethodType(List("a"))(_ => List(TypeRepr.of[A]), _ => res)
       Lambda(Symbol.spliceOwner, mt, (meth, args) => bodyFor(args.head.asInstanceOf[Term], meth).changeOwner(meth))
@@ -66,40 +50,28 @@ private[farray] object CollectMacro:
       case Wildcard()          => true
       case _                   => false
 
+    // Decompose ONLY a single simple-binder case (`case x if g => b` / `case _ => b`): its predicate/transform
+    // just substitute the binder for the loop element and introduce NO fresh pattern-bind symbols. A
+    // destructuring or multi-case literal would need pattern binds owned by the generated predicate/transform
+    // lambda; when `collectPickImpl` inline-expands (beta-reduces) that lambda, those binds' owner is left
+    // dangling and a `-Yexplicit-nulls` caller's LambdaLift crashes ("key not found: method $anonfun" — the
+    // Scala 3 compiler's own build hit this on `xs.collect { case B(lo, hi) if … => … }`). Such PFs (and any
+    // non-literal PF) fall back to the runtime `collectImpl`, which keeps the PartialFunction's own `$anonfun`
+    // live in the tree and is therefore owner-safe (at the cost of the fused single-pass unboxing).
     extract(pf.asTerm) match
-      case Some((xSym, cases)) =>
-        val (pTerm, fTerm) = cases match
-          case List(cd) if isSimpleBinder(cd) =>
-            // fast path: no match at all — guard is p, body is f, the binder becomes the lambda param
-            def bindX(a: Term)(t: Term): Term =
-              val m: Map[Symbol, Term] = cd.pattern match
-                case b @ Bind(_, _) => Map(xSym -> a, b.symbol -> a)
-                case _              => Map(xSym -> a)
-              substitute(m)(t)
-            val p = lam(TypeRepr.of[Boolean])((a, _) => cd.guard.map(bindX(a)).getOrElse(Literal(BooleanConstant(true))))
-            val f = lam(TypeRepr.of[B])((a, _) => bindX(a)(cd.rhs))
-            (p, f)
-          case _ =>
-            val p = lam(TypeRepr.of[Boolean]) { (a, meth) =>
-              val cs = cases.map { cd =>
-                val (fcd, _) = freshened(cd, meth)
-                CaseDef(fcd.pattern, fcd.guard.map(substitute(Map(xSym -> a))), Literal(BooleanConstant(true)))
-              }
-              Match(a, cs :+ CaseDef(Wildcard(), None, Literal(BooleanConstant(false))))
-            }
-            val f = lam(TypeRepr.of[B]) { (a, meth) =>
-              val cs = cases.map { cd =>
-                val (fcd, _) = freshened(cd, meth)
-                CaseDef(fcd.pattern, fcd.guard.map(substitute(Map(xSym -> a))), substitute(Map(xSym -> a))(fcd.rhs))
-              }
-              val boom = '{ throw new MatchError(${ a.asExprOf[Any] }) }.asTerm
-              Match(a, cs :+ CaseDef(Wildcard(), None, boom))
-            }
-            (p, f)
+      case Some((xSym, List(cd))) if isSimpleBinder(cd) =>
+        // fast path: no match at all — guard is p, body is f, the binder becomes the lambda param
+        def bindX(a: Term)(t: Term): Term =
+          val m: Map[Symbol, Term] = cd.pattern match
+            case b @ Bind(_, _) => Map(xSym -> a, b.symbol -> a)
+            case _              => Map(xSym -> a)
+          substitute(m)(t)
+        val p = lam(TypeRepr.of[Boolean])((a, _) => cd.guard.map(bindX(a)).getOrElse(Literal(BooleanConstant(true))))
+        val f = lam(TypeRepr.of[B])((a, _) => bindX(a)(cd.rhs))
         '{
           FArrayOps
-            .collectPickImpl[A, B](${ xs }.asInstanceOf[FBase])(${ pTerm.asExprOf[A => Boolean] }, ${ fTerm.asExprOf[A => B] })
+            .collectPickImpl[A, B](${ xs }.asInstanceOf[FBase])(${ p.asExprOf[A => Boolean] }, ${ f.asExprOf[A => B] })
             .asInstanceOf[FArray[B]]
         }
-      case None =>
+      case _ =>
         '{ FArrayOps.collectImpl[A, B](${ xs }.asInstanceOf[FBase])($pf).asInstanceOf[FArray[B]] }
